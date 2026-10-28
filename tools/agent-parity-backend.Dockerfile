@@ -50,12 +50,12 @@ COPY VERSION /src/VERSION
 ARG BUILD_COMMIT=working-tree
 ARG BUILD_TIME=unknown
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -trimpath -ldflags="-X infinite-canvas/backend/internal/buildinfo.Version=$(tr -d '\r\n' </src/VERSION) -X infinite-canvas/backend/internal/buildinfo.Commit=$BUILD_COMMIT -X infinite-canvas/backend/internal/buildinfo.BuildTime=$BUILD_TIME" -o /out/backend ./cmd/server
+    CGO_ENABLED=1 go build -trimpath -ldflags="-X yingce/backend/internal/buildinfo.Version=$(tr -d '\r\n' </src/VERSION) -X yingce/backend/internal/buildinfo.Commit=$BUILD_COMMIT -X yingce/backend/internal/buildinfo.BuildTime=$BUILD_TIME" -o /out/backend ./cmd/server
 
 FROM golang:1.25-bookworm
 WORKDIR /app
-COPY --from=build /out/backend /usr/local/bin/infinite-canvas-backend
+COPY --from=build /out/backend /usr/local/bin/yingce-backend
 COPY plugin-packages /app/plugin-packages
 ENV CANVAS_BACKEND_ADDR=:8080 CANVAS_BACKEND_DATA_DIR=/data GIN_MODE=release
 EXPOSE 8080
-CMD ["infinite-canvas-backend"]
+CMD ["yingce-backend"]

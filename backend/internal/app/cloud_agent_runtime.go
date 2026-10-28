@@ -12,13 +12,13 @@ import (
 	"unicode/utf8"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/agentcontext"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/observability"
-	"infinite-canvas/backend/internal/platform"
-	"infinite-canvas/backend/internal/prompts"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/agentcontext"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/observability"
+	"yingce/backend/internal/platform"
+	"yingce/backend/internal/prompts"
+	"yingce/backend/internal/repository"
 )
 
 // A deterministic checkpoint failure must not be retried forever like a transient DB error.

@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/tasks"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
 	"strings"
 	"testing"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/tasks"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
 )
 
 func storyboardMediaFixture(t *testing.T) (*Service, *gorm.DB, map[string]any, map[string]any) {

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // 整批预检 + 单步最多一个写入/生成调用（handoff 工作项 B 第 2 步）。

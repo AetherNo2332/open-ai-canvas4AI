@@ -1,8 +1,8 @@
 package repository
 
 import (
-	"infinite-canvas/backend/internal/model"
 	"time"
+	"yingce/backend/internal/model"
 )
 
 type ObservabilityData struct {

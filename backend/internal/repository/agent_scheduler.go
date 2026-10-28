@@ -3,9 +3,9 @@ package repository
 import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"infinite-canvas/backend/internal/model"
 	"strings"
 	"time"
+	"yingce/backend/internal/model"
 )
 
 func (r *Repository) AgentWakeEvents(after int64, limit int, userScope ...string) ([]model.AgentWakeEvent, error) {

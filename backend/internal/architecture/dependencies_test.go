@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-const module = "infinite-canvas/backend/internal/"
+const module = "yingce/backend/internal/"
 
 // Keep legacy violations explicit by source file and imported package. New edges fail.
 func forbiddenImports(filename string, source any) ([]string, error) {
@@ -97,12 +97,12 @@ func TestDependencyRuleFixtures(t *testing.T) {
 		file, src string
 		reject    bool
 	}{
-		{"handler/bad.go", `package handler; import "infinite-canvas/backend/internal/repository"`, true},
-		{"canvas/bad.go", `package canvas; import "infinite-canvas/backend/internal/app"`, true},
-		{"repository/bad.go", `package repository; import "infinite-canvas/backend/internal/service"`, true},
-		{"model/bad.go", `package model; import "infinite-canvas/backend/internal/database"`, true},
-		{"handler/good.go", `package handler; import "infinite-canvas/backend/internal/service"`, false},
-		{"app/good.go", `package app; import "infinite-canvas/backend/internal/platform"`, false},
+		{"handler/bad.go", `package handler; import "yingce/backend/internal/repository"`, true},
+		{"canvas/bad.go", `package canvas; import "yingce/backend/internal/app"`, true},
+		{"repository/bad.go", `package repository; import "yingce/backend/internal/service"`, true},
+		{"model/bad.go", `package model; import "yingce/backend/internal/database"`, true},
+		{"handler/good.go", `package handler; import "yingce/backend/internal/service"`, false},
+		{"app/good.go", `package app; import "yingce/backend/internal/platform"`, false},
 	} {
 		got, err := forbiddenImports(fixture.file, fixture.src)
 		if err != nil {

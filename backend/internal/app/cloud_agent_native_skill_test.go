@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func nativeSkillLeasedFixture(t *testing.T) (*Service, *gorm.DB, *model.CloudAgentExecution, cloudAgentSkill) {

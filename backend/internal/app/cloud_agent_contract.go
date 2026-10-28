@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // 首步合同（路线图 P1.5）把"这一轮用什么提示、什么工具、多少钱"从"worker 进程里的内存"

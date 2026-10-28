@@ -1,8 +1,8 @@
 package app
 
 import (
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/tasks"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/tasks"
 )
 
 // CanvasCommandServices lazily enables the durable canvas command/task chain

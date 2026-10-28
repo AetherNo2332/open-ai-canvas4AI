@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"reflect"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/references"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/references"
 )
 
 func cloudAgentStoryboardAssetAction(action string) bool {

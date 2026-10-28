@@ -1,8 +1,8 @@
 package database
 
 import (
-	"infinite-canvas/backend/internal/model"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func TestCanvasMediaVersionMigrationPreservesExistingData(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func TestSkillItemJSONUsesCamelCaseAndRFC3339(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"crypto/rand"
 	"sort"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // Import only verifiable ready snapshots. Siblings remain independent nodes:

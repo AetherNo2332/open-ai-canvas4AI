@@ -2,10 +2,10 @@ package mediaversions
 
 import (
 	"errors"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"strings"
 	"testing"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestLegacyAdmissionDistinguishesExplicitNewAttemptAndOriginalSaveRecovery(t *testing.T) {

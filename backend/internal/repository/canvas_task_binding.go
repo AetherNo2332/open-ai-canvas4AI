@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"infinite-canvas/backend/internal/model"
 	"time"
+	"yingce/backend/internal/model"
 )
 
 func (r *Repository) ActiveCanvasTaskBindings(owner, canvas, epoch string) ([]model.CanvasTaskBinding, error) {

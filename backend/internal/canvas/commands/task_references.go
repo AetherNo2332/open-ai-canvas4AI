@@ -2,8 +2,8 @@ package commands
 
 import (
 	"context"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/repository"
 )
 
 // Task admission uses the same transaction and room resource policy as editor

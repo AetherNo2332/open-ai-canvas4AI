@@ -2,8 +2,8 @@ package repository
 
 import (
 	"gorm.io/gorm/clause"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
 )
 
 // Atomically compare the stored document to protect concurrent key changes.

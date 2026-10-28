@@ -1,6 +1,6 @@
 package platform
 
-import "infinite-canvas/backend/internal/model"
+import "yingce/backend/internal/model"
 
 type AgentSchedulerSetting = model.AgentSchedulerSetting
 

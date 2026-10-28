@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func seedPiCompactionBranch(t *testing.T, db *gorm.DB, run *model.CloudAgentExecution) (int64, string) {

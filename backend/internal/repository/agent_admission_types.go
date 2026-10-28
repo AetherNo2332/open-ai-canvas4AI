@@ -1,6 +1,6 @@
 package repository
 
-import "infinite-canvas/backend/internal/model"
+import "yingce/backend/internal/model"
 
 // CloudAgentAdmission carries the objects prepared by application validation
 // into the single repository transaction that creates a run and its holding

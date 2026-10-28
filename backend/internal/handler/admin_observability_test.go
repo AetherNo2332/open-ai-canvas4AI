@@ -2,8 +2,8 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/service"
 	"testing"
+	"yingce/backend/internal/service"
 )
 
 func TestAdminObservabilityRouteIsRegistered(t *testing.T) {

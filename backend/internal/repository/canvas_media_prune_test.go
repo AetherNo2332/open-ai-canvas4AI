@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/model"
 )
 
 func TestPruneMediaVersionsWithoutCommandEpochRetainsLiveRoots(t *testing.T) {

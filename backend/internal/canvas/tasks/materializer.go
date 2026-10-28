@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"strconv"
 	"strings"
 	"time"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // Outputs/asset registration is durable before canvas application. A crash

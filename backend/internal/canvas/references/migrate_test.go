@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/contract"
 )
 
 // 历史画布：没有任何声明字段，引用只存在于旧连线里。

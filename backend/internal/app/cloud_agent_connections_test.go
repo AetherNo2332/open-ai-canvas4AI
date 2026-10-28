@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // Task 8 关闭了 Agent 的连线操作：计划器、审批预览与真实执行入口统一拒绝

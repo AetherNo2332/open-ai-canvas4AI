@@ -1,10 +1,10 @@
 package commands
 
 import (
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"reflect"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // Undo changes authoring and an explicit ready selection, never a real task's

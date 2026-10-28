@@ -1,8 +1,8 @@
 package commands
 
 import (
-	"infinite-canvas/backend/internal/assets"
 	"strings"
+	"yingce/backend/internal/assets"
 )
 
 func (p *planner) bindResource(doc Document, op Operation, ctx ValidationContext) error {

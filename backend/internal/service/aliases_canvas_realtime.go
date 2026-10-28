@@ -1,5 +1,5 @@
 package service
 
-import "infinite-canvas/backend/internal/app"
+import "yingce/backend/internal/app"
 
 type CanvasRealtimeSession = app.CanvasRealtimeSession

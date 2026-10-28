@@ -6,8 +6,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type diagnosticActivityRecords struct {

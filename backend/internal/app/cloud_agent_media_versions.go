@@ -2,10 +2,10 @@ package app
 
 import (
 	"errors"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/repository"
 	"sort"
 	"strconv"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/repository"
 )
 
 func cloudAgentMediaVersionTargetIssue(repo *repository.Repository, userID, canvasID string, node map[string]any, args cloudAgentMediaArgs) (string, string) {

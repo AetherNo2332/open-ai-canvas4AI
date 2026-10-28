@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/repository"
 )
 
 // Table scope deliberately includes all rows and actual declared inputs. A

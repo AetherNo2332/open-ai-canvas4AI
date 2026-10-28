@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // Read the registered identity instead of asking HTTP clients to derive hashes

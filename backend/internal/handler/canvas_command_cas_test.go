@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/commands"
 
 	"github.com/gin-gonic/gin"
 )

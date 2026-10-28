@@ -2,12 +2,12 @@ package commands
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/canvas/capability"
 	"reflect"
 	"sort"
 	"strings"
 	"time"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/canvas/capability"
 )
 
 // Plan never mutates its input and never performs I/O. All identities come from

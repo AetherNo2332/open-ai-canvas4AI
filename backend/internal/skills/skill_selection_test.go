@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"infinite-canvas/backend/internal/kernel"
+	"yingce/backend/internal/kernel"
 )
 
 func TestResolveSkillSelectionDedupesWithHighestPriorityLayer(t *testing.T) {

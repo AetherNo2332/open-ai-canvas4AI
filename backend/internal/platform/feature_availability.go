@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/fnv"
-	"infinite-canvas/backend/internal/kernel"
 	"strings"
 	"time"
+	"yingce/backend/internal/kernel"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 )

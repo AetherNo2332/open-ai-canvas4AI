@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // 看门狗：worker 崩溃或配置错误时，运行会被反复领取却永远不终结，

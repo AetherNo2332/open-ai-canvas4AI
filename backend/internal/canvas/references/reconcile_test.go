@@ -3,10 +3,10 @@ package references
 import (
 	"encoding/json"
 	"fmt"
-	"infinite-canvas/backend/internal/canvas/capability"
 	"os"
 	"reflect"
 	"testing"
+	"yingce/backend/internal/canvas/capability"
 )
 
 func TestReconcileIsIdempotent(t *testing.T) {

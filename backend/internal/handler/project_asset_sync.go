@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/service"
 )
 
 func registerProjectAssetSyncRoutes(r *gin.RouterGroup, svc *service.Service) {

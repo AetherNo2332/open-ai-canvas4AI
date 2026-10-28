@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/tasks"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/platform"
-	"infinite-canvas/backend/internal/repository"
 	"strings"
 	"time"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/tasks"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/platform"
+	"yingce/backend/internal/repository"
 )
 
 type canvasTaskSubmitter struct{ s *Service }

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/canvas/references"
+	"yingce/backend/internal/canvas/references"
 )
 
 var cloudAgentCopySuffix = regexp.MustCompile(`(?i)^(.*)_copy([0-9]+)$`)

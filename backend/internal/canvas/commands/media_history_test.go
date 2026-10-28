@@ -6,9 +6,9 @@ import (
 	"errors"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func managedHistoryFixture(t *testing.T) (*Service, *repository.Repository, Snapshot, string) {

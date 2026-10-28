@@ -2,7 +2,7 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func (s *Service) enrichAssetCanvasOrigins(userID string, assets []model.Asset) error {

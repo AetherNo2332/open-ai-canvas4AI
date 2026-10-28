@@ -13,7 +13,6 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"infinite-canvas/backend/internal/kernel"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -25,9 +24,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"yingce/backend/internal/kernel"
 
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 )

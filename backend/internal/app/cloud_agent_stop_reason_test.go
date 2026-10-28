@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // setStepResult 把某一步模型任务的回执写成指定的上游结果（含终止原因）。

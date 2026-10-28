@@ -10,7 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/service"
 )
 
 func realtimeOriginAllowed(r *http.Request) bool {

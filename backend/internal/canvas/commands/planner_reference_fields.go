@@ -1,8 +1,8 @@
 package commands
 
 import (
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/references"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/references"
 )
 
 func reconcileReferenceFields(before, candidate Document, registry *capability.Registry) (references.Result, error) {

@@ -4,12 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/observability"
-	"infinite-canvas/backend/internal/repository"
 	"strconv"
 	"strings"
 	"time"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/observability"
+	"yingce/backend/internal/repository"
 )
 
 func (s *Service) AdminObservability(actor *model.User, window time.Duration, query AnalyticsQuery) (observability.Snapshot, error) {

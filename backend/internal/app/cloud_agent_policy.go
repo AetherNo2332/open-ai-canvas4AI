@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"infinite-canvas/backend/internal/prompts"
+	"yingce/backend/internal/prompts"
 )
 
 const (

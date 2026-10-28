@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/storage"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/storage"
 )
 
 func testReadyResource(provider string) *model.Resource {

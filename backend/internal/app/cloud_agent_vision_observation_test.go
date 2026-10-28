@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // TestCloudAgentVisionObservationLedger 覆盖 D2/D3：模型为某个节点写下的观察要入账，

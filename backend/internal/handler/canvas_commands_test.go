@@ -7,16 +7,16 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestCanvasCommandHTTPDoesNotTrustActor(t *testing.T) {

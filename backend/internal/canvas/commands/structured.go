@@ -2,12 +2,12 @@ package commands
 
 import (
 	"fmt"
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/connection"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/canvas/references"
 	"strings"
 	"unicode/utf8"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/connection"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/canvas/references"
 )
 
 func (p *planner) applyOperation(doc Document, op Operation, ctx ValidationContext) ([]OperationSummary, error) {

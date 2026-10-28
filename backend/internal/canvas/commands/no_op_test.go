@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func noOpRequest(snap Snapshot, operationID string, ops ...Operation) Command {

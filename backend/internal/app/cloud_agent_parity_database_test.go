@@ -2,8 +2,8 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func parityCall(name string, args any) cloudAgentCall {

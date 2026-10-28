@@ -1,11 +1,11 @@
 package commands
 
 import (
-	"infinite-canvas/backend/internal/assets"
 	"math"
 	"strconv"
 	"strings"
 	"time"
+	"yingce/backend/internal/assets"
 )
 
 // These fields describe the persisted Canary editor, including rig and optical

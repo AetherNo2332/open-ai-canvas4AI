@@ -2,10 +2,10 @@ package app
 
 import (
 	"fmt"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"testing"
 	"time"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestPiEventSchedulerPhaseFencingAfterSameOwnerTakeover(t *testing.T) {

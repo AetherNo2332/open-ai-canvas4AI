@@ -1,8 +1,8 @@
 package commands
 
 import (
-	"infinite-canvas/backend/internal/assets"
 	"math"
+	"yingce/backend/internal/assets"
 )
 
 var timelineTrackFields = map[string]string{"kind": "kind", "label": "string", "order": "number", "locked": "bool", "visible": "bool", "muted": "bool"}

@@ -8,14 +8,14 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type stubSubmitter struct{ calls, wakes int }

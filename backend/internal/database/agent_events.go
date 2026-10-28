@@ -2,9 +2,9 @@ package database
 
 import (
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
 	"reflect"
 	"sync"
+	"yingce/backend/internal/model"
 )
 
 var agentCallbackMu sync.Mutex

@@ -10,12 +10,12 @@ import (
 	"sync"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/tasks"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/tasks"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // recordingTaskSubmitter is the mock provider boundary for the acceptance flow:

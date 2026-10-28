@@ -9,7 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // agentEventPayloads 取本轮某一类事件的全部载荷（内存窗口即可，本用例都很短）。

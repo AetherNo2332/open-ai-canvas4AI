@@ -3,12 +3,12 @@ package commands
 import (
 	"context"
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"strings"
 	"time"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type HistoryState struct {

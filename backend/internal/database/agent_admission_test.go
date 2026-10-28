@@ -2,10 +2,10 @@ package database_test
 
 import (
 	"fmt"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"testing"
 	"time"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestAgentAdmissionFairnessBeyondTwentyAndCanvasCap(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"math"
 	"strings"
 
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/repository"
 )
 
 // Previs Agent tools deliberately expose a projection rather than the raw

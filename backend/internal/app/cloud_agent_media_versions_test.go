@@ -2,9 +2,9 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
 	"strings"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testing.T) {

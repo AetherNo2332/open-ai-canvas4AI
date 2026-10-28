@@ -3,8 +3,8 @@ package repository
 import (
 	"fmt"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
 	"time"
+	"yingce/backend/internal/model"
 )
 
 // MutateCloudAgentControl can terminate a run even if its transcript is damaged.

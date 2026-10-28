@@ -7,8 +7,8 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/model"
 )
 
 func TestMediaVersionResourceRootsRetainHistoryWithoutPermanentOrphans(t *testing.T) {

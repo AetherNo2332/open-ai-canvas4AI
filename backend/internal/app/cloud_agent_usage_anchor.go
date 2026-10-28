@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/platform"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/platform"
+	"yingce/backend/internal/repository"
 )
 
 // cloudAgentCompactionRatio 是触发语义压缩的上下文利用率：有效上游输入用量

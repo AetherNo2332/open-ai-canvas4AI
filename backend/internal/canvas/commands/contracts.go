@@ -2,11 +2,11 @@ package commands
 
 import (
 	"fmt"
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/identity"
 	"time"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/identity"
 )
 
 const ProtocolVersion = 1

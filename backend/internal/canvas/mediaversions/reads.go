@@ -2,11 +2,11 @@ package mediaversions
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
 	"net/url"
 	"time"
+	"yingce/backend/internal/model"
 
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/repository"
 )
 
 type Item struct {

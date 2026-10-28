@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/references"
+	"yingce/backend/internal/canvas/references"
 )
 
 // 智能创作提交的整份文档把引用表达成旧连线。导入时必须一次翻译成声明式字段并写入

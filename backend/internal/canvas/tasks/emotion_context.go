@@ -3,10 +3,10 @@ package tasks
 import (
 	"context"
 	"encoding/json"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/repository"
 )
 
 func (s *Service) captureEmotion(ctx context.Context, tx *repository.Repository, p identity.Principal, doc commands.Document, node map[string]any, req SubmitRequest) (string, map[string]bool, error) {

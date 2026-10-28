@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/capability"
 )
 
 func fixture(t *testing.T) map[string]any {

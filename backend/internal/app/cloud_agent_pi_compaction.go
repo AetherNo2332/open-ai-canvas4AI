@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"strings"
 
-	"infinite-canvas/backend/internal/agentcontext"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/agentcontext"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 const cloudAgentPiCompactionProtocol = "canvas-pi-compaction/v1"

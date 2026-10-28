@@ -2,11 +2,11 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/app"
-	"infinite-canvas/backend/internal/kernel"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"yingce/backend/internal/app"
+	"yingce/backend/internal/kernel"
 )
 
 func TestCanvasAdmissionHTTPKeepsSafeErrorOnly(t *testing.T) {

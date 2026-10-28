@@ -1,6 +1,6 @@
 package service
 
-import "infinite-canvas/backend/internal/canvas"
+import "yingce/backend/internal/canvas"
 
 type CanvasEditProof = canvas.CanvasEditProof
 type CanvasEditLeaseGrant = canvas.CanvasEditLeaseGrant

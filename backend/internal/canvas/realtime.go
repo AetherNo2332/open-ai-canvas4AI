@@ -17,7 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/repository"
 )
 
 type RealtimeRoomKey = repository.CanvasRealtimeKey

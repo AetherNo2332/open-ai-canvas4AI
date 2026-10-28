@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/repository"
 )
 
 var errDirectorWorkflowOrder = errors.New("image_to_director workflow order is invalid")

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/repository"
 )
 
 type CanvasEditProof = repository.CanvasEditProof

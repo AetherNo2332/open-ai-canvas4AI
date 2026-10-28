@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // 图片→导演流程的取消契约:image_to_director 运行的 block scene 在批准后即写入

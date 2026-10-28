@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // Lease rejection must first leave the normal executor as an error: its

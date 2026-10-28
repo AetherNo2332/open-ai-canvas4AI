@@ -7,9 +7,9 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"infinite-canvas/backend/internal/canvas/tasks"
-	"infinite-canvas/backend/internal/model"
 	"testing"
+	"yingce/backend/internal/canvas/tasks"
+	"yingce/backend/internal/model"
 )
 
 func TestCanvasEmotionResultStoredOnceWithoutRenderer(t *testing.T) {

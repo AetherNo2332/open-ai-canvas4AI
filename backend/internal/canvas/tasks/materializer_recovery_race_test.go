@@ -3,11 +3,11 @@ package tasks
 import (
 	"context"
 	"errors"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"testing"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestTaskCenterCannotReuseCanvasGenerationAttempt(t *testing.T) {

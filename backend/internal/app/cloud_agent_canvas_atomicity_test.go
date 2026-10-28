@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // 阶段 2.1 故障注入：画布保存与"变更记录"共用同一个 MutateCloudAgent 事务。

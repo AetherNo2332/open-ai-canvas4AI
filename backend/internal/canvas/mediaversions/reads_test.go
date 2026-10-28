@@ -2,9 +2,9 @@ package mediaversions
 
 import (
 	"fmt"
-	"infinite-canvas/backend/internal/model"
 	"strings"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func TestMediaVersionReadPaginatesWithoutCredentialsOrProviderPayload(t *testing.T) {

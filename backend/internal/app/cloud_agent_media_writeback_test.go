@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func queuePiMediaToolForTest(t *testing.T, s *Service, db *gorm.DB, args cloudAgentMediaArgs, permission string) (*model.CloudAgentExecution, cloudAgentRuntime) {

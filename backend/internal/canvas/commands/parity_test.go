@@ -2,8 +2,8 @@ package commands
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/contract"
 	"testing"
+	"yingce/backend/internal/canvas/contract"
 )
 
 func TestDrawingNativeEditAndAtomicRejection(t *testing.T) {

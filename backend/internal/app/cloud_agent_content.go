@@ -1,8 +1,8 @@
 package app
 
 import (
-	"infinite-canvas/backend/internal/repository"
 	"strings"
+	"yingce/backend/internal/repository"
 )
 
 type cloudAgentTextReadArgs struct {

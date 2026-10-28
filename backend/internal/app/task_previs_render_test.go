@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestPrevisRendererClientRetriesOnlyTransientFailure(t *testing.T) {

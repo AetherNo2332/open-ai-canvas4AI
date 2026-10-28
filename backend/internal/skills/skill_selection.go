@@ -3,7 +3,7 @@ package skills
 import (
 	"strings"
 
-	"infinite-canvas/backend/internal/kernel"
+	"yingce/backend/internal/kernel"
 )
 
 const (

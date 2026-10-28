@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/canvas/contract"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 const cloudAgentMediaQuoteLifetime = 30 * time.Minute

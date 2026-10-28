@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/kernel"
 	"io"
 	"net/http"
 	"strconv"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/kernel"
 )
 
 type CanvasPrincipalResolver func(*gin.Context) (identity.Principal, error)

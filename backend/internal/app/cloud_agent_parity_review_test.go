@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/contract"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/canvas/contract"
+	"yingce/backend/internal/model"
 )
 
 func TestAgentParityDatabaseDrawingReadDoesNotExposeNativeCredentials(t *testing.T) {

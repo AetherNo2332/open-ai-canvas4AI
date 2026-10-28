@@ -3,8 +3,8 @@ package references
 import (
 	"encoding/json"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/contract"
 )
 
 func referenceMediaMatches(d capability.Descriptor, b contract.ReferenceBinding) bool {

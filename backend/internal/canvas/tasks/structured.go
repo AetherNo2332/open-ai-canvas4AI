@@ -1,8 +1,8 @@
 package tasks
 
 import (
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/model"
 )
 
 func validateConsumer(node map[string]any, req SubmitRequest) error {

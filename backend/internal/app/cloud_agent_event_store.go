@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // cloudAgentRunEventDeltaLimit 是增量读取（sinceSeq）单次返回的条数上限，

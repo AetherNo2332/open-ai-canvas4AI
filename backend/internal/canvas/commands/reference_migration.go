@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/references"
+	"yingce/backend/internal/canvas/references"
 )
 
 // OperationMigrateReferences 是仅画布客户端可用的一次性规范化入口：它把历史画布的

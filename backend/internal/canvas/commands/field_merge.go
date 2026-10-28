@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/capability"
 )
 
 const maxFieldBaselineBytes = 8 << 20

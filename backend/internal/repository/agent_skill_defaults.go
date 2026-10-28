@@ -3,9 +3,9 @@ package repository
 import (
 	"database/sql"
 	"fmt"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
 	"strconv"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

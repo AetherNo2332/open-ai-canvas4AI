@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
 )
 
 // Task 8：模型可见合同不再包含画布连线操作。连线改由服务端按引用字段派生，

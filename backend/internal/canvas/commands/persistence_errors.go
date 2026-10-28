@@ -2,8 +2,8 @@ package commands
 
 import (
 	"errors"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/repository"
 )
 
 // ErrRevisionConflict is a stable protocol boundary alias; handlers do not

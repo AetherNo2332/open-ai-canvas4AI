@@ -6,10 +6,10 @@ import (
 	"sort"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/repository"
 )
 
 // cloudAgentProjectionMode 决定一次读取往模型上下文里注入多少节点内容。

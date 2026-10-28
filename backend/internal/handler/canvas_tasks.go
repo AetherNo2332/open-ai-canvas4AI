@@ -2,8 +2,8 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/tasks"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/tasks"
 )
 
 func RegisterCanvasTaskRoutes(r *gin.RouterGroup, svc *tasks.Service, principal CanvasPrincipalResolver) {

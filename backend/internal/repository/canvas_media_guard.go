@@ -2,8 +2,8 @@ package repository
 
 import (
 	"errors"
-	"infinite-canvas/backend/internal/model"
 	"reflect"
+	"yingce/backend/internal/model"
 )
 
 var ErrCanvasMediaVersionManaged = errors.New("媒体由版本记录管理，请通过版本命令更改")

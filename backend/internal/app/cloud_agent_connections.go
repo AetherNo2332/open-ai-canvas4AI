@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/connection"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/connection"
+	"yingce/backend/internal/repository"
 )
 
 func validateCloudAgentConnectionCapacities(repo *repository.Repository, doc map[string]any, ops []agentCanvasOp) error {

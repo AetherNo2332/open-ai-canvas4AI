@@ -1,7 +1,7 @@
 // Package references owns declared canvas inputs and their visual connections.
 package references
 
-import "infinite-canvas/backend/internal/canvas/contract"
+import "yingce/backend/internal/canvas/contract"
 
 const Version = 1
 const ManagedBy = "reference-fields-v1"

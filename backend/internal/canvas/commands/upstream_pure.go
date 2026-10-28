@@ -8,12 +8,6 @@ import (
 	hex "encoding/hex"
 	json "encoding/json"
 	fmt "fmt"
-	assets "infinite-canvas/backend/internal/assets"
-	capability "infinite-canvas/backend/internal/canvas/capability"
-	connection "infinite-canvas/backend/internal/canvas/connection"
-	layout "infinite-canvas/backend/internal/canvas/layout"
-	references "infinite-canvas/backend/internal/canvas/references"
-	kernel "infinite-canvas/backend/internal/kernel"
 	math "math"
 	url "net/url"
 	regexp "regexp"
@@ -23,6 +17,12 @@ import (
 	time "time"
 	unicode "unicode"
 	utf8 "unicode/utf8"
+	assets "yingce/backend/internal/assets"
+	capability "yingce/backend/internal/canvas/capability"
+	connection "yingce/backend/internal/canvas/connection"
+	layout "yingce/backend/internal/canvas/layout"
+	references "yingce/backend/internal/canvas/references"
+	kernel "yingce/backend/internal/kernel"
 )
 
 type creationNodeSpec struct {

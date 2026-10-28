@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // 本文件从 dev 的 cloud_agent_projection_test.go 恢复，只保留覆盖本次移植清单的用例：

@@ -3,10 +3,10 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"infinite-canvas/backend/internal/canvas/capability"
 	"strconv"
 	"strings"
 	"time"
+	"yingce/backend/internal/canvas/capability"
 )
 
 // Pure counterpart of Canary storyboardRowsFromTask. Row identifiers derive

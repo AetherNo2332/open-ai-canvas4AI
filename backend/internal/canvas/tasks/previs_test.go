@@ -3,9 +3,9 @@ package tasks
 import (
 	"context"
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/model"
 	"testing"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/model"
 )
 
 func TestPrevisTaskWithoutAgentUsesCommandWriteback(t *testing.T) {

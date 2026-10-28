@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/agentcontext"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/agentcontext"
+	"yingce/backend/internal/model"
 )
 
 // Seed the SDK-shaped durable branch that the hook supplies as its source.

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/buildinfo"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/buildinfo"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 
 	"github.com/redis/go-redis/v9"
 )

@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func TestPiNativeCompactionTimeoutTerminatesRun(t *testing.T) {

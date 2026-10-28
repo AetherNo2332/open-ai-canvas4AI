@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // 首步合同（路线图 C2）专项：冻结 Harness 正文、原子换单、重复投递、退款门槛。

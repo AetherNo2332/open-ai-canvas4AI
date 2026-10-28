@@ -5,11 +5,11 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
 	"path/filepath"
 	"sync"
 	"testing"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
 )
 
 func newWorkspaceRepository(t *testing.T) *Repository {

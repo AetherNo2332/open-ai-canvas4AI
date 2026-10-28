@@ -6,8 +6,8 @@ import (
 	"log"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // DrainPendingPiAgentCleanups 补做"已进入终态、但收尾还没跑"的运行清理。

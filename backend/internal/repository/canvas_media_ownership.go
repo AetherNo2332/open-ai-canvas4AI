@@ -2,8 +2,8 @@ package repository
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
 	"reflect"
+	"yingce/backend/internal/model"
 )
 
 // This monotonic fence is recorded in the same durable document transaction.

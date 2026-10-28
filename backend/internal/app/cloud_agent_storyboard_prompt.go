@@ -3,8 +3,8 @@ package app
 import (
 	"fmt"
 
-	"infinite-canvas/backend/internal/canvas/contract"
-	"infinite-canvas/backend/internal/canvas/references"
+	"yingce/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/references"
 )
 
 func cloudAgentStoryboardProviderPrompt(prompt string, bindings []contract.ReferenceBinding, refs map[string]any) (string, error) {

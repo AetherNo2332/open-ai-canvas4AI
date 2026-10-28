@@ -1,8 +1,8 @@
 package app
 
 import (
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/repository"
 )
 
 type cloudAgentReferenceReader struct {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/volcengine/volc-sdk-golang/base"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func TestArkPrivateAssetUsesRegionalArkControlPlane(t *testing.T) {

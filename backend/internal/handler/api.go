@@ -3,8 +3,8 @@ package handler
 import (
 	"net/http"
 
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

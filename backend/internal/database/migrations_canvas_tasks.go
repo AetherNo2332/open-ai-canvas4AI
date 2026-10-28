@@ -2,7 +2,7 @@ package database
 
 import (
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func MigrateCanvasTasks(db *gorm.DB) error {

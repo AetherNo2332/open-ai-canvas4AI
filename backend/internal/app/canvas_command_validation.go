@@ -3,9 +3,9 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/repository"
 )
 
 func (s *Service) structuredWriteQuota(tx *repository.Repository, ownerID, kind string, countDelta, deltaBytes int64) error {

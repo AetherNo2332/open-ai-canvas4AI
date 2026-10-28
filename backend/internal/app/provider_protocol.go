@@ -22,8 +22,8 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/protocol"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/protocol"
 
 	"github.com/google/uuid"
 	"github.com/volcengine/volc-sdk-golang/base"

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/platform"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/platform"
+	"yingce/backend/internal/repository"
 )
 
 // Pi 协议是 cloud_agent_executions 上唯一的 engine=pi 读路径，此前没有任何测试。

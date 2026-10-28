@@ -2,9 +2,9 @@ package tasks
 
 import (
 	"context"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/model"
 	"testing"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/model"
 )
 
 func TestMediaVersionSaveRecoveryReusesOriginalTaskAndReceipt(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"infinite-canvas/backend/internal/repository"
 	"strings"
+	"yingce/backend/internal/repository"
 )
 
 // 工具调用失败的稳定归类（handoff 工作项 B 的第一步：只加分类，不改执行行为）。

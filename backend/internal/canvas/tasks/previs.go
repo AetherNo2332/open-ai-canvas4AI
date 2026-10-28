@@ -3,11 +3,11 @@ package tasks
 import (
 	"context"
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"time"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func (s *Service) SubmitPrevis(ctx context.Context, p identity.Principal, req PrevisSubmitRequest) (TaskHandle, error) {

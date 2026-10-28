@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // measureFixtureCanvas builds the canvas shape the token audit measured: a

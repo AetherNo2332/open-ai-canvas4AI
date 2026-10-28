@@ -8,11 +8,11 @@ import (
 	"image"
 	_ "image/jpeg"
 	"image/png"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/canvas/tasks"
-	"infinite-canvas/backend/internal/model"
 	"io"
 	"strings"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/canvas/tasks"
+	"yingce/backend/internal/model"
 )
 
 // Local image transformation runs before the materialization transaction. It

@@ -2,10 +2,10 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
 	"strings"
 	"time"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
 )
 
 const agentWebSearchSettingKey = "agent_web_search"

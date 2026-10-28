@@ -2,7 +2,7 @@ package repository
 
 import (
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // LockProjectAssetWrite requires a transaction. The first statement acquires

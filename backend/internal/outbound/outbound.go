@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/kernel"
+	"yingce/backend/internal/kernel"
 
 	"golang.org/x/net/http/httpproxy"
 )

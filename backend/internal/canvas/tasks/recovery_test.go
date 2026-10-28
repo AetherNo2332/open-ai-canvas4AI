@@ -3,11 +3,11 @@ package tasks
 import (
 	"context"
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/model"
 	"reflect"
 	"testing"
 	"time"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/model"
 )
 
 func TestTerminalSuccessAndJobCommitTogether(t *testing.T) {

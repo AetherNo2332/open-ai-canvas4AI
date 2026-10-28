@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/repository"
 )
 
 func reconcileCloudAgentReferenceFields(doc map[string]any, beforeJSON string) error {

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 const CanvasEditLeaseTTL = 30 * time.Second

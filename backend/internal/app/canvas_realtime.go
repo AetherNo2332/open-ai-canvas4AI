@@ -3,9 +3,9 @@ package app
 import (
 	"context"
 
-	"infinite-canvas/backend/internal/auth"
-	"infinite-canvas/backend/internal/canvas"
-	"infinite-canvas/backend/internal/kernel"
+	"yingce/backend/internal/auth"
+	"yingce/backend/internal/canvas"
+	"yingce/backend/internal/kernel"
 )
 
 type CanvasRealtimeSession = canvas.RealtimeSession

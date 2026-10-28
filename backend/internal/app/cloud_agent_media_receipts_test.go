@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
 )
 
 func TestCloudAgentMediaCompletionReplaysCommittedResultAfterBackgroundAndCheckpointFailure(t *testing.T) {

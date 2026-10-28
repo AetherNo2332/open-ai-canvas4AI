@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/kernel"
+	"yingce/backend/internal/kernel"
 )
 
 func TestAgentParityRuntimePhasePreservesStorageErrorAndLeaseLoss(t *testing.T) {

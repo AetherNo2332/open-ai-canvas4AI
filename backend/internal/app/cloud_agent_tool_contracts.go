@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"infinite-canvas/backend/internal/canvas/contract"
-	"infinite-canvas/backend/internal/canvas/references"
+	"yingce/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/references"
 )
 
 // cloudAgentLegacyConnectionOperations 是模型可见合同里已经停用的画布操作。连线改由

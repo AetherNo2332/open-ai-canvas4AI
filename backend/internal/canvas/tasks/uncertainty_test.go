@@ -2,8 +2,8 @@ package tasks
 
 import (
 	"context"
-	"infinite-canvas/backend/internal/model"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func TestOwnerClosesUncertaintyWithoutResubmitting(t *testing.T) {

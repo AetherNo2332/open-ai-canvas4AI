@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"infinite-canvas/backend/internal/canvas"
+	"yingce/backend/internal/canvas"
 )
 
 type CanvasEditProof = canvas.CanvasEditProof

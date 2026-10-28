@@ -2,12 +2,12 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"strings"
 	"time"
+	"yingce/backend/internal/canvas/mediaversions"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // cloudAgentTaskFacts is the model-facing projection of durable task state.

@@ -1,4 +1,4 @@
-module infinite-canvas/backend
+module yingce/backend
 
 go 1.25.0
 
@@ -75,7 +75,7 @@ require (
 	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/arch v0.29.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.47.0
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/ini.v1 v1.66.6 // indirect
 	modernc.org/fileutil v1.0.0 // indirect

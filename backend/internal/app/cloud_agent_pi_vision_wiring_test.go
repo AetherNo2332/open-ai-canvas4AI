@@ -7,8 +7,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // visionReadyService 让夹具里的渠道模型声明图片输入能力，并造一张就绪的图片资源。

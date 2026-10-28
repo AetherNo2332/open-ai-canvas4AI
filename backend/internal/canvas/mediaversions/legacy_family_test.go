@@ -1,9 +1,9 @@
 package mediaversions
 
 import (
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"testing"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestLegacyFamilyImportsOwnedReadySiblingsWithoutRewiring(t *testing.T) {

@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // 阶段 2.2（门槛）：Pi 准入必须"每个准入身份只有一个任务、只预授权一次"。
