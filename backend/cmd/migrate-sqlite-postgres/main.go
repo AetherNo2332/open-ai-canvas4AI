@@ -486,6 +486,8 @@ func migrations() []tableMigration {
 		migrateTable[model.AgentMemorySetting]("agent_memory_settings"),
 		migrateTable[model.AgentMemoryProposal]("agent_memory_proposals"),
 		migrateTable[model.AgentMemoryRevision]("agent_memory_revisions"),
+		migrateTable[model.AgentMemoryDocument]("agent_memory_documents"),
+		migrateTable[model.AgentMemoryDocumentRevision]("agent_memory_document_revisions"),
 		migrateTable[model.TaskTextDelta]("task_text_delta"),
 		migrateTable[model.TaskLog]("task_logs"),
 		migrateTable[model.Result]("results"),
