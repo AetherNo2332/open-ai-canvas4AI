@@ -20,22 +20,6 @@ SERVICES = {"postgres", "redis", "migrate", "backend", "agent", "web", "model-st
 TERMINAL = {"completed", "failed", "cancelled", "rejected"}
 
 
-def media_capability(mode):
-    references = {"promptMaxChars": 8000, "maxImages": 1, "maxImageBytes": 10 * 1024 * 1024}
-    if mode == "image":
-        return {"version": 1, "image": {"references": references, "maxOutputs": 1,
-            "size": {"parameter": "size", "values": ["1024x1024"], "default": "1024x1024"},
-            "quality": {"supported": True, "values": ["low"], "default": "low"},
-            "responseFormat": {"supported": True}}}
-    if mode == "video":
-        return {"version": 1, "video": {"references": references,
-            "duration": {"selection": "enum", "values": [5], "default": 5},
-            "ratios": ["16:9"], "defaultRatio": "16:9", "resolutions": ["720p"], "defaultResolution": "720p",
-            "generateAudio": {"supported": True, "default": False},
-            "operations": ["text_to_video", "image_to_video"], "defaultOperation": "text_to_video"}}
-    return None
-
-
 def wait(predicate, seconds=150):
     end = time.monotonic() + seconds
     while time.monotonic() < end:
@@ -208,10 +192,9 @@ class Smoke:
 
     def canvas(self):
         identity = str(uuid.uuid4())
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        self.api("PUT", f"/canvas-projects/{identity}", {"project": {"id": identity, "revision": 0,
-            "title": "CI smoke", "nodes": [], "connections": [], "createdAt": now, "updatedAt": now,
-            "viewport": {"x": 0, "y": 0, "zoom": 1}}})
+        self.api("PATCH", f"/canvas-projects/{identity}/operations", {"mutationId": str(uuid.uuid4()),
+            "baseRevision": 0, "operations": [{"type": "create_canvas", "id": identity,
+                "patch": {"title": "CI smoke"}}]})
         return identity
 
     def start(self, canvas, permission):
@@ -285,115 +268,6 @@ class Smoke:
                     event.get("payload", {}).get("final") is True and
                     event["payload"].get("via") == "finish_run" for event in events) and
                 any(node.get("id") == scenario for node in nodes))
-
-    def media_versions(self):
-        """Real HTTP admission, provider, billing, resource and writeback chain."""
-        self.stub("media-control", {})
-        canvas = self.api("POST", "/desktop/canvases", {"clientId": "media-smoke",
-            "operationId": str(uuid.uuid4()), "title": "Media version acceptance"})["canvasId"]
-        self.report["mediaCanvasId"] = canvas
-        path = f"/desktop/canvases/{canvas}"
-
-        def command(operations=None):
-            snapshot = self.api("GET", path + "/snapshot")
-            return {"protocolVersion": 1, "canvasId": canvas, "documentEpoch": snapshot["documentEpoch"],
-                "baseRevision": snapshot["revision"], "clientId": "media-smoke",
-                "operationId": str(uuid.uuid4()), "operations": operations or []}
-
-        for index, (mode, model, protocol) in enumerate((
-                ("image", "gpt-image-1", "openai-image"),
-                ("video", "doubao-seedance-1-0-pro", "volcengine-ark-video"),
-                ("audio", "tts-1", "openai-audio"))):
-            model_path = f"/admin/channels/{self.channel}/models"
-            existing = next((row for row in self.api("GET", model_path)["models"] if row["modelKey"] == model), None)
-            self.api("PATCH" if existing else "POST", model_path + ("/" + existing["id"] if existing else ""), {
-                "modelKey": model, "providerModelKey": model, "displayName": "Smoke " + mode,
-                "capability": mode, "protocol": protocol, "billingMode": "fixed_request",
-                "unitPriceMicrocredits": 0, "priceConfigured": True, "enabled": True,
-                "capabilityConfig": media_capability(mode)})
-            self.api("POST", path + "/commands", command([{"type": "add_node", "id": mode,
-                "nodeType": mode, "title": "Version " + mode, "x": index * 380, "y": 0}]))
-            versions_path = path + f"/nodes/{mode}/media-versions"
-            def page():
-                return self.api("GET", versions_path)
-            def submit(intent):
-                config = {"channelId": self.channel, "model": model, **{
-                    "image": {"size": "1024x1024", "quality": "low", "count": "1"},
-                    "video": {"size": "16:9", "videoSeconds": "5", "vquality": "720p", "videoGenerateAudio": "false"},
-                    "audio": {"audioVoice": "alloy", "audioFormat": "wav"}}[mode]}
-                request = {"intent": intent, "command": command(), "targetNodeId": mode,
-                    "task": {"mode": mode, "prompt": "Media version acceptance",
-                        "input": {"config": config}}}
-                handle = self.api("POST", path + "/tasks", request)
-                replay = self.api("POST", path + "/tasks", request)
-                self.check(mode + " repeated submission has one task and version", handle["taskId"] == replay["taskId"] and
-                    handle["versionId"] == replay["versionId"])
-                return handle
-            def settled(handle):
-                def ready():
-                    result = page()
-                    return result if any(item["versionId"] == handle["versionId"] and
-                        item["status"] in {"ready", "failed", "cancelled"} for item in result["items"]) else None
-                return wait(ready, 180)
-
-            initial = submit("create")
-            first = settled(initial)
-            first_id = initial["versionId"]
-            self.check(mode + " first output is a durable ready version", first["state"].get("currentVersionId") == first_id and
-                any(item["versionId"] == first_id and item.get("resourceId") for item in first["items"]))
-            self.stub("media-control", {"hold": True})
-            second = submit("new_version")
-            pending = page()
-            self.check(mode + " pending version preserves old preview", pending["state"].get("currentVersionId") == first_id and
-                pending["state"].get("pendingVersionId") == second["versionId"])
-            self.stub("media-control", {})
-            updated = settled(second)
-            self.check(mode + " success automatically adopts in same node", updated["state"].get("currentVersionId") == second["versionId"])
-            self.stub("media-control", {"hold": True})
-            third = submit("new_version")
-            self.api("POST", path + "/commands", command([{"type": "use_media_version", "id": mode, "versionId": first_id}]))
-            self.stub("media-control", {})
-            manual = settled(third)
-            self.check(mode + " late success respects manual selection", manual["state"].get("currentVersionId") == first_id and
-                len(manual["items"]) == 3 and not manual["state"].get("pendingVersionId"))
-            if mode == "video":
-                self.stub("media-control", {"fail": True})
-                failed = submit("new_version")
-                failure = settled(failed)
-                self.check("failed video retains selected version", failure["state"].get("currentVersionId") == first_id and
-                    any(item["versionId"] == failed["versionId"] and item["status"] == "failed" for item in failure["items"]))
-                self.stub("media-control", {})
-        snapshot = self.api("GET", path + "/snapshot")
-        self.check("all media updates preserve three logical nodes", len(snapshot["document"]["nodes"]) == 3)
-        self.save()
-        self.agent_media_version(canvas)
-
-    def agent_media_version(self, canvas):
-        path = f"/desktop/canvases/{canvas}"
-        scenario = "media_" + uuid.uuid4().hex[:8]
-        before = self.api("GET", path + "/nodes/image/media-versions")
-        previous = {item["versionId"] for item in before["items"]}
-        self.stub("control", {"scenario": scenario, "steps": [
-            {"tool": "canvas_get_state"},
-            {"tool": "model_list", "args": {"mode": "image", "referenceNodeIds": ["image"]}},
-            {"tool": "generate_media", "args": {"mode": "image", "intent": "new_version", "nodeId": "image",
-                "title": "Version image",
-                "prompt": "Preserve the reference composition", "referenceNodeIds": ["image"],
-                "channelId": self.channel, "channelModelKey": "gpt-image-1", "size": "1024x1024",
-                "snapshotHash": "$snapshotHash"}},
-            {"tool": "finish_run", "args": {"summary": "Version request submitted"}}]})
-        run = self.api("POST", "/agent/runs", {"canvasId": canvas, "prompt": "AGENT_PARITY_SCENARIO:" + scenario,
-            "channelId": self.channel, "channelModelKey": "agent-parity-model", "permissionMode": "auto",
-            "reasoningMode": "off", "contextScope": ["canvas"], "skillIds": [],
-            "budget": {"maxCredits": 1, "maxSteps": 12}, "idempotencyKey": str(uuid.uuid4())})["run"]
-        self.complete(run)
-        def agent_ready():
-            result = self.api("GET", path + "/nodes/image/media-versions")
-            return result if any(item["versionId"] not in previous and item["status"] == "ready" and
-                item["isCurrent"] for item in result["items"]) else None
-        adopted = wait(agent_ready, 180)
-        self.check("real Pi worker updates existing image with frozen self-reference", len(adopted["items"]) == len(previous) + 1 and
-            len(self.api("GET", path + "/snapshot")["document"]["nodes"]) == 3)
 
     def execute(self):
         config = json.loads(self.compose("config", "--format", "json").stdout)
@@ -478,7 +352,6 @@ class Smoke:
         cursor = initial[len(initial) // 2]
         self.check("SSE cursor replays later persisted events", initial == sorted(set(initial)) and
                    replay(cursor) == [value for value in initial if value > cursor], eventCount=len(initial))
-        self.media_versions()
 
 
 def run_smoke(smoke):

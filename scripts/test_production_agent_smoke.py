@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -211,6 +212,26 @@ class ProductionSmokeTests(unittest.TestCase):
             for secret in (account, model, cookie, harness.env["CANVAS_AGENT_WORKER_TOKEN"], harness.env["POSTGRES_PASSWORD"]):
                 self.assertNotIn(secret, body)
             self.assertIn("[redacted]", body)
+
+    def test_smoke_uses_only_registered_canvas_routes(self):
+        source = MODULE.read_text(encoding="utf-8")
+        calls = re.findall(r'self\.api\(\s*"([A-Z]+)"\s*,\s*f?"([^"]*)"', source)
+        self.assertTrue(calls)
+        for method, path in calls:
+            with self.subTest(method=method, path=path):
+                self.assertNotIn("/desktop/", path)
+                self.assertFalse(method == "PUT" and path.startswith("/canvas-projects/"))
+
+    def test_canvas_is_created_through_operations_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            with patch.object(harness, "api", return_value={}) as api:
+                identity = harness.canvas()
+            method, path, body = api.call_args.args
+            self.assertEqual((method, path), ("PATCH", f"/canvas-projects/{identity}/operations"))
+            self.assertEqual(body["baseRevision"], 0)
+            self.assertTrue(body["mutationId"])
+            self.assertEqual(body["operations"][0], {"type": "create_canvas", "id": identity, "patch": {"title": "CI smoke"}})
 
     def test_override_names_every_built_image_for_project(self):
         with tempfile.TemporaryDirectory() as directory:

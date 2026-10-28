@@ -182,10 +182,6 @@ jobs:
           fi
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      # web 测试会直接引用 director-desk 源码（three 等依赖来自它自己的 lockfile）。
-      - name: Install director-desk dependencies
-        working-directory: ${{ github.workspace }}/director-desk
-        run: npm ci --ignore-scripts
       - name: Check formatting
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
