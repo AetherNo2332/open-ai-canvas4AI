@@ -2942,18 +2942,6 @@ function CanvasViewportPage() {
                                         />
                                     ) : null}
                                 </div>
-                                <CanvasCloudAgentPanel
-                                    ref={agentPanelRef}
-                                    canvasId={projectId}
-                                    nodeCount={nodes.length}
-                                    selectedNodeIds={agentSelectedNodeIds}
-                                    references={agentMentionReferences}
-                                    prefillPrompt={agentPrefillPrompt}
-                                    open={assistantOpen}
-                                    onOpen={openAgent}
-                                    onCollapse={closeAgent}
-                                    onFocusNode={handleAgentFocusNode}
-                                />
                             </div>
 
                             {angleNode?.metadata?.content ? (
@@ -3583,6 +3571,19 @@ function CanvasViewportPage() {
                                 </div>
                             ) : null}
                         </section>
+                        {/* Agent 侧栏与编辑区并列：编辑区（含顶栏和资产视图）随侧栏收窄，顶栏不会盖住侧栏头部。 */}
+                        <CanvasCloudAgentPanel
+                            ref={agentPanelRef}
+                            canvasId={projectId}
+                            nodeCount={nodes.length}
+                            selectedNodeIds={agentSelectedNodeIds}
+                            references={agentMentionReferences}
+                            prefillPrompt={agentPrefillPrompt}
+                            open={assistantOpen}
+                            onOpen={openAgent}
+                            onCollapse={closeAgent}
+                            onFocusNode={handleAgentFocusNode}
+                        />
                     </div>
                 </CanvasOverlayLayerProvider>
             </main>
