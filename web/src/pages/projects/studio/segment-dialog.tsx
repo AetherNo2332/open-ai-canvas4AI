@@ -138,7 +138,16 @@ export function SegmentDialog({
                     </header>
                     <div className="drama-sdx-body">
                         <main className="drama-sdx-main thin-scrollbar">
-                            <SegmentToolbar key={segment.id} segment={segment} aspectRatio={aspectRatio} busy={busy} writing={writing} defaultVideoModel={defaultVideoModel} onGenerate={(model) => onGenerate(segment, model)} onWritePrompt={() => onWritePrompt(segment)} />
+                            <SegmentToolbar
+                                key={segment.id}
+                                segment={segment}
+                                aspectRatio={aspectRatio}
+                                busy={busy}
+                                writing={writing}
+                                defaultVideoModel={defaultVideoModel}
+                                onGenerate={(model) => onGenerate(segment, model)}
+                                onWritePrompt={() => onWritePrompt(segment)}
+                            />
                             <SegmentPrompt segment={segment} castById={castById} writing={writing} onSave={(override) => onSavePrompt(segment, override)} onWrite={() => onWritePrompt(segment)} />
                             <ReferenceBoard segment={segment} shots={shots} castById={castById} busy={busy} onChange={(ids) => onSaveReferences(segment, ids)} onOpenCast={onOpenCast} />
                             <SegmentReceipt segment={segment} />
@@ -215,7 +224,23 @@ export function SegmentDialog({
 }
 
 /** 生成控制条：本段视频模型（只对本段生效）、时长与画幅，以及撰写提示词、复制全文与生成视频。 */
-function SegmentToolbar({ segment, aspectRatio, busy, writing, defaultVideoModel, onGenerate, onWritePrompt }: { segment: DramaSegment; aspectRatio: string; busy: boolean; writing: boolean; defaultVideoModel: DramaModelChoice; onGenerate: (model?: DramaModelChoice) => void; onWritePrompt: () => void }) {
+function SegmentToolbar({
+    segment,
+    aspectRatio,
+    busy,
+    writing,
+    defaultVideoModel,
+    onGenerate,
+    onWritePrompt,
+}: {
+    segment: DramaSegment;
+    aspectRatio: string;
+    busy: boolean;
+    writing: boolean;
+    defaultVideoModel: DramaModelChoice;
+    onGenerate: (model?: DramaModelChoice) => void;
+    onWritePrompt: () => void;
+}) {
     const { message } = App.useApp();
     const baseline = segment.videoModel?.logicalModelId || segment.videoModel?.modelKey ? segment.videoModel : defaultVideoModel;
     const [choice, setChoice] = useState<DramaModelChoice>(baseline);
@@ -262,7 +287,13 @@ function SegmentToolbar({ segment, aspectRatio, busy, writing, defaultVideoModel
                     复制发送全文
                 </Button>
                 <span className="drama-sdx-spacer" />
-                <Button type="primary" size="small" icon={running ? <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Play className="size-3.5" />} disabled={busy || !promptReady(segment) || running || Boolean(segment.request.unknownReferences?.length)} onClick={() => onGenerate(changed ? choice : undefined)}>
+                <Button
+                    type="primary"
+                    size="small"
+                    icon={running ? <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" /> : <Play className="size-3.5" />}
+                    disabled={busy || !promptReady(segment) || running || Boolean(segment.request.unknownReferences?.length)}
+                    onClick={() => onGenerate(changed ? choice : undefined)}
+                >
                     {generateLabel}
                 </Button>
             </div>
@@ -363,7 +394,17 @@ function ReferenceBoard({ segment, shots, castById, busy, onChange, onOpenCast }
                     );
                 })}
                 {candidates.map((cast) => (
-                    <AssetChip key={cast.id} cast={cast} name={cast.name} kindLabel={CAST_KIND_LABEL[cast.kind]} checked={false} note="本段镜头中出现，未选用" disabled={busy} onToggle={() => onChange([...ids, cast.id])} onOpen={() => onOpenCast(cast.id)} />
+                    <AssetChip
+                        key={cast.id}
+                        cast={cast}
+                        name={cast.name}
+                        kindLabel={CAST_KIND_LABEL[cast.kind]}
+                        checked={false}
+                        note="本段镜头中出现，未选用"
+                        disabled={busy}
+                        onToggle={() => onChange([...ids, cast.id])}
+                        onOpen={() => onOpenCast(cast.id)}
+                    />
                 ))}
             </div>
             <div className="drama-sdx-assets-foot">
@@ -530,7 +571,14 @@ function ShotCard({
     onDelete?: () => void;
 }) {
     const { modal } = App.useApp();
-    const names = useMemo(() => [...castById.values()].map((cast) => cast.name).filter((name) => name.length >= 2).sort((left, right) => right.length - left.length), [castById]);
+    const names = useMemo(
+        () =>
+            [...castById.values()]
+                .map((cast) => cast.name)
+                .filter((name) => name.length >= 2)
+                .sort((left, right) => right.length - left.length),
+        [castById],
+    );
     const rows: Array<[string, string]> = [
         ["景别", [shot.shotSize, shot.camera ? `运镜 ${shot.camera}` : "", shot.transition && shot.transition !== "cut" && shot.position > 0 ? `转场 ${TRANSITION_LABEL[shot.transition]}` : ""].filter(Boolean).join(" · ")],
         ["场景", shot.scene],
@@ -636,7 +684,16 @@ function SegmentPrompt({ segment, castById, writing, onSave, onWrite }: { segmen
         () =>
             request.references.map((ref) => {
                 const resourceId = ref.resourceId || castById.get(ref.castId)?.imageResourceId;
-                return { id: `drama-ref:${ref.castId}`, nodeId: "", kind: "image", label: ref.label, title: `${ref.name} · ${CAST_KIND_LABEL[ref.kind]}${ref.sent ? "" : "（未附图）"}`, storageKey: resourceId ? `resource:${resourceId}` : undefined, mentionToken: ref.label, active: true };
+                return {
+                    id: `drama-ref:${ref.castId}`,
+                    nodeId: "",
+                    kind: "image",
+                    label: ref.label,
+                    title: `${ref.name} · ${CAST_KIND_LABEL[ref.kind]}${ref.sent ? "" : "（未附图）"}`,
+                    storageKey: resourceId ? `resource:${resourceId}` : undefined,
+                    mentionToken: ref.label,
+                    active: true,
+                };
             }),
         [castById, request.references],
     );
@@ -677,7 +734,11 @@ function SegmentPrompt({ segment, castById, writing, onSave, onWrite }: { segmen
                         {request.references.map((ref, index) => {
                             const resourceId = ref.resourceId || castById.get(ref.castId)?.imageResourceId;
                             return (
-                                <span key={ref.castId} className={`drama-sdx-prefix-ref ${ref.sent ? "" : "is-missing"} ${usage.used.has(index + 1) ? "" : "is-unused"}`} title={ref.sent ? `${ref.label}：${ref.name}` : `${ref.label}（${ref.name}）未附图，按文字设定生成`}>
+                                <span
+                                    key={ref.castId}
+                                    className={`drama-sdx-prefix-ref ${ref.sent ? "" : "is-missing"} ${usage.used.has(index + 1) ? "" : "is-unused"}`}
+                                    title={ref.sent ? `${ref.label}：${ref.name}` : `${ref.label}（${ref.name}）未附图，按文字设定生成`}
+                                >
                                     <span className="drama-sdx-prefix-thumb">{resourceId ? <MediaThumb resourceId={resourceId} alt="" /> : null}</span>
                                     <b>{ref.label}</b>
                                     {ref.name}
@@ -736,9 +797,7 @@ function SegmentPrompt({ segment, castById, writing, onSave, onWrite }: { segmen
                     正文里的 {usage.unknown.join("、")} 不是本段的参考图（本段共 {request.references.length} 张），生成视频前请改成正确的编号或用 @ 重新插入。
                 </p>
             ) : draft && unmentioned.length ? (
-                <p className="drama-sg-note">
-                    正文还没有引用 {unmentioned.map((ref) => `${ref.label}（${ref.name}）`).join("、")}；参考图仍会随请求发送，在正文里写明谁是谁，视频模型才不会认错。
-                </p>
+                <p className="drama-sg-note">正文还没有引用 {unmentioned.map((ref) => `${ref.label}（${ref.name}）`).join("、")}；参考图仍会随请求发送，在正文里写明谁是谁，视频模型才不会认错。</p>
             ) : null}
             <div className="drama-sd-pane-foot">
                 {dirty ? <span className="is-dirty">未保存 · 失焦或 ⌘↵ 保存，Esc 放弃</span> : <span>直接修改正文，失焦自动保存</span>}

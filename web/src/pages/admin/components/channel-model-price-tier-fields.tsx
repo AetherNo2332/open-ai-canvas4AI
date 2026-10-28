@@ -199,7 +199,12 @@ export function PriceTierFields({
                                     </div>
                                 )
                             ) : (
-                                <Form.Item className="admin-price-tier-unit-price mb-0" name={[index, "unitPrice"]} label={billingMode === "per_second" ? `每秒售价（${priceUnit}）` : `每次售价（${priceUnit}）`} rules={[{ required: true, message: "请输入售价" }]}>
+                                <Form.Item
+                                    className="admin-price-tier-unit-price mb-0"
+                                    name={[index, "unitPrice"]}
+                                    label={billingMode === "per_second" ? `每秒售价（${priceUnit}）` : `每次售价（${priceUnit}）`}
+                                    rules={[{ required: true, message: "请输入售价" }]}
+                                >
                                     <InputNumber className="w-full" min={0} max={1_000_000} precision={6} step={0.1} />
                                 </Form.Item>
                             )}

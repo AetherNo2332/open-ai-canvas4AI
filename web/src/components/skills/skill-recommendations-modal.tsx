@@ -144,7 +144,14 @@ export function SkillRecommendationsModal({ open, onClose, onInstalled }: SkillR
                                         已安装
                                     </span>
                                 ) : (
-                                    <Button size="small" icon={<Plus className="size-3.5" />} disabled={Boolean(installing)} loading={installing === skill.skillId} onClick={() => void install(industry, [skill.skillId])} aria-label={`安装技能 ${skill.skillName}`}>
+                                    <Button
+                                        size="small"
+                                        icon={<Plus className="size-3.5" />}
+                                        disabled={Boolean(installing)}
+                                        loading={installing === skill.skillId}
+                                        onClick={() => void install(industry, [skill.skillId])}
+                                        aria-label={`安装技能 ${skill.skillName}`}
+                                    >
                                         安装
                                     </Button>
                                 )}

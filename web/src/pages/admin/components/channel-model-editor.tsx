@@ -427,12 +427,13 @@ export function ChannelModelEditor({
                                     <section className="admin-model-editor-section">
                                         <SectionHeading title="用户积分价格" description="默认只需填写一个统一价格；需要区分生成方式、质量或尺寸时，再添加规格价格。" />
                                         <div className="admin-model-editor-section-content">
-                                            <Form.Item
-                                                name="priceCurrency"
-                                                label="计价货币"
-                                                extra="积分：售价即扣除的积分。USD / CNY：售价按货币填写，扣费时按用户分组的「1 USD / 1 CNY = N 积分」换算；成本价仍以积分计。"
-                                            >
-                                                <Segmented options={priceCurrencyOptions} onChange={() => { dirtyRef.current = true; }} />
+                                            <Form.Item name="priceCurrency" label="计价货币" extra="积分：售价即扣除的积分。USD / CNY：售价按货币填写，扣费时按用户分组的「1 USD / 1 CNY = N 积分」换算；成本价仍以积分计。">
+                                                <Segmented
+                                                    options={priceCurrencyOptions}
+                                                    onChange={() => {
+                                                        dirtyRef.current = true;
+                                                    }}
+                                                />
                                             </Form.Item>
                                             <Form.List
                                                 name="priceTiers"

@@ -2,7 +2,32 @@
 //
 // 胶囊是 contentEditable 内的 DOM 节点，序列化时还原成 @[kind:id] 令牌；这里只负责渲染。
 
-import { Brush, Camera, Clapperboard, Clock, Contrast, FastForward, Globe2, Grid2x2, Grid3x3, Image as ImageIcon, Music2, Package, Palette, PenLine, PersonStanding, Play, Rewind, ScanFace, SlidersHorizontal, Sun, Wrench, X, Blocks, Aperture } from "lucide-react";
+import {
+    Brush,
+    Camera,
+    Clapperboard,
+    Clock,
+    Contrast,
+    FastForward,
+    Globe2,
+    Grid2x2,
+    Grid3x3,
+    Image as ImageIcon,
+    Music2,
+    Package,
+    Palette,
+    PenLine,
+    PersonStanding,
+    Play,
+    Rewind,
+    ScanFace,
+    SlidersHorizontal,
+    Sun,
+    Wrench,
+    X,
+    Blocks,
+    Aperture,
+} from "lucide-react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { createPortal } from "react-dom";

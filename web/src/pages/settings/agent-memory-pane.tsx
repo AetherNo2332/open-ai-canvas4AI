@@ -97,7 +97,12 @@ function MemoryEditor({ open, doc, onClose, onSaved }: { open: boolean; doc: Age
                 {draft.map((entry, index) => (
                     <div key={entry.id || `new-${index}`} className="flex items-start gap-2">
                         <div className="w-28 shrink-0">
-                            <Select value={entry.section} options={AGENT_MEMORY_SECTIONS.map((section) => ({ value: section.key, label: section.label }))} onChange={(value) => update(index, { section: value as AgentMemorySection })} ariaLabel="记忆分区" />
+                            <Select
+                                value={entry.section}
+                                options={AGENT_MEMORY_SECTIONS.map((section) => ({ value: section.key, label: section.label }))}
+                                onChange={(value) => update(index, { section: value as AgentMemorySection })}
+                                ariaLabel="记忆分区"
+                            />
                         </div>
                         <Input.TextArea className="flex-1" autoSize={{ minRows: 1, maxRows: 4 }} maxLength={ENTRY_MAX_CHARS} value={entry.text} onChange={(event) => update(index, { text: event.target.value })} aria-label={`第 ${index + 1} 条记忆`} />
                         <IconButton variant="danger" size="sm" icon={Trash2} aria-label={`删除第 ${index + 1} 条记忆`} onClick={() => setDraft((current) => current.filter((_, at) => at !== index))} />
@@ -118,17 +123,20 @@ function MemoryHistory({ open, onClose, onChanged }: { open: boolean; onClose: (
     const [loading, setLoading] = useState(false);
     const [busyId, setBusyId] = useState<string | null>(null);
 
-    const load = useCallback(async (signal?: AbortSignal) => {
-        setLoading(true);
-        try {
-            const data = await listAgentMemoryRevisions(undefined, 50, signal);
-            setRevisions(data.revisions || []);
-        } catch (error) {
-            if (!signal?.aborted) message.error(errorText(error, "读取修改历史失败"));
-        } finally {
-            if (!signal?.aborted) setLoading(false);
-        }
-    }, [message]);
+    const load = useCallback(
+        async (signal?: AbortSignal) => {
+            setLoading(true);
+            try {
+                const data = await listAgentMemoryRevisions(undefined, 50, signal);
+                setRevisions(data.revisions || []);
+            } catch (error) {
+                if (!signal?.aborted) message.error(errorText(error, "读取修改历史失败"));
+            } finally {
+                if (!signal?.aborted) setLoading(false);
+            }
+        },
+        [message],
+    );
 
     useEffect(() => {
         if (!open) return;
@@ -285,7 +293,14 @@ export default function AgentMemoryPane({ compact = false }: { compact?: boolean
     return (
         <div className={compact ? "flex min-h-0 flex-1 flex-col gap-3 overflow-hidden" : "flex flex-col gap-5"}>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <SegmentedControl size="sm" ariaLabel="长期记忆模式" value={doc?.mode || "auto"} options={AGENT_MEMORY_MODES.map(({ value, label }) => ({ value, label }))} onChange={(value) => void changeMode(value as AgentMemoryMode)} disabled={savingMode || !doc} />
+                <SegmentedControl
+                    size="sm"
+                    ariaLabel="长期记忆模式"
+                    value={doc?.mode || "auto"}
+                    options={AGENT_MEMORY_MODES.map(({ value, label }) => ({ value, label }))}
+                    onChange={(value) => void changeMode(value as AgentMemoryMode)}
+                    disabled={savingMode || !doc}
+                />
                 <div className="ml-auto flex items-center gap-1">
                     <IconButton variant="ghost" size="sm" icon={History} aria-label="记忆修改历史" onClick={() => setHistoryOpen(true)} />
                     <Button icon={<Pencil className="size-4" />} onClick={() => setEditorOpen(true)} disabled={!doc}>
@@ -337,9 +352,18 @@ export default function AgentMemoryPane({ compact = false }: { compact?: boolean
                     </div>
                 ) : null}
                 {doc && !doc.entries.length ? (
-                    <WorkspaceState compact icon="empty" className={compact ? "min-h-0 flex-1 py-8" : "min-h-[200px] py-10"} title="还没有长期记忆"
+                    <WorkspaceState
+                        compact
+                        icon="empty"
+                        className={compact ? "min-h-0 flex-1 py-8" : "min-h-[200px] py-10"}
+                        title="还没有长期记忆"
                         description="和 Agent 说“以后都用竖屏”“叫我长官”这类偏好，或纠正它的做法，它会自己记下来。也可以手动添加。"
-                        action={<Button type="primary" icon={<Plus className="size-4" />} onClick={() => setEditorOpen(true)}>添加记忆</Button>} />
+                        action={
+                            <Button type="primary" icon={<Plus className="size-4" />} onClick={() => setEditorOpen(true)}>
+                                添加记忆
+                            </Button>
+                        }
+                    />
                 ) : null}
                 {doc?.entries.length
                     ? AGENT_MEMORY_SECTIONS.map((section) => {

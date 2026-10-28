@@ -77,7 +77,10 @@ export function CanvasDramaAdoptModal({ node, nodes, summary, cast, onClose, onA
         () =>
             CAST_KIND_ORDER.map((kind) => ({
                 label: DRAMA_CAST_KIND_LABEL[kind],
-                options: (cast || []).filter((item) => item.kind === kind).sort((left, right) => left.position - right.position).map((item) => ({ value: item.id, label: item.name })),
+                options: (cast || [])
+                    .filter((item) => item.kind === kind)
+                    .sort((left, right) => left.position - right.position)
+                    .map((item) => ({ value: item.id, label: item.name })),
             })).filter((group) => group.options.length),
         [cast],
     );
@@ -132,9 +135,7 @@ export function CanvasDramaAdoptModal({ node, nodes, summary, cast, onClose, onA
 
     return (
         <AppModal open centered title="采用到短剧" width={520} onCancel={onClose} okText="采用" confirmLoading={submitting} okButtonProps={{ disabled: Boolean(blocker) }} onOk={() => void submit()}>
-            <p className="mb-4 text-sm text-muted-foreground">
-                {isVideo ? "把这个视频设为剧情段的当前视频；短剧原来的视频保留在版本记录里。" : "把这张图设为设定的参考图并锁定；原来的参考图保留在版本记录里。"}
-            </p>
+            <p className="mb-4 text-sm text-muted-foreground">{isVideo ? "把这个视频设为剧情段的当前视频；短剧原来的视频保留在版本记录里。" : "把这张图设为设定的参考图并锁定；原来的参考图保留在版本记录里。"}</p>
 
             {isVideo ? (
                 <div className="grid gap-3">
@@ -214,7 +215,11 @@ export function CanvasDramaAdoptModal({ node, nodes, summary, cast, onClose, onA
                         <Checkbox checked={restyle} onChange={(event) => setRestyle(event.target.checked)}>
                             <span className="text-sm">
                                 让引用它的剧情段视频重新生成
-                                {impactQuery.data ? <span className="ml-1 text-xs text-muted-foreground">（{impactQuery.data.episodes} 集 · {impactQuery.data.segments} 段）</span> : null}
+                                {impactQuery.data ? (
+                                    <span className="ml-1 text-xs text-muted-foreground">
+                                        （{impactQuery.data.episodes} 集 · {impactQuery.data.segments} 段）
+                                    </span>
+                                ) : null}
                             </span>
                         </Checkbox>
                     ) : null}
@@ -259,7 +264,11 @@ function Thumb({ storageKey, label }: { storageKey?: string; label: string }) {
     return (
         <figure className="grid min-w-0 flex-1 gap-1">
             <span className="grid aspect-video place-items-center overflow-hidden rounded-md border border-border bg-surface-secondary text-muted-foreground">
-                {storageKey ? <CachedResourceImage storageKey={storageKey} variant="thumbnail" alt={label} className="size-full object-contain" draggable={false} fallback={<ImageIcon className="size-4" />} /> : <ImageIcon className="size-4" aria-label="暂无参考图" />}
+                {storageKey ? (
+                    <CachedResourceImage storageKey={storageKey} variant="thumbnail" alt={label} className="size-full object-contain" draggable={false} fallback={<ImageIcon className="size-4" />} />
+                ) : (
+                    <ImageIcon className="size-4" aria-label="暂无参考图" />
+                )}
             </span>
             <figcaption className="text-center text-xs text-muted-foreground">{label}</figcaption>
         </figure>

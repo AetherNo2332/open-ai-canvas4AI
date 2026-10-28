@@ -146,7 +146,9 @@ export default function AgentMemoryDocumentsPanel() {
                         <Button icon={<RefreshCw className="size-4" />} onClick={() => void load()}>
                             刷新
                         </Button>
-                        <span className="text-xs opacity-60">共 {items.length} 份{userId ? "" : "（按最近更新，最多 200 份）"}</span>
+                        <span className="text-xs opacity-60">
+                            共 {items.length} 份{userId ? "" : "（按最近更新，最多 200 份）"}
+                        </span>
                     </div>
                 }
                 table={{

@@ -72,10 +72,14 @@ function edge(fromNodeId: string, toNodeId: string): CanvasConnection {
 }
 
 function mediaNode(type: CanvasNodeType.Image | CanvasNodeType.Video, title: string, resourceId: string | undefined, media: DramaProjectionMedia, extra: CanvasNodeData["metadata"] = {}): CanvasNodeData {
-    const node = createCanvasNode(type, { x: 0, y: 0 }, {
-        ...extra,
-        ...(resourceId ? { content: media.urlOf(resourceId), storageKey: resourceKey(resourceId), assetId: media.assetIdOf(resourceId), status: "success" as const } : { status: "idle" as const }),
-    });
+    const node = createCanvasNode(
+        type,
+        { x: 0, y: 0 },
+        {
+            ...extra,
+            ...(resourceId ? { content: media.urlOf(resourceId), storageKey: resourceKey(resourceId), assetId: media.assetIdOf(resourceId), status: "success" as const } : { status: "idle" as const }),
+        },
+    );
     node.title = title;
     return node;
 }
@@ -83,11 +87,13 @@ function mediaNode(type: CanvasNodeType.Image | CanvasNodeType.Video, title: str
 /** 历史版本映射为节点媒体版本：同一资源只保留最新一条，版本号沿用短剧的版本号。 */
 export function dramaTakeVersions(takes: DramaTake[] | undefined, currentResourceId: string | undefined, media: DramaProjectionMedia, kind: "image" | "video"): Pick<NonNullable<CanvasNodeData["metadata"]>, "mediaVersions" | "currentMediaVersionId"> {
     const seen = new Set<string>();
-    const usable = (takes || []).filter((take) => {
-        if (!take.resourceId || seen.has(take.resourceId) || !media.assetIdOf(take.resourceId)) return false;
-        seen.add(take.resourceId);
-        return true;
-    }).slice(0, DRAMA_TAKE_PROJECTION_LIMIT);
+    const usable = (takes || [])
+        .filter((take) => {
+            if (!take.resourceId || seen.has(take.resourceId) || !media.assetIdOf(take.resourceId)) return false;
+            seen.add(take.resourceId);
+            return true;
+        })
+        .slice(0, DRAMA_TAKE_PROJECTION_LIMIT);
     if (usable.length < 2) return {};
     const versions: CanvasMediaVersion[] = usable
         .map((take) => ({
@@ -146,11 +152,7 @@ export function dramaFinalResourceIds(episode: Pick<DramaEpisode, "finalResource
 
 /** 剧情段投送时必须可用的资源：参考图编号与首帧决定了画布上的生成输入，缺一张就不能照原样投送。 */
 export function dramaSegmentRequiredResourceIds(segment: DramaSegment) {
-    return unique([
-        ...segment.request.references.filter((reference) => reference.sent).map((reference) => reference.resourceId),
-        segment.request.firstFrameResourceId,
-        segment.videoResourceId,
-    ]);
+    return unique([...segment.request.references.filter((reference) => reference.sent).map((reference) => reference.resourceId), segment.request.firstFrameResourceId, segment.videoResourceId]);
 }
 
 /** 投送一个剧情段需要登记素材的资源：实际发送的参考图、首帧、当前视频与最近的历史版本。 */
@@ -203,7 +205,10 @@ function shotRow(shot: DramaShot, index: number, castById: Map<string, DramaCast
         durationSeconds: Math.max(1, Math.round(shot.durationMs / 1000)),
         plotDescription: shot.action || shot.imagePrompt,
         dialogue: shot.dialogue ? `${shot.speaker || "旁白"}：${shot.dialogue}` : "",
-        characters: castIds.map((id) => castById.get(id)).filter((cast): cast is DramaCast => Boolean(cast)).map((cast) => ({ characterName: cast.name })),
+        characters: castIds
+            .map((id) => castById.get(id))
+            .filter((cast): cast is DramaCast => Boolean(cast))
+            .map((cast) => ({ characterName: cast.name })),
         shotSize: shot.shotSize,
         camera: shot.camera,
         imageGenerationPrompt: shot.imagePrompt,
@@ -224,7 +229,10 @@ const SEGMENT_OPERATION: Record<string, CanvasVideoEditOperation> = { image_to_v
 
 /** 剧情段的完整发送提示词：系统追加的参考图说明在前，正文在后。 */
 export function dramaSegmentPrompt(segment: DramaSegment) {
-    return [segment.request.header, segment.videoPrompt].map((part) => part?.trim()).filter(Boolean).join("\n\n");
+    return [segment.request.header, segment.videoPrompt]
+        .map((part) => part?.trim())
+        .filter(Boolean)
+        .join("\n\n");
 }
 
 /**
@@ -306,19 +314,27 @@ export function buildDramaSegmentGroup(input: {
     const segmentShots = input.shots.filter((shot) => shot.segmentIndex === segment.index);
     const scriptWidth = Math.max(rowWidth, SCRIPT_MIN_WIDTH);
     if (segmentShots.length) {
-        const script = createCanvasNode(CanvasNodeType.Script, { x: 0, y: 0 }, {
-            storyboard: { rows: segmentShots.map((shot, index) => shotRow(shot, index, input.castById)), visibleColumns: SEGMENT_SCRIPT_COLUMNS, referenceNodeIds: [] },
-        });
+        const script = createCanvasNode(
+            CanvasNodeType.Script,
+            { x: 0, y: 0 },
+            {
+                storyboard: { rows: segmentShots.map((shot, index) => shotRow(shot, index, input.castById)), visibleColumns: SEGMENT_SCRIPT_COLUMNS, referenceNodeIds: [] },
+            },
+        );
         script.title = `第 ${segment.index + 1} 段 · 镜头表`;
         children.push({ ...script, position: { x: FRAME_PADDING, y: contentTop + rowHeight + GROUP_GAP }, width: scriptWidth, height: SCRIPT_HEIGHT });
     }
     const width = FRAME_PADDING * 2 + Math.max(rowWidth, segmentShots.length ? scriptWidth : 0);
     const height = contentTop + rowHeight + (segmentShots.length ? GROUP_GAP + SCRIPT_HEIGHT : 0) + FRAME_PADDING;
-    const frame = createCanvasNode(CanvasNodeType.Frame, { x: 0, y: 0 }, {
-        workflowTitle: "剧情段",
-        frame: { collapsed: false, expandedWidth: width, expandedHeight: height },
-        dramaRef: ref,
-    });
+    const frame = createCanvasNode(
+        CanvasNodeType.Frame,
+        { x: 0, y: 0 },
+        {
+            workflowTitle: "剧情段",
+            frame: { collapsed: false, expandedWidth: width, expandedHeight: height },
+            dramaRef: ref,
+        },
+    );
     frame.title = `第 ${input.episode.number} 集 · 第 ${segment.index + 1} 段 · ${segment.title}`;
     const framed: CanvasNodeData = { ...frame, position: { x: 0, y: 0 }, width, height };
     return {
@@ -337,7 +353,14 @@ export function placeDramaGroup(nodes: CanvasNodeData[], topLeft: Position) {
 }
 
 /** 成片节点：成片视频与历史成片版本；剪辑在画布时间线里进行。 */
-export function buildDramaFinalNode(input: { projectId: string; episode: Pick<DramaEpisode, "id" | "number" | "title" | "finalResourceId" | "durationMs">; aspectRatio: string; takes?: DramaTake[]; media: DramaProjectionMedia; topLeft: Position }): CanvasNodeData {
+export function buildDramaFinalNode(input: {
+    projectId: string;
+    episode: Pick<DramaEpisode, "id" | "number" | "title" | "finalResourceId" | "durationMs">;
+    aspectRatio: string;
+    takes?: DramaTake[];
+    media: DramaProjectionMedia;
+    topLeft: Position;
+}): CanvasNodeData {
     const size = dramaMediaSize(input.aspectRatio, 540);
     const node = mediaNode(CanvasNodeType.Video, `第 ${input.episode.number} 集成片 · ${input.episode.title}`, input.episode.finalResourceId, input.media, {
         assetCategory: "material",

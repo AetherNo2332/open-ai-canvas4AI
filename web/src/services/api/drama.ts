@@ -556,7 +556,11 @@ export function updateDramaCast(projectId: string, castId: string, patch: DramaC
  * origin.source=canvas 时版本记录标为“来自画布”，taskId 是产出这张图的画布生成任务（可省略）。
  */
 export function setDramaCastImage(projectId: string, castId: string, resourceId: string, restyleSegments: boolean, origin?: { source: "canvas"; taskId?: string }) {
-    return http.put<{ cast: DramaCast; affectedSegments: number; unchanged?: boolean }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/image`, { resourceId, restyleSegments, ...(origin ? { source: origin.source, taskId: origin.taskId || "" } : {}) });
+    return http.put<{ cast: DramaCast; affectedSegments: number; unchanged?: boolean }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/image`, {
+        resourceId,
+        restyleSegments,
+        ...(origin ? { source: origin.source, taskId: origin.taskId || "" } : {}),
+    });
 }
 
 export function getDramaCastImpact(projectId: string, castId: string, signal?: AbortSignal) {

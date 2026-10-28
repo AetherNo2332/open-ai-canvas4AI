@@ -168,7 +168,13 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
 
     // 集合内容不变时保持引用不变：节点经 Context 读取，引用变化会让所有节点重渲染。
     const staleKey = useMemo(
-        () => (active ? nodes.filter((node) => node.metadata?.dramaRef?.projectId === dramaId && isDramaNodeStale(node, current)).map((node) => node.id).join("\n") : ""),
+        () =>
+            active
+                ? nodes
+                      .filter((node) => node.metadata?.dramaRef?.projectId === dramaId && isDramaNodeStale(node, current))
+                      .map((node) => node.id)
+                      .join("\n")
+                : "",
         [active, current, dramaId, nodes],
     );
     const staleNodeIds = useMemo<ReadonlySet<string>>(() => new Set(staleKey ? staleKey.split("\n") : []), [staleKey]);
@@ -222,17 +228,10 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
     );
 
     const focus = useCallback((nodeIds: string[]) => latest.current.input.focusNodes(nodeIds), []);
-    const fetchEpisode = useCallback(
-        (episodeId: string) => queryClient.fetchQuery({ queryKey: dramaKeys.episode(dramaId, episodeId), queryFn: ({ signal }) => getDramaEpisode(dramaId, episodeId, signal), staleTime: 0 }),
-        [dramaId, queryClient],
-    );
-    const fetchCast = useCallback(
-        () => queryClient.fetchQuery({ queryKey: dramaKeys.cast(dramaId), queryFn: ({ signal }) => listDramaCast(dramaId, signal), staleTime: 5_000 }).then((data) => data.cast),
-        [dramaId, queryClient],
-    );
+    const fetchEpisode = useCallback((episodeId: string) => queryClient.fetchQuery({ queryKey: dramaKeys.episode(dramaId, episodeId), queryFn: ({ signal }) => getDramaEpisode(dramaId, episodeId, signal), staleTime: 0 }), [dramaId, queryClient]);
+    const fetchCast = useCallback(() => queryClient.fetchQuery({ queryKey: dramaKeys.cast(dramaId), queryFn: ({ signal }) => listDramaCast(dramaId, signal), staleTime: 5_000 }).then((data) => data.cast), [dramaId, queryClient]);
     const fetchTakes = useCallback(
-        (ownerId: string, kind: DramaTakeKind) =>
-            queryClient.fetchQuery({ queryKey: dramaKeys.takes(dramaId, kind, ownerId), queryFn: ({ signal }) => listDramaTakes(dramaId, ownerId, kind, signal), staleTime: 5_000 }).then((data) => data.takes),
+        (ownerId: string, kind: DramaTakeKind) => queryClient.fetchQuery({ queryKey: dramaKeys.takes(dramaId, kind, ownerId), queryFn: ({ signal }) => listDramaTakes(dramaId, ownerId, kind, signal), staleTime: 5_000 }).then((data) => data.takes),
         [dramaId, queryClient],
     );
     /** 登记素材；required 里的资源缺失时中止投送，历史版本缺失只少带一个版本。 */
@@ -330,7 +329,13 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
                         missing.flatMap((segment) => dramaSegmentRequiredResourceIds(segment)),
                     );
                     const pending = missing.map((segment, index) => ({ segment, takes: takesList[index] })).filter(({ segment }) => !findDramaSegmentFrame(nodesRef.current, segment.id));
-                    placeSegments(detail, pending.map((item) => item.segment), pending.map((item) => item.takes), allCast, media);
+                    placeSegments(
+                        detail,
+                        pending.map((item) => item.segment),
+                        pending.map((item) => item.takes),
+                        allCast,
+                        media,
+                    );
                     if (pending.length) message.success(`已投送第 ${detail.episode.number} 集的 ${pending.length} 个剧情段`);
                 }
                 focus(ordered.map((segment) => findDramaSegmentFrame(nodesRef.current, segment.id)?.id).filter((id): id is string => Boolean(id)));

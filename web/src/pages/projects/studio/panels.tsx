@@ -850,7 +850,11 @@ function EpisodeModeCard({ summary, settings, onChange }: { summary: DramaSummar
                 <div className="grid gap-3">
                     <CompactRadios label="分集方式" value={mode || "auto"} options={EPISODE_MODE_OPTIONS} onChange={(value) => onChange({ episodeMode: value, chaptersPerEpisode: value === "chapter" ? perEpisode : undefined })} />
                     {mode === "chapter" ? <EpisodeGroupField value={perEpisode} onChange={(value) => onChange({ episodeMode: "chapter", chaptersPerEpisode: value })} chapterCount={Math.max(0, production.chapterCount - production.planCursor)} /> : null}
-                    {production.planCursor > 0 ? <p className="drama-cfg-note">前 {production.planCursor} 章已分成 {episodes.length} 集，保持不变。</p> : null}
+                    {production.planCursor > 0 ? (
+                        <p className="drama-cfg-note">
+                            前 {production.planCursor} 章已分成 {episodes.length} 集，保持不变。
+                        </p>
+                    ) : null}
                 </div>
             ) : (
                 <p className="drama-cfg-note">

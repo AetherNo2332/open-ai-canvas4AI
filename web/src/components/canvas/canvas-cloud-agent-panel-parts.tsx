@@ -268,7 +268,15 @@ export function AgentHeader({
                         title={docked ? "改为浮动窗口" : "停靠到画布右侧，画布让出位置不被遮挡"}
                     />
                 ) : null}
-                <Button type="text" shape="circle" icon={<RotateCcw className="size-4" />} onClick={onResetLayout} aria-label={docked ? "恢复 Agent 默认宽度" : "恢复 Agent 紧凑窗口"} title={docked ? "恢复默认宽度" : "恢复默认窗口大小和位置"} className="hidden sm:inline-flex" />
+                <Button
+                    type="text"
+                    shape="circle"
+                    icon={<RotateCcw className="size-4" />}
+                    onClick={onResetLayout}
+                    aria-label={docked ? "恢复 Agent 默认宽度" : "恢复 Agent 紧凑窗口"}
+                    title={docked ? "恢复默认宽度" : "恢复默认窗口大小和位置"}
+                    className="hidden sm:inline-flex"
+                />
                 <Button type="text" shape="circle" icon={<Download className="size-4" />} loading={exporting} onClick={onExport} aria-label="导出 Agent 调试记录" title="导出对话、工具参数、审批和错误（分享前请检查隐私）" />
                 <Button type="text" shape="circle" icon={<MessageSquarePlus className="size-4" />} onClick={onNew} aria-label="新建对话" title="新建对话" />
                 <Button type="text" shape="circle" icon={<History className="size-4" />} onClick={onHistory} aria-label="历史对话" title="历史对话" />
@@ -670,12 +678,23 @@ export function AgentConversation({
                 followRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
             }}
         >
-            {!messages.length ? <AgentWelcome appearance={appearance} nodeCount={nodeCount} installedSkillCount={installedSkillCount} onChooseSkill={onChooseSkill} onOpenSkillRecommendations={onOpenSkillRecommendations} onDraftPrompt={onDraftPrompt} /> : null}
+            {!messages.length ? (
+                <AgentWelcome appearance={appearance} nodeCount={nodeCount} installedSkillCount={installedSkillCount} onChooseSkill={onChooseSkill} onOpenSkillRecommendations={onOpenSkillRecommendations} onDraftPrompt={onDraftPrompt} />
+            ) : null}
             <div ref={contentRef} className="agent-conversation-messages">
                 {segments.map((segment, index) =>
                     segment.kind === "operations" ? (
                         // 只有"对话末尾那一段 + 还在跑"才流光：历史段落留在静态态，任务完成即停。
-                        <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={linkReferences} onFocusNode={onFocusNode} onUndo={onUndo ? stableUndo : undefined} undoStates={undoStates} live={busy && index === segments.length - 1} />
+                        <AgentOperationFeed
+                            key={segment.key}
+                            items={segment.items}
+                            theme={theme}
+                            references={linkReferences}
+                            onFocusNode={onFocusNode}
+                            onUndo={onUndo ? stableUndo : undefined}
+                            undoStates={undoStates}
+                            live={busy && index === segments.length - 1}
+                        />
                     ) : segment.kind === "reasoning" ? (
                         <AgentReasoningFeed key={segment.key} items={segment.items} theme={theme} />
                     ) : (

@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { canCancelGenerationTask, generationPhaseHint, generationPhaseLabel, generationPhaseStep, generationTaskPhase, generationTaskSavingState, generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel, mediaDeliverySummary } from "@/lib/generation-task-display";
+import {
+    canCancelGenerationTask,
+    generationPhaseHint,
+    generationPhaseLabel,
+    generationPhaseStep,
+    generationTaskPhase,
+    generationTaskSavingState,
+    generationTaskShowsProgress,
+    generationTaskStageLabel,
+    generationTaskStatusLabel,
+    mediaDeliverySummary,
+} from "@/lib/generation-task-display";
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-task-state";
 
 describe("作品保存阶段", () => {

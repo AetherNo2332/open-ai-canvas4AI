@@ -1219,7 +1219,6 @@
     }
 }
 
-
 @media (prefers-reduced-motion: reduce) {
     .agent-welcome-actions button {
         transition: none;

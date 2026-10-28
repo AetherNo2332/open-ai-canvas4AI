@@ -20,7 +20,7 @@ b.user-group-badge {
     font-size: 10px;
     font-weight: 700;
     font-style: normal;
-    letter-spacing: .04em;
+    letter-spacing: 0.04em;
     line-height: 1;
     white-space: nowrap;
 }
@@ -63,15 +63,20 @@ b.user-group-badge.is-svip::after {
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / .55) 50%, transparent 70%);
+    background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / 0.55) 50%, transparent 70%);
     transform: translateX(-120%);
     animation: user-group-badge-shine 3.2s ease-in-out infinite;
     pointer-events: none;
 }
 
 @keyframes user-group-badge-shine {
-    0%, 55% { transform: translateX(-120%); }
-    100% { transform: translateX(120%); }
+    0%,
+    55% {
+        transform: translateX(-120%);
+    }
+    100% {
+        transform: translateX(120%);
+    }
 }
 
 .user-group-avatar-ring {

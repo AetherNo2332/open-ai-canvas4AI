@@ -67,7 +67,6 @@ function groupChapters(chapters: Array<{ text: string }>, size: number) {
     return groups;
 }
 
-
 export default function DramaCreatePage() {
     const navigate = useNavigate();
     const { message } = App.useApp();
@@ -135,7 +134,20 @@ export default function DramaCreatePage() {
         ...(assets ? { assets } : {}),
     };
     const estimateQuery = useQuery({
-        queryKey: ["drama-estimate", analysis?.chapters.length, analysis?.words, episodeMode, chaptersPerEpisode, episodeSeconds, videoContinuity, JSON.stringify(storyboard), assets?.resolution || "", dramaChoiceKey(resolvedModels?.text), dramaChoiceKey(resolvedModels?.image), dramaChoiceKey(resolvedModels?.video)],
+        queryKey: [
+            "drama-estimate",
+            analysis?.chapters.length,
+            analysis?.words,
+            episodeMode,
+            chaptersPerEpisode,
+            episodeSeconds,
+            videoContinuity,
+            JSON.stringify(storyboard),
+            assets?.resolution || "",
+            dramaChoiceKey(resolvedModels?.text),
+            dramaChoiceKey(resolvedModels?.image),
+            dramaChoiceKey(resolvedModels?.video),
+        ],
         queryFn: ({ signal }) => estimateDrama({ chapterCount: analysis!.chapters.length, wordCount: analysis!.words, settings, episodeMode }, signal),
         enabled: Boolean(analysis && resolvedModels),
         staleTime: 30_000,
@@ -517,7 +529,9 @@ export default function DramaCreatePage() {
                                 ))}
                             </div>
                             {videoContinuity === "tail_frame" && videoOption?.tailFrameChain === false ? (
-                                <p className="drama-cfg-note" role="alert">当前视频模型不支持图生视频，无法尾帧续接；请改用并行出片或换模型。</p>
+                                <p className="drama-cfg-note" role="alert">
+                                    当前视频模型不支持图生视频，无法尾帧续接；请改用并行出片或换模型。
+                                </p>
                             ) : null}
                         </div>
                         <section className="drama-compose-models" aria-label="制作模型">

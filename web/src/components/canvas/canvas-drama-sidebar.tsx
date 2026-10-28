@@ -211,7 +211,14 @@ function EpisodeItem({
             {expanded ? (
                 <div id={panelId} className="min-w-0 pb-2 pl-5">
                     <div className="mb-1 grid grid-cols-3 gap-1">
-                        <SidebarAction icon={<LayoutGrid className="size-3" />} label="整集投送" busy={busyKey === `episode:${episode.id}`} disabled={busy || !episode.stats.segments} title="把这一集的全部剧情段投送到画布（已投送的段跳过）" onClick={() => onProjectEpisode(episode.id)} />
+                        <SidebarAction
+                            icon={<LayoutGrid className="size-3" />}
+                            label="整集投送"
+                            busy={busyKey === `episode:${episode.id}`}
+                            disabled={busy || !episode.stats.segments}
+                            title="把这一集的全部剧情段投送到画布（已投送的段跳过）"
+                            onClick={() => onProjectEpisode(episode.id)}
+                        />
                         <SidebarAction
                             icon={finalPlaced ? <LocateFixed className="size-3" /> : <Film className="size-3" />}
                             label={finalPlaced ? "定位成片" : "成片"}
@@ -220,7 +227,14 @@ function EpisodeItem({
                             title={episode.finalResourceId || finalPlaced ? "把这一集的成片投送到画布" : "这一集还没有成片"}
                             onClick={() => onProjectFinal(episode.id)}
                         />
-                        <SidebarAction icon={<Scissors className="size-3" />} label="剪辑" busy={busyKey === `cut:${episode.id}`} disabled={busy || !episode.stats.videoReady} title={episode.stats.videoReady ? "把各剧情段视频按顺序载入画布时间线精剪" : "还没有可剪辑的剧情段视频"} onClick={() => onOpenCut(episode.id)} />
+                        <SidebarAction
+                            icon={<Scissors className="size-3" />}
+                            label="剪辑"
+                            busy={busyKey === `cut:${episode.id}`}
+                            disabled={busy || !episode.stats.videoReady}
+                            title={episode.stats.videoReady ? "把各剧情段视频按顺序载入画布时间线精剪" : "还没有可剪辑的剧情段视频"}
+                            onClick={() => onOpenCut(episode.id)}
+                        />
                     </div>
                     {detailQuery.isLoading ? <SidebarNote>正在读取剧情段…</SidebarNote> : null}
                     {detailQuery.isError ? <SidebarNote tone="error">剧情段读取失败，请稍后重试</SidebarNote> : null}
@@ -278,7 +292,11 @@ function RowState({ placed, stale, busy }: { placed: boolean; stale: boolean; bu
     return (
         <span className="flex shrink-0 items-center gap-1">
             {stale ? <StaleDot /> : null}
-            {placed ? <LocateFixed className="size-3.5 text-foreground/32 group-hover:text-[var(--workspace-accent)]" aria-label="已在画布上" /> : <Send className="size-3.5 text-foreground/25 group-hover:text-[var(--workspace-accent)]" aria-label="投送到画布" />}
+            {placed ? (
+                <LocateFixed className="size-3.5 text-foreground/32 group-hover:text-[var(--workspace-accent)]" aria-label="已在画布上" />
+            ) : (
+                <Send className="size-3.5 text-foreground/25 group-hover:text-[var(--workspace-accent)]" aria-label="投送到画布" />
+            )}
         </span>
     );
 }

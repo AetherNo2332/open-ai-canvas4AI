@@ -1,7 +1,17 @@
 // 画布节点的运行状态内容：生成中（阶段、耗时、三段进度）、失败（重新获取 / 重新保存 / 重新生成）与未知节点兜底。
 
 import { type GenerationTask } from "@/services/api/task-center";
-import { generationPhaseHint, generationPhaseLabel, generationPhaseStep, generationTaskPhase, generationTaskSavingState, generationTaskShowsProgress, isGenerationTaskSubmissionUncertain, type GenerationMediaKind, type GenerationPhase } from "@/lib/generation-task-display";
+import {
+    generationPhaseHint,
+    generationPhaseLabel,
+    generationPhaseStep,
+    generationTaskPhase,
+    generationTaskSavingState,
+    generationTaskShowsProgress,
+    isGenerationTaskSubmissionUncertain,
+    type GenerationMediaKind,
+    type GenerationPhase,
+} from "@/lib/generation-task-display";
 import { AlertCircle, AlertTriangle, AudioLines, CloudOff, FileText, Film, Image as ImageIcon, RefreshCw, RotateCcw, ShieldAlert, Type, type LucideIcon } from "lucide-react";
 import { type CSSProperties, type MouseEvent } from "react";
 import { useTaskElapsed } from "@/hooks/use-task-elapsed";

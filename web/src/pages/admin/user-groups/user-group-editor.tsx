@@ -33,10 +33,14 @@ export function UserGroupEditor({ open, group, onClose, onSaved }: { open: boole
         form.setFieldsValue(group ? userGroupFormValues(group) : emptyUserGroupForm());
     }, [form, group, open]);
 
-    const channelOptions = useMemo(() => references.channels.map((channel) => ({
-        value: channel.id,
-        label: `${channel.name}${channel.enabled ? "" : "（已停用）"}`,
-    })), [references.channels]);
+    const channelOptions = useMemo(
+        () =>
+            references.channels.map((channel) => ({
+                value: channel.id,
+                label: `${channel.name}${channel.enabled ? "" : "（已停用）"}`,
+            })),
+        [references.channels],
+    );
 
     // 模型倍率候选来自当前可用渠道；全部渠道时列出所有系统渠道模型。
     const modelOptions = useMemo(() => {
@@ -88,7 +92,11 @@ export function UserGroupEditor({ open, group, onClose, onSaved }: { open: boole
             onClose={close}
             mask={{ closable: !saving }}
             destroyOnHidden
-            extra={<Button type="primary" loading={saving} onClick={() => void save()}>保存</Button>}
+            extra={
+                <Button type="primary" loading={saving} onClick={() => void save()}>
+                    保存
+                </Button>
+            }
         >
             <Form form={form} layout="vertical" requiredMark={false}>
                 <div className="grid gap-x-4 sm:grid-cols-2">
@@ -115,9 +123,7 @@ export function UserGroupEditor({ open, group, onClose, onSaved }: { open: boole
                         <Input maxLength={16} placeholder="VIP" />
                     </Form.Item>
                     <Form.Item label="预览">
-                        <div className="flex h-8 items-center">
-                            {badgeStyle === "none" ? <span className="text-xs text-foreground/45">不展示</span> : <UserGroupBadge group={{ name, badgeLabel, badgeStyle }} />}
-                        </div>
+                        <div className="flex h-8 items-center">{badgeStyle === "none" ? <span className="text-xs text-foreground/45">不展示</span> : <UserGroupBadge group={{ name, badgeLabel, badgeStyle }} />}</div>
                     </Form.Item>
                 </div>
 
@@ -169,7 +175,9 @@ export function UserGroupEditor({ open, group, onClose, onSaved }: { open: boole
                                     <Button type="text" danger icon={<Trash2 className="size-4" />} aria-label="删除这条模型倍率" onClick={() => remove(field.name)} />
                                 </div>
                             ))}
-                            <Button icon={<Plus className="size-4" />} onClick={() => add({ modelKey: "", ratio: null, pointsPerUsd: null, pointsPerCny: null })}>添加模型倍率</Button>
+                            <Button icon={<Plus className="size-4" />} onClick={() => add({ modelKey: "", ratio: null, pointsPerUsd: null, pointsPerCny: null })}>
+                                添加模型倍率
+                            </Button>
                         </div>
                     )}
                 </Form.List>

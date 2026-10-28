@@ -121,7 +121,16 @@ export function CreationMessageView({
                 </>
             ) : (
                 <GenerationToolCard status={toolStatus} heading={heading}>
-                    <MediaResult item={item} onRetryFailure={onRetryFailure} onRefreshResult={onRefreshResult} onRecoverMedia={onRecoverMedia} refreshingResult={refreshingResult} onCreateVariant={onCreateVariant} onContinueCanvas={onContinueCanvas} openingCanvas={openingCanvas} />
+                    <MediaResult
+                        item={item}
+                        onRetryFailure={onRetryFailure}
+                        onRefreshResult={onRefreshResult}
+                        onRecoverMedia={onRecoverMedia}
+                        refreshingResult={refreshingResult}
+                        onCreateVariant={onCreateVariant}
+                        onContinueCanvas={onContinueCanvas}
+                        openingCanvas={openingCanvas}
+                    />
                 </GenerationToolCard>
             )}
             {item.error && mode === "text" ? (
@@ -348,8 +357,7 @@ export function MediaResult({
     const expectedResultCount = resultStorageKeys.length || alignedResultUrls.length;
     const canContinueWithResults = expectedResultCount > 0 && resultAssetIds.length === expectedResultCount;
     if (item.status === "pending") return <CreationMediaPending item={item} refreshing={refreshingResult} onRefresh={onRefreshResult} onRetry={onRetryFailure} />;
-    if ((item.status === "error" || item.status === "cancelled") && !expectedResultCount)
-        return <CreationMediaFailure item={item} refreshing={refreshingResult} onRefresh={onRefreshResult} onRecoverMedia={onRecoverMedia} onRetry={onRetryFailure} />;
+    if ((item.status === "error" || item.status === "cancelled") && !expectedResultCount) return <CreationMediaFailure item={item} refreshing={refreshingResult} onRefresh={onRefreshResult} onRecoverMedia={onRecoverMedia} onRetry={onRetryFailure} />;
     // 远端结果首次解析中不显示空态，避免先闪「没有返回可预览结果」再出现结果。
     if (!expectedResultCount || (!displayResultUrls.length && !resolving))
         return (
@@ -477,7 +485,12 @@ export function CreationMediaPending({ item, refreshing, onRefresh, onRetry }: {
     const kind = mode === "video" ? "video" : "image";
     const phase: GenerationPhase = item.taskIds?.length ? generationTaskPhase({ status: item.generationStatus || "running", stage: item.generationStage, mediaStage: item.generationMediaStage }) : "submitting";
     const uncertain = phase === "uncertain";
-    const progress = item.taskIds?.length && typeof item.generationProgress === "number" && generationTaskShowsProgress({ status: item.generationStatus || "running", stage: item.generationStage, mediaStage: item.generationMediaStage, progress: item.generationProgress }) ? item.generationProgress : null;
+    const progress =
+        item.taskIds?.length &&
+        typeof item.generationProgress === "number" &&
+        generationTaskShowsProgress({ status: item.generationStatus || "running", stage: item.generationStage, mediaStage: item.generationMediaStage, progress: item.generationProgress })
+            ? item.generationProgress
+            : null;
     const elapsed = useTaskElapsed(item.createdAt);
     const hint = generationPhaseHint(phase, kind, item.generationStage);
     const aspectRatio = creationMediaAspectRatio(item.settings?.ratio, mode);
