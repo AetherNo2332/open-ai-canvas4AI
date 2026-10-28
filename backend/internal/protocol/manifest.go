@@ -64,12 +64,12 @@ type ManifestResponse struct {
 	Stage any `json:"stage,omitempty"`
 	// QueueAhead 映射排在本任务前面的条数；分离式回查据此拉长回查间隔，减少长队列下的无效查询。
 	QueueAhead any `json:"queueAhead,omitempty"`
-	Text              any  `json:"text,omitempty"`
-	Reasoning         any  `json:"reasoning,omitempty"`
-	Images            any  `json:"images,omitempty"`
-	Videos            any  `json:"videos,omitempty"`
-	Audios            any  `json:"audios,omitempty"`
-	Usage             any  `json:"usage,omitempty"`
+	Text       any `json:"text,omitempty"`
+	Reasoning  any `json:"reasoning,omitempty"`
+	Images     any `json:"images,omitempty"`
+	Videos     any `json:"videos,omitempty"`
+	Audios     any `json:"audios,omitempty"`
+	Usage      any `json:"usage,omitempty"`
 }
 
 // ManifestAgentResponse describes the provider response shape for a
