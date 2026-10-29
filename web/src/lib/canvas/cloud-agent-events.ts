@@ -56,6 +56,11 @@ export function applyAgentEvent(
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: text || "Agent 正在整理执行计划" }));
         return;
     }
+    if (event.type === "canvas_contention") {
+        // 用户与 Agent 同时编辑：画布持续变化，Agent 暂停询问用户。这是状态提示，不是错误。
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: "画布一直在变化，Agent 已暂停等你", detail: { ...payload, eventType: event.type } }));
+        return;
+    }
     if (event.type === "canvas_undone" && payload.scope === "run") {
         setMessages((current) => appendUniqueMessage(current, { id: agentRunUndoneMessageId(event.runId), role: "system", text: "已撤销本次修改", detail: { ...payload, eventType: event.type } }));
         return;

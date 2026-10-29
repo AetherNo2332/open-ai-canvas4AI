@@ -158,15 +158,17 @@ type cloudAgentRuntime struct {
 	// DirectorPreview 是 director preview 等待浏览器视口回传的持久挂起点。
 	DirectorPreview *cloudAgentDirectorPreview `json:"directorPreview,omitempty"`
 	// ToolRepairs is counted per tool so reads do not reset write-argument repairs.
-	ToolRepairs            map[string]cloudAgentToolRepair `json:"toolRepairs,omitempty"`
-	Approval               *cloudAgentApproval             `json:"approval,omitempty"`
-	AutoPreparedMedia      *cloudAgentPreparedMedia        `json:"autoPreparedMedia,omitempty"`
-	AutoPreparedCallHash   string                          `json:"autoPreparedCallHash,omitempty"`
-	Decisions              map[string]string               `json:"decisions"`
-	DecisionSettings       map[string]string               `json:"decisionSettings,omitempty"`
-	DecisionPreparedHashes map[string]string               `json:"decisionPreparedHashes,omitempty"`
-	ActionNudged           bool                            `json:"actionNudged,omitempty"`
-	EmptyOutputNudged      int                             `json:"emptyOutputNudged,omitempty"`
+	ToolRepairs map[string]cloudAgentToolRepair `json:"toolRepairs,omitempty"`
+	// EnvironmentConflicts 按工具名记录画布并发冲突（过期快照 / 节点被用户占用），与 ToolRepairs 分开计数。
+	EnvironmentConflicts   map[string]cloudAgentEnvironmentConflict `json:"environmentConflicts,omitempty"`
+	Approval               *cloudAgentApproval                      `json:"approval,omitempty"`
+	AutoPreparedMedia      *cloudAgentPreparedMedia                 `json:"autoPreparedMedia,omitempty"`
+	AutoPreparedCallHash   string                                   `json:"autoPreparedCallHash,omitempty"`
+	Decisions              map[string]string                        `json:"decisions"`
+	DecisionSettings       map[string]string                        `json:"decisionSettings,omitempty"`
+	DecisionPreparedHashes map[string]string                        `json:"decisionPreparedHashes,omitempty"`
+	ActionNudged           bool                                     `json:"actionNudged,omitempty"`
+	EmptyOutputNudged      int                                      `json:"emptyOutputNudged,omitempty"`
 	// EmptyOutputEscalated 记录"空输出已经升级重试过几次"（关思考 + 放大输出预算）。
 	EmptyOutputEscalated int `json:"emptyOutputEscalated,omitempty"`
 	// TruncatedStepEscalated 记录"输出被输出上限截断后已经升级重试过几次"。
@@ -576,6 +578,9 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 		if err := validateCloudAgentID(repair.GroupID, "工具纠错组 ID", 240); err != nil {
 			return err
 		}
+	}
+	if err := validateCloudAgentRuntimeEnvironmentConflicts(state); err != nil {
+		return err
 	}
 	if state.ActiveTaskID != "" && state.MediaTaskID != "" {
 		return errors.New("Agent runtime has multiple active tasks")
