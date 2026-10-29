@@ -22,7 +22,7 @@ type InputKind = "text" | "image" | "video" | "audio" | "character";
 type LineId = (line: Line) => string;
 
 /** Same refusals as the fork editor: the line is drawn by another field, so deleting it here would only redraw it. */
-export const SHARED_REFERENCE_MESSAGE = "这是共享引用或人物引用，请在所属表或人物字段中修改";
+export const SHARED_REFERENCE_MESSAGE = "这是表级共享引用或人物引用：请删除连到分镜表输入区的那条连线，或在人物字段中修改";
 export const FIRST_FRAME_REFERENCE_MESSAGE = "首帧引用由镜头的首帧选择管理";
 export class ReferenceLineOwnedError extends Error {
     constructor(message: string) {

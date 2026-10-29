@@ -12,6 +12,8 @@ const STORYBOARD_COMPOSER_MAX_HEIGHT = 180;
 /** 全屏编辑器表头与表格内边距占用的高度；表体滚动高度 = 容器高度 - 该值。 */
 const STORYBOARD_EDITOR_TABLE_CHROME_HEIGHT = 64;
 const STORYBOARD_ROW_OVERSCAN = 4;
+/** 画布卡片列头（h-9）在滚动容器内 sticky，行从它下方开始。 */
+export const STORYBOARD_CARD_COLUMN_HEADER_HEIGHT = 36;
 
 // 布局计算属于画布领域逻辑，独立于 React 节点组件，避免纯函数测试加载完整 UI 依赖。
 function normalizedComposerHeight(composerHeight: number) {
@@ -46,6 +48,16 @@ export function storyboardVisibleRowWindow(scrollTop: number, viewportHeight: nu
     const last = Math.ceil((top + Math.max(rowHeight, viewportHeight)) / rowHeight) + overscan;
     const start = Math.min(count, Math.max(0, first));
     return { start, end: Math.min(count, Math.max(start, last)) };
+}
+
+/**
+ * The in-node card's row window. The sticky column header sits inside the same scroll
+ * container, so rows begin STORYBOARD_CARD_COLUMN_HEADER_HEIGHT below scrollTop 0 and the
+ * header covers that much of the viewport.
+ */
+export function storyboardCardRowWindow(scrollTop: number, viewportHeight: number, rowCount: number, overscan = STORYBOARD_ROW_OVERSCAN): StoryboardRowRange {
+    const header = STORYBOARD_CARD_COLUMN_HEADER_HEIGHT;
+    return storyboardVisibleRowWindow(scrollTop - header, viewportHeight - header, STORYBOARD_ROW_HEIGHT, rowCount, overscan);
 }
 
 /**

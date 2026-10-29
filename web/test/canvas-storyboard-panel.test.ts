@@ -40,7 +40,9 @@ describe("storyboard table rendering boundaries", () => {
     const script = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-script-node.tsx"), "utf8");
 
     test("the in-node row list mounts only the visible window and keeps the edited row", () => {
-        expect(script).toContain("storyboardVisibleRowWindow(scrollTop, tableHeight, STORYBOARD_ROW_HEIGHT, rows.length)");
+        expect(script).toContain("storyboardCardRowWindow(scrollTop, tableHeight, rows.length)");
+        expect(script).toContain("<StoryboardWindowedRows");
+        expect(script).not.toMatch(/<Fragment key=\{`\$\{range\.start\}/);
         expect(script).toContain("storyboardMountedRowRanges(");
         expect(script).toContain("data-storyboard-row-id={row.id}");
         expect(script).toContain("setFocusedRowId(");

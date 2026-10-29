@@ -75,6 +75,11 @@ for (const item of parity as unknown as ParityCase[]) {
 const storyboard = (rowPatch: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
     node("board", CanvasNodeType.Script, { ...extra, storyboard: { referenceNodeIds: [], visibleColumns: [], ...((extra.storyboard as object) || {}), rows: [{ id: "shot", shotNumber: 1, characters: [], assetBindings: [], ...rowPatch }] } });
 
+test("共享引用拒绝提示指向真实修改入口：分镜表输入区连线或人物字段", () => {
+    expect(SHARED_REFERENCE_MESSAGE).toBe("这是表级共享引用或人物引用：请删除连到分镜表输入区的那条连线，或在人物字段中修改");
+    expect(SHARED_REFERENCE_MESSAGE).not.toContain("所属表");
+});
+
 test("分镜表级共享引用画出的行连线拒绝删除且图不变", () => {
     const nodes = [node("img", CanvasNodeType.Image), storyboard({}, { storyboard: { referenceNodeIds: ["img"] } })];
     const connections = projectReferenceConnections(nodes, [], 1);

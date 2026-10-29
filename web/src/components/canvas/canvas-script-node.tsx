@@ -1,7 +1,7 @@
 import { Button, Input, InputNumber, Modal, Popover, Segmented, Table } from "antd";
 import { CanvasAnchoredDropdown as Dropdown } from "./canvas-anchored-dropdown";
 import { Tooltip } from "@/components/ui/base/tooltip";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { CheckboxGroup } from "@/components/ui/base/checkbox";
 import type { MenuProps } from "antd";
@@ -28,12 +28,12 @@ import {
     observeStoryboardElementSize,
     storyboardCardGridTemplate,
     storyboardCardMinWidth,
+    storyboardCardRowWindow,
     storyboardEditorColumnsTotal,
     storyboardEditorColumnWidths,
     storyboardEditorTableScrollY,
     storyboardMountedRowRanges,
     storyboardTableHeight,
-    storyboardVisibleRowWindow,
 } from "@/lib/canvas/canvas-storyboard-layout";
 import { DEFAULT_STORYBOARD_COLUMNS, resolveStoryboardVisibleColumns, STORYBOARD_COLUMN_OPTIONS, storyboardColumnLabel } from "@/lib/canvas/canvas-storyboard-columns";
 import { AppModal } from "@/components/ui/product/app-modal";
@@ -50,7 +50,7 @@ import type {
 } from "@/types/canvas";
 import type { TaskStatus } from "@/services/api/task-center";
 import { Select } from "@/components/ui/base/select";
-import { GenerationBatchDetails, StoryboardMiniPipeline, batchItemTone, generationBatchItemLabel, generationBatchSummary } from "./canvas-script-node-parts";
+import { GenerationBatchDetails, StoryboardMiniPipeline, StoryboardWindowedRows, batchItemTone, generationBatchItemLabel, generationBatchSummary } from "./canvas-script-node-parts";
 
 const STORYBOARD_PROMPT_MIN_HEIGHT = 40;
 const STORYBOARD_PROMPT_MAX_HEIGHT = 116;
@@ -187,7 +187,7 @@ export function CanvasScriptNodeContent({
     const composerHeight = node.metadata?.storyboardComposerHeight || STORYBOARD_COMPOSER_MIN_HEIGHT;
     const tableHeight = storyboardTableHeight(node.height, composerHeight);
     // Only the scrolled window is mounted; the row being edited stays mounted after it scrolls out.
-    const rowWindow = storyboardVisibleRowWindow(scrollTop, tableHeight, STORYBOARD_ROW_HEIGHT, rows.length);
+    const rowWindow = storyboardCardRowWindow(scrollTop, tableHeight, rows.length);
     const focusedRowIndex = focusedRowId ? rows.findIndex((row) => row.id === focusedRowId) : -1;
     const mountedRowRanges = storyboardMountedRowRanges(rowWindow, rows.length, focusedRowIndex);
     const totalDuration = rows.reduce((sum, row) => sum + (Number(row.durationSeconds) || 0), 0);
@@ -365,14 +365,14 @@ export function CanvasScriptNodeContent({
                         ))}
                     </div>
                     {rows.length ? (
-                        mountedRowRanges.map((range, rangeIndex) => {
-                            const previousEnd = rangeIndex === 0 ? 0 : mountedRowRanges[rangeIndex - 1].end;
-                            const isLast = rangeIndex === mountedRowRanges.length - 1;
-                            return (
-                                <Fragment key={`${range.start}-${range.end}`}>
-                                    {range.start > previousEnd ? <div aria-hidden className="shrink-0" style={{ height: (range.start - previousEnd) * STORYBOARD_ROW_HEIGHT }} /> : null}
-                                    {rows.slice(range.start, range.end).map((row) => (
-                                        <div key={row.id} data-storyboard-row-id={row.id} className="relative grid shrink-0 border-b" style={{ height: STORYBOARD_ROW_HEIGHT, borderColor: theme.node.stroke, gridTemplateColumns: cardGridTemplate }}>
+                        <StoryboardWindowedRows
+                            rowCount={rows.length}
+                            ranges={mountedRowRanges}
+                            rowHeight={STORYBOARD_ROW_HEIGHT}
+                            renderRow={(index) => {
+                                const row = rows[index];
+                                return (
+                                    <div key={row.id} data-storyboard-row-id={row.id} className="relative grid shrink-0 border-b" style={{ height: STORYBOARD_ROW_HEIGHT, borderColor: theme.node.stroke, gridTemplateColumns: cardGridTemplate }}>
                                             {visibleColumns.map((column) => (
                                                 <ScriptCardCell
                                                     scriptNode={node}
@@ -390,11 +390,9 @@ export function CanvasScriptNodeContent({
                                                 />
                                             ))}
                                         </div>
-                                    ))}
-                                    {isLast && range.end < rows.length ? <div aria-hidden className="shrink-0" style={{ height: (rows.length - range.end) * STORYBOARD_ROW_HEIGHT }} /> : null}
-                                </Fragment>
-                            );
-                        })
+                                );
+                            }}
+                        />
                     ) : (
                         <button
                             type="button"

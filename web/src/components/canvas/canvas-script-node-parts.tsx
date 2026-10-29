@@ -3,7 +3,7 @@
 import { type CanvasStoryboardPipelineProgress, pipelineStatusLabel, type StoryboardPipelineStage } from "@/lib/canvas/canvas-storyboard-progress";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { type CanvasGenerationBatch, type CanvasGenerationBatchItem, type CanvasGenerationBatchItemStatus, type CanvasNodeStatus, type StoryboardRow } from "@/types/canvas";
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
 import { generationErrorMessage, isContentModerationError } from "@/lib/generation-error";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { RefreshCw } from "lucide-react";
@@ -122,4 +122,21 @@ export function batchItemTone(item?: CanvasGenerationBatchItem): CanvasNodeStatu
     if (item.status === "failed" || item.status === "cancelled") return "error";
     if (item.status === "waiting") return "idle";
     return "loading";
+}
+
+/**
+ * Windowed storyboard rows: mounted ranges render rows, everything else becomes fixed-height spacers.
+ * Children stay one flat list so React matches rows by their own keys (renderRow must key each row by
+ * its id); spacers use position names, never range bounds, so moving the window never remounts a row.
+ */
+export function StoryboardWindowedRows({ rowCount, ranges, rowHeight, renderRow }: { rowCount: number; ranges: ReadonlyArray<{ start: number; end: number }>; rowHeight: number; renderRow: (index: number) => ReactNode }) {
+    const children: ReactNode[] = [];
+    let cursor = 0;
+    ranges.forEach((range, rangeIndex) => {
+        if (range.start > cursor) children.push(<div key={rangeIndex === 0 ? "spacer-before" : "spacer-between"} aria-hidden className="shrink-0" style={{ height: (range.start - cursor) * rowHeight }} />);
+        for (let index = range.start; index < range.end; index += 1) children.push(renderRow(index));
+        cursor = Math.max(cursor, range.end);
+    });
+    if (cursor < rowCount) children.push(<div key="spacer-after" aria-hidden className="shrink-0" style={{ height: (rowCount - cursor) * rowHeight }} />);
+    return <>{children}</>;
 }
