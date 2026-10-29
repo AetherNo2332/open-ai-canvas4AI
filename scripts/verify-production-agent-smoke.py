@@ -20,6 +20,18 @@ SERVICES = {"postgres", "redis", "migrate", "backend", "agent", "web", "model-st
 TERMINAL = {"completed", "failed", "cancelled", "rejected"}
 
 
+IMAGE_CAPABILITY = {"version": 1, "image": {
+    "references": {"promptMaxChars": 8000, "maxImages": 1, "maxImageBytes": 10 * 1024 * 1024}, "maxOutputs": 1,
+    "size": {"parameter": "size", "values": ["1024x1024"], "default": "1024x1024"},
+    "quality": {"supported": True, "values": ["low"], "default": "low"},
+    "responseFormat": {"supported": True}}}
+
+
+def media_versions_of(node):
+    metadata = (node or {}).get("metadata") or {}
+    return metadata.get("mediaVersions") or [], metadata.get("currentMediaVersionId")
+
+
 def wait(predicate, seconds=150):
     end = time.monotonic() + seconds
     while time.monotonic() < end:
@@ -251,6 +263,66 @@ class Smoke:
                 "contextWindowTokens": 128000, "maxOutputTokens": 32000,
                 "references": {"promptMaxChars": 32000}}}})
 
+    def configure_image_model(self):
+        model_path = f"/admin/channels/{self.channel}/models"
+        existing = next((row for row in self.api("GET", model_path)["models"] if row["modelKey"] == "gpt-image-1"), None)
+        self.api("PATCH" if existing else "POST", model_path + ("/" + existing["id"] if existing else ""), {
+            "modelKey": "gpt-image-1", "providerModelKey": "gpt-image-1", "displayName": "Smoke image",
+            "capability": "image", "protocol": "openai-image", "billingMode": "fixed_request",
+            "unitPriceMicrocredits": 0, "priceConfigured": True, "enabled": True,
+            "capabilityConfig": IMAGE_CAPABILITY})
+
+    def agent_generate_image(self, canvas, node_id, intent):
+        scenario = "media_" + uuid.uuid4().hex[:8]
+        args = {"mode": "image", "nodeId": node_id, "title": "Version image", "prompt": "Media version acceptance",
+                "channelId": self.channel, "channelModelKey": "gpt-image-1", "size": "1024x1024",
+                "snapshotHash": "$snapshotHash"}
+        if intent == "new_version":
+            args["intent"] = "new_version"
+        self.stub("control", {"scenario": scenario, "steps": [
+            {"tool": "canvas_get_state"}, {"tool": "generate_media", "args": args},
+            {"tool": "finish_run", "args": {"summary": "Media request submitted"}}]})
+        run = self.api("POST", "/agent/runs", {"canvasId": canvas, "prompt": "AGENT_PARITY_SCENARIO:" + scenario,
+            "channelId": self.channel, "channelModelKey": "agent-parity-model", "permissionMode": "auto",
+            "reasoningMode": "off", "contextScope": ["canvas"], "skillIds": [],
+            "budget": {"maxCredits": 1, "maxSteps": 12}, "idempotencyKey": str(uuid.uuid4())})["run"]
+        return self.complete(run)
+
+    def media_node(self, canvas, node_id):
+        nodes = self.api("GET", f"/canvas-projects/{canvas}")["project"]["nodes"]
+        return next((node for node in nodes if node.get("id") == node_id), None)
+
+    def media_versions(self):
+        """Agent in-place generation lands in the node's browser-visible version history."""
+        self.stub("media-control", {})
+        self.configure_image_model()
+        canvas = self.canvas()
+        self.report["mediaCanvasId"] = canvas
+        node_id = "image_" + uuid.uuid4().hex[:8]
+        self.agent_generate_image(canvas, node_id, "create")
+        def media_ready():
+            node = self.media_node(canvas, node_id)
+            metadata = (node or {}).get("metadata") or {}
+            return node if metadata.get("status") == "success" and metadata.get("storageKey") else None
+        first = wait(media_ready, 180)
+        before, _ = media_versions_of(first)
+        first_key = first["metadata"]["storageKey"]
+        self.agent_generate_image(canvas, node_id, "new_version")
+        def adopted():
+            node = self.media_node(canvas, node_id)
+            versions, current = media_versions_of(node)
+            return node if len(versions) > len(before) and (node["metadata"].get("storageKey") != first_key) and current else None
+        updated = wait(adopted, 180)
+        versions, current = media_versions_of(updated)
+        current_version = next((item for item in versions if item.get("id") == current), None)
+        self.check("Agent new version lands in node mediaVersions and is adopted",
+            len(versions) >= 2 and current_version is not None and
+            (current_version.get("media") or {}).get("storageKey") == updated["metadata"]["storageKey"] and
+            any((item.get("media") or {}).get("storageKey") == first_key for item in versions),
+            versions=len(versions))
+        self.check("in-place version keeps one logical node",
+            sum(1 for node in self.api("GET", f"/canvas-projects/{canvas}")["project"]["nodes"] if node.get("id") == node_id) == 1)
+
     def preflight_receipt(self, scenario, canvas, view):
         requests = self.stub("stats")["requests"]
         nodes = self.api("GET", f"/canvas-projects/{canvas}")["project"]["nodes"]
@@ -352,6 +424,7 @@ class Smoke:
         cursor = initial[len(initial) // 2]
         self.check("SSE cursor replays later persisted events", initial == sorted(set(initial)) and
                    replay(cursor) == [value for value in initial if value > cursor], eventCount=len(initial))
+        self.media_versions()
 
 
 def run_smoke(smoke):

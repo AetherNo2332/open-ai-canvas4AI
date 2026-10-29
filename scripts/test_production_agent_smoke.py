@@ -72,6 +72,49 @@ class ProductionSmokeTests(unittest.TestCase):
             self.assertEqual(api.call_args_list[1].args[2]["modelKey"], "agent-parity-model")
             self.assertTrue(api.call_args_list[1].args[2]["enabled"])
 
+    def test_media_versions_checks_node_metadata_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            harness.channel = "channel-1"
+            first = {"id": "image_xxxxxxxx", "metadata": {"status": "success", "storageKey": "resource:a"}}
+            second = {"id": "image_xxxxxxxx", "metadata": {"status": "success", "storageKey": "resource:b",
+                "currentMediaVersionId": "v2", "mediaVersions": [
+                    {"id": "v1", "media": {"storageKey": "resource:a"}},
+                    {"id": "v2", "media": {"storageKey": "resource:b"}}]}}
+            nodes = iter([first, second])
+            with patch.object(harness, "stub", return_value={}), \
+                    patch.object(harness, "configure_image_model"), \
+                    patch.object(harness, "canvas", return_value="canvas-1"), \
+                    patch.object(harness, "agent_generate_image") as generate, \
+                    patch.object(harness, "media_node", side_effect=lambda canvas, node_id: next(nodes)), \
+                    patch.object(harness, "api", return_value={"project": {"nodes": [second]}}), \
+                    patch.object(smoke.uuid, "uuid4", return_value=SimpleNamespace(hex="x" * 32)):
+                harness.media_versions()
+            self.assertEqual([call.args[2] for call in generate.call_args_list], ["create", "new_version"])
+            checks = {row["name"]: row["passed"] for row in json.loads(harness.output.read_text())["checks"]}
+            self.assertTrue(checks["Agent new version lands in node mediaVersions and is adopted"])
+            self.assertTrue(checks["in-place version keeps one logical node"])
+
+    def test_media_versions_rejects_unadopted_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            harness.channel = "channel-1"
+            first = {"id": "image_xxxxxxxx", "metadata": {"status": "success", "storageKey": "resource:a"}}
+            # New version appended to history but the node still shows the old media.
+            stale = {"id": "image_xxxxxxxx", "metadata": {"status": "success", "storageKey": "resource:a",
+                "currentMediaVersionId": "v1", "mediaVersions": [
+                    {"id": "v1", "media": {"storageKey": "resource:a"}},
+                    {"id": "v2", "media": {"storageKey": "resource:b"}}]}}
+            nodes = iter([first] + [stale] * 1000)
+            with patch.object(harness, "stub", return_value={}), \
+                    patch.object(harness, "configure_image_model"), \
+                    patch.object(harness, "canvas", return_value="canvas-1"), \
+                    patch.object(harness, "agent_generate_image"), \
+                    patch.object(harness, "media_node", side_effect=lambda canvas, node_id: next(nodes)), \
+                    patch.object(smoke, "wait", side_effect=lambda predicate, seconds=150: predicate() or (_ for _ in ()).throw(AssertionError("smoke stage timed out"))):
+                with self.assertRaisesRegex(AssertionError, "timed out"):
+                    harness.media_versions()
+
     def test_preflight_accepts_persisted_finish_and_canvas_receipts(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = smoke.Smoke(directory, Path(directory) / "report.json")
