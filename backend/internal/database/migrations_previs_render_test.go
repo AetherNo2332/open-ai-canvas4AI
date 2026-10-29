@@ -47,7 +47,7 @@ func TestPrevisRenderQueuedTasksFailedByMigration(t *testing.T) {
 		}
 	}
 	status, err := ReadSchemaStatus(db)
-	if err != nil || !status.Ready || status.Current != CurrentSchemaVersion || CurrentSchemaVersion != 76 {
+	if err != nil || !status.Ready || status.Current != CurrentSchemaVersion || CurrentSchemaVersion < 76 {
 		t.Fatalf("schema not ready after upgrade: %+v, %v", status, err)
 	}
 }

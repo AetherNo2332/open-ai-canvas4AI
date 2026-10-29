@@ -13,8 +13,8 @@ import (
 )
 
 // CurrentSchemaVersion 跟随上游迁移到 v74；v75 起是 fork 云端 Agent 子系统（见 migrations_agent.go），
-// v76 退役服务端预演渲染任务（见 migrations_previs_render.go）。
-const CurrentSchemaVersion int64 = previsRenderRetiredMigrationVersion
+// v76 退役服务端预演渲染任务（见 migrations_previs_render.go），v77 把媒体版本表迁入节点 metadata（见 migrations_media_versions.go）。
+const CurrentSchemaVersion int64 = mediaVersionsMigrationVersion
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -275,6 +275,7 @@ var schemaMigrations = []migration{
 	}},
 	{version: forkAgentRuntimeMigrationVersion, name: "fork_agent_runtime", checksum: forkAgentRuntimeChecksum, apply: migrateForkAgentRuntime},
 	{version: previsRenderRetiredMigrationVersion, name: "previs_render_retired", checksum: previsRenderRetiredChecksum, apply: migratePrevisRenderRetired},
+	{version: mediaVersionsMigrationVersion, name: "media_versions_to_metadata", checksum: mediaVersionsChecksum, apply: migrateMediaVersionsToMetadata},
 }
 
 // migrateReferralCenter 增加推广人标记和推广码、绑定、返佣三张表；旧用户默认不是推广人。
