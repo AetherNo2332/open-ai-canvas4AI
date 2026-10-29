@@ -448,7 +448,7 @@ type cloudAgentRunScope struct {
 
 func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest, parentID string, scope *cloudAgentRunScope) (*CloudAgentRun, error) {
 	if req.Workflow == "image_to_director" {
-		return nil, BadAuthRequest("画布已移除导演台与预演台，请使用普通 Agent 对话继续创作")
+		return nil, BadAuthRequest("图片转导演台工作流已下线：请在图片工具栏使用「生成预演台」，或让 Agent 调用 director 工具")
 	}
 	if scope != nil {
 		req.subagent = scope.Subagent

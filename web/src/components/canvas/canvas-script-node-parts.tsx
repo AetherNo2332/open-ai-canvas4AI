@@ -133,7 +133,7 @@ export function StoryboardWindowedRows({ rowCount, ranges, rowHeight, renderRow 
     const children: ReactNode[] = [];
     let cursor = 0;
     ranges.forEach((range, rangeIndex) => {
-        if (range.start > cursor) children.push(<div key={rangeIndex === 0 ? "spacer-before" : "spacer-between"} aria-hidden className="shrink-0" style={{ height: (range.start - cursor) * rowHeight }} />);
+        if (range.start > cursor) children.push(<div key={rangeIndex === 0 ? "spacer-before" : `spacer-between-${rangeIndex}`} aria-hidden className="shrink-0" style={{ height: (range.start - cursor) * rowHeight }} />);
         for (let index = range.start; index < range.end; index += 1) children.push(renderRow(index));
         cursor = Math.max(cursor, range.end);
     });

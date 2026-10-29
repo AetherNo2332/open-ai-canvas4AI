@@ -9,9 +9,10 @@ import type { AgentRun } from "@/services/api/agent";
  * 浏览器录制完成后用它回传结果。
  */
 export type DirectorOpenEvent = { canvasId: string; nodeId: string; sceneId: string; shotId?: string; action: string; requestId?: string };
-export type DirectorOpenRunEvent = DirectorOpenEvent & { runId: string };
+/** `seq` 是 director_open 的持久事件序号；宿主只转发 seq>0 的事件，预演挂起查询据此定位请求事件。 */
+export type DirectorOpenRunEvent = DirectorOpenEvent & { runId: string; seq?: number };
 export type DirectorPreviewResult = { videoResourceId: string } | { error: string };
-export type DirectorPreviewJob = { runId: string; requestId: string; sceneId: string; shotId?: string };
+export type DirectorPreviewJob = { runId: string; requestId: string; sceneId: string; shotId?: string; openSeq?: number };
 
 const DIRECTOR_PREVIEW_ERROR_MAX = 500;
 /** 与后端 CANVAS_AGENT_DIRECTOR_PREVIEW_TIMEOUT 默认值一致：更早的事件只可能是回放。 */
@@ -21,7 +22,7 @@ function optionalString(value: unknown) {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-export function parseDirectorOpenEvent(event: { type: string; runId: string; payload?: Record<string, unknown> }): DirectorOpenRunEvent | null {
+export function parseDirectorOpenEvent(event: { type: string; runId: string; seq?: number; payload?: Record<string, unknown> }): DirectorOpenRunEvent | null {
     if (event.type !== "director_open") return null;
     const payload = event.payload || {};
     const canvasId = optionalString(payload.canvasId);
@@ -31,7 +32,8 @@ export function parseDirectorOpenEvent(event: { type: string; runId: string; pay
     if (!canvasId || !nodeId || !sceneId || !action) return null;
     const shotId = optionalString(payload.shotId);
     const requestId = optionalString(payload.requestId);
-    return { runId: event.runId, canvasId, nodeId, sceneId, action, ...(shotId ? { shotId } : {}), ...(requestId ? { requestId } : {}) };
+    const seq = typeof event.seq === "number" && Number.isInteger(event.seq) && event.seq > 0 ? event.seq : undefined;
+    return { runId: event.runId, canvasId, nodeId, sceneId, action, ...(shotId ? { shotId } : {}), ...(requestId ? { requestId } : {}), ...(seq ? { seq } : {}) };
 }
 
 /** 页面重连会回放游标之后的事件；过期或时间无法解析的打开请求不再弹出导演台（fail closed）。 */
@@ -106,6 +108,24 @@ export function directorPreviewPending(run: Pick<AgentRun, "status" | "events"> 
     if (index < 0) return false;
     const callId = events[index].payload?.callId;
     return !events.slice(index + 1).some((event) => (event.type === "tool_completed" || event.type === "tool_failed") && event.payload?.callId === callId);
+}
+
+/** 与后端 agentRunEventQueryLimit 一致的单页事件上限。 */
+const DIRECTOR_PREVIEW_EVENT_PAGE = 500;
+type DirectorRunFetchOptions = { sinceSeq?: number; eventLimit?: number; fromStart?: boolean };
+
+/**
+ * 挂起查询的事件窗口：从 director_open 的前一条开始分页读取，请求事件（紧随 director_open 写入）
+ * 与之后的工具回执都落在页内；默认视图只返回尾部一窗，请求事件之后事件一多就会漏判为未挂起。
+ * 缺少序号时从头读取。
+ */
+export function directorPreviewRunQuery(job: Pick<DirectorPreviewJob, "openSeq">): DirectorRunFetchOptions {
+    const sinceSeq = Math.max(0, (job.openSeq ?? 0) - 1);
+    return sinceSeq > 0 ? { sinceSeq, eventLimit: DIRECTOR_PREVIEW_EVENT_PAGE } : { fromStart: true, eventLimit: DIRECTOR_PREVIEW_EVENT_PAGE };
+}
+
+export async function directorPreviewJobPending(job: Pick<DirectorPreviewJob, "runId" | "requestId" | "openSeq">, fetchRun: (runId: string, options: DirectorRunFetchOptions) => Promise<{ run: Pick<AgentRun, "status" | "events"> }>) {
+    return directorPreviewPending((await fetchRun(job.runId, directorPreviewRunQuery(job))).run, job.requestId);
 }
 
 type SyncStorage = { getItem(key: string): string | null; setItem(key: string, value: string): void };
@@ -248,11 +268,12 @@ export async function runDirectorPreview(input: {
 
 export type DirectorPreviewOutcome = "submitted" | "submitted_error" | "expired" | "abandoned" | "skipped";
 
-/** 结果提示：只有真正回传了视频才报成功；录制失败回传给 Agent 时用警告。 */
-export function directorPreviewOutcomeNotice(outcome: DirectorPreviewOutcome): { level: "success" | "warning"; text: string } | null {
+/** 结果提示：只有真正回传了视频才报成功；录制失败回传给 Agent 时用警告；未录制即放弃时用信息提示。 */
+export function directorPreviewOutcomeNotice(outcome: DirectorPreviewOutcome): { level: "success" | "warning" | "info"; text: string } | null {
     if (outcome === "submitted") return { level: "success", text: "预演视频已回传给 Agent" };
     if (outcome === "submitted_error") return { level: "warning", text: "预演录制失败，已把失败原因告知 Agent" };
     if (outcome === "expired") return { level: "warning", text: "Agent 的预演请求已超时或已结束" };
+    if (outcome === "abandoned") return { level: "info", text: "页面不在前台，未录制导演台预演；Agent 将在超时后收到可重试的提示" };
     return null;
 }
 

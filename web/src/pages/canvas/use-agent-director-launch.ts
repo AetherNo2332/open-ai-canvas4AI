@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App } from "antd";
 
-import { directorOpenTargetReady, directorPreviewHandledStore, directorPreviewOutcomeNotice, directorPreviewPending, directorPreviewVideoResourceId, handleDirectorOpen, runDirectorPreview, withDirectorPreviewLock, type DirectorOpenRunEvent, type DirectorPreviewJob } from "@/lib/canvas/agent-director-launch";
+import { directorOpenTargetReady, directorPreviewHandledStore, directorPreviewJobPending, directorPreviewOutcomeNotice, directorPreviewVideoResourceId, handleDirectorOpen, runDirectorPreview, withDirectorPreviewLock, type DirectorOpenRunEvent, type DirectorPreviewJob } from "@/lib/canvas/agent-director-launch";
 import { getAgentRun, submitDirectorPreviewResult } from "@/services/api/agent";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { PrevisScene } from "@/types/previs";
@@ -29,7 +29,7 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
     const onDirectorOpen = useCallback(
         (event: DirectorOpenRunEvent) => {
             if (event.canvasId !== projectId || event.action === "read") return;
-            if (event.action === "preview" && event.requestId) setDirectorPreview({ runId: event.runId, requestId: event.requestId, sceneId: event.sceneId, shotId: event.shotId });
+            if (event.action === "preview" && event.requestId) setDirectorPreview({ runId: event.runId, requestId: event.requestId, sceneId: event.sceneId, shotId: event.shotId, openSeq: event.seq });
             setPendingOpen(event);
         },
         [projectId],
@@ -62,7 +62,7 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                 submit: submitDirectorPreviewResult,
                 // 后台标签页录制会因不可见中止；只让可见标签页录制，且同一请求跨标签页只执行一次。
                 isHidden: () => typeof document !== "undefined" && document.visibilityState === "hidden",
-                isPending: async () => directorPreviewPending((await getAgentRun(job.runId, AbortSignal.timeout(10_000))).run, job.requestId),
+                isPending: () => directorPreviewJobPending(job, (runId, options) => getAgentRun(runId, AbortSignal.timeout(10_000), options)),
                 handled: handledStoreRef.current,
                 withLock: withDirectorPreviewLock,
             })

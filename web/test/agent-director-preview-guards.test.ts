@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { directorPreviewHandledStore, directorPreviewOutcomeNotice, directorPreviewPending, handleDirectorOpen, isDirectorOpenStale, runDirectorPreview, withDirectorPreviewLock } from "@/lib/canvas/agent-director-launch";
+import { directorPreviewHandledStore, directorPreviewJobPending, directorPreviewOutcomeNotice, directorPreviewPending, directorPreviewRunQuery, parseDirectorOpenEvent, handleDirectorOpen, isDirectorOpenStale, runDirectorPreview, withDirectorPreviewLock } from "@/lib/canvas/agent-director-launch";
 import type { AgentRun } from "@/services/api/agent";
 
 const openEvent = { canvasId: "canvas-1", nodeId: "previs-scene-1", sceneId: "scene-1", shotId: "shot-1", action: "create_scene" };
@@ -101,6 +101,30 @@ describe("pending check, lock and handled store", () => {
         expect(directorPreviewPending(run([evt(5, "director_preview_requested", { requestId: "other", callId: "call-1" })]), "dpv_1")).toBe(false);
     });
 
+    test("pending lookup pages from the director_open seq so an old request event is still found", async () => {
+        const open = parseDirectorOpenEvent({ type: "director_open", runId: "run-1", seq: 5, payload: { ...openEvent, action: "preview", requestId: "dpv_1" } });
+        expect(open?.seq).toBe(5);
+        expect(directorPreviewRunQuery({ openSeq: open?.seq })).toEqual({ sinceSeq: 4, eventLimit: 500 });
+        // No seq: read from the start rather than the default tail.
+        expect(directorPreviewRunQuery({})).toEqual({ fromStart: true, eventLimit: 500 });
+
+        // Request at seq 6 followed by 60 unrelated events: the default 40-event tail would miss it.
+        const all = [evt(5, "director_open", { requestId: "dpv_1" }), evt(6, "director_preview_requested", { requestId: "dpv_1", callId: "call-1" }), ...Array.from({ length: 60 }, (_, i) => evt(7 + i, "assistant_delta", {}))];
+        const requests: unknown[] = [];
+        const fetchRun = async (runId: string, options: { sinceSeq?: number; eventLimit?: number; fromStart?: boolean }) => {
+            requests.push({ runId, ...options });
+            const events = options.sinceSeq ? all.filter((e) => e.seq > options.sinceSeq!).slice(0, options.eventLimit) : options.fromStart ? all.slice(0, options.eventLimit) : all.slice(-40);
+            return { run: run(events) };
+        };
+        expect(directorPreviewPending(run(all.slice(-40)), "dpv_1")).toBe(false);
+        expect(await directorPreviewJobPending({ runId: "run-1", requestId: "dpv_1", openSeq: open?.seq }, fetchRun)).toBe(true);
+        expect(requests).toEqual([{ runId: "run-1", sinceSeq: 4, eventLimit: 500 }]);
+
+        // A later completion inside the page still ends the wait.
+        all.push(evt(70, "tool_completed", { callId: "call-1", toolName: "director" }));
+        expect(await directorPreviewJobPending({ runId: "run-1", requestId: "dpv_1", openSeq: 5 }, fetchRun)).toBe(false);
+    });
+
     test("navigator.locks ifAvailable grants a single holder", async () => {
         let held = false;
         const locks = {
@@ -157,7 +181,7 @@ describe("preview outcome notice", () => {
         expect(directorPreviewOutcomeNotice("submitted")?.level).toBe("success");
         expect(directorPreviewOutcomeNotice("submitted_error")).toEqual({ level: "warning", text: "预演录制失败，已把失败原因告知 Agent" });
         expect(directorPreviewOutcomeNotice("expired")?.level).toBe("warning");
-        expect(directorPreviewOutcomeNotice("abandoned")).toBeNull();
+        expect(directorPreviewOutcomeNotice("abandoned")).toEqual({ level: "info", text: "页面不在前台，未录制导演台预演；Agent 将在超时后收到可重试的提示" });
         expect(directorPreviewOutcomeNotice("skipped")).toBeNull();
     });
 });

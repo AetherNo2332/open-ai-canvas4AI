@@ -28,12 +28,12 @@ import {
     observeStoryboardElementSize,
     storyboardCardGridTemplate,
     storyboardCardMinWidth,
-    storyboardCardRowWindow,
     storyboardEditorColumnsTotal,
     storyboardEditorColumnWidths,
     storyboardEditorTableScrollY,
     storyboardMountedRowRanges,
     storyboardTableHeight,
+    storyboardVisibleRowWindow,
 } from "@/lib/canvas/canvas-storyboard-layout";
 import { DEFAULT_STORYBOARD_COLUMNS, resolveStoryboardVisibleColumns, STORYBOARD_COLUMN_OPTIONS, storyboardColumnLabel } from "@/lib/canvas/canvas-storyboard-columns";
 import { AppModal } from "@/components/ui/product/app-modal";
@@ -187,7 +187,10 @@ export function CanvasScriptNodeContent({
     const composerHeight = node.metadata?.storyboardComposerHeight || STORYBOARD_COMPOSER_MIN_HEIGHT;
     const tableHeight = storyboardTableHeight(node.height, composerHeight);
     // Only the scrolled window is mounted; the row being edited stays mounted after it scrolls out.
-    const rowWindow = storyboardCardRowWindow(scrollTop, tableHeight, rows.length);
+    // The sticky column header occupies the first 36px of the scroll container, and rows start
+    // 36px into its content, so the rows' visible span from the top of row 0 is
+    // [scrollTop, scrollTop + tableHeight]; the row-handle math below uses the same model.
+    const rowWindow = storyboardVisibleRowWindow(scrollTop, tableHeight, STORYBOARD_ROW_HEIGHT, rows.length);
     const focusedRowIndex = focusedRowId ? rows.findIndex((row) => row.id === focusedRowId) : -1;
     const mountedRowRanges = storyboardMountedRowRanges(rowWindow, rows.length, focusedRowIndex);
     const totalDuration = rows.reduce((sum, row) => sum + (Number(row.durationSeconds) || 0), 0);

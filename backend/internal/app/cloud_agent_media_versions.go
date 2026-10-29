@@ -37,7 +37,7 @@ type cloudAgentMediaVersionError struct {
 
 func (e *cloudAgentMediaVersionError) Unwrap() error { return e.error }
 
-// cloudAgentMediaVersionRetryable 对应决定 2：只有生成或上传中可以稍后重试。
+// cloudAgentMediaVersionRetryable 对应决定 2：只有上传中或首次生成中可以稍后重试。
 func cloudAgentMediaVersionRetryable(reason string) bool { return reason == "media_version_loading" }
 
 // applyCloudAgentMediaVersionOp 用与浏览器一致的 Go 版上游函数执行 use_media_version / extract_media_version。

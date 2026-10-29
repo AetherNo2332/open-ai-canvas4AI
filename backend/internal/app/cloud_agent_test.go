@@ -278,7 +278,7 @@ func TestCloudAgentRejectsRetiredDirectorWorkflowBeforeTaskCreation(t *testing.T
 	}
 	req := agentTestRequest()
 	req.Workflow = "image_to_director"
-	if _, err := s.CreateCloudAgentRun("user", req, ""); err == nil || !strings.Contains(err.Error(), "画布已移除导演台与预演台") {
+	if _, err := s.CreateCloudAgentRun("user", req, ""); err == nil || !strings.Contains(err.Error(), "图片转导演台工作流已下线") {
 		t.Fatalf("retired workflow must be rejected with an actionable explanation: %v", err)
 	}
 	var count int64

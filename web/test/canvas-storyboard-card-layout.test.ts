@@ -2,13 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import { DEFAULT_STORYBOARD_COLUMNS, STORYBOARD_COLUMN_OPTIONS } from "@/lib/canvas/canvas-storyboard-columns";
 import {
-    STORYBOARD_CARD_COLUMN_HEADER_HEIGHT,
     STORYBOARD_EDITOR_ACTIONS_WIDTH,
     STORYBOARD_ROW_HEIGHT,
     observeStoryboardElementSize,
     storyboardCardGridTemplate,
     storyboardCardMinWidth,
-    storyboardCardRowWindow,
     storyboardEditorColumnsTotal,
     storyboardEditorColumnWidth,
     storyboardEditorColumnWidths,
@@ -98,17 +96,16 @@ describe("storyboard visible row window", () => {
         expect(storyboardVisibleRowWindow(0, 192, 0, 10)).toEqual({ start: 0, end: 10 });
     });
 
-    test("the sticky column header inside the scroll container offsets the row window", () => {
-        // Rows start below the 36px sticky header, so scrollTop 36 is exactly row 0 at the top.
-        const header = STORYBOARD_CARD_COLUMN_HEADER_HEIGHT;
-        expect(header).toBe(36);
-        expect(storyboardCardRowWindow(header + 30 * rowHeight, 192, 73)).toEqual(storyboardVisibleRowWindow(30 * rowHeight, 192 - header, rowHeight, 73));
-        expect(storyboardCardRowWindow(header + 30 * rowHeight, 192, 73)).toEqual({ start: 26, end: 38 });
-        // Without the offset the window is computed one header-height too low and mounts an extra row.
-        expect(storyboardVisibleRowWindow(header + 30 * rowHeight, 192, rowHeight, 73)).toEqual({ start: 26, end: 39 });
-        // Before the header scrolls away only 156px of rows are visible.
-        expect(storyboardCardRowWindow(0, 192, 73, 0)).toEqual({ start: 0, end: 4 });
-        expect(storyboardCardRowWindow(0, 10 * rowHeight + header, 200, 0)).toEqual({ start: 0, end: 10 });
+    test("the card window treats scrollTop and tableHeight as the rows' own visible span", () => {
+        // The sticky header covers the first 36px of the scroll viewport and rows start 36px into the
+        // content, so they cancel: at scrollTop s the first visible row pixel is s from row 0's top,
+        // and tableHeight (STORYBOARD_HEADER_HEIGHT already includes the header) is the rows' height.
+        expect(storyboardVisibleRowWindow(30 * rowHeight, 4 * rowHeight, rowHeight, 73, 0)).toEqual({ start: 30, end: 34 });
+        expect(storyboardVisibleRowWindow(30 * rowHeight, 4 * rowHeight, rowHeight, 73)).toEqual({ start: 26, end: 38 });
+        // Unscrolled, a 4-row table mounts exactly rows 0-3 without overscan.
+        expect(storyboardVisibleRowWindow(0, 4 * rowHeight, rowHeight, 73, 0)).toEqual({ start: 0, end: 4 });
+        // A half-scrolled row at the top keeps the next row partially visible at the bottom.
+        expect(storyboardVisibleRowWindow(rowHeight / 2, 4 * rowHeight, rowHeight, 73, 0)).toEqual({ start: 0, end: 5 });
     });
 
     test("the row being edited stays mounted without mounting the rows in between", () => {
