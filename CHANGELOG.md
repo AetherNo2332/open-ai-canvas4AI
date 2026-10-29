@@ -8,7 +8,7 @@
 - 素材删除：普通删除会检查 Agent 画布历史与已提交任务的引用，并提示「画布当前内容」或「Agent 画布历史」来源；彻底删除同时清理这些引用，对象删除任务不再无限重试。接单状态未知的生成任务计为进行中，Agent 不会在核对完成前重提。
 - 保留本仓库界面：Agent 通过字段传递的素材引用与画布连线保持同步，共享引用与人物引用的连线需在所属字段中修改；摄影机控制恢复机位与镜头产品图和滚轮切档，上游时期保存的机位会自动对应到现有机型；工作台侧栏恢复展开收起动效；分镜表恢复本仓库列定义、全屏高度修正与长表格只渲染可见行，滚动时正在输入的单元格不丢焦点。
 - 修复：CI 中已删除的导演台依赖、冒烟脚本的旧画布接口、nginx 重复的实时连线配置；系统性能页移除会返回 404 的 Agent 上限卡片，改为跳转「Agent 调度设置」。
-- 升级注意：数据库 Schema 升至 77。v76 把存量排队的服务端预演渲染任务标为失败；v77 把 `canvas_media_versions` 中已就绪的版本迁入节点 `metadata.mediaVersions` 并沿用原 ID，原表保留只读。Agent 工具合同升至 `cloud-agent-tools/v16`，部署需同时更新 web、backend 与 agent 三份镜像。新增可选环境变量 `CANVAS_AGENT_DIRECTOR_PREVIEW_TIMEOUT`（导演台预演等待时长，默认 120s），已透传到各 Compose 文件。本版改动已通过专项与全量回归，真实浏览器联调、多端协作与 PostgreSQL 升级验收见待测试清单。
+- 升级注意：数据库 Schema 升至 78。v76 把存量排队的服务端预演渲染任务标为失败；v77 把 `canvas_media_versions` 中已就绪的版本迁入节点 `metadata.mediaVersions` 并沿用原 ID，原表保留只读；v78 为任务绑定增加媒体版本快照列 `canvas_task_bindings.media_version_json`。Agent 工具合同升至 `cloud-agent-tools/v16`，部署需同时更新 web、backend 与 agent 三份镜像。新增可选环境变量 `CANVAS_AGENT_DIRECTOR_PREVIEW_TIMEOUT`（导演台预演等待时长，默认 120s），已透传到各 Compose 文件。本版改动已通过专项与全量回归，真实浏览器联调、多端协作与 PostgreSQL 升级验收见待测试清单。
 
 ### 本版本此前记录（a421413）
 
