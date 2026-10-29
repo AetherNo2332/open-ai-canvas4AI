@@ -114,15 +114,17 @@ describe("Agent cloud conversation history", () => {
             events: [
                 event("first", 1, "plan_updated", { items: [{ id: "step", title: "生成图片", status: "doing" }] }),
                 event("first", 2, "user_interjection", { messageId: "interjection-1", text: "改成清晨" }),
-                event("first", 3, "tool_completed", { callId: "preview-1", toolName: "previs_preview", text: "预演完成", result: { sceneId: "scene-1" } }),
-                event("first", 4, "generation_task_created", { taskId: "task-1", nodeId: "node-1", text: "图片生成" }),
+                event("first", 3, "director_preview_requested", { callId: "preview-1", toolName: "director", action: "preview", requestId: "dpv_1", sceneId: "scene-1", status: "awaiting_viewport" }),
+                event("first", 4, "tool_completed", { callId: "preview-1", toolName: "director", arguments: JSON.stringify({ action: "preview" }), text: "预演完成", result: { sceneId: "scene-1" } }),
+                event("first", 5, "generation_task_created", { taskId: "task-1", nodeId: "node-1", text: "图片生成" }),
             ],
         });
         const failed = run("second", { parentId: first.id, status: "failed", failureMessage: "模型额度不足", events: [] });
         const result = projectCloudAgentConversation(conversationId, [failed, first]);
         expect(result.messages.find((item) => item.id === "plan-first")).toMatchObject({ planTerminal: true });
         expect(result.messages.find((item) => item.id === "interjection-1")).toMatchObject({ role: "user", interjection: "sent" });
-        expect(result.messages.find((item) => item.title === "previs_preview")?.text).toBe("预演完成");
+        expect(result.messages.find((item) => item.id === "first:3")).toMatchObject({ role: "tool", title: "director", text: "等待导演台录制预演" });
+        expect(result.messages.find((item) => item.id === "first:4")?.text).toBe("预演完成");
         expect(result.messages.find((item) => item.title === "generate_media")?.detail).toMatchObject({ taskId: "task-1" });
         expect(result.messages.find((item) => item.id === "terminal-second")?.text).toBe("模型额度不足");
     });

@@ -74,6 +74,16 @@ describe("Agent SSE recovery", () => {
         await api.decideAgentApproval("run/id", "approval/id", "approve", "", signal, mediaSettings);
         expect(requests).toEqual([["/agent/runs/run%2Fid/approvals/approval%2Fid/decision", { decision: "approve", reason: undefined, mediaSettings }, { signal }]]);
     });
+    it("posts a director preview result to the run's director-preview endpoint", async () => {
+        const requests: unknown[][] = [];
+        transport.http.post = async (...args: unknown[]) => { requests.push(args); return { accepted: true }; };
+        await api.submitDirectorPreviewResult("run/id", "dpv_1", { videoResourceId: "res-1" });
+        await api.submitDirectorPreviewResult("run/id", "dpv_2", { error: "录制失败" });
+        expect(requests).toEqual([
+            ["/agent/runs/run%2Fid/director-preview", { requestId: "dpv_1", videoResourceId: "res-1" }, { timeout: 20_000 }],
+            ["/agent/runs/run%2Fid/director-preview", { requestId: "dpv_2", error: "录制失败" }, { timeout: 20_000 }],
+        ]);
+    });
     it.each([401, 403, 404, 422])("stops immediately on definitive %s", async (status) => {
         let requests = 0;
         globalThis.fetch = (async () => { requests++; return new Response("", { status }); }) as typeof fetch;

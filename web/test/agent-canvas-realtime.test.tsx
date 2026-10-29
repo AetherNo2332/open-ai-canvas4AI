@@ -196,7 +196,7 @@ test("实时在线时 Agent 写入事件不再触发整份刷新；离线时退�
         refreshIntervalMs: 0,
     });
     sync.receive(event("canvas_updated", { canvasId: "canvas" }));
-    sync.receive(event("tool_completed", { toolName: "previs_preview" }));
+    sync.receive(event("tool_completed", { toolName: "director", arguments: JSON.stringify({ action: "apply_patch" }) }));
     sync.receive(event("canvas_updated", { canvasId: "canvas", canvasPatchSlimmed: true }));
     await sleep();
     expect(refreshes).toBe(0);

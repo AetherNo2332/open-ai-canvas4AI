@@ -7,6 +7,8 @@ import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { sameJsonData } from "@/lib/same-json-data";
 import { applyAgentEvent, appendUniqueMessage } from "@/lib/canvas/cloud-agent-events";
+import { isDirectorOpenStale, parseDirectorOpenEvent, type DirectorOpenRunEvent } from "@/lib/canvas/agent-director-launch";
+import { selectImageInspectionModel } from "@/lib/canvas/image-to-previs-agent";
 import { refreshCloudAgentConversations, mergeCloudAgentConversations } from "@/services/cloud-agent-history";
 import { agentPlanVisible, latestAgentPlanItems, latestAgentPlanTerminal, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
 import { continueAgentContextUsage, emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage, sameAgentContextSelection, type AgentContextPhase, type AgentContextUsage, type AgentContextUsageView } from "@/lib/canvas/agent-context-usage";
@@ -103,9 +105,10 @@ import { useAgentMessageQueue } from "./use-agent-message-queue";
 import { AgentMessageQueueList } from "./canvas-agent-message-queue";
 
 export type CanvasCloudAgentPanelHandle = {
-    sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => Promise<"sent" | "queued" | false>;
+    /** requiresVision：本轮必须在支持图片输入的平台模型上运行（图片复现预演台）。 */
+    sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[]; requiresVision?: boolean }) => Promise<"sent" | "queued" | false>;
 };
-type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[]; mode?: AgentSendMode; oppositeMode?: boolean; replyToQuestionId?: string };
+type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[]; mode?: AgentSendMode; oppositeMode?: boolean; replyToQuestionId?: string; requiresVision?: boolean };
 const AgentPanelVisibilityContext = createContext(true);
 
 type CloudAgentPanelProps = {
@@ -122,11 +125,13 @@ type CloudAgentPanelProps = {
     onOpen: () => void;
     onCollapse: () => void;
     onFocusNode?: (nodeId: string) => void;
+    /** 实时收到 director_open（Agent 调用导演工具）时通知宿主打开导演台；历史回放不触发。 */
+    onDirectorOpen?: (event: DirectorOpenRunEvent) => void;
 };
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, ref, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
+export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, ref, onOpen, onCollapse, onFocusNode, onDirectorOpen }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const userScope = getActiveUserScope();
     const subagentsAvailable = useUserStore((state) => state.features.agentSubagentsEnabled);
@@ -317,6 +322,8 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const lastSeqRef = useRef(0);
     const lastSeqRunIdRef = useRef<string | null>(null);
     const canvasSyncRef = useRef<ReturnType<typeof createAgentCanvasSync> | null>(null);
+    const onDirectorOpenRef = useRef(onDirectorOpen);
+    onDirectorOpenRef.current = onDirectorOpen;
     useEffect(() => {
         const sync = createAgentCanvasSync({
             canvasId,
@@ -851,6 +858,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
                 setContextUsage((current) => reduceAgentContextUsage(current, event));
                 applyAgentEvent(event, setMessages, setRun, setApproval, setPrompt);
+                // 只有持久事件（seq>0）且未过期才拉起导演台：快照合成事件与重连回放的旧请求不弹窗。
+                const directorOpen = event.seq > 0 && !isDirectorOpenStale(event.createdAt) ? parseDirectorOpenEvent(event) : null;
+                if (directorOpen) onDirectorOpenRef.current?.(directorOpen);
                 if (["user_question", "run_completed", "run_failed", "run_cancelled"].includes(event.type)) void messageQueue.refresh();
                 if (event.type.startsWith("subagent_") || ["run_completed", "run_failed", "run_cancelled"].includes(event.type)) {
                     const request = ++subagentListRequestRef.current;
@@ -924,17 +934,19 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 if (!capabilities.availability.configured) throw new Error(capabilities.availability.reason);
                 if (!capabilities.permissionModes.includes(permissionMode)) throw new Error("当前后端不支持所选 Agent 权限，请更新后端");
                 if (selectedSkillIds.length && !capabilities.skills) throw new Error("当前后端尚未接入技能库");
+                const effectiveModel = options.requiresVision ? selectImageInspectionModel(config, selectedModel) : selectedModel;
+                if (options.requiresVision && !effectiveModel) throw new Error("当前没有配置支持图片输入的文本模型，请在模型能力设置中为一个文本模型开启图片输入后重试");
                 await saveRemoteUserDataNow(canvasId);
                 if (currentScope.current !== scope) return false;
-                const agentConfig = { ...config, model: selectedModel };
-                const requestConfig = resolveModelRequestConfig(agentConfig, selectedModel);
+                const agentConfig = { ...config, model: effectiveModel };
+                const requestConfig = resolveModelRequestConfig(agentConfig, effectiveModel);
                 const logicalModelId = logicalModelIDForConfig(agentConfig);
                 const input = {
                     canvasId,
                     prompt: value,
-                    reasoningMode: reasoningSupported ? reasoningMode : "off",
-                    model: modelOptionName(selectedModel) || undefined,
-                    ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(selectedModel) || undefined } : {}),
+                    reasoningMode: reasoningSupported && effectiveModel === selectedModel ? reasoningMode : "off",
+                    model: modelOptionName(effectiveModel) || undefined,
+                    ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(effectiveModel) || undefined } : {}),
                     skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
                     permissionMode,
                     subagentEnabled: subagentsAvailable && subagentPolicy?.enabled === true,
@@ -1043,7 +1055,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         sendPrompt: async (request) => {
             if (request.canvasId !== canvasId || request.userScope !== userScope || getActiveUserScope() !== userScope) return false;
             setView("chat");
-            return submit(request.prompt, { preserveDraft: true, focusNodeIds: request.focusNodeIds });
+            return submit(request.prompt, { preserveDraft: true, focusNodeIds: request.focusNodeIds, requiresVision: request.requiresVision });
         },
     }));
     const stop = async () => {

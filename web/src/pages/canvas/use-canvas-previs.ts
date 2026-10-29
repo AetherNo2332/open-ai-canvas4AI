@@ -12,7 +12,7 @@ import { uploadMediaFile } from "@/services/file-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
-import type { PrevisScene, PrevisSceneOutput } from "@/types/previs";
+import type { PrevisApplyResult, PrevisScene, PrevisSceneOutput } from "@/types/previs";
 
 type UseCanvasPrevisOptions = {
     projectId: string;
@@ -146,7 +146,7 @@ export function useCanvasPrevis({
     );
 
     const applyPrevisOutput = useCallback(
-        async (output: PrevisSceneOutput) => {
+        async (output: PrevisSceneOutput): Promise<PrevisApplyResult> => {
             const outputProjectId = projectId;
             if (projectIdRef.current !== outputProjectId) throw new Error("画布项目已切换，请重试");
             const sourceNodeAtStart = nodesRef.current.find((item) => item.id === previsNodeId);
@@ -306,6 +306,7 @@ export function useCanvasPrevis({
             setNodes(finalizedNodes);
             setConnections(nextConnections);
             savePrevisScene(mergedScene);
+            return { clayVideoStorageKey: videoUpload?.storageKey };
         },
         [connectionsRef, previsNodeId, domainProjectId, nodesRef, projectId, savePrevisScene, setConnections, setNodes],
     );

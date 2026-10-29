@@ -150,6 +150,8 @@ import { useCanvasAssistantVisibility } from "./use-canvas-assistant-visibility"
 import { useCanvasActiveTasks } from "./use-canvas-active-tasks";
 import { useCanvasStyleWorkflow } from "./use-canvas-style-workflow";
 import { useCanvasPrevis } from "./use-canvas-previs";
+import { useAgentDirectorLaunch } from "./use-agent-director-launch";
+import { buildImageToPrevisAgentPrompt } from "@/lib/canvas/image-to-previs-agent";
 import { useCanvasGeneration } from "./use-canvas-generation";
 import { useCanvasGenerationBatches } from "./use-canvas-generation-batches";
 import { useCanvasBatchTable } from "./use-canvas-batch-table";
@@ -448,6 +450,27 @@ function CanvasViewportPage() {
             setContextMenu(null);
         },
         [agentMentionReferences, openAgent],
+    );
+
+    // 图片「生成预演台」：让 Agent 识图后用 director 工具复现为可编辑的 3D 场景（需支持图片输入的模型）。
+    const sendImageToPrevisAgent = useCallback(
+        (node: CanvasNodeData) => {
+            if (node.type !== CanvasNodeType.Image) return;
+            const reference = agentMentionReferences.find((item) => item.nodeId === node.id && item.kind === "image");
+            if (!reference) {
+                message.warning("这张图片暂时没有可供 Agent 引用的画布资源");
+                return;
+            }
+            if (!selectedNodeIdsRef.current.has(node.id)) {
+                const selection = new Set([node.id]);
+                selectedNodeIdsRef.current = selection;
+                setSelectedNodeIds(selection);
+            }
+            openAgent();
+            setContextMenu(null);
+            void agentPanelRef.current?.sendPrompt({ canvasId: projectId, userScope: getActiveUserScope(), prompt: buildImageToPrevisAgentPrompt(reference), focusNodeIds: [node.id], requiresVision: true });
+        },
+        [agentMentionReferences, message, openAgent, projectId],
     );
 
     const applyLibTVImport = useCallback(
@@ -1652,6 +1675,7 @@ function CanvasViewportPage() {
         setPrevisNodeId,
         updateProject,
     });
+    const { onDirectorOpen, directorPreview, onDirectorPreview } = useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsScenes: currentProject?.previsScenes, openPrevisWorkbench });
 
     const {
         activateStep: activateShortDramaStep,
@@ -3118,6 +3142,7 @@ function CanvasViewportPage() {
                                     setLightingNodeId((current) => (current === node.id ? null : node.id));
                                 }}
                                 onPanorama={openPanoramaConfig}
+                                onPrevis={sendImageToPrevisAgent}
                                 onViewImage={(node) => setPreviewNodeId(node.id)}
                                 onExtractVideoFrames={openVideoFrameExtractor}
                                 onExtractAudioFromVideo={(node) => void extractAudioFromVideo(node)}
@@ -3487,6 +3512,8 @@ function CanvasViewportPage() {
                                         onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
                                         onFlush={() => flushCanvasStorePersistence()}
                                         onboardingScope={previsOnboardingScope}
+                                        directorPreview={directorPreview}
+                                        onDirectorPreview={onDirectorPreview}
                                     />
                                 </Suspense>
                             ) : null}
@@ -3585,6 +3612,7 @@ function CanvasViewportPage() {
                             onOpen={openAgent}
                             onCollapse={closeAgent}
                             onFocusNode={handleAgentFocusNode}
+                            onDirectorOpen={onDirectorOpen}
                         />
                     </div>
                 </CanvasOverlayLayerProvider>

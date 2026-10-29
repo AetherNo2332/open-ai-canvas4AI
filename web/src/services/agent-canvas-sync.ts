@@ -1,5 +1,6 @@
 import type { AgentEvent } from "@/services/api/agent";
 import type { AgentCanvasPatch } from "@/lib/canvas/agent-canvas-patch";
+import { directorToolAction } from "@/lib/canvas/agent-director-launch";
 
 type Options = {
     canvasId: string;
@@ -11,6 +12,11 @@ type Options = {
     batchMs?: number;
     refreshIntervalMs?: number;
 };
+
+/** director 写入导演场景（previsScenes 与工作站节点）；read 不改画布。 */
+function directorWrite(event: AgentEvent) {
+    return event.type === "tool_completed" && event.payload.toolName === "director" && directorToolAction(event.payload) !== "read";
+}
 
 /**
  * Batch SSE bursts. Committed Agent writes are announced over realtime
@@ -66,7 +72,7 @@ export function createAgentCanvasSync(options: Options) {
                 // 服务端为了控制运行态体积丢掉了这条画布增量：增量链不再完整，
                 // 必须拉全量画布，否则本地会静默漏掉这一步的变更。
                 needsRefresh = true;
-            } else if ((event.type === "tool_completed" && event.payload.toolName === "previs_preview") || event.type === "canvas_updated" || event.type === "canvas_undone" || (!supportsPatches && (event.type === "generation_task_created" || event.type === "tool_failed" || event.type === "run_failed" || (event.type === "tool_completed" && ["canvas_apply_ops", "generate_media"].includes(String(event.payload.toolName)))))) {
+            } else if (directorWrite(event) || event.type === "director_open" || event.type === "canvas_updated" || event.type === "canvas_undone" || (!supportsPatches && (event.type === "generation_task_created" || event.type === "tool_failed" || event.type === "run_failed" || (event.type === "tool_completed" && ["canvas_apply_ops", "generate_media"].includes(String(event.payload.toolName)))))) {
                 needsRefresh = true;
             }
             schedule();

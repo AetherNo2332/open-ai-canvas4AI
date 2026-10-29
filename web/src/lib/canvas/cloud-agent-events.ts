@@ -190,8 +190,9 @@ export function applyAgentEvent(
         setMessages((current) => mergeAgentToolRetry(current, message));
         if (event.type === "tool_failed") return;
     }
-    if (event.type === "previs_task_created") {
-        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", title: "previs_preview", text: text || "后台预演已排队，等待视频与画布节点", detail: { ...payload, eventType: event.type } }));
+    if (event.type === "director_preview_requested") {
+        // director preview 挂起等待浏览器录制；回执 tool_completed/tool_failed 稍后另起一条。
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", title: "director", text: "等待导演台录制预演", detail: { ...payload, eventType: event.type } }));
         return;
     }
     if (event.type === "tool_completed" && payload.toolName === "canvas_apply_ops" && payload.callId) {

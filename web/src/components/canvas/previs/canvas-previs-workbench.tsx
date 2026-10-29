@@ -84,7 +84,7 @@ import { type PrevisTransaction, createPrevisTransaction, installPrevisTerminalL
 import { buildPrevisPathKeyframes, movePrevisPathKeyframe } from "@/lib/canvas/previs/previs-path";
 import { recordPrevisDiagnostic } from "@/lib/canvas/previs/previs-diagnostics-recorder";
 import { shouldReinitializePrevisSession, isPrevisOutputSnapshotCurrent } from "@/lib/canvas/previs/previs-session";
-import { isPrevisPreviewRequestForWorkbench, previsPreviewRequestKey, type PrevisPreviewRequest } from "@/lib/canvas/previs/previs-preview";
+import { isPrevisPreviewRequestForWorkbench, previsPreviewRequestKey } from "@/lib/canvas/previs/previs-preview";
 import { describePrevisSaveStatus, shouldBlockPrevisUnload, resolvePrevisCloseOutcome } from "@/lib/canvas/previs/previs-save-wiring";
 import { usePrevisSaveCoordinator } from "@/components/canvas/previs/use-previs-save-coordinator";
 import "./canvas-previs-workbench.css";
@@ -93,7 +93,8 @@ import { usePrevisWorkbenchStore } from "@/stores/canvas/use-previs-workbench-st
 import { PREVIS_MODES, previsModeCapabilities } from "@/lib/canvas/previs/previs-modes";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
-import type { PrevisCameraMove, PrevisRenderMode, PrevisScene, PrevisSceneOutput, PrevisTransform, PrevisVec3 } from "@/types/previs";
+import type { PrevisApplyResult, PrevisCameraMove, PrevisRenderMode, PrevisScene, PrevisSceneOutput, PrevisTransform, PrevisVec3 } from "@/types/previs";
+import { DirectorPreviewAbandonedError, waitForDirectorViewport, type DirectorPreviewJob } from "@/lib/canvas/agent-director-launch";
 export { cameraMoveOptions, poseOptions, shotSizeOptions } from "./previs-inspectors";
 
 export function CanvasPrevisWorkbench({
@@ -107,6 +108,8 @@ export function CanvasPrevisWorkbench({
     onApply,
     onDeleteImageNode,
     onFlush,
+    directorPreview,
+    onDirectorPreview,
 }: {
     open: boolean;
     canvasId?: string;
@@ -115,9 +118,13 @@ export function CanvasPrevisWorkbench({
     onboardingScope: string;
     onClose: () => void;
     onChange: (scene: PrevisScene) => void;
-    onApply: (output: PrevisSceneOutput) => Promise<void>;
+    onApply: (output: PrevisSceneOutput) => Promise<PrevisApplyResult | void>;
     onDeleteImageNode: (nodeId: string) => void;
     onFlush?: () => void | Promise<void>;
+    /** Agent director preview 请求；工作台在对应场景镜头上录制白膜视频后交给 onDirectorPreview。 */
+    directorPreview?: DirectorPreviewJob | null;
+    /** record 解析为上传后的白膜视频 storageKey；失败抛错，导演台关闭时抛 DirectorPreviewAbandonedError。 */
+    onDirectorPreview?: (job: DirectorPreviewJob, record: () => Promise<string | undefined>) => void;
 }) {
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
@@ -941,10 +948,14 @@ export function CanvasPrevisWorkbench({
         }
     };
 
-    const exportClayVideo = async () => {
+    /** 录制白膜 MP4 并回写画布；返回上传后的视频 storageKey。rethrow 供 Agent 预演拿到失败原因。 */
+    const exportClayVideo = async (options: { rethrow?: boolean } = {}): Promise<string | undefined> => {
         stagedTransaction.end("commit");
         const current = draftRef.current;
-        if (!current || !activeShot || !viewportRef.current || recording) return;
+        if (!current || !activeShot || !viewportRef.current || recording) {
+            if (options.rethrow) throw new Error(recording ? "导演台正在录制其他视频，请稍后重试" : "导演台尚未就绪");
+            return undefined;
+        }
         const expected = { scene: current, shotId: activeShot.id };
         setRecording(true);
         try {
@@ -956,15 +967,22 @@ export function CanvasPrevisWorkbench({
             writeAndPublish(next);
             const beauty = await viewportRef.current.capture("beauty");
             if (!isPrevisOutputSnapshotCurrent(draftRef.current, { scene: next, shotId: expected.shotId })) throw new Error("输出期间场景或镜头已变化，请重试");
-            await onApply({ scene: next, shot: activeShot, prompt: compilePrevisPrompt(next, activeShot), beauty, clayVideo, clayVideoMimeType: clayVideo.type });
+            const applied = await onApply({ scene: next, shot: activeShot, prompt: compilePrevisPrompt(next, activeShot), beauty, clayVideo, clayVideoMimeType: clayVideo.type });
             setLastClayExport({ shotId: expected.shotId, at: Date.now() });
             message.success("白膜 MP4 视频已回写画布");
+            return applied?.clayVideoStorageKey;
         } catch (error) {
             message.error(error instanceof Error ? error.message : "白膜视频导出失败");
+            if (options.rethrow) throw error;
+            return undefined;
         } finally {
             setRecording(false);
         }
     };
+
+    // 预演 effect 只按请求触发；录制函数每次渲染都重建，经 ref 取最新闭包。
+    const exportClayVideoRef = useRef(exportClayVideo);
+    exportClayVideoRef.current = exportClayVideo;
 
     /** 当前镜头深度范围：整段镜头固定一次，深度视频不闪烁。 */
     const resolveShotDepthRange = () => {
@@ -1261,24 +1279,33 @@ export function CanvasPrevisWorkbench({
         setSequencerVisible(true);
     }, [selectedActor, setMode, setPlaying, setSelectedBone, setSelectedLightId, setSelectedObjectId, setSequencerVisible, stagedTransaction]);
 
+    // Agent director preview：先切到请求的镜头，命中当前画布/场景/活动镜头后只录制一次。
     useEffect(() => {
-        const onPreviewRequested = (event: Event) => {
-            const detail = (event as CustomEvent<PrevisPreviewRequest>).detail;
-            if (!isPrevisPreviewRequestForWorkbench({ request: detail, canvasId: effectiveCanvasId, sceneId: draft?.id, activeShotId: activeShot?.id })) return;
-            const requestKey = previsPreviewRequestKey(detail);
-            if (handledPreviewRequestsRef.current.has(requestKey)) return;
-            // 标记发生在 recording 判断之前：录制期间的重复/并发事件也不能在录制结束后再次执行。
-            handledPreviewRequestsRef.current.add(requestKey);
-            if (handledPreviewRequestsRef.current.size > 64) {
-                const oldest = handledPreviewRequestsRef.current.values().next().value;
-                if (typeof oldest === "string") handledPreviewRequestsRef.current.delete(oldest);
-            }
-            if (recording) return;
-            void exportClayVideo();
-        };
-        window.addEventListener("previs:preview-requested", onPreviewRequested);
-        return () => window.removeEventListener("previs:preview-requested", onPreviewRequested);
-    }, [activeShot?.id, draft?.id, effectiveCanvasId, exportClayVideo]);
+        if (!open || !directorPreview || !onDirectorPreview || !draft) return;
+        const request = { canvasId: effectiveCanvasId, sceneId: directorPreview.sceneId, shotId: directorPreview.shotId, previewRequestId: directorPreview.requestId };
+        const requestKey = previsPreviewRequestKey(request);
+        if (handledPreviewRequestsRef.current.has(requestKey)) return;
+        const requestedShotId = directorPreview.shotId;
+        if (draft.id === directorPreview.sceneId && requestedShotId && activeShot?.id !== requestedShotId && draft.shots.some((shot) => shot.id === requestedShotId)) {
+            commit((current) => ({ ...current, activeShotId: requestedShotId }));
+            return;
+        }
+        if (!isPrevisPreviewRequestForWorkbench({ request, canvasId: effectiveCanvasId, sceneId: draft.id, activeShotId: activeShot?.id })) return;
+        // 标记发生在录制之前：录制期间的重复渲染不能再次执行。
+        handledPreviewRequestsRef.current.add(requestKey);
+        if (handledPreviewRequestsRef.current.size > 64) {
+            const oldest = handledPreviewRequestsRef.current.values().next().value;
+            if (typeof oldest === "string") handledPreviewRequestsRef.current.delete(oldest);
+        }
+        onDirectorPreview(directorPreview, async () => {
+            // 刚打开时 WebGL 上下文尚未登记；data-renderer-ready 是视口自己的就绪信号。
+            await waitForDirectorViewport(() => {
+                if (closingRef.current) throw new DirectorPreviewAbandonedError();
+                return Boolean(viewportRef.current && document.querySelector('[data-canvas-previs-workbench] [data-renderer-ready="true"]'));
+            });
+            return exportClayVideoRef.current({ rethrow: true });
+        });
+    }, [activeShot?.id, commit, directorPreview, draft, effectiveCanvasId, onDirectorPreview, open]);
 
     if (!open || !draft || !activeShot) return null;
 

@@ -265,3 +265,6 @@ export type PrevisSceneOutput = {
     clayVideoMimeType?: string;
     depthVideo?: Blob;
 };
+
+/** 回写画布后的上传结果；白膜视频的 storageKey 供 Agent 导演台预演回传。 */
+export type PrevisApplyResult = { clayVideoStorageKey?: string };

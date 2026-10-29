@@ -28,12 +28,7 @@ export const AGENT_TOOL_NAMES = [
     "canvas_list_node_types",
     "canvas_read_batch_table",
     "canvas_read_storyboard",
-    "director_block_scene",
-    "director_design_shot",
-    "director_draw_action",
-    "director_check_continuity",
-    "director_preview_shot",
-    "director_handoff_shot",
+    "director",
     "finish_run",
     "generate_media",
     "model_list",
@@ -108,12 +103,18 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
     canvas_create_character: { summary: ({ pending }) => (pending ? "准备创建角色卡" : "角色卡已创建并保存至角色库和画布"), failureMessage: "创建角色卡失败" },
     task_get: { summary: "已查询任务状态", failureMessage: "查询任务状态失败" },
     canvas_apply_ops: { summary: ({ pending }) => (pending ? "准备更新画布内容" : "画布内容已保存至服务端"), failureMessage: "更新画布内容失败" },
-    director_block_scene: { summary: ({ pending }) => (pending ? "准备搭建导演场景" : "导演场景已创建并保存"), failureMessage: "搭建导演场景失败" },
-    director_design_shot: { summary: ({ pending }) => (pending ? "准备设计镜头" : "镜头设计已保存"), failureMessage: "设计镜头失败" },
-    director_draw_action: { summary: ({ pending }) => (pending ? "准备绘制动作路径" : "动作路径已保存"), failureMessage: "绘制动作路径失败" },
-    director_check_continuity: { summary: ({ pending }) => (pending ? "正在检查接拍连续性" : "已完成接拍连续性检查"), failureMessage: "连续性检查失败" },
-    director_preview_shot: { summary: ({ pending }) => (pending ? "准备提交镜头预演" : "镜头预演任务已提交"), failureMessage: "镜头预演未完成" },
-    director_handoff_shot: { summary: ({ pending }) => (pending ? "正在整理导演交接摘要" : "已生成导演交接摘要"), failureMessage: "生成导演交接摘要失败" },
+    // 导演台唯一工具：文案按 action 区分，读取与写入不能共用一句"已完成"。
+    director: {
+        summary: ({ pending, detail }) => {
+            const action = directorAction(detail);
+            if (action === "read") return pending ? "正在读取导演台场景" : "已读取导演台场景";
+            if (action === "create_scene") return pending ? "准备创建导演场景" : "导演场景已创建，导演台已打开";
+            if (action === "apply_patch") return pending ? "准备修改导演场景" : "导演场景已修改并保存";
+            if (action === "preview") return pending ? "等待导演台录制预演" : "导演台预演已录制并回传";
+            return pending ? "准备操作导演台" : "导演台操作已完成";
+        },
+        failureMessage: ({ detail }) => ({ read: "读取导演台场景失败", create_scene: "创建导演场景失败", apply_patch: "修改导演场景失败", preview: "导演台预演未完成" } as Record<string, string>)[directorAction(detail)] || "导演台操作失败",
+    },
     model_list: { summary: "已获取可用模型", failureMessage: "获取可用模型失败" },
     generate_media: { summary: ({ pending, detail }) => (pending ? "准备创建媒体节点并生成" : field(detail, "eventType") === "tool_completed" ? "生成结果已回写画布节点" : "媒体节点已创建，生成任务已提交"), failureMessage: "媒体生成未完成" },
     // 看图：只有这个工具会把图片字节真的交给模型，所以只有它可以说"画面/看图"。
@@ -146,13 +147,11 @@ const AGENT_CANVAS_READ_TOOLS = new Set([
     "canvas_read_content",
     "canvas_search_nodes",
     "canvas_read_drawing",
-    "director_check_continuity",
-    "director_handoff_shot",
 ]);
 /** 非画布信息的只读工具（模型、任务、技能、偏好）。`skills_load` 是历史事件名，保留兼容。 */
 const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "read", "native_skill_enabled", "canvas_list_assets"]);
 const AGENT_VISION_TOOLS = new Set(["canvas_inspect_image"]);
-const AGENT_CREATE_TOOLS = new Set(["generate_media", "canvas_create_storyboard", "image_annotation_render", "canvas_create_character", "director_block_scene"]);
+const AGENT_CREATE_TOOLS = new Set(["generate_media", "canvas_create_storyboard", "image_annotation_render", "canvas_create_character"]);
 const AGENT_OPERATE_TOOLS = new Set([
     "canvas_apply_ops",
     "canvas_arrange_nodes",
@@ -164,9 +163,6 @@ const AGENT_OPERATE_TOOLS = new Set([
     "canvas_redo",
     "image_layer_split",
     "image_text_detect",
-    "director_design_shot",
-    "director_draw_action",
-    "director_preview_shot",
 ]);
 
 export type AgentToolCategory = "read" | "vision" | "create" | "operate" | "other";
@@ -186,6 +182,11 @@ export function nativeSkillEventPresentation(type: string, payload: unknown) {
     const title = reading ? "read" : "native_skill_enabled";
     const text = `${type === "native_skill_read_failed" ? "技能文件读取失败" : reading ? "已读取技能文件" : "已启用技能"} · ${skillName}${reading && path ? ` · ${path}` : ""}`;
     return { title, text, detail: { eventType: type, toolName: title, skillName, path, version: typeof data.version === "string" ? data.version : "" } };
+}
+
+function directorAction(detail?: unknown) {
+    const action = toolArguments(detail).action ?? record(field(detail, "result")).action;
+    return typeof action === "string" ? action : "";
 }
 
 function toolArguments(detail?: unknown) {
@@ -208,6 +209,11 @@ function toolArguments(detail?: unknown) {
  */
 export function agentToolCategory(toolName: string, detail?: unknown): AgentToolCategory {
     if (AGENT_VISION_TOOLS.has(toolName)) return "vision";
+    if (toolName === "director") {
+        // 与后端 cloudAgentWriteCall 一致：只有 action=read 是只读，参数缺失按写处理。
+        const action = directorAction(detail);
+        return action === "read" ? "read" : action === "create_scene" ? "create" : "operate";
+    }
     if (AGENT_CANVAS_READ_TOOLS.has(toolName) || AGENT_INFO_READ_TOOLS.has(toolName)) return "read";
     if (AGENT_CREATE_TOOLS.has(toolName)) return "create";
     if (toolName === "canvas_apply_ops") {
@@ -223,7 +229,7 @@ export function agentToolCategory(toolName: string, detail?: unknown): AgentTool
 
 export function agentToolCategoryLabel(toolName: string, category: AgentToolCategory): string {
     if (category === "vision") return "查看画面";
-    if (category === "read") return toolName === "canvas_read_content" ? "读取正文" : toolName === "canvas_read_drawing" ? "读取绘图" : toolName === "canvas_search_nodes" ? "搜索节点" : AGENT_CANVAS_READ_TOOLS.has(toolName) ? "读取清单" : "读取信息";
+    if (category === "read") return toolName === "director" ? "读取场景" : toolName === "canvas_read_content" ? "读取正文" : toolName === "canvas_read_drawing" ? "读取绘图" : toolName === "canvas_search_nodes" ? "搜索节点" : AGENT_CANVAS_READ_TOOLS.has(toolName) ? "读取清单" : "读取信息";
     if (category === "create") return "创建节点";
     if (category === "operate") return "修改画布";
     return "其他操作";

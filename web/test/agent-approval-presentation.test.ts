@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
+import { AGENT_APPROVAL_OPERATION_LABELS, agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 
 describe("Agent approval presentation", () => {
     const args = JSON.stringify({ snapshotHash: "private-hash", ops: [
@@ -132,5 +132,35 @@ describe("Agent approval presentation", () => {
         const fallback = agentApprovalPresentation({ toolName: "canvas_bind_asset", arguments: { nodeId: "node", assetId: "asset", private: "private" } });
         expect(fallback.items[0].operation).toBe("bind_asset");
         expect(JSON.stringify(fallback)).not.toContain("private");
+    });
+});
+
+describe("director approval presentation", () => {
+    it("labels server director previews by action in Chinese", () => {
+        const items = [
+            { operation: "previs_scene_create", nodeId: "scene-1", nodeTitle: "雨夜对峙", summary: "修改预演场景《雨夜对峙》" },
+            { operation: "previs_apply_patch", nodeId: "scene-1", nodeTitle: "雨夜对峙", details: ["新增演员《甲》"], summary: "修改预演场景《雨夜对峙》" },
+            { operation: "director_preview", nodeId: "previs-scene-1", summary: "预演场景 scene-1 的镜头 shot-1" },
+        ];
+        const view = agentApprovalPresentation({ toolName: "director", preview: { kind: "director", title: "确认导演台修改", description: "批准后会打开导演台并写入当前画布。", items } });
+        expect(view.source).toBe("server");
+        expect(view.items.map((item) => AGENT_APPROVAL_OPERATION_LABELS[item.operation])).toEqual(["创建场景", "修改场景", "预览"]);
+        expect(view.items[1].nodeTitle).toBe("雨夜对峙");
+    });
+
+    it("falls back to the director action and target when the preview is missing", () => {
+        const read = agentApprovalPresentation({ toolName: "director", arguments: JSON.stringify({ action: "read", sceneId: "scene-1" }) });
+        expect(read.items[0]).toMatchObject({ operation: "director_read" });
+        expect(AGENT_APPROVAL_OPERATION_LABELS[read.items[0].operation]).toBe("读取场景");
+        const create = agentApprovalPresentation({ call: { function: { name: "director", arguments: JSON.stringify({ action: "create_scene", template: "dialogue", title: "雨夜对峙" }) } } });
+        expect(create.title).toBe("确认导演台修改");
+        expect(create.items[0]).toMatchObject({ operation: "previs_scene_create", nodeTitle: "雨夜对峙" });
+        const patch = agentApprovalPresentation({ toolName: "director", arguments: { action: "apply_patch", sceneId: "scene-1", expectedSceneHash: "h", patch: { operations: [{ type: "object_add" }, { type: "camera_update" }] } } });
+        expect(patch.items[0]).toMatchObject({ operation: "previs_apply_patch" });
+        expect(patch.items[0].summary).toContain("2 项");
+        const preview = agentApprovalPresentation({ toolName: "director", arguments: { action: "preview", nodeId: "previs-scene-1", shotId: "shot-2" } });
+        expect(preview.title).toBe("确认导演台预演");
+        expect(preview.items[0]).toMatchObject({ operation: "director_preview", nodeId: "previs-scene-1" });
+        expect(AGENT_APPROVAL_OPERATION_LABELS[preview.items[0].operation]).toBe("预览");
     });
 });
