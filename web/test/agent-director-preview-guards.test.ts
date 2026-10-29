@@ -181,7 +181,7 @@ describe("preview outcome notice", () => {
         expect(directorPreviewOutcomeNotice("submitted")?.level).toBe("success");
         expect(directorPreviewOutcomeNotice("submitted_error")).toEqual({ level: "warning", text: "预演录制失败，已把失败原因告知 Agent" });
         expect(directorPreviewOutcomeNotice("expired")?.level).toBe("warning");
-        expect(directorPreviewOutcomeNotice("abandoned")).toEqual({ level: "info", text: "页面不在前台，未录制导演台预演；Agent 将在超时后收到可重试的提示" });
+        expect(directorPreviewOutcomeNotice("abandoned")).toEqual({ level: "info", text: "未录制导演台预演（页面在后台或导演台已关闭）；Agent 将在超时后收到可重试的提示" });
         expect(directorPreviewOutcomeNotice("skipped")).toBeNull();
     });
 });

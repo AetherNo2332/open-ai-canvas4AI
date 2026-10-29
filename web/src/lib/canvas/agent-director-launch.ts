@@ -273,7 +273,7 @@ export function directorPreviewOutcomeNotice(outcome: DirectorPreviewOutcome): {
     if (outcome === "submitted") return { level: "success", text: "预演视频已回传给 Agent" };
     if (outcome === "submitted_error") return { level: "warning", text: "预演录制失败，已把失败原因告知 Agent" };
     if (outcome === "expired") return { level: "warning", text: "Agent 的预演请求已超时或已结束" };
-    if (outcome === "abandoned") return { level: "info", text: "页面不在前台，未录制导演台预演；Agent 将在超时后收到可重试的提示" };
+    if (outcome === "abandoned") return { level: "info", text: "未录制导演台预演（页面在后台或导演台已关闭）；Agent 将在超时后收到可重试的提示" };
     return null;
 }
 
