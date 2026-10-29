@@ -15,6 +15,23 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] 后台「Agent（beta）」：调度配置、Worker 管理、联网搜索与默认技能可读写；系统性能页不再显示上游 Agent 服务卡片。
 - [ ] PostgreSQL：全新库升级到 Schema 75；已有上游 v74 库升级后旧 Pi 会话表改名留存，Agent 新表齐全。
 
+## 上游同步整合：共同编辑、导演工具、媒体版本与界面保留
+
+- 已实现：浏览器写与 Agent 写共用同一修订序列。Agent 写入经命令层校验后由 `SaveAgentCanvasWrite` 落库；删除项目、画布关联/解除关联同事务投影命令事件；编辑租约浏览器与 Agent 共用一套判定，Agent 改用户正在编辑的节点返回可重试的 `node_locked`。
+- 已实现：Agent 作为 realtime 在线参与者，编辑中的节点显示标记；Agent 写入后按 `canvas_changed` 增量合并，不再整份刷新；realtime 断开时回退整份刷新。`POST /api/agent/runs/:id/undo` 撤销单次运行的全部画布修改，他人后续改过的对象返回 409 `agent_undo_conflict`。
+- 已实现：`previs_*` / `director_*` 合并为单一 `director` 工具（read / create_scene / apply_patch / preview），按审批模式执行；写入与预演前发 `director_open`，前端自动打开上游预演台，预演由浏览器录制后经 `POST /api/agent/runs/:id/director-preview` 回传，超时（`CANVAS_AGENT_DIRECTOR_PREVIEW_TIMEOUT`，默认 120s）回执 `director_viewport_unavailable`。多标签页只由可见且拿到锁的一个标签页录制。v76 把存量排队的服务端 `previs_render` 任务标为失败。
+- 已实现：媒体版本改为上游设计，存于节点 `metadata.mediaVersions`（最多 30 条）；v77 把旧表就绪版本迁入节点并沿用原 ID，旧表只读。Agent 读取返回全部版本与 `generating`，`use_media_version` 切换、`extract_media_version` 取出为独立节点；原位生成成功自动采用，期间用户手动切换则新结果只进历史。工具合同 `cloud-agent-tools/v16`。
+- 已实现：素材删除检查 Agent 画布命令历史与任务输入引用（「画布当前内容」/「Agent 画布历史」），彻底删除同时清理这些索引；`submission_uncertain` 任务计为活跃。
+- 已实现（前端保留）：Agent 声明式引用字段与连线双向同步；摄影机机位产品图与滚轮切档，上游机位/镜头 id 读取时映射到现有目录；工作台侧栏展开收起动效；分镜表恢复本仓库列定义、全屏高度与可见行渲染。
+- [ ] 共同编辑：两个浏览器窗口加 Agent 同时编辑同一画布，Agent 正在改的节点有标记；用户正在输入的节点 Agent 不覆盖；断网重连后 Agent 的修改补齐；「撤销本次修改」恢复 Agent 改动，用户之后改过的节点提示冲突。
+- [ ] 第二个标签页往另一标签页正在编辑的节点连线：保存等待租约释放后写入，不丢修改。
+- [ ] 导演台：auto 与 request_approval 下让 Agent 建场景、改场景、预演，导演台自动打开、录制结果回到 Agent；关闭导演台或标签页在后台时预演超时返回可纠正回执，运行不卡住；图片工具栏「生成预演台」可用。
+- [ ] 媒体版本：在原节点生成新版本，生成中旧作品可用、成功后自动采用；生成中手动切换历史版本后新结果只进历史；Agent 读取与切换版本、取出为独立节点；旧画布升级后历史版本可预览与切换。
+- [ ] 摄影机：上游时期保存的机位（如 ARRI Alexa Mini LF、Cooke S7/i）打开对话框显示映射后的机型，生成不报错；滚轮切档不缩放画布。
+- [ ] 侧栏：320px 与 680px 下抽屉宽度与 Esc 收起、焦点返回；开启减少动态效果后无动画；画布列表与素材页展开收起不卡顿。
+- [ ] 分镜表：200 行平移与松手不卡顿；滚动中正在输入的单元格不丢焦点与输入法候选；全屏打开、关闭重开、窗口缩放后无下方留白。
+- [ ] PostgreSQL：已有 v75 库升级到 v77；v77 的 5 个 PostgreSQL 迁移测试在 CI 中实际运行（PASS 而非 SKIP）。
+
 ## 画布同步：已应用目标值幂等收敛与瞬时并发重放
 
 - 已实现（后端）：`applyCanvasOperations` 对当前值已等于目标值的写入按已应用处理，不再因旧基线整笔返回 `canvas_field_conflict`。覆盖 `patch_node` 各补丁路径（不再限于任务围栏请求）、`set_field`、`update_connection`，以及同内容重复的 `create_node` / `create_connection`。`remove_node`、`update_connection`、`remove_connection` 的整对象基线忽略节点 `updatedAt`。只在 `before` 中的断言、第三值和内容不同的同 ID 对象仍冲突。

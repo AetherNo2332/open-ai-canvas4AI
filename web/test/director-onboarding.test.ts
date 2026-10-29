@@ -33,7 +33,8 @@ function progressAt(stepId: PrevisOnboardingProgress["stepId"], status: PrevisOn
  * （比如「不是 role="dialog"」这句话本身）不该让断言把「提到」误判成「使用」。
  */
 function stripComments(source: string) {
-    return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    // 字符串和模板字面量原样保留，否则 accept="image/*,…" 里的 /* 会被当成注释开头，吞掉后面的代码。
+    return source.replace(/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/.*$/gm, (match) => (match.startsWith("/") ? "" : match));
 }
 
 /** 单 scope 的内存存储接缝。生产路径由 localForageStorageForScope 加 `:user:<scope>`，这里只验状态流转。 */

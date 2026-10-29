@@ -191,7 +191,11 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 内部资源保护与维护快照 | `backend/internal/canvas/canvas_history.go`、`repair_resources.go`、`backend/internal/repository/canvas_history.go`；仅供资源完整性维护和审计，不提供用户历史树、预览或恢复入口 |
 | Patch 历史、生成任务和重试控制 | `web/src/pages/canvas/use-canvas-history.ts`、`use-canvas-generation.ts`、`use-canvas-generation-executor.ts`、`use-canvas-generation-retry.ts` |
 | 文本、图片、视频和音频生成执行 | `web/src/pages/canvas/canvas-*-generation-executor*.ts` |
-| 云端 Agent、助手面板、导演台和全局快捷键控制 | `web/src/components/canvas/canvas-cloud-agent-panel.tsx`、`web/src/pages/canvas/use-canvas-assistant-visibility.ts`、`use-canvas-director.ts`、`use-canvas-keyboard.ts`；画布操作契约在 `web/src/lib/canvas/canvas-operation-contract.ts` |
+| 云端 Agent、助手面板和全局快捷键控制 | `web/src/components/canvas/canvas-cloud-agent-panel.tsx`、`web/src/pages/canvas/use-canvas-assistant-visibility.ts`、`use-canvas-keyboard.ts`；画布操作契约在 `web/src/lib/canvas/canvas-operation-contract.ts` |
+| Agent 共同编辑：在线状态、增量合并与撤销 | 后端 `backend/internal/app/cloud_agent_presence.go` 发布 Agent 在线与编辑节点，`backend/internal/app/cloud_agent_undo.go` 撤销单次运行；前端 `web/src/components/canvas/canvas-agent-presence.tsx` 显示 Agent 正在编辑的节点，`web/src/services/agent-canvas-sync.ts` 在 realtime `canvas_changed` 后增量合并 |
+| Agent 导演工具与自动打开导演台 | 后端 `backend/internal/app/cloud_agent_director_tool.go`（单一 `director` 工具、审批门控、预演等待与回传）；前端 `web/src/lib/canvas/agent-director-launch.ts`、`web/src/pages/canvas/use-agent-director-launch.ts` 处理 `director_open` 与预演回传 |
+| 素材引用字段与连线同步 | `web/src/lib/canvas/canvas-reference-fields.ts`：`referenceFieldsVersion = 1` 的画布中把 `inputBindings` / `storyboard.referenceNodeIds` 投影为连线，用户连线、删线时同步字段 |
+| 媒体版本历史 | 前端 `web/src/lib/canvas/canvas-media-versions.ts`；后端 `backend/internal/canvas/mediaversions/history.go` 实现同一规则（共享夹具 `testdata/parity.json` 校验一致），任务回写与 Agent 工具都读写节点 `metadata.mediaVersions` |
 | 选择拖拽与连线控制 | `web/src/pages/canvas/use-canvas-selection-controller.ts`、`use-canvas-connection-controller.ts` |
 | 上传、素材插入、媒体工具和短剧编排 | `web/src/pages/canvas/use-canvas-upload.ts`、`use-canvas-timeline-asset-insert.ts`、`use-canvas-media-tools.ts`、`use-canvas-storyboard.ts`、`use-canvas-generation-batches.ts`、`use-canvas-short-drama.ts` |
 | 节点操作、节点编辑和视口导航 | `web/src/pages/canvas/use-canvas-node-operations.ts`、`use-canvas-node-editor.ts`、`use-canvas-viewport-controller.ts` |
@@ -211,8 +215,10 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 批量任务输入冻结 | `web/src/lib/canvas/canvas-batch-table-state.ts` 准备任务；`canvas-batch-input-snapshot.ts` 保存提示词及最小资源引用快照；`web/src/pages/canvas/use-canvas-generation-batches.ts` 持久化队列与重试，`use-canvas-generation-executor.ts` 以快照构建本次输入，不读取排队期间变更后的源图 |
 | 生成 Composer | `web/src/components/canvas/canvas-node-prompt-panel.tsx`、`canvas-config-composer.tsx` |
 | 风格中心、用户风格编辑与项目快照 | `web/src/components/canvas/canvas-style-picker-modal.tsx`、`style-profile-editor-modal.tsx`、`style-asset-binding-modal.tsx`、`web/src/lib/canvas/style-profile.ts`、`web/src/services/api/style-profiles.ts` |
-| 分镜脚本节点 | `web/src/components/canvas/canvas-script-node.tsx` |
-| 3D 导演台 | `web/src/components/canvas/director/` |
+| 分镜脚本节点 | `web/src/components/canvas/canvas-script-node.tsx`；列定义 `web/src/lib/canvas/canvas-storyboard-columns.ts`（与后端 `capability/storyboard_columns.go` 一致），可见行窗口 `canvas-storyboard-layout.ts` |
+| 导演台（预演工作台） | `web/src/components/canvas/previs/`、`web/src/lib/canvas/previs/` |
+| 摄影机控制与机位产品图 | `web/src/components/canvas/canvas-node-camera-dialog.tsx`、`web/src/lib/canvas/camera-prompt-library.ts`（含上游机位 id 别名）、`camera-wheel.ts`；产品图在 `web/public/camera-controls/` |
+| 工作台侧栏动效 | `web/src/components/layout/workspace-sidebar-motion.tsx`、`workspace-sidebar-motion.css`，挂载在 `app-top-nav.tsx` |
 | 节点生成上下文 | `web/src/components/canvas/canvas-node-generation.ts` |
 | 布局和连线算法 | `web/src/lib/canvas/canvas-layout.ts`、`canvas-frame.ts` |
 | 任务结果准备与按节点提交 | `web/src/lib/canvas/canvas-generation-task-sync.ts`、`canvas-generation-result.ts`；持久化协调在 `web/src/services/canvas-generation-consumer.ts` |

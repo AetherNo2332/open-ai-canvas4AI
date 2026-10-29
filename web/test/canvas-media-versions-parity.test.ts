@@ -4,13 +4,11 @@ import type { CanvasNodeData } from "../src/types/canvas";
 import parity from "../../backend/internal/canvas/mediaversions/testdata/parity.json";
 
 // 与 Go 的 TestMediaVersionParity 读同一份夹具；这里调用真实的上游函数，夹具的 expected 必须由它们得出。
+// bun 的 mock.module 对同一进程里的其他测试文件也生效：夹具 id 用完后退回真实 nanoid，不影响别的测试。
+const realNanoid = (await import("nanoid")).nanoid;
 const ids: string[] = [];
 mock.module("nanoid", () => ({
-    nanoid: () => {
-        const id = ids.shift();
-        if (!id) throw new Error("fixture ran out of version ids");
-        return id;
-    },
+    nanoid: (size?: number) => ids.shift() ?? realNanoid(size),
 }));
 
 const { adoptMediaVersion, createNodeFromMediaVersion, currentMediaVersion, mediaVersionAdoptBlock, recordReplacedMediaVersion } = await import("../src/lib/canvas/canvas-media-versions");
