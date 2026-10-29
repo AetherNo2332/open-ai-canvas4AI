@@ -96,6 +96,23 @@ describe("changed-file formatting gate", () => {
         await expect(repo.check({ baseSha: "0".repeat(40) })).rejects.toThrow("new.ts");
     });
 
+    test("files already unformatted on a merged branch are legacy", async () => {
+        const repo = fixture({ "own.ts": "const value = 1;\n" });
+        const main = repo.git("rev-parse", "--abbrev-ref", "HEAD");
+        repo.git("checkout", "-qb", "side");
+        repo.write("merged.ts", "const value=1;\n");
+        repo.commit();
+        repo.git("checkout", "-q", main);
+        repo.git("-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", "merge side", "side");
+        repo.write("merged.ts", "const value=2;\n");
+        repo.commit();
+        await repo.check();
+        expect(repo.messages).toContain("Skipping legacy unformatted file: merged.ts");
+        repo.write("own.ts", "const value=2;\n");
+        repo.commit();
+        await expect(repo.check()).rejects.toThrow("own.ts");
+    });
+
     test("deletions do not attempt to read missing files", async () => {
         const repo = fixture({ "deleted.ts": "const value = 1;\n" });
         repo.git("rm", "web/deleted.ts");

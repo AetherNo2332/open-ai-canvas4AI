@@ -29,7 +29,15 @@ export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = pr
         .split("\0")
         .filter((file) => /\.(css|html|json|js|jsx|md|mdx|mjs|cjs|ts|tsx|yaml|yml)$/.test(file));
     const prefix = git(["rev-parse", "--show-prefix"]).trim();
-    const previousFiles = new Set(base ? git(["ls-tree", "-r", "--name-only", "-z", base, "--", "."]).split("\0") : []);
+    // 合并进来的分支（如上游同步）带入的历史格式问题同样按旧文件处理：
+    // 只取首父链上合并提交的其余父提交，避免展开被合并分支内部的全部历史。
+    const legacyRefs = base ? [base] : [];
+    if (base) {
+        for (const line of git(["rev-list", "--merges", "--first-parent", "--parents", `${base}..${head}`]).split("\n")) {
+            legacyRefs.push(...line.trim().split(" ").slice(2).filter(Boolean));
+        }
+    }
+    const refFiles = new Map(legacyRefs.map((ref) => [ref, new Set(git(["ls-tree", "-r", "--name-only", "-z", ref, "--", "."]).split("\0"))]));
     const failures = [];
     for (const file of files) {
         const filepath = path.join(cwd, file);
@@ -37,8 +45,15 @@ export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = pr
         if (info.ignored) continue;
         const options = { ...(await prettier.resolveConfig(filepath)), filepath };
         // 只允许明确的历史格式问题跳过；语法、Git、文件读取错误全部向上抛出。
-        const previous = previousFiles.has(file) ? git(["show", `${base}:${prefix}${file}`]) : null;
-        if (previous !== null && !(await prettier.check(previous, options))) {
+        let legacy = false;
+        for (const ref of legacyRefs) {
+            if (!refFiles.get(ref).has(file)) continue;
+            if (!(await prettier.check(git(["show", `${ref}:${prefix}${file}`]), options))) {
+                legacy = true;
+                break;
+            }
+        }
+        if (legacy) {
             log(`Skipping legacy unformatted file: ${file}`);
             continue;
         }

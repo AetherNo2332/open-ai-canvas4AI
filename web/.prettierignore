@@ -12,3 +12,5 @@ bun.lock
 *.gif
 *.webp
 *.svg
+# 上游误提交的 globals.css 拆分副本，未被引用
+src/styles/globals-[0-9].css
