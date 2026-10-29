@@ -108,7 +108,7 @@ describe("batch image input snapshot", () => {
     test("相机参数和直接生成共用提示词准备，不在执行时重复拼入", () => {
         const source = input();
         const target = output();
-        target.metadata!.cameraControl = { enabled: true, camera: "arri_alexa_mini_lf", lens: "cooke_s7i", focalLength: 50, aperture: 2.8 };
+        target.metadata!.cameraControl = { enabled: true, camera: "arri_alexa_65", lens: "cooke_s4", focalLength: 50, aperture: 2.8 };
         const snapshot = createCanvasBatchInputSnapshot(target, [source, target], connections, []);
         expect(snapshot.context.prompt).toBe(canvasGenerationInputPrompt(target, "image", "保留人物身份"));
         expect(snapshot.context.prompt).not.toBe(snapshot.prompt);
