@@ -1,8 +1,10 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react";
+import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import { BannerAnnouncementsSlider } from "@/components/layout/banner-announcements-slider";
 import { ModelSetupGuide } from "@/components/layout/model-setup-guide";
+import { workspaceSidebarTransition } from "@/components/layout/workspace-sidebar-motion";
 import { WorkspaceSidebarNav } from "@/components/layout/workspace-sidebar-nav";
 import { readWorkspaceSidebarCollapsed, writeWorkspaceSidebarCollapsed } from "@/components/layout/workspace-sidebar-state";
 import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
@@ -11,6 +13,16 @@ import { WorkspaceStorageLimitNotice } from "@/components/layout/workspace-stora
 import { WorkspaceWalletHost } from "@/components/layout/workspace-wallet-modal";
 import { cn } from "@/lib/utils";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
+import { useAppearanceStore } from "@/stores/use-appearance-store";
+import "./workspace-sidebar-motion.css";
+
+const mobileQuery = "(max-width: 1023px)";
+const subscribeViewport = (callback: () => void) => {
+    const query = window.matchMedia(mobileQuery);
+    query.addEventListener("change", callback);
+    return () => query.removeEventListener("change", callback);
+};
+const getMobileViewport = () => window.matchMedia(mobileQuery).matches;
 
 const WorkspaceCommandPalette = lazy(() => import("@/components/layout/workspace-command-palette").then((module) => ({ default: module.WorkspaceCommandPalette })));
 
@@ -20,16 +32,38 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
     const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(readWorkspaceSidebarCollapsed);
     const [paletteOpen, setPaletteOpen] = useState(false);
+    const mobileViewport = useSyncExternalStore(subscribeViewport, getMobileViewport, () => false);
+    const reducedMotion = useReducedMotion();
+    // 侧栏宽度/位移动画时长跟随当前皮肤的常规过渡；减少动态效果时直接到终态。
+    const motionNormal = useAppearanceStore((state) => state.appearance.activeSkin.tokens.components.motionNormal);
+    const sidebarRef = useRef<HTMLElement>(null);
+    const sidebarCollapsed = !mobileViewport && desktopSidebarCollapsed;
+    const sidebarHidden = mobileViewport && !mobileSidebarExpanded;
+    const sidebarTransition = workspaceSidebarTransition(reducedMotion, motionNormal);
+    const closeMobileSidebar = () => {
+        // 关闭前把焦点交还给顶栏菜单按钮，避免焦点留在已 inert 的侧栏里。
+        if (sidebarRef.current?.contains(document.activeElement)) {
+            document.querySelector<HTMLButtonElement>(".app-workspace-mobile-menu")?.focus();
+        }
+        setMobileSidebarExpanded(false);
+    };
+
+    useEffect(() => {
+        if (!mobileViewport || !mobileSidebarExpanded) return;
+        const handleEscape = (event: KeyboardEvent) => {
+            if (event.key === "Escape") closeMobileSidebar();
+        };
+        window.addEventListener("keydown", handleEscape);
+        return () => window.removeEventListener("keydown", handleEscape);
+    }, [mobileViewport, mobileSidebarExpanded]);
 
     const hideChrome = pathname.startsWith("/admin") || /^\/canvas\/[^/]+/.test(pathname);
     const showGlobalTopBar = !hideChrome;
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);
     const creationWorkspace = pathname === "/" || pathname === "/create";
 
-    const isMobileViewport = () => window.innerWidth < 1024;
-
     const toggleSidebar = () => {
-        if (isMobileViewport()) {
+        if (mobileViewport) {
             setMobileSidebarExpanded((current) => !current);
             return;
         }
@@ -51,7 +85,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     };
 
     const handleNavClick = () => {
-        if (isMobileViewport()) setMobileSidebarExpanded(false);
+        if (mobileViewport) closeMobileSidebar();
     };
 
     // ⌘K / Ctrl+K 全局呼出搜索面板。
@@ -81,31 +115,53 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
         <>
             <WorkspaceTopBarExtensionProvider>
                 <div className={cn("app-workspace-shell flex h-dvh min-h-0 w-full flex-col overflow-hidden", spatialWorkbench && "is-spatial", creationWorkspace && "is-creation-workspace")}>
-                    {!hideChrome && mobileSidebarExpanded ? <button type="button" className="app-workspace-sidebar-scrim lg:hidden" aria-label="收起侧栏" onClick={() => setMobileSidebarExpanded(false)} /> : null}
+                    <AnimatePresence initial={false}>
+                        {!hideChrome && mobileViewport && mobileSidebarExpanded ? (
+                            <motion.button
+                                key="sidebar-scrim"
+                                type="button"
+                                className="app-workspace-sidebar-scrim lg:hidden"
+                                aria-label="收起侧栏"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                transition={sidebarTransition}
+                                onClick={closeMobileSidebar}
+                            />
+                        ) : null}
+                    </AnimatePresence>
 
                     {showGlobalTopBar ? <BannerAnnouncementsSlider /> : null}
 
                     <div className="app-workspace-main-row flex min-h-0 min-w-0 flex-1 overflow-hidden">
                         {!hideChrome ? (
-                            <aside
-                                className={cn(
-                                    "app-workspace-sidebar flex h-full shrink-0 flex-col overflow-hidden",
-                                    mobileSidebarExpanded && "is-mobile-expanded",
-                                    desktopSidebarCollapsed && "is-collapsed",
-                                )}
+                            <motion.aside
+                                ref={sidebarRef}
+                                id="workspace-sidebar"
+                                data-motion-sidebar
+                                aria-label="工作台导航"
+                                aria-hidden={sidebarHidden || undefined}
+                                inert={sidebarHidden}
+                                initial={false}
+                                animate={{ "--sidebar-expansion": sidebarCollapsed ? 0 : 1, x: sidebarHidden ? "-100%" : "0%" }}
+                                transition={sidebarTransition}
+                                style={{ "--sidebar-expansion": sidebarCollapsed ? 0 : 1 } as CSSProperties}
+                                className={cn("app-workspace-sidebar flex h-full shrink-0 flex-col overflow-hidden", mobileSidebarExpanded && "is-mobile-expanded", sidebarCollapsed && "is-collapsed")}
                             >
-                                <WorkspaceSidebarNav
-                                    collapsed={desktopSidebarCollapsed}
-                                    onNavigate={handleNavClick}
-                                    onOpenSearch={() => setPaletteOpen(true)}
-                                    onExpand={expandDesktopSidebar}
-                                    onCollapse={collapseDesktopSidebar}
-                                />
-                            </aside>
+                                <MotionConfig reducedMotion="user" transition={sidebarTransition}>
+                                    <WorkspaceSidebarNav
+                                        collapsed={sidebarCollapsed}
+                                        onNavigate={handleNavClick}
+                                        onOpenSearch={() => setPaletteOpen(true)}
+                                        onExpand={expandDesktopSidebar}
+                                        onCollapse={mobileViewport ? closeMobileSidebar : collapseDesktopSidebar}
+                                    />
+                                </MotionConfig>
+                            </motion.aside>
                         ) : null}
 
                         <div className="app-workspace-stage relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                            {showGlobalTopBar ? <WorkspaceTopBar sidebarOpen={isMobileViewport() ? mobileSidebarExpanded : !desktopSidebarCollapsed} onToggleSidebar={toggleSidebar} /> : null}
+                            {showGlobalTopBar ? <WorkspaceTopBar sidebarOpen={mobileViewport ? mobileSidebarExpanded : !desktopSidebarCollapsed} onToggleSidebar={toggleSidebar} /> : null}
                             <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
                         </div>
                     </div>

@@ -18,6 +18,7 @@ import { WorkspaceAccountCard } from "./workspace-account-card";
 import { WorkspaceSidebarCheckin } from "./workspace-sidebar-checkin";
 import { WorkspaceSidebarStorageMeter } from "./workspace-sidebar-storage-meter";
 import { openWorkspaceWallet } from "@/lib/workspace-wallet";
+import { WorkspaceSidebarDisclosure, WorkspaceSidebarLabel } from "./workspace-sidebar-motion";
 
 export type WorkspaceNavItem = {
     id: string;
@@ -76,14 +77,35 @@ function WorkspaceSidebarProfile({ collapsed, user, onExpand, onCollapse }: { co
     const [menuOpen, setMenuOpen] = useState(false);
     const profileName = user?.displayName || user?.username || "未登录";
 
+    // 折叠/展开按钮声明它控制的侧栏与当前展开状态；游客模式同样需要，否则收起后无法再展开。
+    const toggle = (
+        <button
+            type="button"
+            className={cn("app-workspace-sidebar-collapse-toggle", collapsed && "is-collapsed")}
+            aria-label={collapsed ? "展开侧栏菜单" : "收起侧栏"}
+            title={collapsed ? "展开侧栏菜单" : "收起侧栏"}
+            aria-expanded={!collapsed}
+            aria-controls="workspace-sidebar"
+            onClick={collapsed ? onExpand : onCollapse}
+        >
+            {collapsed ? <PanelLeftOpen className="size-4" strokeWidth={1.7} /> : <PanelLeftClose className="size-4" strokeWidth={1.7} />}
+        </button>
+    );
+
     if (!user) {
         return (
-            <Link to="/login" className={cn("app-workspace-sidebar-profile", collapsed && "is-collapsed")} aria-label="登录" title="登录">
-                <span className="app-workspace-sidebar-profile-avatar">
-                    <CircleUserRound aria-hidden />
-                </span>
-                {!collapsed ? <span>游客模式</span> : null}
-            </Link>
+            <div className={cn("app-workspace-sidebar-account", collapsed && "is-collapsed")}>
+                <div className={cn("app-workspace-sidebar-profile-row", collapsed && "is-collapsed")}>
+                    <Link to="/login" className={cn("app-workspace-sidebar-profile", collapsed && "is-collapsed")} aria-label="登录" title="登录">
+                        <span className="app-workspace-sidebar-profile-avatar">
+                            <CircleUserRound aria-hidden />
+                        </span>
+                        {!collapsed ? <span>游客模式</span> : null}
+                    </Link>
+                    {!collapsed ? toggle : null}
+                </div>
+                {collapsed ? toggle : null}
+            </div>
         );
     }
 
@@ -113,17 +135,9 @@ function WorkspaceSidebarProfile({ collapsed, user, onExpand, onCollapse }: { co
                         ) : null}
                     </button>
                 </Popover>
-                {!collapsed ? (
-                    <button type="button" className="app-workspace-sidebar-collapse-toggle" aria-label="收起侧栏" title="收起侧栏" onClick={onCollapse}>
-                        <PanelLeftClose className="size-4" strokeWidth={1.7} />
-                    </button>
-                ) : null}
+                {!collapsed ? toggle : null}
             </div>
-            {collapsed ? (
-                <button type="button" className="app-workspace-sidebar-collapse-toggle is-collapsed" aria-label="展开侧栏菜单" title="展开侧栏菜单" onClick={onExpand}>
-                    <PanelLeftOpen className="size-4" strokeWidth={1.7} />
-                </button>
-            ) : null}
+            {collapsed ? toggle : null}
         </div>
     );
 }
@@ -208,12 +222,16 @@ function NavItem({
                 ) : (
                     <span className="size-1.5 shrink-0 rounded-full bg-current opacity-40" aria-hidden />
                 )}
-                <span className="app-workspace-nav-title truncate">{collapsed ? collapsedTitle : item.title}</span>
+                <WorkspaceSidebarLabel identity={`${item.id}-${collapsed}`}>{collapsed ? collapsedTitle : item.title}</WorkspaceSidebarLabel>
             </span>
             <span className="app-workspace-nav-meta flex shrink-0 items-center gap-2">
                 {item.shortcut ? <Kbd className="hidden group-hover:inline-flex">{item.shortcut}</Kbd> : null}
                 {item.badge !== undefined ? <span className="flex min-w-5 items-center justify-center rounded-full bg-primary/10 px-2 py-0.5 text-[var(--fs-tiny)] font-medium tabular-nums text-primary">{item.badge}</span> : null}
-                {hasChildren ? <ChevronRight className={cn("size-3.5 shrink-0 text-foreground/40 transition-transform duration-200", isOpen && "rotate-90")} strokeWidth={2} /> : null}
+                {hasChildren ? (
+                    <motion.span className="inline-flex" animate={{ rotate: isOpen ? 90 : 0 }}>
+                        <ChevronRight className="size-3.5 shrink-0 text-foreground/40" strokeWidth={2} />
+                    </motion.span>
+                ) : null}
             </span>
         </>
     );
@@ -252,7 +270,8 @@ function NavItem({
                     className={rowClassName}
                     data-nav-id={item.id}
                     style={rowStyle}
-                    aria-label={collapsed ? item.title : undefined}
+                    aria-current={isActive ? "page" : undefined}
+                    aria-label={item.title}
                     title={collapsed ? item.title : undefined}
                     onClick={handleClick}
                     onFocus={() => preloadWorkspaceRoute(linkTo)}
@@ -279,13 +298,13 @@ function NavItem({
             )}
 
             {hasChildren && !collapsed ? (
-                <div className={cn("grid transition-[grid-template-rows,opacity] duration-200 ease-in-out", isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+                <WorkspaceSidebarDisclosure open={isOpen}>
                     <div className="relative flex min-h-0 flex-col gap-0.5 overflow-hidden pt-0.5">
                         {item.children!.map((child) => (
                             <NavItem key={child.id} item={child} activeId={activeId} onSelect={onSelect} onOpenSearch={onOpenSearch} onLogout={onLogout} level={level + 1} collapsed={false} />
                         ))}
                     </div>
-                </div>
+                </WorkspaceSidebarDisclosure>
             ) : null}
         </div>
     );
@@ -321,11 +340,13 @@ function NavGroup({ group, activeId, onNavigate, onOpenSearch, onLogout, collaps
         <div className="app-workspace-nav-group flex shrink-0 flex-col" data-nav-group-heading={group.heading}>
             <button type="button" onClick={() => setIsOpen((open) => !open)} aria-expanded={isOpen} className="app-workspace-nav-group-toggle select-none">
                 <span className="app-workspace-nav-group-label">{group.heading}</span>
-                <ChevronRight className={cn("size-3.5 shrink-0 text-foreground/35 transition-transform duration-200", isOpen && "rotate-90")} strokeWidth={2} />
+                <motion.span className="inline-flex" animate={{ rotate: isOpen ? 90 : 0 }}>
+                    <ChevronRight className="size-3.5 shrink-0 text-foreground/35" strokeWidth={2} />
+                </motion.span>
             </button>
-            <div className={cn("grid transition-[grid-template-rows,opacity] duration-200 ease-in-out", isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0")}>
+            <WorkspaceSidebarDisclosure open={isOpen}>
                 <div className="min-h-0 overflow-hidden pt-0.5">{content}</div>
-            </div>
+            </WorkspaceSidebarDisclosure>
         </div>
     );
 }
