@@ -249,6 +249,13 @@ func checkMigrateMediaVersionsKeepsCurrentWhenTrimming(t *testing.T, db *gorm.DB
 	if number := meta["mediaVersions"].([]any)[29].(map[string]any)["number"]; number != float64(35) {
 		t.Fatalf("trimming renumbered versions: last number = %v", number)
 	}
+	before := f.project(t)
+	if err := rerunMediaVersionsMigration(db); err != nil {
+		t.Fatal(err)
+	}
+	if after := f.project(t); after.Revision != before.Revision || after.PayloadJSON != before.PayloadJSON {
+		t.Fatalf("rerun re-added trimmed versions: %v", mediaVersionIDs(f.metadata(t, "n1")))
+	}
 }
 
 func checkMigrateMediaVersionsIdempotent(t *testing.T, db *gorm.DB) {

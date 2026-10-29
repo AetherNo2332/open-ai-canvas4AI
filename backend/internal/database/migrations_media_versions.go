@@ -171,9 +171,14 @@ func mergeMediaVersions(node map[string]any, rows []model.CanvasMediaVersion) (b
 	original, _ := json.Marshal(meta)
 	existing, _ := meta["mediaVersions"].([]any)
 	versions := append([]any(nil), existing...)
+	rowIDs := map[string]bool{}
+	for _, row := range rows {
+		rowIDs[row.ID] = true
+	}
 	ids := map[string]bool{}
 	byResource := map[string]string{}
-	maxNumber := 0.0
+	// 编号基数只看不是由这些行迁出的版本，重复执行时迁移版本拿到相同编号，裁剪结果也相同。
+	base := 0.0
 	for _, raw := range versions {
 		version, _ := raw.(map[string]any)
 		id, _ := version["id"].(string)
@@ -182,12 +187,15 @@ func mergeMediaVersions(node map[string]any, rows []model.CanvasMediaVersion) (b
 		if resource := resourceOf(media); resource != "" && byResource[resource] == "" {
 			byResource[resource] = id
 		}
-		maxNumber = max(maxNumber, numberOf(version["number"]))
+		if !rowIDs[id] {
+			base = max(base, numberOf(version["number"]))
+		}
 	}
 	alias := map[string]string{}
-	added := 0
+	rank := 0
 	for _, row := range rows {
 		if ids[row.ID] {
+			rank++
 			continue
 		}
 		version, err := migratedMediaVersion(row)
@@ -199,8 +207,8 @@ func mergeMediaVersions(node map[string]any, rows []model.CanvasMediaVersion) (b
 			alias[row.ID] = byResource[resource]
 			continue
 		}
-		added++
-		version["number"] = maxNumber + float64(added)
+		rank++
+		version["number"] = base + float64(rank)
 		versions = append(versions, version)
 		ids[row.ID] = true
 		if resource != "" {
