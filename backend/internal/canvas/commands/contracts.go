@@ -26,6 +26,11 @@ type Snapshot struct {
 	// 时填充：客户端据此区分“需要一次性迁移”和“已规范化”。nil 表示无需迁移。
 	ReferenceMigration *references.MigrationPreview `json:"referenceMigration,omitempty"`
 }
+
+// ActorKindAgent marks events written by the Agent command layer; projected
+// browser writes leave actorKind empty.
+const ActorKindAgent = "agent"
+
 type Receipt struct {
 	Protocol          int              `json:"protocolVersion"`
 	CanvasID          string           `json:"canvasId"`
@@ -33,6 +38,7 @@ type Receipt struct {
 	OperationID       string           `json:"operationId"`
 	ClientID          string           `json:"clientId"`
 	ActorID           string           `json:"actorId"`
+	ActorKind         string           `json:"actorKind,omitempty"`
 	Revision          int64            `json:"revision"`
 	EventSeq          int64            `json:"eventSeq"`
 	Changes           ChangeSet        `json:"changes"`

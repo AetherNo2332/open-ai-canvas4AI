@@ -20,11 +20,10 @@ var canvasOptionalOperationFields = map[string]struct{}{"projectId": {}, "starte
 // Agent and media callbacks. MutationID is the retry identity: a lost response
 // must be replayed with the same ID and payload.
 type CanvasOperationsRequest struct {
-	MutationID            string                  `json:"mutationId"`
-	BaseRevision          *int64                  `json:"baseRevision,omitempty"`
-	Operations            []CanvasOperation       `json:"operations"`
-	EditProofs            []model.CanvasEditProof `json:"editProofs,omitempty"`
-	TrustedServerMutation bool                    `json:"-"`
+	MutationID   string                  `json:"mutationId"`
+	BaseRevision *int64                  `json:"baseRevision,omitempty"`
+	Operations   []CanvasOperation       `json:"operations"`
+	EditProofs   []model.CanvasEditProof `json:"editProofs,omitempty"`
 }
 
 var (

@@ -157,36 +157,79 @@ func (r *Repository) CreateCommandCanvas(row *model.CanvasProject) error {
 	}
 	return r.db.Create(row).Error
 }
-func (r *Repository) PersistCommandCanvas(row *model.CanvasProject, expected int64) error {
-	if err := r.LockCanvasWrite(row.UserID, row.ID); err != nil {
-		return err
+
+// AgentActor identifies the Agent run behind a canvas write. It is attribution
+// only; ownership and permissions are checked by the caller before persisting.
+type AgentActor struct{ RunID, UserID string }
+
+// SaveAgentCanvasWrite is the single persistence entry for Agent canvas writes
+// (commands Execute/ExecuteHost/undo/restore and the Agent full-document
+// writeback). It shares the browser path's revision sequence: lock, revision CAS
+// against before.Revision, edit leases, then one UPDATE that bumps revision by 1.
+//
+// Lock order: account row, then canvas row (LockCanvasWrite). Browser writes lock
+// only the canvas row and never the account afterwards, so no path holds the
+// canvas while waiting for the account. Agent writes keep the account lock
+// because quota and the Agent run/queue state are serialized on it.
+//
+// events: when the command layer already derived its events (with entity
+// versions, receipts and actor history written by itself in the same
+// transaction), they are inserted as given. When nil, the before/after diff is
+// projected into an Agent-attributed command event, like a browser write.
+// On success after.Revision holds the new revision.
+func (r *Repository) SaveAgentCanvasWrite(before, after *model.CanvasProject, actor AgentActor, events []model.CanvasCommandEvent) error {
+	if before == nil || after == nil || before.ID != after.ID || before.UserID != after.UserID {
+		return errors.New("agent canvas write requires the same canvas before and after")
 	}
-	before, err := r.CanvasProjectForUser(row.UserID, row.ID)
-	if err != nil {
-		if r.IsMissing(err) {
+	write := func(tx *Repository) error {
+		if err := tx.LockCanvasWrite(after.UserID, after.ID); err != nil {
+			return err
+		}
+		current, err := tx.CanvasProjectForUser(after.UserID, after.ID)
+		if err != nil {
+			if tx.IsMissing(err) {
+				return ErrCanvasRevisionConflict
+			}
+			return err
+		}
+		expected := before.Revision
+		if current.Revision != expected {
 			return ErrCanvasRevisionConflict
 		}
-		return err
+		if err = tx.checkAgentCanvasEditLeases(current, after); err != nil {
+			return err
+		}
+		if err = tx.checkCanvasWriteQuota(current, after); err != nil {
+			return err
+		}
+		result := tx.db.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ? AND revision = ?", after.ID, after.UserID, expected).
+			Updates(map[string]any{"project_id": after.ProjectID, "payload_json": after.PayloadJSON, "revision": expected + 1, "title": after.Title, "updated_at": after.UpdatedAt})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrCanvasRevisionConflict
+		}
+		after.Revision = expected + 1
+		// 浏览器的多端同步依赖画布变更通知；Agent 写入同样要触发，否则打开的画布感知不到。
+		tx.canvasChanged(after.UserID, after.ID)
+		if events == nil {
+			return tx.projectCanvasWrite(current, after, false, &actor)
+		}
+		for i := range events {
+			if events[i].CanvasID != after.ID || events[i].OwnerID != after.UserID {
+				return errors.New("agent canvas event does not belong to the written canvas")
+			}
+			if err = tx.InsertCommandEvent(&events[i]); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	if before.Revision != expected {
-		return ErrCanvasRevisionConflict
+	if _, active := r.db.Statement.ConnPool.(gorm.TxCommitter); active {
+		return write(r)
 	}
-	if err = r.checkAgentCanvasEditLeases(before, row); err != nil {
-		return err
-	}
-	if err = r.checkCanvasWriteQuota(before, row); err != nil {
-		return err
-	}
-	result := r.db.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ? AND revision = ?", row.ID, row.UserID, expected).Updates(map[string]any{"payload_json": row.PayloadJSON, "revision": row.Revision, "title": row.Title, "updated_at": row.UpdatedAt})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrCanvasRevisionConflict
-	}
-	// 浏览器的多端同步依赖画布变更通知；Agent 命令写入同样要触发，否则打开的画布感知不到。
-	r.canvasChanged(row.UserID, row.ID)
-	return nil
+	return r.Transaction(write)
 }
 func (r *Repository) IsMissing(err error) bool { return errors.Is(err, gorm.ErrRecordNotFound) }
 func (r *Repository) UpdateCommandReceiptEvent(key model.CanvasCommandReceipt, encoded string, sequence int64) error {

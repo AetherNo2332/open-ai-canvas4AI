@@ -252,12 +252,7 @@ func decodeCanvasMutationReceipt(raw string, result *UserDataSummary) error {
 // latest server document. The request is idempotent by mutation ID and commits
 // the canvas row plus its receipt in one database transaction.
 func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasOperationsRequest) (UserDataSummary, error) {
-	// 服务端可信写入（云端 Agent 整份画布写回）由声明式引用派生连线，单次差量可能远超浏览器批次上限。
-	maxOperations := 500
-	if req.TrustedServerMutation {
-		maxOperations = 20000
-	}
-	if canvasID == "" || len(canvasID) > 80 || req.MutationID == "" || len(req.MutationID) > 160 || len(req.Operations) == 0 || len(req.Operations) > maxOperations {
+	if canvasID == "" || len(canvasID) > 80 || req.MutationID == "" || len(req.MutationID) > 160 || len(req.Operations) == 0 || len(req.Operations) > 500 {
 		return UserDataSummary{}, kernel.BadAuthRequest("画布操作请求 ID、操作内容或批次大小无效")
 	}
 	if req.BaseRevision != nil && (*req.BaseRevision < 0 || *req.BaseRevision >= 9007199254740991) {
@@ -367,12 +362,10 @@ func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasO
 			if err != nil {
 				return err
 			}
-			if !req.TrustedServerMutation {
-				if err := New(tx, nil).ValidateCanvasMediaAssets(userID, raw); err != nil {
-					return err
-				}
+			if err := New(tx, nil).ValidateCanvasMediaAssets(userID, raw); err != nil {
+				return err
 			}
-			project, err := canvasProjectFromJSONWithValidation(userID, raw, !req.TrustedServerMutation)
+			project, err := canvasProjectFromJSON(userID, raw)
 			if err != nil {
 				return err
 			}
@@ -582,14 +575,8 @@ func AssetFromJSON(userID string, raw json.RawMessage) (model.Asset, error) {
 }
 
 func canvasProjectFromJSON(userID string, raw json.RawMessage) (model.CanvasProject, error) {
-	return canvasProjectFromJSONWithValidation(userID, raw, true)
-}
-
-func canvasProjectFromJSONWithValidation(userID string, raw json.RawMessage, validate bool) (model.CanvasProject, error) {
-	if validate {
-		if err := ValidateSyncedPayload(raw, "画布"); err != nil {
-			return model.CanvasProject{}, err
-		}
+	if err := ValidateSyncedPayload(raw, "画布"); err != nil {
+		return model.CanvasProject{}, err
 	}
 	var payload struct {
 		ID        string `json:"id"`

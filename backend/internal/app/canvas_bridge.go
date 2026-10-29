@@ -1,9 +1,13 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"reflect"
+	"strings"
+	"time"
 
 	"yingce/backend/internal/assets"
 	"yingce/backend/internal/canvas"
@@ -274,6 +278,9 @@ func (s *Service) RestoreCanvasHistory(userID, canvasID, snapshotID string, revi
 	return s.canvasDomain().RestoreCanvasHistory(userID, canvasID, snapshotID, revision)
 }
 
+// saveCreationCanvasWithHistory 是 Agent 整份写回（工具改写、撤销、创作提交）的落库入口。
+// 调用方已完成引用、归属与额度校验；这里和命令层一样经 SaveAgentCanvasWrite 落库，
+// 与浏览器写入共用 revision 序列，事件按 Agent 归属投影，并记录画布历史快照。
 func saveCreationCanvasWithHistory(repo *repository.Repository, project *model.CanvasProject, previous string) error {
 	before, err := repo.CanvasProjectForUser(project.UserID, project.ID)
 	if err != nil {
@@ -282,47 +289,62 @@ func saveCreationCanvasWithHistory(repo *repository.Repository, project *model.C
 	if before.PayloadJSON != previous || before.Revision != project.Revision {
 		return repository.ErrCreationConflict
 	}
-	rawBefore, err := creationDocument(before.PayloadJSON)
+	desired, err := creationDocument(project.PayloadJSON)
 	if err != nil {
 		return err
 	}
-	desiredDoc, err := creationDocument(project.PayloadJSON)
+	current, err := creationDocument(before.PayloadJSON)
 	if err != nil {
 		return err
 	}
-	// operations 的字段基线按数据库列投影（标题、项目归属等以列为准）。本仓库 Agent 读写的是
-	// 原始正文，调用方没有改动的行元数据换成投影值，避免把投影差异当成编辑或并发冲突。
-	projected, err := canvas.New(repo, nil).UserCanvasProject(project.UserID, project.ID)
-	if err != nil {
-		return err
-	}
-	beforeDoc, err := creationDocument(string(projected))
-	if err != nil {
-		return err
-	}
-	for _, key := range []string{"id", "title", "projectId", "revision", "createdAt", "updatedAt"} {
-		if reflect.DeepEqual(rawBefore[key], desiredDoc[key]) {
-			if value, ok := beforeDoc[key]; ok {
-				desiredDoc[key] = value
-			} else {
-				delete(desiredDoc, key)
-			}
-		}
-	}
-	operations := canvas.DiffCanvasDocuments(beforeDoc, desiredDoc)
-	if len(operations) == 0 {
+	// 只刷新簿记字段（updatedAt 等）不算编辑，不产生新 revision。
+	if reflect.DeepEqual(withoutCanvasBookkeeping(desired), withoutCanvasBookkeeping(current)) {
 		return nil
 	}
-	baseRevision := project.Revision
-	request := canvas.CanvasOperationsRequest{BaseRevision: &baseRevision, Operations: operations, TrustedServerMutation: true}
-	request.MutationID = "creation-canvas:" + project.ID + ":" + canvas.CanvasOperationsDigest(request)
-	result, err := canvas.New(repo, nil).ApplyUserCanvasOperations(project.UserID, project.ID, request)
+	// 与 operations 写入保持同一份落库形态：revision 等簿记不进正文，列从正文派生。
+	now := time.Now().UTC()
+	delete(desired, "revision")
+	delete(desired, "remoteContentHash")
+	desired["id"], desired["updatedAt"] = project.ID, now.Format(time.RFC3339Nano)
+	raw, err := json.Marshal(desired)
 	if err != nil {
 		return err
 	}
-	project.Revision = result.Revision
-	project.UpdatedAt = result.UpdatedAt
+	after := *before
+	after.PayloadJSON = string(raw)
+	after.UpdatedAt = now
+	if title, ok := desired["title"].(string); ok {
+		after.Title = strings.TrimSpace(title)
+	}
+	if projectID, ok := desired["projectId"].(string); ok {
+		after.ProjectID = strings.TrimSpace(projectID)
+	}
+	// 调用方多在 Agent 检查点事务内；CanvasAtomicWrite 加入该事务，不开嵌套保存点。
+	err = repo.CanvasAtomicWrite(context.Background(), project.UserID, project.ID, func(tx *repository.Repository) error {
+		if err := tx.SaveAgentCanvasWrite(before, &after, repository.AgentActor{UserID: project.UserID}, nil); err != nil {
+			return err
+		}
+		return canvas.CaptureDocumentHistory(tx, before, after, "automatic")
+	})
+	if errors.Is(err, repository.ErrCanvasRevisionConflict) {
+		return repository.ErrCreationConflict
+	}
+	if err != nil {
+		return err
+	}
+	project.PayloadJSON, project.Title, project.ProjectID = after.PayloadJSON, after.Title, after.ProjectID
+	project.Revision, project.UpdatedAt = after.Revision, after.UpdatedAt
 	return nil
+}
+
+func withoutCanvasBookkeeping(doc map[string]any) map[string]any {
+	out := make(map[string]any, len(doc))
+	for key, value := range doc {
+		if key != "updatedAt" && key != "revision" && key != "remoteContentHash" {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func (s *Service) UserAssetsByIDs(userID string, ids []string) ([]json.RawMessage, error) {

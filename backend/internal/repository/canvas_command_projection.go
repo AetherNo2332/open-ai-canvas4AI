@@ -25,6 +25,11 @@ func canvasEpochID() (string, error) {
 // 没有这一步，Agent 命令的目标版本 CAS 看不到用户的手工修改，媒体版本等受管字段也可能被
 // 旧保存悄悄改写。必须与画布本身的 revision CAS 处于同一事务。
 func (r *Repository) syncLegacyCanvasWrite(before, after *model.CanvasProject, reset bool) error {
+	return r.projectCanvasWrite(before, after, reset, nil)
+}
+
+// projectCanvasWrite 是投影本体；agent 非空时事件记为 Agent 写入（Agent 整份写回没有命令层事件）。
+func (r *Repository) projectCanvasWrite(before, after *model.CanvasProject, reset bool, agent *AgentActor) error {
 	// 只迁移局部表的测试夹具没有命令表；一旦纪元表存在，任一命令表失败都要让保存失败。
 	present, err := r.hasCommandSchema()
 	if err != nil {
@@ -158,6 +163,16 @@ func (r *Repository) syncLegacyCanvasWrite(before, after *model.CanvasProject, r
 	changes["entities"] = entities
 	event := map[string]any{"protocolVersion": 1, "canvasId": after.ID, "documentEpoch": epoch.Epoch, "operationId": op, "clientId": "legacy", "actorId": after.UserID, "revision": after.Revision, "eventSeq": epoch.EventSeq, "changes": changes, "entityVersions": changedVersions}
 	event["entityGenerations"] = changedGenerations
+	if agent != nil {
+		event["actorKind"] = "agent"
+		event["clientId"] = "agent"
+		if agent.RunID != "" {
+			event["clientId"] = "agent:" + agent.RunID
+		}
+		if agent.UserID != "" {
+			event["actorId"] = agent.UserID
+		}
+	}
 	if newEpoch || epoch.Deleted {
 		event["reset"] = snapshot
 	}
