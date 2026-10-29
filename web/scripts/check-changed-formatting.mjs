@@ -12,7 +12,8 @@ export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = pr
         return result.stdout;
     };
     const head = git(["rev-parse", "--verify", `${headSha}^{commit}`]).trim();
-    const parent = git(["rev-list", "--parents", "-n", "1", head]).trim().split(" ")[1] || null;
+    const headParents = git(["rev-list", "--parents", "-n", "1", head]).trim().split(" ").slice(1);
+    const parent = headParents[0] || null;
     let base = parent;
     if (baseSha && !/^0+$/.test(baseSha)) {
         // 强制改写提交历史后，push 事件里的 before 可能已不在 checkout 中；
@@ -29,11 +30,14 @@ export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = pr
         .split("\0")
         .filter((file) => /\.(css|html|json|js|jsx|md|mdx|mjs|cjs|ts|tsx|yaml|yml)$/.test(file));
     const prefix = git(["rev-parse", "--show-prefix"]).trim();
-    // 合并进来的分支（如上游同步）带入的历史格式问题同样按旧文件处理：
-    // 只取首父链上合并提交的其余父提交，避免展开被合并分支内部的全部历史。
+    // 分支内部合并进来的外部历史（如上游同步）带入的格式问题按旧文件处理：
+    // 只取分支首父链上合并提交的其余父提交，避免展开被合并分支内部的全部历史。
+    // 直接落在 base 上的合并（GitHub 的 PR 合成合并或单次推送的合并）本身就是
+    // 被检查的改动：其第二父提交即改动内容，不能当作旧文件，只沿它的首父链继续找。
     const legacyRefs = base ? [base] : [];
     if (base) {
-        for (const line of git(["rev-list", "--merges", "--first-parent", "--parents", `${base}..${head}`]).split("\n")) {
+        const tip = headParents.length > 1 && headParents[0] === base ? headParents[1] : head;
+        for (const line of git(["rev-list", "--merges", "--first-parent", "--parents", tip, `^${base}`]).split("\n")) {
             legacyRefs.push(...line.trim().split(" ").slice(2).filter(Boolean));
         }
     }
