@@ -18,6 +18,8 @@ import {
     FOCAL_LENGTH_META,
     LENS_PROFILES,
     buildCameraPrompt,
+    cameraProfileIndex,
+    lensProfileIndex,
     type CameraControlOptions,
 } from "@/lib/canvas/camera-prompt-library";
 import { CAMERA_WHEEL_IDLE_RESET_MS, normalizeCameraWheelDelta, takeCameraWheelStep } from "@/lib/canvas/camera-wheel";
@@ -241,8 +243,9 @@ export function CanvasNodeCameraPanel({
 
     const [enabled, setEnabled] = useState(cameraControl?.enabled ?? defaultCameraControl.enabled);
     // 新建草稿按声明的默认机身/镜头开始；已保存的枚举值可能已下线，退回首项展示但要求用户显式重新选择后再应用，避免静默改写配置。
-    const initialCameraIdx = CAMERA_PROFILES.findIndex((c) => c.id === (cameraControl?.camera ?? defaultCameraControl.camera));
-    const initialLensIdx = LENS_PROFILES.findIndex((l) => l.id === (cameraControl?.lens ?? defaultCameraControl.lens));
+    // 上游目录时期的 id 经别名映射后预选对应项，应用时写回现有 id。
+    const initialCameraIdx = cameraProfileIndex(cameraControl?.camera ?? defaultCameraControl.camera);
+    const initialLensIdx = lensProfileIndex(cameraControl?.lens ?? defaultCameraControl.lens);
     const [cameraIdx, setCameraIdx] = useState(initialCameraIdx >= 0 ? initialCameraIdx : 0);
     const [lensIdx, setLensIdx] = useState(initialLensIdx >= 0 ? initialLensIdx : 0);
     const [cameraInvalid, setCameraInvalid] = useState(Boolean(cameraControl) && initialCameraIdx < 0);

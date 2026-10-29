@@ -236,6 +236,49 @@ export const LENS_PROFILES: LensProfile[] = [
     },
 ];
 
+/**
+ * 上游摄像机目录时期保存的节点仍带上游 id。只在读取时映射到现有目录，不改写已存数据；
+ * 用户下次应用该节点配置时自然写回现有 id。未知 id 原样返回，继续走“不支持”路径。
+ */
+export const LEGACY_CAMERA_ID_ALIASES: Readonly<Record<string, string>> = {
+    arri_alexa_mini_lf: "arri_alexa_65",
+    red_komodo_6k: "red_v_raptor",
+    red_v_raptor_8k: "red_v_raptor",
+    sony_venice_2: "sony_venice",
+    sony_fx6: "sony_venice",
+    blackmagic_ursa_12k: "arri_alexa_35",
+    canon_c500_mk2: "arri_alexa_35",
+};
+
+export const LEGACY_LENS_ID_ALIASES: Readonly<Record<string, string>> = {
+    cooke_s7i: "cooke_s4",
+    zeiss_supreme_prime: "zeiss_ultra_prime",
+    canon_sumire_prime: "canon_k35",
+    anamorphic_cooke: "cooke_sf_18x",
+    anamorphic_atlas: "hawk_class_x",
+    vintage_leica_r: "cooke_speed_panchro",
+    macro_100mm: "zeiss_ultra_prime",
+};
+
+export function resolveCameraId(id: string | undefined): string | undefined {
+    return id !== undefined && Object.hasOwn(LEGACY_CAMERA_ID_ALIASES, id) ? LEGACY_CAMERA_ID_ALIASES[id] : id;
+}
+
+export function resolveLensId(id: string | undefined): string | undefined {
+    return id !== undefined && Object.hasOwn(LEGACY_LENS_ID_ALIASES, id) ? LEGACY_LENS_ID_ALIASES[id] : id;
+}
+
+/** 按映射后的 id 查目录下标；-1 表示不支持。 */
+export function cameraProfileIndex(id: string | undefined): number {
+    const resolved = resolveCameraId(id);
+    return CAMERA_PROFILES.findIndex((item) => item.id === resolved);
+}
+
+export function lensProfileIndex(id: string | undefined): number {
+    const resolved = resolveLensId(id);
+    return LENS_PROFILES.findIndex((item) => item.id === resolved);
+}
+
 export const FOCAL_LENGTHS = [14, 18, 24, 35, 40, 50, 65, 85, 100, 135, 200] as const;
 export const APERTURES = [1.2, 1.4, 1.8, 2, 2.8, 4, 5.6, 8, 11, 16] as const;
 
@@ -313,9 +356,9 @@ export interface CameraPromptInput {
 
 export function buildCameraPrompt(input: CameraPromptInput): string {
     // 镜头参数会进入图片生成写路径，未知枚举不能静默退回首项，否则持久化配置与实际生成语义会不一致。
-    const camera = CAMERA_PROFILES.find((item) => item.id === input.cameraId);
+    const camera = CAMERA_PROFILES[cameraProfileIndex(input.cameraId)];
     if (!camera) throw new Error(`不支持的相机配置：${input.cameraId}`);
-    const lens = LENS_PROFILES.find((item) => item.id === input.lensId);
+    const lens = LENS_PROFILES[lensProfileIndex(input.lensId)];
     if (!lens) throw new Error(`不支持的镜头配置：${input.lensId}`);
     if (!FOCAL_LENGTHS.includes(input.focalLengthMm as (typeof FOCAL_LENGTHS)[number])) throw new Error(`不支持的焦距：${input.focalLengthMm}mm`);
     if (!APERTURES.includes(input.apertureF as (typeof APERTURES)[number])) throw new Error(`不支持的光圈：f/${input.apertureF}`);
