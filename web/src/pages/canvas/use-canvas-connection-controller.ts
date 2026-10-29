@@ -12,6 +12,8 @@ import { canvasConnectionError, connectionInputSummary } from "@/lib/canvas/canv
 import { resolveCanvasConnectionTarget, type CanvasConnectionDropTarget as ConnectionDropTarget } from "@/lib/canvas/canvas-connection-hit";
 import { audioModelForConnectionInput } from "@/lib/model-selection";
 import { attachNodeToStoryboardRow, createCanvasNode, normalizeConnection, storyboardPromptTemplateMetadata, storyboardRowFromHandle } from "@/lib/canvas/canvas-project-domain";
+import { addReferenceConnections, referenceFieldsEnabled } from "@/lib/canvas/canvas-reference-fields";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { createCanvasDrawingFromImage } from "@/lib/canvas/canvas-drawing-storage";
 import { isDrawingEngineAvailable, type CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { normalizeRunningHubCapability, type AiConfig } from "@/stores/use-config-store";
@@ -95,6 +97,12 @@ export function useCanvasConnectionController({
     const [batchConnectionPreview, setBatchConnectionPreview] = useState<CanvasBatchConnectionPreview | null>(null);
     const [mouseWorld, setMouseWorld] = useState<Position>({ x: 0, y: 0 });
     const connectingParamsRef = useRef(connectingParams);
+    // 声明式引用文档里，连线写入目标节点的引用字段并以受管连线显示；旧文档保持自由连线。
+    const connectReferences = useCallback((nodes: CanvasNodeData[], connections: CanvasConnection[], candidates: CanvasConnection[]) => {
+        const version = useCanvasStore.getState().openProject(projectId)?.referenceFieldsVersion;
+        if (!referenceFieldsEnabled(version)) return { nodes: candidates.reduce((current, connection) => attachNodeToStoryboardRow(current, connection), nodes), connections: [...connections, ...candidates] };
+        return addReferenceConnections({ nodes, connections }, candidates, version);
+    }, [projectId]);
     const connectingPointerIdRef = useRef<number | null>(null);
     const connectingPointerStartRef = useRef<Position | null>(null);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
@@ -193,8 +201,9 @@ export function useCanvasConnectionController({
             message.warning(reason);
             return plan;
         }
-        setNodes((currentNodes) => plan.connections.reduce((current, connection) => attachNodeToStoryboardRow(current, connection), currentNodes));
-        setConnections((currentConnections) => [...currentConnections, ...plan.connections]);
+        const graph = connectReferences(nodesRef.current, connectionsRef.current, plan.connections);
+        setNodes(graph.nodes);
+        setConnections(graph.connections);
         setContextMenu(null);
         const skippedCount = plan.skipped.length;
         const duplicateCount = plan.duplicates.length;
@@ -202,7 +211,7 @@ export function useCanvasConnectionController({
         if (skippedCount) message.warning(`已连接 ${plan.connected.length} 个节点${suffix}：${plan.skipped[0].reason}`);
         else message.success(`已连接 ${plan.connected.length} 个节点${suffix}`);
         return plan;
-    }, [config, connectionsRef, message, nodesRef, onBatchCellConnect, setConnections, setContextMenu, setNodes]);
+    }, [config, connectReferences, connectionsRef, message, nodesRef, onBatchCellConnect, setConnections, setContextMenu, setNodes]);
 
     const connectNodes = useCallback((current: ConnectionHandle, targetNodeId: string, targetHandleId?: string, targetAnchorRatio?: number) => {
         if (current.nodeId === targetNodeId) return;
@@ -233,11 +242,12 @@ export function useCanvasConnectionController({
         if (exists) {
             setConnections((currentConnections) => currentConnections.map((item) => item.id === exists.id ? { ...item, fromAnchorRatio, toAnchorRatio } : item));
         } else {
-            setConnections((currentConnections) => [...currentConnections, { id: `conn-${Date.now()}`, fromNodeId, toNodeId, fromHandleId, toHandleId, fromAnchorRatio, toAnchorRatio }]);
-            setNodes((currentNodes) => attachNodeToStoryboardRow(currentNodes, { fromNodeId, toNodeId, fromHandleId, toHandleId }));
+            const graph = connectReferences(nodesRef.current, connectionsRef.current, [{ id: `conn-${Date.now()}`, fromNodeId, toNodeId, fromHandleId, toHandleId, fromAnchorRatio, toAnchorRatio }]);
+            setNodes(graph.nodes);
+            setConnections(graph.connections);
         }
         setContextMenu(null);
-    }, [config, connectionsRef, message, nodesRef, onBatchCellConnect, setConnections, setContextMenu, setNodes]);
+    }, [config, connectReferences, connectionsRef, message, nodesRef, onBatchCellConnect, setConnections, setContextMenu, setNodes]);
 
     const createConnectedNode = useCallback(async (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion, pending: PendingConnectionCreate, workflowProvider?: "runninghub") => {
         const nodeType = type;
@@ -329,8 +339,7 @@ export function useCanvasConnectionController({
                 setConnecting(null);
                 return;
             }
-            const nextConnections = [...connectionsRef.current, ...batchPlan.connections];
-            const nextNodes = batchPlan.connections.reduce((currentNodes, connection) => attachNodeToStoryboardRow(currentNodes, connection), [...nodesRef.current, newNode]);
+            const { nodes: nextNodes, connections: nextConnections } = connectReferences([...nodesRef.current, newNode], connectionsRef.current, batchPlan.connections);
             nodesRef.current = nextNodes;
             connectionsRef.current = nextConnections;
             setNodes(nextNodes);
@@ -399,8 +408,9 @@ export function useCanvasConnectionController({
         const fromAnchorRatio = connection.fromNodeId === pending.connection.nodeId ? pending.connection.anchorRatio : 0.5;
         const toAnchorRatio = connection.toNodeId === pending.connection.nodeId ? pending.connection.anchorRatio : 0.5;
         const connected = { ...connection, fromHandleId, toHandleId, fromAnchorRatio, toAnchorRatio };
-        setNodes((currentNodes) => attachNodeToStoryboardRow([...currentNodes, newNode], connected));
-        setConnections((currentConnections) => [...currentConnections, { id: nanoid(), ...connected }]);
+        const graph = connectReferences([...nodesRef.current, newNode], connectionsRef.current, [{ id: nanoid(), ...connected }]);
+        setNodes(graph.nodes);
+        setConnections(graph.connections);
         setSelectedNodeIds(new Set([newNode.id]));
         setSelectedConnectionId(null);
         if (nodeType === CanvasNodeType.Drawing) setDrawingNodeId(newNode.id);
@@ -408,7 +418,7 @@ export function useCanvasConnectionController({
         else if (nodeType !== CanvasNodeType.Text && nodeType !== CanvasNodeType.BatchTable && nodeType !== CanvasNodeType.Audio && nodeType !== CanvasNodeType.MediaConversion) setDialogNodeId(newNode.id);
         closeConnectionCreateMenu();
         setConnecting(null);
-    }, [closeConnectionCreateMenu, config, connectionsRef, defaultDrawingEngine, message, nodesRef, projectId, runtimeStatuses, setConnecting, setConnections, setDialogNodeId, setDrawingNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, tldrawLicenseKey]);
+    }, [closeConnectionCreateMenu, config, connectReferences, connectionsRef, defaultDrawingEngine, message, nodesRef, projectId, runtimeStatuses, setConnecting, setConnections, setDialogNodeId, setDrawingNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, tldrawLicenseKey]);
 
     const getConnectionCreateDisabledReason = useCallback((type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion, pending: PendingConnectionCreate, workflowProvider?: "runninghub") => {
         const nodeType = type;

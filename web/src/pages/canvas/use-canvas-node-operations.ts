@@ -8,6 +8,8 @@ import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, FRAME_HEADER_HEIGHT, g
 import { alignCanvasNodes, layoutCanvasAuto, layoutCanvasFlow, layoutCanvasNodes, nextCanvasVersionLabel, spreadCanvasNodes, type CanvasAlignmentMode } from "@/lib/canvas/canvas-layout";
 import { applyCanvasConnectionPromptSync } from "@/lib/canvas/canvas-resource-references";
 import { createCanvasNode, isHiddenBatchChild, removeCanvasNodes } from "@/lib/canvas/canvas-project-domain";
+import { pruneReferenceFields, removeReferenceConnection } from "@/lib/canvas/canvas-reference-fields";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
 import { createCanvasImageEditCopy } from "@/lib/canvas/canvas-image-edit-copy";
 import { copyImageLayerSources } from "@/lib/canvas/canvas-image-layers";
@@ -355,23 +357,27 @@ export function useCanvasNodeOperations({
         const result = removeCanvasNodes(previousNodes, ids);
         const removedNodes = previousNodes.filter((node) => result.removedIds.has(node.id));
         const nextConnections = previousConnections.filter((connection) => !result.removedIds.has(connection.fromNodeId) && !result.removedIds.has(connection.toNodeId));
-        const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, result.nodes, nextConnections);
+        // 声明式引用字段指向已删除节点会让后端下一次核对整份拒绝，随节点一并移除。
+        const prunedNodes = pruneReferenceFields(result.nodes, result.removedIds, useCanvasStore.getState().openProject(projectId)?.referenceFieldsVersion);
+        const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, prunedNodes, nextConnections);
         commitNodes(nextNodes);
         commitConnections(nextConnections);
         selectNodes(new Set());
         onNodesDeleted(result.removedIds, nextNodes, removedNodes);
-    }, [commitConnections, commitNodes, connectionsRef, nodesRef, onNodesDeleted, selectNodes]);
+    }, [commitConnections, commitNodes, connectionsRef, nodesRef, onNodesDeleted, projectId, selectNodes]);
 
     const deleteConnection = useCallback((connectionId: string) => {
         const previousNodes = nodesRef.current;
         const previousConnections = connectionsRef.current;
-        const nextConnections = previousConnections.filter((item) => item.id !== connectionId);
-        const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
+        // 声明式引用文档里，删除连线同时删除会重新画出它的引用字段。
+        const graph = removeReferenceConnection({ nodes: previousNodes, connections: previousConnections }, connectionId, useCanvasStore.getState().openProject(projectId)?.referenceFieldsVersion);
+        const nextConnections = graph.connections;
+        const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, graph.nodes, nextConnections);
         if (nextNodes !== previousNodes) commitNodes(nextNodes);
         commitConnections(nextConnections);
         setSelectedConnectionId((current) => current === connectionId ? null : current);
         setContextMenu((current) => current?.type === "connection" && current.connectionId === connectionId ? null : current);
-    }, [commitConnections, commitNodes, connectionsRef, nodesRef, setContextMenu, setSelectedConnectionId]);
+    }, [commitConnections, commitNodes, connectionsRef, nodesRef, projectId, setContextMenu, setSelectedConnectionId]);
 
     const duplicateNode = useCallback((nodeId: string, duplicateMode: "variant" | "copy" | "linked-copy" = "variant") => {
         const source = nodesRef.current.find((node) => node.id === nodeId);

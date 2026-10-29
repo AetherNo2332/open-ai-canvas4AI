@@ -20,6 +20,8 @@ export type CanvasProject = {
     id: string;
     revision?: number;
     remoteContentHash?: string;
+    /** 声明式引用字段版本（后端 canvas/references）；为 1 时连线由节点引用字段投影。 */
+    referenceFieldsVersion?: number;
     projectId?: string;
     title: string;
     createdAt: string;

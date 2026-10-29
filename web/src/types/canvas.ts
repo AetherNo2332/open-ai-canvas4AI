@@ -6,7 +6,7 @@ import type { StyleExecutionPlan } from "@/lib/canvas/style-profile";
 import type { ArtCritiqueNodeState } from "@/lib/art-critique/contracts";
 import type { CameraControlOptions } from "@/lib/canvas/camera-prompt-library";
 import type { SrtEntry, SubtitleHighlight, SubtitleStyle } from "@/types/timeline";
-import type { GenerationSpec } from "@/lib/canvas/generation-contract.generated";
+import type { GenerationSpec, ReferenceBinding } from "@/lib/canvas/generation-contract.generated";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -273,6 +273,8 @@ export type CanvasMediaVersion = {
 export type CanvasNodeMetadata = {
     /** Credential-free editable generation contract; submitted recipes live with tasks. */
     generationSpec?: GenerationSpec;
+    /** Declared inputs of a non-generation target (backend canvas/references "node" scope); only used when referenceFieldsVersion = 1. */
+    inputBindings?: ReferenceBinding[];
     /** Namespaced extension ownership for nodes contributed by a unified plugin. */
     pluginId?: string;
     pluginNodeId?: string;

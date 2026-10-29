@@ -10,6 +10,7 @@ import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { normalizeCanvasNodeTimestamps } from "@/lib/canvas/canvas-node-timestamps";
 import { canvasPersistentNodes } from "@/lib/canvas/canvas-persistent-nodes";
+import { projectReferenceConnections } from "@/lib/canvas/canvas-reference-fields";
 import { hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { createCanvasProjectWithRemoteSync, deleteCanvasProjectsWithRemoteSync, loadCanvasProjectForEditing, saveRemoteUserDataNow, prepareCanvasForCloudAction, subscribeAgentCanvasRefresh, refreshCanvasAfterAgent } from "@/services/user-data-sync";
@@ -135,7 +136,8 @@ export function useCanvasProjectLifecycle({
             });
             const snapshot: CanvasHistorySnapshot = {
                 nodes: initialNodes,
-                connections: targetProject.connections,
+                // Agent 写入的引用字段在打开时投影为可见连线；浏览器 operations 保存不会替编辑器补线。
+                connections: projectReferenceConnections(initialNodes, targetProject.connections, targetProject.referenceFieldsVersion),
                 chatSessions: targetProject.chatSessions || [],
                 activeChatId: targetProject.activeChatId || null,
                 canvasAppearance: restoredAppearance,
