@@ -158,7 +158,7 @@ func checkMigrateMediaVersions(t *testing.T, db *gorm.DB) {
 		t.Fatalf("currentMediaVersionId = %v", meta["currentMediaVersionId"])
 	}
 	if meta["mediaVersion"] == nil {
-		t.Fatal("fork mediaVersion state must stay until Task 11 retires it")
+		t.Fatal("v77 keeps the legacy metadata.mediaVersion object; runtime no longer reads it")
 	}
 	first := meta["mediaVersions"].([]any)[0].(map[string]any)
 	media, _ := first["media"].(map[string]any)

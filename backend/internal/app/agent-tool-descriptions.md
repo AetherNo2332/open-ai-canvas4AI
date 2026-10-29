@@ -76,7 +76,7 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 ## canvas_apply_ops
 
-基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的版本 id 切换当前媒体，已是当前版本即成功；锁定 media_version_locked、生成或上传中 media_version_loading（可稍后重试）、版本不存在或无媒体 media_version_missing。extract_media_version 给 versionId 和新 nodeId，把该版取出为右侧独立节点（无版本历史和任务绑定）。均无生成费用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。
+基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的版本 id 切换当前媒体，已是当前版本即成功；锁定 media_version_locked、上传中或首次生成中 media_version_loading（可稍后重试；原位生成新版本期间可切换，切换后新结果只进历史）、版本不存在或无媒体 media_version_missing。extract_media_version 给 versionId 和新 nodeId，把该版取出为右侧独立节点（无版本历史和任务绑定）。均无生成费用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。
 
 ## canvas_arrange_nodes
 
