@@ -96,15 +96,14 @@ func (e *cloudAgentReadLoopError) Error() string {
 }
 
 type cloudAgentApproval struct {
-	PrevisSourceHash string                    `json:"previsSourceHash,omitempty"`
-	Prepared         *cloudAgentPreparedMedia  `json:"prepared,omitempty"`
-	ModelName        string                    `json:"modelName,omitempty"`
-	ID               string                    `json:"approvalId"`
-	Call             cloudAgentCall            `json:"call"`
-	CallHash         string                    `json:"callHash,omitempty"`
-	Preview          cloudAgentApprovalPreview `json:"preview"`
-	Decision         string                    `json:"decision,omitempty"`
-	Reason           string                    `json:"reason,omitempty"`
+	Prepared  *cloudAgentPreparedMedia  `json:"prepared,omitempty"`
+	ModelName string                    `json:"modelName,omitempty"`
+	ID        string                    `json:"approvalId"`
+	Call      cloudAgentCall            `json:"call"`
+	CallHash  string                    `json:"callHash,omitempty"`
+	Preview   cloudAgentApprovalPreview `json:"preview"`
+	Decision  string                    `json:"decision,omitempty"`
+	Reason    string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
 	ToolSchemaVersion string                   `json:"toolSchemaVersion,omitempty"`
@@ -142,22 +141,22 @@ type cloudAgentRuntime struct {
 	// Snapshot 是本轮不可变的提示合同；首个模型步补齐 Harness 正文，之后只比对不重写。
 	Snapshot *cloudAgentContractSnapshot `json:"contractSnapshot,omitempty"`
 	// PlaceholderTaskID 是承载本轮报价预留的占位任务（当前实现里等于运行 ID）。
-	PlaceholderTaskID              string           `json:"placeholderTaskId,omitempty"`
-	ActiveTaskID                   string           `json:"activeTaskId"`
-	PiNoToolTaskID                 string           `json:"piNoToolTaskId,omitempty"`
-	PiNoToolNudge                  string           `json:"piNoToolNudge,omitempty"`
-	PiModelFailureTaskID           string           `json:"piModelFailureTaskId,omitempty"`
-	PiModelFailureNudge            string           `json:"piModelFailureNudge,omitempty"`
-	ActiveTextDraft                string           `json:"activeTextDraft,omitempty"`
-	MediaTaskID                    string           `json:"mediaTaskId,omitempty"`
-	TaskIDs                        []string         `json:"taskIds"`
-	Step                           int              `json:"step"`
-	Generations                    int              `json:"generations"`
-	VideoSeconds                   int              `json:"videoSeconds"`
-	Calls                          []cloudAgentCall `json:"calls"`
-	CallIndex                      int              `json:"callIndex"`
-	DirectorWorkflowPhase          string           `json:"directorWorkflowPhase,omitempty"`
-	DirectorWorkflowMutationCallID string           `json:"directorWorkflowMutationCallId,omitempty"`
+	PlaceholderTaskID    string           `json:"placeholderTaskId,omitempty"`
+	ActiveTaskID         string           `json:"activeTaskId"`
+	PiNoToolTaskID       string           `json:"piNoToolTaskId,omitempty"`
+	PiNoToolNudge        string           `json:"piNoToolNudge,omitempty"`
+	PiModelFailureTaskID string           `json:"piModelFailureTaskId,omitempty"`
+	PiModelFailureNudge  string           `json:"piModelFailureNudge,omitempty"`
+	ActiveTextDraft      string           `json:"activeTextDraft,omitempty"`
+	MediaTaskID          string           `json:"mediaTaskId,omitempty"`
+	TaskIDs              []string         `json:"taskIds"`
+	Step                 int              `json:"step"`
+	Generations          int              `json:"generations"`
+	VideoSeconds         int              `json:"videoSeconds"`
+	Calls                []cloudAgentCall `json:"calls"`
+	CallIndex            int              `json:"callIndex"`
+	// DirectorPreview 是 director preview 等待浏览器视口回传的持久挂起点。
+	DirectorPreview *cloudAgentDirectorPreview `json:"directorPreview,omitempty"`
 	// ToolRepairs is counted per tool so reads do not reset write-argument repairs.
 	ToolRepairs            map[string]cloudAgentToolRepair `json:"toolRepairs,omitempty"`
 	Approval               *cloudAgentApproval             `json:"approval,omitempty"`
@@ -612,7 +611,7 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 		return errors.New("Agent runtime active task is not in task history")
 	}
 	if state.MediaTaskID != "" {
-		if !cloudAgentContainsString(state.TaskIDs, state.MediaTaskID) || state.CallIndex >= len(state.Calls) || (state.Calls[state.CallIndex].Function.Name != "generate_media" && state.Calls[state.CallIndex].Function.Name != "previs_preview") {
+		if !cloudAgentContainsString(state.TaskIDs, state.MediaTaskID) || state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].Function.Name != "generate_media" {
 			return errors.New("Agent runtime media task is not attached to current call")
 		}
 	}
@@ -1078,13 +1077,7 @@ func (s *Service) terminateCloudAgent(run *model.CloudAgentExecution, message st
 
 func (s *Service) failCloudAgent(run *model.CloudAgentExecution, state *cloudAgentRuntime, message string) error {
 	s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTask, Status: observability.StatusFailed, EndedAt: time.Now().UTC(), Reason: message})
-	policy, policyErr := s.RuntimePolicy()
-	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
-		if policyErr == nil {
-			if rollbackErr := rollbackDirectorWorkflowDraft(repo, run.UserID, state, policy); rollbackErr != nil {
-				message += "；导演流程草稿自动回滚失败，请保留当前场景并检查版本冲突"
-			}
-		}
+	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		current.Status = "failed"
 		current.FailureMessage = truncateRunes(message, 1000)
 		// 终态必须携带收尾标记：首步之前失败时，本轮还压着一笔占位预留，
@@ -1204,10 +1197,6 @@ func cloudAgentSafeMediaTaskError(task *model.Task) string {
 }
 
 func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgentCall, result any, err error) bool {
-	if err == nil && cloudAgentDirectorTool(call.Function.Name) {
-		result = cloudAgentDirectorReceipt(runID, call.ID, result)
-	}
-	cloudAgentAdvanceDirectorWorkflow(state, call.Function.Name, call.ID, result, err)
 	payload := map[string]any{"toolName": call.Function.Name, "callId": call.ID, "arguments": call.Function.Arguments}
 	if state.PiToolBatchTaskID != "" {
 		payload["taskId"] = state.PiToolBatchTaskID
@@ -1467,7 +1456,7 @@ func (state *cloudAgentRuntime) recordCanvasBatchHash(result any, toolName strin
 		return
 	}
 	produced, _ := fields["snapshotHash"].(string)
-	if toolName == "previs_scene_create" || toolName == "previs_apply_patch" {
+	if toolName == cloudAgentDirectorTool {
 		produced, _ = fields["canvasSnapshotHash"].(string)
 	}
 	if produced == "" {
@@ -1475,7 +1464,7 @@ func (state *cloudAgentRuntime) recordCanvasBatchHash(result any, toolName strin
 	}
 	if len(state.CanvasBatchHashes) == 0 {
 		before, _ := fields["beforeSnapshotHash"].(string)
-		if toolName == "previs_scene_create" || toolName == "previs_apply_patch" {
+		if toolName == cloudAgentDirectorTool {
 			before, _ = fields["beforeCanvasSnapshotHash"].(string)
 		}
 		if before != "" {
@@ -1525,7 +1514,7 @@ func cloudAgentInvalidateReadCache(state *cloudAgentRuntime) {
 	// Canvas writes invalidate only canvas projections. Skill documents and
 	// the model catalog remain valid, avoiding unrelated repeated reads.
 	for key := range state.ToolReadResults {
-		if strings.HasPrefix(key, "canvas_get_state:") || strings.HasPrefix(key, "canvas_read_storyboard:") || strings.HasPrefix(key, "previs_scene_read:") {
+		if strings.HasPrefix(key, "canvas_get_state:") || strings.HasPrefix(key, "canvas_read_storyboard:") || strings.HasPrefix(key, cloudAgentDirectorTool+":") {
 			delete(state.ToolReadResults, key)
 			delete(state.ToolReadReplays, key)
 		}
@@ -1543,21 +1532,16 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		return s.failCloudAgent(run, state, "Agent 工具调用状态无效，本轮已停止")
 	}
 	call := state.Calls[state.CallIndex]
-	// A task admitted before retirement may finish; this cannot submit new work.
-	if resumed, err := s.resumeCloudAgentRetiredPrevis(run, state, call); resumed {
-		return err
+	// director preview 挂起在浏览器视口上：回传由 SubmitCloudAgentDirectorPreview 处理，
+	// 这里只负责超时回执，避免页面未打开时卡死运行。
+	if cloudAgentDirectorPreviewPending(state, call) {
+		return s.advanceCloudAgentDirectorPreview(run, state, call)
 	}
 	// 同一批内的后续写入要基于本批自己产出的版本，否则第二个写入必然被"画布已变化"拒绝；
 	// 之后再按本步读取基线把仍然匹配的哈希接到当前画布上（跨轮或模型自己换过的哈希不接）。
 	call = cloudAgentRebaseWriteSnapshot(state, call)
 	call = s.cloudAgentRefreshStepSnapshotHash(run, state, call)
 	state.Calls[state.CallIndex] = call
-	if workflowErr := cloudAgentDirectorWorkflowError(state, call); workflowErr != nil {
-		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-			cloudAgentRecordToolResult(current, state, call, nil, workflowErr)
-			return cloudAgentSave(current, state)
-		})
-	}
 	if state.Approval != nil && state.Approval.Decision == "" {
 		return nil
 	}
@@ -1586,6 +1570,13 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		call = normalized
 		state.Calls[state.CallIndex] = call
 	}
+	// read_only 只放行 director read；写 action 即使绕过了预检 schema 也在执行前拒绝。
+	if allowed && call.Function.Name == cloudAgentDirectorTool && state.Request.PermissionMode == "read_only" && cloudAgentWriteCall(call) {
+		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			cloudAgentRecordToolResult(current, state, call, nil, kernel.Forbidden("只读模式下 director 只允许 action=read"))
+			return cloudAgentSave(current, state)
+		})
+	}
 	mediaTool := call.Function.Name == "generate_media"
 	if allowed && call.Function.Name == "canvas_edit_storyboard" {
 		result, replayed, err := cloudAgentStoryboardReplay(s.repo, run.UserID, state.Request.CanvasID, call)
@@ -1599,7 +1590,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 			})
 		}
 	}
-	if allowed && cloudAgentWrite(call.Function.Name) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
+	if allowed && cloudAgentWriteCall(call) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
 		var plan *cloudAgentMediaPlan
 		var modelName string
 		var mediaRequest CreateTaskRequest
@@ -1776,6 +1767,8 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 					if err == nil {
 						preview = characterPlan.Preview
 					}
+				case "director":
+					preview, mutationErr = cloudAgentDirectorApproval(repo, run.UserID, state.Request.CanvasID, run.ID, call)
 				case "canvas_arrange_nodes":
 					arrangePlan, err := prepareCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call)
 					mutationErr = err
@@ -1834,6 +1827,9 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 	}
 	if allowed && (call.Function.Name == "generate_media") && state.Approval != nil && state.Approval.Decision == "approve" {
 		return s.executeCloudAgentMediaCall(run, state, call)
+	}
+	if allowed && call.Function.Name == cloudAgentDirectorTool && cloudAgentWriteCall(call) && cloudAgentDirectorPreviewAction(call) {
+		return s.startCloudAgentDirectorPreview(run, state, call)
 	}
 	if allowed && call.Function.Name == "spawn_subagent" {
 		result, spawnErr := s.spawnDynamicSubagent(run, state, call)
@@ -1935,6 +1931,13 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 				result, toolErr = applyCloudAgentAssetBinding(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 			case call.Function.Name == "canvas_undo", call.Function.Name == "canvas_redo":
 				result, toolErr = applyCloudAgentHistory(repo, run.UserID, state.Request.CanvasID, run.ID, state, call, policy)
+			case call.Function.Name == "director" && cloudAgentWriteCall(call):
+				var plan *cloudAgentDirectorPlan
+				plan, result, toolErr = applyCloudAgentDirectorMutation(repo, run.UserID, state.Request.CanvasID, run.ID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+				if toolErr == nil {
+					// 写入与 director_open 同一事务提交：前端收到事件时场景已落库。
+					state.event(run.ID, "director_open", cloudAgentDirectorOpenPayload(state.Request.CanvasID, plan.NodeID, plan.SceneID, plan.ShotID, plan.Args.Action, ""))
+				}
 			case call.Function.Name == "canvas_arrange_nodes":
 				result, toolErr = applyCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 			case call.Function.Name == "canvas_create_storyboard", call.Function.Name == "canvas_edit_storyboard":
@@ -1988,7 +1991,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 				toolReason = toolErr.Error()
 			}
 			s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTool, ToolType: call.Function.Name, Status: toolStatus, StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC(), Reason: toolReason})
-			if toolErr == nil && cloudAgentWrite(call.Function.Name) {
+			if toolErr == nil && cloudAgentWriteCall(call) {
 				// A successful canvas mutation changes the read model. Do not replay a
 				// pre-mutation canvas snapshot later in the same Agent run.
 				cloudAgentInvalidateReadCache(state)
@@ -2402,31 +2405,7 @@ func (s *Service) cloudAgentMediaError(run *model.CloudAgentExecution, state *cl
 	})
 }
 
-func (s *Service) resumeCloudAgentRetiredPrevis(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) (bool, error) {
-	if state.MediaTaskID == "" || call.Function.Name != "previs_preview" {
-		return false, nil
-	}
-	task, err := s.repo.TaskForUser(run.UserID, state.MediaTaskID)
-	if err != nil {
-		return true, err
-	}
-	if task.AgentRunID != run.ID || task.Type != model.TaskTypePrevisRender {
-		return true, BadAuthRequest("预演任务身份不匹配，无法恢复结果")
-	}
-	return true, s.executeCloudAgentMediaCall(run, state, call)
-}
-
 func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
-	if call.Function.Name == "previs_preview" {
-		if state.MediaTaskID == "" {
-			return BadAuthRequest("预演工具已停用，无法创建新任务")
-		}
-		policy, err := s.RuntimePolicy()
-		if err != nil {
-			return err
-		}
-		return s.advanceCloudAgentPrevis(run, state, call, policy)
-	}
 	if state.MediaTaskID != "" {
 		task, err := s.repo.TaskForUser(run.UserID, state.MediaTaskID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -2709,11 +2688,7 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 		// Persist intent independently of the transcript. Retrying also repairs
 		// legacy cancelled rows that crashed before cancelling their children.
 		state, decodeErr := cloudAgentDecode(run)
-		// 图片→导演流程的取消契约：连续性检查通过前取消运行，半成品导演场景
-		// 不得留在画布上——与失败路径 failCloudAgent 的 rollbackDirectorWorkflowDraft
-		// 同一语义。控制面优先：回滚失败不阻断取消，只记录。
-		rollbackPolicy, rollbackPolicyErr := s.RuntimePolicy()
-		err = s.repo.MutateCloudAgent(userID, id, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
+		err = s.repo.MutateCloudAgent(userID, id, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 			firstCancellation := current.Status != "cancelled"
 			current.Status = "cancelled"
 			current.CleanupPending = true
@@ -2724,11 +2699,6 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 					if saveErr := cloudAgentSave(current, &state); saveErr != nil {
 						// Cancellation must still work if the transcript is oversized.
 						log.Printf("[cloud-agent] cancellation event unavailable for run %s: checkpoint rejected", id)
-					}
-					if rollbackPolicyErr == nil {
-						if rollErr := rollbackDirectorWorkflowDraft(repo, userID, &state, rollbackPolicy); rollErr != nil {
-							log.Printf("[cloud-agent] director workflow draft rollback on cancel failed for run %s: %v", id, rollErr)
-						}
 					}
 				}
 			} else {

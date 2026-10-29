@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"yingce/backend/internal/canvas/commands"
 	"yingce/backend/internal/canvas/tasks"
 	"yingce/backend/internal/identity"
 	"yingce/backend/internal/model"
@@ -22,15 +21,8 @@ func (d *canvasTaskSubmitter) Prepare(ctx context.Context, p identity.Principal,
 		return tasks.PreparedTask{}, Forbidden("没有生成权限")
 	}
 	if req.Mode == "previs" {
-		raw, err := json.Marshal(req.Input)
-		if err != nil {
-			return tasks.PreparedTask{}, err
-		}
-		var input commands.PrevisRenderInput
-		if err = json.Unmarshal(raw, &input); err != nil || input.CanvasID == "" || input.SceneID == "" || input.ShotID == "" || input.SourceHash == "" || input.Width < 1 || input.Height < 1 {
-			return tasks.PreparedTask{}, BadAuthRequest("预演任务输入无效")
-		}
-		return tasks.PreparedTask{Task: model.Task{ID: newID(), UserID: p.OwnerID, ProjectID: input.CanvasID, Type: model.TaskTypePrevisRender, Status: model.TaskStatusQueued, Stage: "预演等待队列调度", Progress: 5, Provider: "local", Model: "previs-renderer", Prompt: "白模预演", InputJSON: string(raw)}}, nil
+		// 服务端白模渲染器已下线；预演由浏览器导演台视口录制。
+		return tasks.PreparedTask{}, BadAuthRequest("服务端预演渲染已下线，请在导演台中预览")
 	}
 	input, err := normalizeTaskInput(req.Input)
 	if err != nil {

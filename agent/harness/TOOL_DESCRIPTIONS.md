@@ -50,6 +50,10 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 读取生成模型目录、能力与价格。生成前传 mode 和实际 referenceNodeIds，按真实素材与操作筛选；素材或模式变化后重新查询，空列表表示无匹配项。优先原样复制返回的 selectionId 字符串到生成工具，不传嵌套 selection 对象，不混用选择字段。再按能力核对时长、画幅、音频和价格。
 
+## director
+
+导演台唯一工具。read 只读：无 sceneId/nodeId 返回场景目录，指定后返回场景、坐标、snapshotHash 和工作站 nodeId。create_scene 按 template 建白模场景并绑定可打开导演台的视频节点。apply_patch 用 patch.operations 做受限语义修改，须带 read 的 expectedSceneHash，禁止原始 JSON/URL/storage key。preview 让浏览器导演台录制白模视频，运行等待回传；status=completed 才有 videoResourceId，reason=director_viewport_unavailable 表示页面未打开或超时，可请用户打开导演台后重试。写入与 preview 按权限审批并自动打开导演台；只读模式仅 read。
+
 ## canvas_create_character
 
 把就绪图片打包为角色卡，按权限审批。imageNodeId 为单图复用模式；或分别给 primaryImageNodeId/turnaroundImageNodeId，缺一时明确复用，不能混两种模式。保存各自来源，同名卡先核对版本。读取 character.resolvedImage/representations 确认实际图片、复用和来源；未记录来源不可猜。definition 只填有依据的设定。

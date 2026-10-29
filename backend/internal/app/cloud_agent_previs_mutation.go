@@ -103,20 +103,6 @@ type cloudAgentPrevisMutationPlan struct {
 	SceneID            string
 }
 
-func cloudAgentPrevisSceneCreateSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"canvasSnapshotHash": map[string]any{"type": "string", "description": "previs_scene_read 场景目录返回的 canvasSnapshotHash；创建前画布必须未变化"},
-			"sceneId":            map[string]any{"type": "string", "maxLength": 80, "description": "新的稳定场景 ID"},
-			"title":              map[string]any{"type": "string", "maxLength": cloudAgentPrevisTextLimit, "description": "场景标题"},
-			"templateId":         map[string]any{"type": "string", "enum": []string{"empty", "monologue", "dialogue", "blocking", "product", "action_chase", "interior", "crowd"}, "description": "模板：empty/monologue/dialogue/blocking/product/action_chase/interior/crowd"},
-		},
-		"required":             []string{"canvasSnapshotHash", "sceneId", "title", "templateId"},
-		"additionalProperties": false,
-	}
-}
-
 func cloudAgentPrevisPatchOperationSchema() map[string]any {
 	vec3 := map[string]any{"type": "array", "minItems": 3, "maxItems": 3, "items": map[string]any{"type": "number"}}
 	properties := map[string]any{
@@ -165,19 +151,6 @@ func cloudAgentPrevisPatchOperationSchema() map[string]any {
 		"activeShotId":         map[string]any{"type": "string", "maxLength": 80},
 	}
 	return map[string]any{"type": "object", "properties": properties, "required": []string{"type", "id"}, "additionalProperties": false}
-}
-
-func cloudAgentPrevisApplyPatchSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"snapshotHash": map[string]any{"type": "string", "description": "previs_scene_read 聚焦读取返回的场景 snapshotHash；只代表该场景"},
-			"sceneId":      map[string]any{"type": "string", "maxLength": 80, "description": "要修改的场景 ID"},
-			"operations":   map[string]any{"type": "array", "minItems": 1, "maxItems": cloudAgentPrevisMaxOperations, "items": cloudAgentPrevisPatchOperationSchema(), "description": "受限语义操作；不能替换整个场景或写任意 JSON"},
-		},
-		"required":             []string{"snapshotHash", "sceneId", "operations"},
-		"additionalProperties": false,
-	}
 }
 
 func cloudAgentPrevisValidateText(value, label string, maxRunes int, required bool) error {
@@ -1733,34 +1706,4 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 	default:
 		return cloudAgentApprovalPreviewItem{}, BadAuthRequest("不支持的预演台语义操作")
 	}
-}
-
-func applyCloudAgentPrevisMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {
-	var plan *cloudAgentPrevisMutationPlan
-	var err error
-	switch call.Function.Name {
-	case "previs_scene_create":
-		plan, err = prepareCloudAgentPrevisSceneCreate(repo, userID, canvasID, call)
-	case "previs_apply_patch":
-		plan, err = prepareCloudAgentPrevisApplyPatch(repo, userID, canvasID, call)
-	default:
-		return nil, BadAuthRequest("不支持的预演台写工具")
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err = saveCloudAgentDocument(repo, plan.Canvas, plan.Document, policy); err != nil {
-		return nil, err
-	}
-	if len(recorder) > 0 && recorder[0] != nil {
-		preview := plan.Preview
-		if err := recorder[0](repo, cloudAgentMutationInput{UserID: userID, CanvasID: canvasID, StepID: call.ID, Operation: plan.Operation, BeforeSnapshotHash: plan.BeforeSnapshotHash, AfterSnapshotHash: plan.AfterSnapshotHash, BeforeJSON: plan.BeforeJSON, Preview: &preview}); err != nil {
-			return nil, err
-		}
-	}
-	resultSnapshotHash := plan.ResultSnapshotHash
-	if resultSnapshotHash == "" {
-		resultSnapshotHash = plan.AfterSnapshotHash
-	}
-	return map[string]any{"canvasId": canvasID, "sceneId": plan.SceneID, "snapshotHash": resultSnapshotHash, "canvasSnapshotHash": plan.AfterSnapshotHash, "beforeCanvasSnapshotHash": plan.BeforeSnapshotHash, "committed": true, "summary": plan.Preview.Description}, nil
 }

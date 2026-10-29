@@ -345,6 +345,39 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"accepted": true})
 	})
+	// 导演台浏览器视口录制完成（或失败）后回传结果，恢复 Agent 挂起的 director preview。
+	r.POST("/agent/runs/:id/director-preview", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+		var req struct {
+			RequestID       string `json:"requestId"`
+			VideoResourceID string `json:"videoResourceId"`
+			Error           string `json:"error"`
+		}
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			fail(c, http.StatusBadRequest, errors.New("请求必须只包含一个 JSON 对象"))
+			return
+		}
+		if !utf8.ValidString(req.RequestID) || !utf8.ValidString(req.VideoResourceID) || !utf8.ValidString(req.Error) {
+			fail(c, http.StatusBadRequest, errors.New("请求包含无效字符"))
+			return
+		}
+		if err := svc.SubmitCloudAgentDirectorPreview(user.ID, c.Param("id"), req.RequestID, req.VideoResourceID, req.Error); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"accepted": true})
+	})
 	r.GET("/agent/runs/:id/events", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

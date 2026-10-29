@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func previsMutationFixture(t *testing.T) (*Service, *model.CanvasProject) {
@@ -530,4 +531,36 @@ func mustCreationDocument(t *testing.T, raw string) map[string]any {
 		t.Fatal(err)
 	}
 	return doc
+}
+
+// applyCloudAgentPrevisMutation exercises the checked previs internals that
+// director create_scene/apply_patch compile into, without the director wrapper.
+func applyCloudAgentPrevisMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {
+	var plan *cloudAgentPrevisMutationPlan
+	var err error
+	switch call.Function.Name {
+	case "previs_scene_create":
+		plan, err = prepareCloudAgentPrevisSceneCreate(repo, userID, canvasID, call)
+	case "previs_apply_patch":
+		plan, err = prepareCloudAgentPrevisApplyPatch(repo, userID, canvasID, call)
+	default:
+		return nil, BadAuthRequest("不支持的预演台写工具")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err = saveCloudAgentDocument(repo, plan.Canvas, plan.Document, policy); err != nil {
+		return nil, err
+	}
+	if len(recorder) > 0 && recorder[0] != nil {
+		preview := plan.Preview
+		if err := recorder[0](repo, cloudAgentMutationInput{UserID: userID, CanvasID: canvasID, StepID: call.ID, Operation: plan.Operation, BeforeSnapshotHash: plan.BeforeSnapshotHash, AfterSnapshotHash: plan.AfterSnapshotHash, BeforeJSON: plan.BeforeJSON, Preview: &preview}); err != nil {
+			return nil, err
+		}
+	}
+	resultSnapshotHash := plan.ResultSnapshotHash
+	if resultSnapshotHash == "" {
+		resultSnapshotHash = plan.AfterSnapshotHash
+	}
+	return map[string]any{"canvasId": canvasID, "sceneId": plan.SceneID, "snapshotHash": resultSnapshotHash, "canvasSnapshotHash": plan.AfterSnapshotHash, "beforeCanvasSnapshotHash": plan.BeforeSnapshotHash, "committed": true, "summary": plan.Preview.Description}, nil
 }

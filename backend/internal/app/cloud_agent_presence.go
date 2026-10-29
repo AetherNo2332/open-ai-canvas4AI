@@ -70,7 +70,7 @@ func cloudAgentPresencePhase(name string) string {
 	if cloudAgentWrite(name) {
 		return "editing"
 	}
-	if cloudAgentReadToolReadOnly(name) && (strings.HasPrefix(name, "canvas_") || strings.HasPrefix(name, "previs_")) {
+	if cloudAgentReadToolReadOnly(name) && strings.HasPrefix(name, "canvas_") {
 		return "reading"
 	}
 	return ""
@@ -83,6 +83,9 @@ func (s *Service) publishCloudAgentToolPresence(run *model.CloudAgentExecution, 
 		return
 	}
 	phase := cloudAgentPresencePhase(call.Function.Name)
+	if call.Function.Name == cloudAgentDirectorTool && !cloudAgentWriteCall(call) {
+		phase = "reading"
+	}
 	if phase == "" {
 		return
 	}

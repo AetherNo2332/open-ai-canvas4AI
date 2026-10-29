@@ -15,7 +15,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 	if run != nil && state != nil && state.CallIndex >= 0 && state.CallIndex < len(state.Calls) && (run.Status == "running" || run.Status == "queued") {
 		s.publishCloudAgentToolPresence(run, state, state.Calls[state.CallIndex])
 	}
-	if run == nil || state == nil || state.CallIndex < 0 || state.CallIndex >= len(state.Calls) || !cloudAgentWrite(state.Calls[state.CallIndex].Function.Name) {
+	if run == nil || state == nil || state.CallIndex < 0 || state.CallIndex >= len(state.Calls) || !cloudAgentWriteCall(state.Calls[state.CallIndex]) {
 		return s.executeCloudAgentToolCallAttempt(run, state)
 	}
 	baseline := *state

@@ -175,7 +175,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v14"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v15"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -266,6 +266,8 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 		map[string]any{"summary": str(cloudAgentToolText("parameter_007"))},
 		"summary")
 	if len(req.ContextScope) > 0 {
+		directorReadOnly := req.PermissionMode == "read_only"
+		add("director", cloudAgentToolText("director"), cloudAgentDirectorToolSchema(directorReadOnly), "action")
 		add("canvas_list_node_types", "查询可创建节点和可编辑字段。传 nodeType 返回该类型的完整字段 schema；编辑复杂内容前先查字段合同。", map[string]any{"nodeType": str("可选节点类型；空值列出摘要")})
 		add("canvas_list_assets", "搜索当前用户素材库，返回可用于绑定的 assetId、标题和类型，不暴露下载凭证。", map[string]any{"query": str("可选搜索文字"), "kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio", "text"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
 		add("canvas_read_content", "分页读取节点正文或分镜行文本。分镜续读须同时指定 rowId 和 field。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。", map[string]any{
@@ -564,7 +566,8 @@ func cloudAgentWrite(name string) bool {
 	if name == "canvas_undo" || name == "canvas_redo" || name == "canvas_bind_asset" {
 		return true
 	}
-	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == "previs_scene_create" || name == "previs_apply_patch" || name == "previs_preview" || cloudAgentDirectorWriteTool(name)
+	// director 按名字判定为写，具体调用用 cloudAgentWriteCall 按 action 放过 read。
+	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == cloudAgentDirectorTool
 }
 
 // cloudAgentCanvasWriteTool 标记"调用返回即表示已经落到画布上"的写入工具。
@@ -591,7 +594,7 @@ const cloudAgentMaxReadToolCallsPerRun = platform.DefaultRuntimeAgentReadCallsPe
 
 func cloudAgentReadToolCacheable(name string) bool {
 	switch name {
-	case "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "model_list":
+	case "canvas_get_state", "canvas_read_storyboard", "model_list":
 		return true
 	default:
 		return false
@@ -600,7 +603,7 @@ func cloudAgentReadToolCacheable(name string) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "previs_scene_read", "director_check_continuity", "director_handoff_shot", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "recall_lessons", "task_get":
+	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "recall_lessons", "task_get":
 		return true
 	default:
 		return false
@@ -635,7 +638,7 @@ func cloudAgentReadCacheKeyForState(repo *repository.Repository, userID string, 
 		return key
 	}
 	switch call.Function.Name {
-	case "canvas_get_state", "canvas_read_storyboard", "canvas_read_content", "canvas_search_nodes", "model_list", "previs_scene_read":
+	case "canvas_get_state", "canvas_read_storyboard", "canvas_read_content", "canvas_search_nodes", "model_list":
 		if repo != nil {
 			if canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID); err == nil && canvas != nil {
 				return fmt.Sprintf("%s:canvas-revision:%d", key, canvas.Revision)
@@ -740,6 +743,11 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		service = services[0]
 	}
 	switch call.Function.Name {
+	case "director":
+		if state == nil || cloudAgentWriteCall(call) {
+			return nil, BadAuthRequest("director 写操作不能走只读通道")
+		}
+		return cloudAgentDirectorRead(repo, userID, state.Request.CanvasID, call)
 	case "web_search":
 		if service == nil || state == nil || !state.Request.WebSearchEnabled {
 			return nil, kernel.Forbidden("本轮未启用联网搜索")

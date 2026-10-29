@@ -1326,6 +1326,51 @@ paths:
           description: 运行不存在或不属于当前用户，或本次运行没有可撤销的画布修改
         "409":
           description: reason=agent_undo_conflict 表示本次运行改过的内容之后又被编辑过，画布未改动，details.ids 为冲突的节点/连线/字段；运行仍在进行时返回 reason=conflict
+  /agent/runs/{id}/director-preview:
+    parameters:
+      - $ref: "#/components/parameters/AgentRunID"
+    post:
+      tags: [agent]
+      summary: 回传导演台浏览器预演录制结果
+      description: 前端导演台在收到 director_open（action=preview）事件后录制白模预演，用本接口回传结果并恢复 Agent 挂起的 director 调用。requestId 取自事件；videoResourceId 与 error 必须且只能提供一个，视频资源须为当前用户已就绪的视频。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId]
+              properties:
+                requestId:
+                  type: string
+                  maxLength: 120
+                videoResourceId:
+                  type: string
+                error:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: "信封 data 为 { accepted: true }"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: {type: integer, enum: [0]}
+                  msg: {type: string}
+                  data:
+                    type: object
+                    required: [accepted]
+                    properties:
+                      accepted: {type: boolean, enum: [true]}
+        "400":
+          description: 请求无效、videoResourceId 与 error 未二选一，或视频资源不存在、未就绪、不属于当前用户
+        "401":
+          description: 未登录
+        "404":
+          description: "reason=director_preview_not_found：运行不存在或不属于当前用户，或 requestId 未知、已完成、已超时"
   /agent/runs/{id}/approvals/{approvalId}/decision:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"

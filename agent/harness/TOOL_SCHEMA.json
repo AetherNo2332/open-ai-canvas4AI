@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v14",
+  "schemaVersion": "cloud-agent-tools/v15",
   "tools": [
     {
       "function": {
@@ -131,6 +131,388 @@
           },
           "required": [
             "summary"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "导演台唯一工具。read 只读：无 sceneId/nodeId 返回场景目录，指定后返回场景、坐标、snapshotHash 和工作站 nodeId。create_scene 按 template 建白模场景并绑定可打开导演台的视频节点。apply_patch 用 patch.operations 做受限语义修改，须带 read 的 expectedSceneHash，禁止原始 JSON/URL/storage key。preview 让浏览器导演台录制白模视频，运行等待回传；status=completed 才有 videoResourceId，reason=director_viewport_unavailable 表示页面未打开或超时，可请用户打开导演台后重试。写入与 preview 按权限审批并自动打开导演台；只读模式仅 read。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "director",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "description": "read 只读；其余为写，按权限审批",
+              "enum": [
+                "read",
+                "create_scene",
+                "apply_patch",
+                "preview"
+              ],
+              "type": "string"
+            },
+            "expectedSceneHash": {
+              "description": "read 返回的场景 snapshotHash；apply_patch 必填",
+              "maxLength": 128,
+              "type": "string"
+            },
+            "nodeId": {
+              "description": "可选：已绑定场景的导演台节点 ID，可代替 sceneId",
+              "maxLength": 80,
+              "type": "string"
+            },
+            "patch": {
+              "additionalProperties": false,
+              "description": "apply_patch 补丁，只含 operations（1–32 项受限语义操作）",
+              "properties": {
+                "operations": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "activeShotId": {
+                        "maxLength": 80,
+                        "type": "string"
+                      },
+                      "angle": {
+                        "maximum": 6.29,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "archetype": {
+                        "description": "演员体型原型",
+                        "enum": [
+                          "adult",
+                          "child",
+                          "elderly",
+                          "man",
+                          "woman",
+                          "monster"
+                        ],
+                        "type": "string"
+                      },
+                      "background": {
+                        "maxLength": 32,
+                        "type": "string"
+                      },
+                      "cameraId": {
+                        "maxLength": 80,
+                        "type": "string"
+                      },
+                      "cameraMove": {
+                        "enum": [
+                          "static",
+                          "push_in",
+                          "pull_out",
+                          "pan_left",
+                          "pan_right",
+                          "tilt_up",
+                          "tilt_down",
+                          "orbit_left",
+                          "orbit_right",
+                          "handheld"
+                        ],
+                        "type": "string"
+                      },
+                      "castShadow": {
+                        "type": "boolean"
+                      },
+                      "characterAssetId": {
+                        "maxLength": 120,
+                        "type": "string"
+                      },
+                      "characterName": {
+                        "maxLength": 160,
+                        "type": "string"
+                      },
+                      "characterVersionId": {
+                        "maxLength": 120,
+                        "type": "string"
+                      },
+                      "color": {
+                        "description": "十六进制颜色",
+                        "maxLength": 9,
+                        "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+                        "type": "string"
+                      },
+                      "duration": {
+                        "maximum": 60,
+                        "minimum": 0.1,
+                        "type": "number"
+                      },
+                      "easing": {
+                        "enum": [
+                          "step",
+                          "linear",
+                          "smooth"
+                        ],
+                        "type": "string"
+                      },
+                      "environmentIntensity": {
+                        "maximum": 100,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "focalLength": {
+                        "maximum": 300,
+                        "minimum": 1,
+                        "type": "number"
+                      },
+                      "fps": {
+                        "maximum": 60,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "gridVisible": {
+                        "type": "boolean"
+                      },
+                      "id": {
+                        "description": "目标或新建资源 ID",
+                        "maxLength": 80,
+                        "type": "string"
+                      },
+                      "intensity": {
+                        "maximum": 100,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "keyframeId": {
+                        "maxLength": 120,
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "primitive",
+                          "actor"
+                        ],
+                        "type": "string"
+                      },
+                      "lightType": {
+                        "enum": [
+                          "directional",
+                          "point",
+                          "spot",
+                          "ambient"
+                        ],
+                        "type": "string"
+                      },
+                      "name": {
+                        "maxLength": 160,
+                        "type": "string"
+                      },
+                      "orientToPath": {
+                        "type": "boolean"
+                      },
+                      "parentId": {
+                        "maxLength": 80,
+                        "type": "string"
+                      },
+                      "pathPoints": {
+                        "items": {
+                          "items": {
+                            "type": "number"
+                          },
+                          "maxItems": 3,
+                          "minItems": 3,
+                          "type": "array"
+                        },
+                        "maxItems": 64,
+                        "minItems": 2,
+                        "type": "array"
+                      },
+                      "pathSpeed": {
+                        "enum": [
+                          "slow",
+                          "walk",
+                          "run"
+                        ],
+                        "type": "string"
+                      },
+                      "penumbra": {
+                        "maximum": 1,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "pose": {
+                        "description": "演员姿态",
+                        "enum": [
+                          "stand",
+                          "sit",
+                          "walk",
+                          "run",
+                          "wave",
+                          "think",
+                          "fight",
+                          "kick",
+                          "throw",
+                          "push",
+                          "reach",
+                          "arms_crossed",
+                          "phone",
+                          "bow",
+                          "kneel_single",
+                          "kneel_double",
+                          "lean",
+                          "squat",
+                          "hands_hips",
+                          "neutral",
+                          "t_pose"
+                        ],
+                        "type": "string"
+                      },
+                      "position": {
+                        "items": {
+                          "type": "number"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "primitive": {
+                        "enum": [
+                          "box",
+                          "sphere",
+                          "cylinder",
+                          "plane",
+                          "character"
+                        ],
+                        "type": "string"
+                      },
+                      "prompt": {
+                        "maxLength": 2000,
+                        "type": "string"
+                      },
+                      "referenceNodeId": {
+                        "maxLength": 120,
+                        "type": "string"
+                      },
+                      "rotation": {
+                        "items": {
+                          "type": "number"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "scale": {
+                        "items": {
+                          "type": "number"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "shotSize": {
+                        "enum": [
+                          "extreme_wide",
+                          "wide",
+                          "full",
+                          "medium",
+                          "close_up",
+                          "extreme_close_up"
+                        ],
+                        "type": "string"
+                      },
+                      "startDelay": {
+                        "maximum": 60,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "target": {
+                        "items": {
+                          "type": "number"
+                        },
+                        "maxItems": 3,
+                        "minItems": 3,
+                        "type": "array"
+                      },
+                      "time": {
+                        "maximum": 60,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "title": {
+                        "maxLength": 160,
+                        "type": "string"
+                      },
+                      "type": {
+                        "enum": [
+                          "scene_update",
+                          "shot_add",
+                          "shot_update",
+                          "shot_remove",
+                          "object_add",
+                          "object_update",
+                          "object_remove",
+                          "object_keyframe_upsert",
+                          "object_keyframe_remove",
+                          "object_motion_path_set",
+                          "object_motion_path_clear",
+                          "camera_add",
+                          "camera_update",
+                          "camera_remove",
+                          "camera_keyframe_upsert",
+                          "camera_keyframe_remove",
+                          "light_add",
+                          "light_update",
+                          "light_remove"
+                        ],
+                        "type": "string"
+                      },
+                      "visible": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 32,
+                  "minItems": 1,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "operations"
+              ],
+              "type": "object"
+            },
+            "sceneId": {
+              "description": "场景 ID；create_scene 省略时由系统分配",
+              "maxLength": 80,
+              "type": "string"
+            },
+            "shotId": {
+              "description": "可选镜头 ID；preview 默认活动镜头",
+              "maxLength": 80,
+              "type": "string"
+            },
+            "template": {
+              "description": "create_scene 场景模板",
+              "enum": [
+                "empty",
+                "monologue",
+                "dialogue",
+                "blocking",
+                "product",
+                "action_chase",
+                "interior",
+                "crowd"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "description": "create_scene 场景与节点标题",
+              "maxLength": 160,
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
           ],
           "type": "object"
         }
