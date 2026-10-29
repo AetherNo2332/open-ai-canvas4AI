@@ -28,6 +28,9 @@ type cloudAgentUndoValue struct {
 
 type cloudAgentUndoEntry struct {
 	base, final cloudAgentUndoValue
+	// interleaved: between two of the run's mutations the entity changed outside
+	// the run, so restoring base would also erase that outside edit.
+	interleaved bool
 }
 
 // UndoCloudAgentRun reverts every canvas change one finished Agent run made,
@@ -101,6 +104,10 @@ func (s *Service) UndoCloudAgentRun(userID, runID, reason string) (*CloudAgentUn
 		if err := saveCreationCanvasWithHistory(repo, canvas, previous); err != nil {
 			if errors.Is(err, repository.ErrCreationConflict) {
 				return kernel.AgentUndoConflict("画布刚刚发生了新的修改，请稍后重试撤销", nil)
+			}
+			var lease *repository.CanvasEditLeaseError
+			if errors.As(err, &lease) {
+				return kernel.AgentUndoConflict("有人正在编辑 Agent 修改过的节点，结束编辑后再撤销", map[string]any{"ids": []string{lease.NodeID}})
 			}
 			return err
 		}
@@ -188,6 +195,8 @@ func cloudAgentUndoDocument(chain []model.CloudAgentCanvasMutation, live map[str
 				entry = &cloudAgentUndoEntry{base: b}
 				entries[key] = entry
 				order = append(order, key)
+			} else if !cloudAgentUndoSame(key, b, entry.final) {
+				entry.interleaved = true
 			}
 			entry.final = a
 		}
@@ -201,7 +210,7 @@ func cloudAgentUndoDocument(chain []model.CloudAgentCanvasMutation, live map[str
 		if cloudAgentUndoSame(key, entry.base, entry.final) {
 			continue
 		}
-		if !cloudAgentUndoSame(key, liveEntities[key], entry.final) {
+		if entry.interleaved || !cloudAgentUndoSame(key, liveEntities[key], entry.final) {
 			conflicts = append(conflicts, key)
 			continue
 		}

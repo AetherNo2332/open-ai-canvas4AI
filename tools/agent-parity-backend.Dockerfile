@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=tmpfs,target=/t
 RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=tmpfs,target=/tmp \
     CGO_ENABLED=1 go test ./internal/prompts -run '^Test(LoadAgentPoliciesUsesDocumentMetadata|ParsePolicyDocumentRejectsInvalidMetadata)$' -v -count=1 -timeout=10m
 RUN --mount=type=cache,target=/root/.cache/go-build --mount=type=tmpfs,target=/tmp \
-    CGO_ENABLED=1 go test ./internal/app ./internal/database ./internal/assets -run 'TestPiPreflight|TestAgentParity|TestCanvasAgentManualOperationConformance|TestAgentToolSchemaArtifact|TestUndoCloudAgentCanvas|TestMigrateSchemaV58|TestCloudAgent(ToolSchema|ToolArgumentValidation|ToolTableMatchesRuntimeDispatch|RegistersEligibleConcreteToolsFromStart|ToolCategoriesRespectCapabilityAndPermission|ToolLoopPersistsApprovalAndAppliesCanvasWrite|CanvasApprovalAdmissionFailureTerminatesRun|Storyboard|BatchTable|MixedCanvasReadsUnsupportedNodesWithoutGrantingCapabilities|NodeTypesExposeExecutableAllowList)' -v -count=1 -timeout=20m
+    CGO_ENABLED=1 go test ./internal/app ./internal/database ./internal/assets -run 'TestPiPreflight|TestAgentParity|TestCanvasAgentManualOperationConformance|TestAgentToolSchemaArtifact|TestAgentUndo|TestMigrateSchemaV58|TestCloudAgent(ToolSchema|ToolArgumentValidation|ToolTableMatchesRuntimeDispatch|RegistersEligibleConcreteToolsFromStart|ToolCategoriesRespectCapabilityAndPermission|ToolLoopPersistsApprovalAndAppliesCanvasWrite|CanvasApprovalAdmissionFailureTerminatesRun|Storyboard|BatchTable|MixedCanvasReadsUnsupportedNodesWithoutGrantingCapabilities|NodeTypesExposeExecutableAllowList)' -v -count=1 -timeout=20m
 
 FROM deps AS backend-history-test
 COPY backend ./

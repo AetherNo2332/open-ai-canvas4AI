@@ -3,7 +3,9 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -182,5 +184,64 @@ func TestAgentUndoRejectsOtherUsersAndRunningRuns(t *testing.T) {
 	}
 	if _, err := f.s.UndoCloudAgentRun("", f.runID, ""); !errors.As(err, &appErr) || appErr.Status != 401 {
 		t.Fatalf("missing user must be unauthorized, got %v", err)
+	}
+}
+
+func (f agentUndoFixture) userEditTitle(t *testing.T, nodeID, title string) {
+	t.Helper()
+	canvas := f.canvas(t)
+	doc, _ := creationDocument(canvas.PayloadJSON)
+	for _, node := range creationMaps(doc["nodes"]) {
+		if stringValue(node["id"]) == nodeID {
+			node["title"] = title
+		}
+	}
+	raw, _ := json.Marshal(doc)
+	canvas.PayloadJSON = string(raw)
+	if err := f.s.repo.UpsertCanvasProject(canvas); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Agent edits A, the user edits A, the Agent edits A again: live A equals the
+// run's final value, but undoing to the pre-run value would erase the user's
+// mid-run edit, so it must conflict.
+func TestAgentUndoConflictsOnUserEditBetweenAgentMutations(t *testing.T) {
+	f := newAgentUndoFixture(t, agentUndoSeed)
+	f.apply(t, "call-1", map[string]any{"type": "update_node", "id": "keep", "patch": map[string]any{"content": "第一次"}})
+	f.userEditTitle(t, "keep", "用户中途改标题")
+	f.apply(t, "call-2", map[string]any{"type": "update_node", "id": "keep", "patch": map[string]any{"content": "第二次"}})
+	f.finish(t)
+	before := f.canvas(t)
+
+	_, err := f.s.UndoCloudAgentRun("user", f.runID, "")
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Status != 409 || appErr.Reason != kernel.ReasonAgentUndoConflict {
+		t.Fatalf("expected 409 agent_undo_conflict, got %v", err)
+	}
+	if after := f.canvas(t); after.Revision != before.Revision || after.PayloadJSON != before.PayloadJSON {
+		t.Fatal("conflicting undo must leave the canvas unchanged")
+	}
+}
+
+func TestAgentUndoReportsLeaseHeldNodeAsConflict(t *testing.T) {
+	f := newAgentUndoFixture(t, agentUndoSeed)
+	f.apply(t, "call-edit", map[string]any{"type": "update_node", "id": "keep", "patch": map[string]any{"content": "Agent 改写"}})
+	f.finish(t)
+	if _, err := f.s.repo.ChangeCanvasEditLease("user", "agent-canvas", model.CanvasEditProof{NodeID: "keep", SessionID: "tab"}, "acquire", strings.Repeat("t", 48), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	before := f.canvas(t)
+
+	_, err := f.s.UndoCloudAgentRun("user", f.runID, "")
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Status != 409 || appErr.Reason != kernel.ReasonAgentUndoConflict {
+		t.Fatalf("lease-held node must be a 409 agent_undo_conflict, got %v", err)
+	}
+	if ids, _ := appErr.Details["ids"].([]string); len(ids) != 1 || ids[0] != "keep" {
+		t.Fatalf("conflict must name the leased node: %+v", appErr.Details)
+	}
+	if after := f.canvas(t); after.Revision != before.Revision || after.PayloadJSON != before.PayloadJSON {
+		t.Fatal("blocked undo must leave the canvas unchanged")
 	}
 }
