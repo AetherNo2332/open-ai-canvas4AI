@@ -107,3 +107,16 @@ test("Pi validates the shared conditional contracts before execution", () => {
     else assert.throws(validate, Error, name);
   }
 });
+
+test("director character binding fields explain their source and joint requirement", () => {
+  const director = artifact.tools.map((entry: any) => entry.function).find((entry: any) => entry.name === "director");
+  assert.ok(director, "director");
+  assert.match(director.description, /character\.assetId/);
+  assert.match(director.description, /character\.versionId/);
+  const operation = director.parameters.properties.patch.properties.operations.items;
+  for (const [field, source] of <[string, string][]>[["characterAssetId", "character.assetId"], ["characterVersionId", "character.versionId"], ["referenceNodeId", "角色卡节点 id"]]) {
+    const description: string = operation.properties[field].description ?? "";
+    assert.ok(description.includes(source), `${field} must name its source`);
+    assert.ok(description.includes("三者必须同时提供"), `${field} must state the joint requirement`);
+  }
+});

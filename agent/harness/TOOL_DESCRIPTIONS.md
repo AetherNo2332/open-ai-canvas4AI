@@ -52,7 +52,7 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 ## director
 
-导演台唯一工具。read 只读：无 sceneId/nodeId 返回场景目录，指定后返回场景、坐标、snapshotHash 和工作站 nodeId。create_scene 按 template 建白模场景并绑定可打开导演台的视频节点。apply_patch 用 patch.operations 做受限语义修改，须带 read 的 expectedSceneHash，禁止原始 JSON/URL/storage key。preview 让浏览器导演台录制白模视频，运行等待回传；status=completed 才有 videoResourceId，reason=director_viewport_unavailable 表示页面未打开或超时，可请用户打开导演台后重试。写入与 preview 按权限审批并自动打开导演台；只读模式仅 read。
+导演台唯一工具。read 只读：无 sceneId/nodeId 返回场景目录，指定后返回场景、坐标、snapshotHash 和工作站 nodeId。create_scene 按 template 建白模场景并绑定可打开导演台的视频节点。apply_patch 用 patch.operations 做受限语义修改，须带 read 的 expectedSceneHash，禁止原始 JSON/URL/storage key；角色绑定须同时给 characterAssetId、characterVersionId、referenceNodeId，分别取 canvas_get_state 角色卡的 character.assetId、character.versionId 与节点 id。preview 让浏览器导演台录制白模视频，运行等待回传；status=completed 才有 videoResourceId，reason=director_viewport_unavailable 表示页面未打开或超时，可请用户打开导演台后重试。写入与 preview 按权限审批并自动打开导演台；只读模式仅 read。
 
 ## canvas_create_character
 
