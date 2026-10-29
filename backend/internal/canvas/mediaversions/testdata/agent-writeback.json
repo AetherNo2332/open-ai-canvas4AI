@@ -1,0 +1,88 @@
+{
+  "after": {
+    "height": 300,
+    "id": "hero",
+    "metadata": {
+      "content": "/api/resources/agent-new/file",
+      "currentMediaVersionId": "agent-v2",
+      "mediaVersions": [
+        {
+          "createdAt": "2026-10-29T08:00:00.000Z",
+          "generation": {
+            "prompt": "first"
+          },
+          "id": "agent-v1",
+          "media": {
+            "content": "/api/resources/old/file",
+            "mimeType": "image/png",
+            "naturalHeight": 600,
+            "naturalWidth": 800,
+            "storageKey": "resource:old"
+          },
+          "number": 1,
+          "source": "upload"
+        },
+        {
+          "createdAt": "2026-10-29T08:00:00.000Z",
+          "generation": {
+            "producedModel": "img-model",
+            "prompt": "agent prompt",
+            "taskId": "agent-task"
+          },
+          "id": "agent-v2",
+          "media": {
+            "content": "/api/resources/agent-new/file",
+            "mimeType": "image/png",
+            "naturalHeight": 900,
+            "naturalWidth": 600,
+            "storageKey": "resource:agent-new"
+          },
+          "number": 2,
+          "source": "generate"
+        }
+      ],
+      "mimeType": "image/png",
+      "naturalHeight": 900,
+      "naturalWidth": 600,
+      "producedModel": "img-model",
+      "prompt": "agent prompt",
+      "status": "success",
+      "storageKey": "resource:agent-new",
+      "taskCompletedAt": "2026-10-29T08:00:00.000Z",
+      "taskId": "agent-task",
+      "taskStatus": "succeeded"
+    },
+    "position": {
+      "x": 0,
+      "y": 0
+    },
+    "title": "主角",
+    "type": "image",
+    "width": 400
+  },
+  "before": {
+    "height": 300,
+    "id": "hero",
+    "metadata": {
+      "content": "/api/resources/old/file",
+      "mimeType": "image/png",
+      "naturalHeight": 600,
+      "naturalWidth": 800,
+      "prompt": "first",
+      "status": "success",
+      "storageKey": "resource:old"
+    },
+    "position": {
+      "x": 0,
+      "y": 0
+    },
+    "title": "主角",
+    "type": "image",
+    "width": 400
+  },
+  "outcome": {
+    "Reason": "applied",
+    "VersionID": "agent-v2",
+    "Adopted": true
+  }
+}

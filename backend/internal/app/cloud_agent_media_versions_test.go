@@ -57,8 +57,16 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 				t.Fatalf("version submit lacks the actual pending node: %+v", submitted)
 			}
 			projection := changed[0]["after"].(map[string]any)["metadata"].(map[string]any)
-			if projection["taskId"] == nil || projection["storageKey"] != "resource:ref-two" || projection["mediaVersions"] != nil {
-				t.Fatalf("version submit must keep old media and add no placeholder version: %+v", projection)
+			// 提交把节点当前媒体登记为版本 1（等价浏览器 recordCommittedMediaVersion），
+			// 在途生成单独走 generating，不是版本条目；版本 1 的媒体与来源必须仍是旧媒体。
+			submittedVersions := mediaversions.List(changed[0]["after"].(map[string]any))
+			if projection["taskId"] == nil || projection["storageKey"] != "resource:ref-two" || len(submittedVersions) != 1 {
+				t.Fatalf("version submit must keep old media and register only the current media as version 1: %+v", projection)
+			}
+			first := submittedVersions[0]
+			firstMedia, _ := first["media"].(map[string]any)
+			if first["source"] != "upload" || firstMedia["storageKey"] != "resource:ref-two" || projection["currentMediaVersionId"] != first["id"] {
+				t.Fatalf("submitted version 1 must snapshot the pre-task current media: %+v", first)
 			}
 			if state.MediaTaskID == "" {
 				t.Fatalf("approved version has no task: %+v", state.Events[len(state.Events)-1])
@@ -104,7 +112,7 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 					} `json:"mediaVersions"`
 				}
 				_ = json.Unmarshal(raw, &history)
-				if history.Versions.Generating.TaskID != task.ID || len(history.Versions.Items) != 0 || strings.Contains(string(raw), "beforeVersion") {
+				if history.Versions.Generating.TaskID != task.ID || len(history.Versions.Items) != 1 || strings.Contains(string(raw), "beforeVersion") {
 					t.Fatalf("read must report generation apart from versions: %s", raw)
 				}
 				// The user adopts an older version in the browser while the task runs.

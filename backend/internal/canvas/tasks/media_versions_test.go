@@ -61,7 +61,7 @@ func TestCanvasMediaNewVersionRetainsAndAdoptsWithoutChangingNode(t *testing.T) 
 				t.Fatal(err)
 			}
 			node := findNode(snap.Document, "target")
-			if metadata(node)["storageKey"] != "resource:old" || metadata(node)["status"] != "success" || metadata(node)["taskId"] != handle.TaskID || len(mediaversions.List(node)) != 0 {
+			if metadata(node)["storageKey"] != "resource:old" || metadata(node)["status"] != "success" || metadata(node)["taskId"] != handle.TaskID || len(mediaversions.List(node)) != 1 {
 				t.Fatalf("old media unavailable during update: %+v", metadata(node))
 			}
 			result := fmt.Sprintf(`{"%s":{"resourceId":"new"}}`, kind)

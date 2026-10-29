@@ -100,6 +100,9 @@ func Begin(node map[string]any, task model.Task, nodes []map[string]any) (Base, 
 	if m["locked"] == true {
 		return Base{}, fail("target_locked", "目标节点已锁定")
 	}
+	// 与浏览器 mediaVersionFieldsBeforeReplace 一致：生成开始时先把节点当前媒体登记进历史（不是在途占位），
+	// 这样它的来源字段不会被新任务的 taskId 覆盖，写回时也能确认当前版本是否被用户换过。
+	ensure(node, "", clock())
 	base := Base{NodeID: str(node["id"]), HadMedia: HasMedia(node), OutputOwners: OutputOwners(nodes, str(node["id"])), Geometry: geometry(node)}
 	if current := Current(node); current != nil {
 		base.CurrentVersionID = str(current["id"])

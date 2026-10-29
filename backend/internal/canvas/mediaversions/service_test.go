@@ -75,7 +75,7 @@ func TestFinishFailureAndBlockKeepCurrent(t *testing.T) {
 	node := imageNode("old", nil)
 	base, _ := Begin(node, model.Task{ID: "t1", Status: model.TaskStatusQueued}, []map[string]any{node})
 	next, outcome := Finish(cloneMap(node), map[string]any{"id": "n", "type": "image"}, base, model.Task{ID: "t1", Status: model.TaskStatusFailed}, "", time.Now())
-	if outcome.Adopted || meta(next)["storageKey"] != "resource:old" || meta(next)["status"] != "success" || len(List(next)) != 0 {
+	if outcome.Adopted || meta(next)["storageKey"] != "resource:old" || meta(next)["status"] != "success" || len(List(next)) != 1 {
 		t.Fatalf("failure changed media: %+v", meta(next))
 	}
 	next, outcome = Finish(cloneMap(node), resultFor(node, "new", "t1"), base, model.Task{ID: "t1", Status: model.TaskStatusSucceeded}, "output_binding_changed", time.Now())

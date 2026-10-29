@@ -2910,7 +2910,8 @@ func (p *planner) canvasReorderItems(items []map[string]any, ids []string) ([]ma
 // It returns the source-to-copy identity mapping of the copied table rows so that
 // row scoped connections can be rebound onto the copy instead of the source table.
 func (p *planner) canvasResetCopiedMetadata(meta map[string]any, nodeID string, idMap map[string]string) map[string]string {
-	delete(meta, "mediaVersion")
+	delete(meta, "mediaVersions")
+	delete(meta, "currentMediaVersionId")
 	for _, key := range []string{"taskId", "taskClientOperationId", "retryOf", "attemptGroupId", "taskStatus", "taskProgress", "taskStage", "taskMediaStage", "taskCanRecoverMedia", "taskProvider", "taskStartedAt", "taskCompletedAt", "taskDurationMs", "taskErrorCode", "taskOfficialStatus", "taskReceiptRecorded", "taskCreatedAt", "taskUpdatedAt", "generationBatches", "batchRootId", "batchChildIds", "batchFailedCount", "isBatchRoot", "primaryImageId", "imageBatchExpanded", "batchUsesReferenceImages", "versionOfNodeId", "versionLabel", "versionPrimary", "errorDetails", "generationErrorCode", "resourceReloadAvailable", "failedPromptFingerprint"} {
 		delete(meta, key)
 	}
