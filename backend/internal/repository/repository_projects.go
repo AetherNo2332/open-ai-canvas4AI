@@ -3,6 +3,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -69,7 +70,8 @@ func (r *Repository) UpdateProject(project *model.Project) error {
 }
 
 func (r *Repository) DeleteProject(userID string, id string, canvasUpdates []model.CanvasProject) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return r.Transaction(func(repo *Repository) error {
+		tx := repo.db
 		var canvasIDs []string
 		if err := tx.Model(&model.CanvasProject{}).
 			Where("user_id = ? AND project_id = ?", userID, id).
@@ -93,14 +95,11 @@ func (r *Repository) DeleteProject(userID string, id string, canvasUpdates []mod
 			return err
 		}
 		for _, canvas := range canvasUpdates {
-			result := tx.Model(&model.CanvasProject{}).
-				Where("id = ? AND user_id = ? AND project_id = ? AND revision = ?", canvas.ID, userID, id, canvas.Revision).
-				Updates(map[string]any{"project_id": "", "payload_json": canvas.PayloadJSON, "updated_at": canvas.UpdatedAt, "revision": canvas.Revision + 1})
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected != 1 {
-				return gorm.ErrRecordNotFound
+			after := canvas
+			after.UserID = userID
+			after.ProjectID = ""
+			if err := repo.writeCanvasProjectAssociation(id, &after); err != nil {
+				return err
 			}
 		}
 		var remainingCanvasCount int64
@@ -333,25 +332,82 @@ func (r *Repository) DeleteCanvasUnitLink(projectID string, canvasID string, uni
 }
 
 func (r *Repository) AssignCanvasToProject(userID string, canvasID string, projectID string) error {
-	return r.db.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ?", canvasID, userID).Updates(map[string]any{"project_id": projectID, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error
+	return r.Transaction(func(tx *Repository) error {
+		if err := tx.LockCanvasMutation(userID, canvasID); err != nil {
+			return err
+		}
+		before, err := tx.CanvasProjectForUser(userID, canvasID)
+		if err != nil {
+			return err
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(before.PayloadJSON), &payload); err != nil {
+			return err
+		}
+		if payload == nil {
+			return fmt.Errorf("canvas document is null")
+		}
+		// 关系列与同步快照里的 projectId 必须一致，否则浏览器下次整份保存会把旧归属写回。
+		now := time.Now()
+		payload["projectId"] = projectID
+		payload["updatedAt"] = now.Format(time.RFC3339Nano)
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		after := *before
+		after.ProjectID = projectID
+		after.Revision = before.Revision
+		after.PayloadJSON = string(encoded)
+		after.UpdatedAt = now
+		return tx.writeCanvasProjectAssociation(before.ProjectID, &after)
+	})
 }
 
 func (r *Repository) UnassignCanvasFromProject(userID string, projectID string, canvasID string, payloadJSON string, updatedAt time.Time, revision int64) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("project_id = ? AND canvas_id = ?", projectID, canvasID).Delete(&model.CanvasUnitLink{}).Error; err != nil {
+	return r.Transaction(func(tx *Repository) error {
+		if err := tx.db.Where("project_id = ? AND canvas_id = ?", projectID, canvasID).Delete(&model.CanvasUnitLink{}).Error; err != nil {
 			return err
 		}
-		result := tx.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ? AND project_id = ? AND revision = ?", canvasID, userID, projectID, revision).Updates(map[string]any{
-			"project_id": "", "payload_json": payloadJSON, "updated_at": updatedAt, "revision": revision + 1,
-		})
-		if result.Error != nil {
-			return result.Error
+		after := model.CanvasProject{ID: canvasID, UserID: userID, Revision: revision, PayloadJSON: payloadJSON, UpdatedAt: updatedAt}
+		if err := tx.writeCanvasProjectAssociation(projectID, &after); err != nil {
+			return err
 		}
-		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
-		}
-		return tx.Model(&model.Project{}).Where("id = ?", projectID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": updatedAt}).Error
+		return tx.db.Model(&model.Project{}).Where("id = ?", projectID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": updatedAt}).Error
 	})
+}
+
+// writeCanvasProjectAssociation 必须在事务内调用：锁画布、按期望项目与 revision 做 CAS，
+// 再把归属变化投影为 Agent 命令事件与实体版本。after.Revision 为调用方读到的 revision，
+// 成功后更新为新 revision。
+func (r *Repository) writeCanvasProjectAssociation(expectedProjectID string, after *model.CanvasProject) error {
+	if err := r.LockCanvasMutation(after.UserID, after.ID); err != nil {
+		return err
+	}
+	before, err := r.CanvasProjectForUser(after.UserID, after.ID)
+	if err != nil {
+		return err
+	}
+	expected := after.Revision
+	if before.ProjectID != expectedProjectID || before.Revision != expected {
+		return gorm.ErrRecordNotFound
+	}
+	if err := r.checkCanvasEditLeases(before, after); err != nil {
+		return err
+	}
+	result := r.db.Model(&model.CanvasProject{}).
+		Where("id = ? AND user_id = ? AND project_id = ? AND revision = ?", after.ID, after.UserID, expectedProjectID, expected).
+		Updates(map[string]any{"project_id": after.ProjectID, "payload_json": after.PayloadJSON, "updated_at": after.UpdatedAt, "revision": expected + 1})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
+	after.Title = before.Title
+	after.Revision = expected + 1
+	r.canvasChanged(after.UserID, after.ID)
+	return r.syncLegacyCanvasWrite(before, after, false)
 }
 
 func (r *Repository) ProjectAssets(userID string, projectID string) ([]model.Asset, error) {

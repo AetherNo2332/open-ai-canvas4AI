@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -142,11 +143,15 @@ func testCanvasRevision(t *testing.T, db *gorm.DB) {
 	if err := repo.UpsertCanvasProject(winner); !errors.Is(err, ErrCanvasRevisionConflict) {
 		t.Fatalf("association did not invalidate old content: %v", err)
 	}
+	assigned, _ := repo.CanvasProjectForUser("owner", initial.ID)
+	if assigned.ProjectID != "project" || !strings.Contains(assigned.PayloadJSON, `"projectId":"project"`) {
+		t.Fatalf("assignment left column and payload inconsistent: %#v", assigned)
+	}
 	if err := repo.UnassignCanvasFromProject("owner", "project", initial.ID, `{"nodes":[]}`, time.Now(), 2); err == nil {
 		t.Fatal("stale unassignment replaced canvas content")
 	}
 	stored, _ = repo.CanvasProjectForUser("owner", initial.ID)
-	if stored.PayloadJSON != winner.PayloadJSON || stored.Revision != 3 {
+	if stored.PayloadJSON != assigned.PayloadJSON || stored.Revision != 3 {
 		t.Fatal("stale unassignment changed the canvas")
 	}
 	if err := db.Delete(&model.CanvasProject{}, "id = ?", initial.ID).Error; err != nil {
