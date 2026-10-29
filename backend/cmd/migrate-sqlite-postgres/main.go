@@ -50,6 +50,9 @@ func main() {
 	if err := verifyMigrationCoverage(source); err != nil {
 		log.Fatalf("迁移表清单检查失败：%v", err)
 	}
+	if err := verifySourceSchema(source); err != nil {
+		log.Fatalf("SQLite 结构版本检查失败：%v", err)
+	}
 	source = source.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
 	target = target.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
 
@@ -98,6 +101,20 @@ func verifySQLite(db *gorm.DB) error {
 	}
 	if result != "ok" {
 		return fmt.Errorf("quick_check 返回 %q", result)
+	}
+	return nil
+}
+
+// verifySourceSchema 要求源库已在当前版本的后端上完成全部迁移。数据迁移（如 v77
+// 把旧媒体版本表并入节点元数据）只在源库执行；目标库建表时这些表还是空的，
+// 复制旧结构的行会让迁移被标记为已完成却从未转换数据。
+func verifySourceSchema(db *gorm.DB) error {
+	status, err := database.ReadSchemaStatus(db)
+	if err != nil {
+		return err
+	}
+	if !status.Ready {
+		return fmt.Errorf("源库结构版本为 %d，当前版本需要 %d；请先用当前版本的后端启动一次（或运行 migrate-schema）完成 SQLite 迁移，再复制到 PostgreSQL", status.Current, status.Expected)
 	}
 	return nil
 }

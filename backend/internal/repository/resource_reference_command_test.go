@@ -67,6 +67,28 @@ func TestResourceReferenceSnapshotIncludesCommandResources(t *testing.T) {
 	}
 }
 
+func TestResourceReferenceSnapshotHidesOtherOwnersCanvas(t *testing.T) {
+	db, repo := commandResourceTestDB(t)
+	for _, row := range []any{
+		&model.CanvasProject{ID: "canvas-other", UserID: "other", Title: "别人的画布", PayloadJSON: `{}`},
+		&model.CanvasCommandResource{OwnerID: "other", CanvasID: "canvas-other", Epoch: "e1", OperationID: "op-1", Kind: "history", ResourceID: "r1"},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := repo.ResourceReferenceSnapshotExcludingAssets("user", nil, []string{"r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Direct) != 1 || snapshot.Direct[0].ResourceID != "r1" {
+		t.Fatalf("other owner's command reference must still block deletion: %#v", snapshot.Direct)
+	}
+	if ref := snapshot.Direct[0]; ref.ID != "" || ref.Title == "别人的画布" {
+		t.Fatalf("other owner's canvas id/title leaked: %#v", ref)
+	}
+}
+
 func TestDeleteDetachedResourcesKeepsCommandReferenced(t *testing.T) {
 	db, repo := commandResourceTestDB(t)
 	resource := model.Resource{ID: "r1", UserID: "user", Provider: "local", ObjectKey: "users/user/r1.png", Status: model.ResourceStatusReady}

@@ -91,7 +91,8 @@ func (r *Repository) OtherAssetResourceReferences(userID string, excludedAssetID
 // CanvasCommandResourceReferences 列出 Agent 画布命令持有的资源：kind=current 是画布当前内容
 // （每次保存由投影写入），kind=history 是撤销所需的命令历史。
 // 不按 owner 过滤：物理删除检查同样全局计数，资源归属由调用方先行校验。
-func (r *Repository) CanvasCommandResourceReferences(resourceIDs []string) ([]ResourceDirectReference, error) {
+// 传入 viewerID 时，不属于该用户的画布仍计为引用，但不返回其画布 ID 与标题。
+func (r *Repository) CanvasCommandResourceReferences(resourceIDs []string, viewerID ...string) ([]ResourceDirectReference, error) {
 	refs := []ResourceDirectReference{}
 	if len(resourceIDs) == 0 || !r.db.Migrator().HasTable(&model.CanvasCommandResource{}) {
 		return refs, nil
@@ -101,9 +102,10 @@ func (r *Repository) CanvasCommandResourceReferences(resourceIDs []string) ([]Re
 		Kind       string
 		ResourceID string
 		Title      string
+		OwnerID    string
 	}
 	if err := r.db.Table("canvas_command_resources AS refs").
-		Select("refs.canvas_id, refs.kind, refs.resource_id, canvas_projects.title").
+		Select("refs.canvas_id, refs.kind, refs.resource_id, canvas_projects.title, canvas_projects.user_id AS owner_id").
 		Joins("LEFT JOIN canvas_projects ON canvas_projects.id = refs.canvas_id").
 		Where("refs.resource_id IN ?", resourceIDs).Distinct().Scan(&rows).Error; err != nil {
 		return nil, err
@@ -112,6 +114,9 @@ func (r *Repository) CanvasCommandResourceReferences(resourceIDs []string) ([]Re
 		kind := "Agent 画布历史"
 		if row.Kind == "current" {
 			kind = "画布当前内容"
+		}
+		if len(viewerID) > 0 && row.OwnerID != viewerID[0] {
+			row.CanvasID, row.Title = "", "其他用户的画布"
 		}
 		refs = append(refs, ResourceDirectReference{Kind: kind, ID: row.CanvasID, Title: row.Title, ResourceID: row.ResourceID})
 	}
@@ -190,7 +195,7 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 	}
 	snapshot.Direct = append(snapshot.Direct, taskRefs...)
 	// Agent 画布命令历史持有撤销所需资源；物理删除检查已认它，这里必须同样列为直接引用。
-	commandRefs, err := r.CanvasCommandResourceReferences(resourceIDs)
+	commandRefs, err := r.CanvasCommandResourceReferences(resourceIDs, userID)
 	if err != nil {
 		return snapshot, err
 	}

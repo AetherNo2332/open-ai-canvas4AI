@@ -63,3 +63,19 @@ func TestCanvasHistoryCompositeKeyMigration(t *testing.T) {
 		t.Fatalf("history refs not copied/verified: %d %v", count, err)
 	}
 }
+
+func TestSourceSchemaMustBeCurrent(t *testing.T) {
+	db, err := database.Open(database.Config{Driver: "sqlite", DSN: "file:source-schema-check?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySourceSchema(db); err == nil {
+		t.Fatal("unmigrated source schema was accepted")
+	}
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySourceSchema(db); err != nil {
+		t.Fatalf("current source schema rejected: %v", err)
+	}
+}
