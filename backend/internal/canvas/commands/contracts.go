@@ -148,9 +148,9 @@ type ValidationContext struct {
 	ModelInputLimits map[string]map[string]int
 	Asset            func(assetID string) (AssetMetadata, error)
 	// Resources contains only ready, owner-authorized resource records hydrated by the host.
-	Resources              map[string]ResourceMetadata
-	CharacterBindings      map[string]map[string]any
-	FolderBindings         map[string]bool
+	Resources         map[string]ResourceMetadata
+	CharacterBindings map[string]map[string]any
+	FolderBindings    map[string]bool
 }
 type ResourceMetadata struct {
 	ID, Kind, MimeType string

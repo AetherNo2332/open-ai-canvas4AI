@@ -18,7 +18,7 @@ type CanvasTaskBinding struct {
 	ResultContextJSON string `gorm:"type:text"`
 	OriginalContent   string `gorm:"type:text"`
 	// MediaVersionJSON 冻结媒体版本任务提交时的上下文（mediaversions.Base）；空表示不是媒体版本任务。
-	MediaVersionJSON string `gorm:"type:text"`
+	MediaVersionJSON  string `gorm:"type:text"`
 	ResolutionVersion int
 	CreatedAt         time.Time
 }
