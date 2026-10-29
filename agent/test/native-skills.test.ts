@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { CanvasBridge, type PiSkillSnapshot, type PiSnapshot } from "../src/bridge.js";
-import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "../src/native-skills.js";
+import { materializeNativeSkills, NativeSkillReadRejected, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "../src/native-skills.js";
 
 const entry = '---\nname: "skill-abc"\ndescription: "Use this for scripts"\n---\n# Body\n';
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -124,5 +124,46 @@ test("recovery rebases a persisted read from a previous worker root to the curre
   for (const path of [resolve(tmpdir(), "previous-worker", "skills", "other", "SKILL.md"),
     resolve(tmpdir(), "previous-worker", "skills", "skill-abc", "scripts", "exec.js")]) {
     assert.throws(() => rebaseNativeSkillPath(skills, current, path));
+  }
+});
+
+test("native read accepts the stable relative Skill location shown to the model", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "canvas-native-relative-"));
+  try {
+    const root = join(parent, "skills");
+    const skills = [nativeSkill()];
+    materializeNativeSkills(skills, root);
+    const run = { runId: "run", userId: "user", skillRuntimeMode: "pi-native", skills } as unknown as PiSnapshot;
+    const requests: string[] = [];
+    const bridge = { async readSkillFile(_run: PiSnapshot, name: string, path: string) {
+      requests.push(`${name}:${path}`);
+      const content = path === "SKILL.md" ? entry : "Reference";
+      return { nativeName: name, path, skillId: skills[0]!.id, versionId: skills[0]!.versionId,
+        contentHash: skills[0]!.contentHash, sha256: digest(content), isEntry: path === "SKILL.md",
+        offset: 0, limit: 12000, totalRunes: [...content].length, hasMore: false, content };
+    } } as unknown as CanvasBridge;
+    assert.ok((await readNativeSkill(run, root, bridge, "skills/skill-abc/SKILL.md")).startsWith(entry));
+    assert.ok((await readNativeSkill(run, root, bridge, "skills\\skill-abc\\references\\a.md")).startsWith("Reference"));
+    assert.ok((await readNativeSkill(run, root, bridge, join(root, "skill-abc", "SKILL.md"))).startsWith(entry));
+    assert.deepEqual(requests, ["skill-abc:SKILL.md", "skill-abc:references/a.md", "skill-abc:SKILL.md"]);
+    for (const path of ["skills/../x", "../skills/skill-abc/SKILL.md", "./skills/skill-abc/SKILL.md",
+      "skills/./skill-abc/SKILL.md", "skills/skill-abc/../skill-abc/SKILL.md", "skills//skill-abc/SKILL.md",
+      "skill-abc/SKILL.md", "other/skills/skill-abc/SKILL.md", "skills/skill-abc", "skills/other/SKILL.md",
+      "skills/skill-abc/scripts/run.js", resolve(parent, "elsewhere", "skills", "skill-abc", "SKILL.md"), ""]) {
+      await assert.rejects(readNativeSkill(run, root, bridge, path), NativeSkillReadRejected, path);
+    }
+    assert.equal(requests.length, 3);
+  } finally { rmSync(parent, { recursive: true, force: true }); }
+});
+
+test("rebase accepts the stable relative Skill location", () => {
+  const skills = [nativeSkill()];
+  const current = resolve(tmpdir(), "new-worker", "skills");
+  assert.equal(rebaseNativeSkillPath(skills, current, "skills/skill-abc/references/a.md"),
+    join(current, "skill-abc", "references", "a.md"));
+  assert.equal(rebaseNativeSkillPath(skills, current, "skills\\skill-abc\\SKILL.md"), join(current, "skill-abc", "SKILL.md"));
+  for (const path of ["skills/../skill-abc/SKILL.md", "../skills/skill-abc/SKILL.md", "x/skills/skill-abc/SKILL.md",
+    "skills/other/SKILL.md", "skills/skill-abc/scripts/exec.js"]) {
+    assert.throws(() => rebaseNativeSkillPath(skills, current, path), NativeSkillReadRejected, path);
   }
 });

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { LoadSkillsResult } from "@earendil-works/pi-coding-agent";
+import type { InlineExtension, LoadSkillsResult } from "@earendil-works/pi-coding-agent";
 import type { CanvasBridge, PiSkillSnapshot, PiSnapshot } from "./bridge.js";
 import { FatalWorkerError } from "./tool-disclosure.js";
 
@@ -49,14 +49,58 @@ export function verifyNativeSkillDiscovery(skills: PiSkillSnapshot[], result: Lo
   }
 }
 
-function resolveSkillPath(skills: PiSkillSnapshot[], root: string, input: string): { skill: PiSkillSnapshot; path: string } {
-  if (!isAbsolute(input) || input.split(/[\\/]/).some((part) => part === ".." || part === ".")) {
-    throw new NativeSkillReadRejected("Skill read path must be an absolute path inside this run");
+/** The model sees run-independent locations so its prompt stays cacheable. */
+export const NATIVE_SKILLS_DIR = "skills";
+export const NATIVE_RUN_CWD = "canvas-agent-run";
+export const nativeSkillLocation = (nativeName: string): string => `${NATIVE_SKILLS_DIR}/${nativeName}/SKILL.md`;
+
+/**
+ * Pi renders `<cwd>` and each Skill `<location>` from its prompt options. The
+ * on-disk run directory is a fresh temp dir, so rendering the real paths would
+ * change the system prompt on every run and defeat upstream prompt caching.
+ * `before_agent_start` is Pi's supported hook for per-run prompt options; it
+ * runs before each prompt and its options persist for every turn of that run,
+ * so fresh and resumed sessions both send the same stable text. Restored
+ * sessions with an older absolute-path system message are overridden by Pi's
+ * section diff, which keeps the original section order.
+ */
+export function createStableSkillPromptExtension(skills: PiSkillSnapshot[]): InlineExtension {
+  const names = new Set(skills.map((skill) => skill.nativeName));
+  return {
+    name: "canvas-stable-skill-locations",
+    hidden: true,
+    factory: (pi) => {
+      pi.on("before_agent_start", (event) => {
+        const options = event.systemPromptOptions;
+        options.cwd = NATIVE_RUN_CWD;
+        options.skills = (options.skills || []).map((skill) =>
+          names.has(skill.name) ? { ...skill, filePath: nativeSkillLocation(skill.name) } : skill);
+      });
+    },
+  };
+}
+
+const SEPARATOR = /[\\/]/;
+const hasDotSegment = (input: string): boolean => input.split(SEPARATOR).some((part) => part === ".." || part === ".");
+
+/** `skills/<nativeName>/<path>` relative to this run's cwd (the parent of `root`). */
+function relativeSkillParts(input: string): string[] | undefined {
+  if (isAbsolute(input) || /^[A-Za-z]:/.test(input)) return undefined;
+  const parts = input.split(SEPARATOR);
+  if (parts[0] !== NATIVE_SKILLS_DIR || parts.length < 3 || parts.some((part) => !part || part === "." || part === "..")) {
+    throw new NativeSkillReadRejected("Skill read path must be a Skill location from the system prompt");
   }
-  const rel = relative(resolve(root), resolve(input));
+  return parts.slice(1);
+}
+
+function resolveSkillPath(skills: PiSkillSnapshot[], root: string, input: string): { skill: PiSkillSnapshot; path: string } {
+  if (hasDotSegment(input)) throw new NativeSkillReadRejected("Skill read path must not contain . or .. segments");
+  const relativeParts = relativeSkillParts(input);
+  const target = relativeParts ? join(root, ...relativeParts) : input;
+  const rel = relative(resolve(root), resolve(target));
   const parts = rel.split(sep);
   if (parts.length < 2 || parts.some((part) => !part || part === ".." || part === ".") ||
-      !resolve(input).startsWith(resolve(root) + sep)) {
+      !resolve(target).startsWith(resolve(root) + sep)) {
     throw new NativeSkillReadRejected("Skill read path escapes this run");
   }
   const skill = skills.find((item) => item.nativeName === parts[0]);
@@ -67,13 +111,20 @@ function resolveSkillPath(skills: PiSkillSnapshot[], root: string, input: string
   return { skill, path };
 }
 
-/** A persisted Pi tool call contains the previous worker's absolute location. */
+/**
+ * A persisted Pi tool call contains either the stable relative location or,
+ * for runs saved before stable locations, the previous worker's absolute one.
+ */
 export function rebaseNativeSkillPath(skills: PiSkillSnapshot[], root: string, previousPath: string): string {
-  if (!isAbsolute(previousPath) || previousPath.split(/[\\/]/).some((part) => part === ".." || part === ".")) {
-    throw new NativeSkillReadRejected("Persisted Skill path is invalid");
+  if (hasDotSegment(previousPath)) throw new NativeSkillReadRejected("Persisted Skill path is invalid");
+  const relativeParts = relativeSkillParts(previousPath);
+  if (relativeParts) {
+    const rebased = join(root, ...relativeParts);
+    resolveSkillPath(skills, root, rebased);
+    return rebased;
   }
-  const parts = previousPath.split(/[\\/]/);
-  const index = parts.lastIndexOf("skills");
+  const parts = previousPath.split(SEPARATOR);
+  const index = parts.lastIndexOf(NATIVE_SKILLS_DIR);
   if (index < 0 || parts.length < index + 3) throw new NativeSkillReadRejected("Persisted Skill path is not within a Skill");
   const rebased = join(root, ...parts.slice(index + 1));
   resolveSkillPath(skills, root, rebased);

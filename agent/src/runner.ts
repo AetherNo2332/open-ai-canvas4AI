@@ -27,7 +27,7 @@ import { compactionSettings, serializePreparation, runNativeCompaction, prepareN
 import { FatalWorkerError } from "./tool-disclosure.js";
 import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
-import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected } from "./native-skills.js";
+import { createStableSkillPromptExtension, materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected } from "./native-skills.js";
 import { Unsafe, type TSchema } from "typebox";
 import { createImageContextExtension, createTerminalHistoryExtension, missingImageContent } from "./session-history.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
@@ -997,7 +997,7 @@ export async function runCanvasAgent(
     return undefined;
   }, nativeRead);
   const boot = await bootstrapSession(snapshot, systemPrompt, resume.entries, streamSimple, disclosure,
-    [compactionExtension, toolExtension, createTerminalHistoryExtension(snapshot), createImageContextExtension(() => snapshot.visionBatchBudget?.maxImages ?? 1)],
+    [compactionExtension, toolExtension, createStableSkillPromptExtension(snapshot.skills || []), createTerminalHistoryExtension(snapshot), createImageContextExtension(() => snapshot.visionBatchBudget?.maxImages ?? 1)],
     workspace);
   session = boot.session;
   sessionManager = boot.sessionManager;
