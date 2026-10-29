@@ -90,9 +90,9 @@ func (e *cloudAgentReadLoopError) Error() string {
 		return "Agent 重复读取护栏已触发"
 	}
 	if e.Budget {
-		return fmt.Sprintf("Agent 本轮只读工具调用已达到安全上限（%d 次），本轮已停止以避免继续消耗模型调用；请使用已有结果继续，不要继续读取", e.Count)
+		return fmt.Sprintf("Agent 本轮只读工具调用已达到安全上限（%d 次），本轮已停止；请基于已读到的内容答复，或请用户确认后开新一轮", e.Count)
 	}
-	return fmt.Sprintf("Agent 连续重复读取同一份%s结果，本轮已停止以避免继续消耗模型调用；请使用已有结果继续，不要再次读取", e.ToolName)
+	return fmt.Sprintf("Agent 连续多次读取同一份%s且结果未变，本轮已停止；请基于已读到的内容继续", e.ToolName)
 }
 
 type cloudAgentApproval struct {

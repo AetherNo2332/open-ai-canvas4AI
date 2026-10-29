@@ -101,6 +101,7 @@ describe("Agent tool presentation", () => {
         expect(agentVisionFailureSummary("cloud agent image inspection budget exhausted: 已用 7 次、本轮额度 5 次")).toBe("本轮识图额度已用完（已用 7 / 额度 5）");
         expect(agentVisionFailureSummary("cloud agent image inspection budget exhausted")).toBe("本轮识图额度已用完");
         expect(agentVisionFailureSummary("Agent 连续重复读取同一份canvas_inspect_image结果，本轮已停止以避免继续消耗模型调用；请让 Agent 使用已有结果继续，不要再次读取")).toBe("同一张图同版本重复读取，已拦下");
+        expect(agentVisionFailureSummary("Agent 连续多次读取同一份canvas_inspect_image且结果未变，本轮已停止；请基于已读到的内容继续")).toBe("同一张图同版本重复读取，已拦下");
         expect(agentVisionFailureSummary("本批看图数量已达到当前模型限制：本批已附 3 张、单次上限 4 张。请在本批结果返回后、下一步再继续查看剩余图片。")).toBe("本批图片数已达模型上限（已附 3 / 上限 4），下一步继续");
         expect(agentVisionFailureSummary("当前模型未声明图片输入能力")).toBe("当前渠道模型未声明图片输入能力");
         expect(agentVisionFailureSummary("指定节点不在当前画布")).toBe("查看画面未完成");

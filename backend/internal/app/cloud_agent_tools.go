@@ -697,7 +697,7 @@ func cloudAgentReadToolCached(repo *repository.Repository, userID string, state 
 					}
 					return restored, nil
 				}
-				return map[string]any{"cacheReplay": true, "replayCount": cached.ReplayCount, "message": "该只读结果已在当前上下文中，请直接使用已有结果，不要再次读取"}, nil
+				return map[string]any{"cacheReplay": true, "replayCount": cached.ReplayCount, "message": "结果与上次读取相同，可直接使用；若用户刚修改过画布或纠正了你，请重新读取需要的节点"}, nil
 			}
 		}
 	}

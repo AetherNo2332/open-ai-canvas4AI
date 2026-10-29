@@ -313,7 +313,7 @@ export function agentVisionFailureSummary(text: string, detail?: unknown): strin
     if (quota) return `本轮识图额度已用完（已用 ${quota[1]} / 额度 ${quota[2]}）`;
     const batch = VISION_BATCH_PATTERN.exec(raw);
     if (batch) return `本批图片数已达模型上限（已附 ${batch[1]} / 上限 ${batch[2]}），下一步继续`;
-    if (/重复读取|护栏/.test(raw)) return "同一张图同版本重复读取，已拦下";
+    if (/重复读取|多次读取同一份|护栏/.test(raw)) return "同一张图同版本重复读取，已拦下";
     if (/未声明图片输入能力|支持图片输入的渠道模型/.test(raw)) return "当前渠道模型未声明图片输入能力";
     // 兜底也认后端的哨兵文案（"cloud agent image inspection budget exhausted"）：包一层时才有数字，
     // 单独出现时只给到"额度已用完"，不能让用户看到一句英文原样。
