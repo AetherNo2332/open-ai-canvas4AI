@@ -35,3 +35,33 @@ describe("storyboard prompt panel boundaries", () => {
         expect(storyboard).not.toContain("projectStyle: storyboardContext.projectStyle");
     });
 });
+
+describe("storyboard table rendering boundaries", () => {
+    const script = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-script-node.tsx"), "utf8");
+
+    test("the in-node row list mounts only the visible window and keeps the edited row", () => {
+        expect(script).toContain("storyboardVisibleRowWindow(scrollTop, tableHeight, STORYBOARD_ROW_HEIGHT, rows.length)");
+        expect(script).toContain("storyboardMountedRowRanges(");
+        expect(script).toContain("data-storyboard-row-id={row.id}");
+        expect(script).toContain("setFocusedRowId(");
+    });
+
+    test("the scrolling table stays inside the canvas wheel boundary and scrolls both axes in its own container", () => {
+        expect(script).toMatch(/data-canvas-wheel-scroll[\s\S]{0,200}aria-label="分镜镜头列表"/);
+        expect(script).toContain("storyboard-scrollbar min-h-0 flex-1 overflow-auto");
+        expect(script).not.toContain("transition: all");
+    });
+
+    test("the full-screen editor fills the viewport and re-measures its table on resize", () => {
+        expect(script).toContain('container: { height: "calc(100dvh - 24px)", display: "flex", flexDirection: "column" }');
+        expect(script).toContain("observeStoryboardElementSize(tableWrap");
+        expect(script).toContain("ref={setTableWrap}");
+        expect(script).toContain("storyboardEditorTableScrollY(tableHeight)");
+        expect(script).not.toContain('y: "calc(78vh - 170px)"');
+    });
+
+    test("the duration cell keeps its number and unit inside the column", () => {
+        expect(script).not.toContain('addonAfter="s"');
+        expect(script).toContain('suffix="s"');
+    });
+});

@@ -1,3 +1,4 @@
+import { DEFAULT_STORYBOARD_COLUMNS } from "@/lib/canvas/canvas-storyboard-columns";
 import { nanoid } from "nanoid";
 
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
@@ -53,7 +54,7 @@ export function createShortDramaPipeline(center: Position) {
         workflowTitle: "分镜脚本",
         storyboard: {
             rows: [],
-            visibleColumns: ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
+            visibleColumns: [...DEFAULT_STORYBOARD_COLUMNS],
             referenceNodeIds: [],
         },
     });

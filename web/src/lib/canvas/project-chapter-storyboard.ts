@@ -1,3 +1,4 @@
+import { DEFAULT_STORYBOARD_COLUMNS } from "@/lib/canvas/canvas-storyboard-columns";
 import { createCanvasNode, createStoryboardRow } from "@/lib/canvas/canvas-project-domain";
 import type { ProjectShot, ProjectUnit } from "@/services/api/projects";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type StoryboardData, type StoryboardRow } from "@/types/canvas";
@@ -22,7 +23,7 @@ export function upsertProjectChapterStoryboard(
 
     const storyboard: StoryboardData = {
         rows,
-        visibleColumns: existing?.metadata?.storyboard?.visibleColumns || ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
+        visibleColumns: existing?.metadata?.storyboard?.visibleColumns || [...DEFAULT_STORYBOARD_COLUMNS],
         referenceNodeIds: existing?.metadata?.storyboard?.referenceNodeIds || [],
     };
     const scriptNode: CanvasNodeData = existing
@@ -75,7 +76,7 @@ function createChapterStoryboardNode(nodes: CanvasNodeData[], unit: Pick<Project
         chapterTitle: unit.title,
         storyboard: {
             rows,
-            visibleColumns: ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
+            visibleColumns: [...DEFAULT_STORYBOARD_COLUMNS],
             referenceNodeIds: [],
         },
     });

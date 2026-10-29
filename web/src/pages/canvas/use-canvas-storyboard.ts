@@ -11,7 +11,6 @@ import {
     logicalModelIDForConfig,
 } from "@/lib/canvas/canvas-project-generation";
 import {
-    cinematicStoryboardColumns,
     createCanvasNode,
     createStoryboardRow,
     expandStoryboardTextMentions,
@@ -22,6 +21,7 @@ import {
 } from "@/lib/canvas/canvas-project-domain";
 import { buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
 import { buildStoryboardAssetCatalog } from "@/lib/canvas/canvas-storyboard-assets";
+import { DEFAULT_STORYBOARD_COLUMNS, resolveStoryboardVisibleColumns } from "@/lib/canvas/canvas-storyboard-columns";
 import { resolveStoryboardGenerationContext } from "@/lib/canvas/canvas-storyboard-context";
 import { reconcileStoryboardTargetConnections, storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
 import { generationErrorMessage } from "@/lib/generation-error";
@@ -97,7 +97,7 @@ export function useCanvasStoryboard({
                 ...node.metadata,
                 storyboard: {
                     rows: updater(node.metadata?.storyboard?.rows || []),
-                    visibleColumns: node.metadata?.storyboard?.visibleColumns || ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
+                    visibleColumns: node.metadata?.storyboard?.visibleColumns || [...DEFAULT_STORYBOARD_COLUMNS],
                     referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [],
                 },
             },
@@ -239,7 +239,7 @@ export function useCanvasStoryboard({
                     ...generationTaskMetadata(completed),
                     storyboard: {
                         rows: result.rows,
-                        visibleColumns: cinematicStoryboardColumns(node.metadata?.storyboard?.visibleColumns),
+                        visibleColumns: resolveStoryboardVisibleColumns(node.metadata?.storyboard?.visibleColumns),
                         referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [],
                     },
                 },
@@ -298,7 +298,7 @@ export function useCanvasStoryboard({
                 ...scriptNode.metadata,
                 storyboard: {
                     rows: (scriptNode.metadata?.storyboard?.rows || []).map((row) => ({ ...row, imageNodeId: imageNodeByRowId.get(row.id) || row.imageNodeId })),
-                    visibleColumns: scriptNode.metadata?.storyboard?.visibleColumns || ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
+                    visibleColumns: scriptNode.metadata?.storyboard?.visibleColumns || [...DEFAULT_STORYBOARD_COLUMNS],
                     referenceNodeIds: scriptNode.metadata?.storyboard?.referenceNodeIds || [],
                 },
             },
@@ -384,7 +384,7 @@ export function useCanvasStoryboard({
                 ...scriptNode.metadata,
                 storyboard: {
                     rows: allRows.map((row) => ({ ...row, videoNodeId: videoNodeByRowId.get(row.id) || row.videoNodeId })),
-                    visibleColumns: scriptNode.metadata?.storyboard?.visibleColumns || ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
+                    visibleColumns: scriptNode.metadata?.storyboard?.visibleColumns || [...DEFAULT_STORYBOARD_COLUMNS],
                     referenceNodeIds: scriptNode.metadata?.storyboard?.referenceNodeIds || [],
                 },
             },
