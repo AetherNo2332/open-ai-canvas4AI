@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App } from "antd";
 
-import { directorOpenTargetReady, directorPreviewVideoResourceId, handleDirectorOpen, runDirectorPreview, type DirectorOpenRunEvent, type DirectorPreviewJob } from "@/lib/canvas/agent-director-launch";
-import { submitDirectorPreviewResult } from "@/services/api/agent";
+import { directorOpenTargetReady, directorPreviewHandledStore, directorPreviewOutcomeNotice, directorPreviewPending, directorPreviewVideoResourceId, handleDirectorOpen, runDirectorPreview, withDirectorPreviewLock, type DirectorOpenRunEvent, type DirectorPreviewJob } from "@/lib/canvas/agent-director-launch";
+import { getAgentRun, submitDirectorPreviewResult } from "@/services/api/agent";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { PrevisScene } from "@/types/previs";
 
@@ -23,11 +23,12 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
     const [pendingOpen, setPendingOpen] = useState<DirectorOpenRunEvent | null>(null);
     const [directorPreview, setDirectorPreview] = useState<DirectorPreviewJob | null>(null);
     const previsNodeIdRef = useRef(previsNodeId);
+    const handledStoreRef = useRef(directorPreviewHandledStore());
     previsNodeIdRef.current = previsNodeId;
 
     const onDirectorOpen = useCallback(
         (event: DirectorOpenRunEvent) => {
-            if (event.canvasId !== projectId) return;
+            if (event.canvasId !== projectId || event.action === "read") return;
             if (event.action === "preview" && event.requestId) setDirectorPreview({ runId: event.runId, requestId: event.requestId, sceneId: event.sceneId, shotId: event.shotId });
             setPendingOpen(event);
         },
@@ -59,10 +60,15 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                 requestId: job.requestId,
                 record: async () => directorPreviewVideoResourceId(await record()),
                 submit: submitDirectorPreviewResult,
+                // 后台标签页录制会因不可见中止；只让可见标签页录制，且同一请求跨标签页只执行一次。
+                isHidden: () => typeof document !== "undefined" && document.visibilityState === "hidden",
+                isPending: async () => directorPreviewPending((await getAgentRun(job.runId, AbortSignal.timeout(10_000))).run, job.requestId),
+                handled: handledStoreRef.current,
+                withLock: withDirectorPreviewLock,
             })
                 .then((outcome) => {
-                    if (outcome === "submitted") message.success("预演视频已回传给 Agent");
-                    else if (outcome === "expired") message.warning("Agent 的预演请求已超时或已结束，视频已保留在画布");
+                    const notice = directorPreviewOutcomeNotice(outcome);
+                    if (notice) message[notice.level](notice.text);
                 })
                 .catch((cause) => message.error(cause instanceof Error ? `预演结果回传失败：${cause.message}` : "预演结果回传失败"));
         },

@@ -144,7 +144,7 @@ describe("runDirectorPreview", () => {
         const now = Date.parse("2026-10-29T00:10:00Z");
         expect(isDirectorOpenStale("2026-10-29T00:09:30Z", now)).toBe(false);
         expect(isDirectorOpenStale("2026-10-29T00:00:00Z", now)).toBe(true);
-        expect(isDirectorOpenStale(undefined, now)).toBe(false);
+        expect(isDirectorOpenStale(undefined, now)).toBe(true);
     });
 
     test("limits error text to the backend contract", () => {

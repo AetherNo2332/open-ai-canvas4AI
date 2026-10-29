@@ -1,6 +1,7 @@
 import { API_ERROR_REASONS } from "@/services/api/error-codes";
 import { ApiError } from "@/services/api/request";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
+import type { AgentRun } from "@/services/api/agent";
 
 /**
  * Agent 调用 `director` 工具时由后端发出的 `director_open` 运行事件载荷。
@@ -33,15 +34,15 @@ export function parseDirectorOpenEvent(event: { type: string; runId: string; pay
     return { runId: event.runId, canvasId, nodeId, sceneId, action, ...(shotId ? { shotId } : {}), ...(requestId ? { requestId } : {}) };
 }
 
-/** 页面重连会回放游标之后的事件；过期的打开请求不再弹出导演台。 */
+/** 页面重连会回放游标之后的事件；过期或时间无法解析的打开请求不再弹出导演台（fail closed）。 */
 export function isDirectorOpenStale(createdAt: string | undefined, now = Date.now()) {
     const at = createdAt ? Date.parse(createdAt) : Number.NaN;
-    return Number.isFinite(at) && now - at > DIRECTOR_OPEN_MAX_AGE_MS;
+    return !Number.isFinite(at) || now - at > DIRECTOR_OPEN_MAX_AGE_MS;
 }
 
-/** 画布不匹配返回 ignored；已打开同一节点不重复打开。 */
+/** 画布不匹配或 read（后端本不发，纵深防御）返回 ignored；已打开同一节点不重复打开。 */
 export function handleDirectorOpen(event: DirectorOpenEvent, deps: { openPrevisWorkbench(nodeId: string): void; currentCanvasId: string; openNodeId?: string | null }): "opened" | "ignored" {
-    if (!event.nodeId || event.canvasId !== deps.currentCanvasId) return "ignored";
+    if (!event.nodeId || event.action === "read" || event.canvasId !== deps.currentCanvasId) return "ignored";
     if (deps.openNodeId === event.nodeId) return "ignored";
     deps.openPrevisWorkbench(event.nodeId);
     return "opened";
@@ -94,24 +95,165 @@ export function directorPreviewErrorMessage(cause: unknown) {
 }
 
 /**
- * 录制并回传一次预演。录制失败回传 { error }，让 Agent 立即拿到结论而不是等超时；
- * 请求已超时或已完成（director_preview_not_found）视为已结束，其余提交失败向上抛。
+ * 运行仍挂起在这次预演上：运行未结束、事件里有该 requestId 的 director_preview_requested，
+ * 且同一调用之后还没有 tool_completed / tool_failed（浏览器回传、超时都会写回执）。
+ * 前端运行视图不暴露 waitKind/waitId，所以按事件判定；找不到请求事件时按未挂起处理。
  */
-export async function runDirectorPreview(input: { runId: string; requestId: string; record: () => Promise<string>; submit: (runId: string, requestId: string, result: DirectorPreviewResult) => Promise<void> }): Promise<"submitted" | "expired" | "abandoned"> {
-    let result: DirectorPreviewResult;
+export function directorPreviewPending(run: Pick<AgentRun, "status" | "events"> | null | undefined, requestId: string) {
+    if (!run || !["running", "queued"].includes(run.status)) return false;
+    const events = run.events || [];
+    const index = events.findLastIndex((event) => event.type === "director_preview_requested" && event.payload?.requestId === requestId);
+    if (index < 0) return false;
+    const callId = events[index].payload?.callId;
+    return !events.slice(index + 1).some((event) => (event.type === "tool_completed" || event.type === "tool_failed") && event.payload?.callId === callId);
+}
+
+type SyncStorage = { getItem(key: string): string | null; setItem(key: string, value: string): void };
+type LeaseStorage = SyncStorage & { removeItem(key: string): void };
+type LockManager = { request(name: string, options: { ifAvailable: boolean }, callback: (lock: object | null) => Promise<unknown>): Promise<unknown> };
+export type DirectorPreviewLock = <T>(name: string, fn: () => Promise<T>) => Promise<{ acquired: true; value: T } | { acquired: false }>;
+
+const HANDLED_STORAGE_KEY = "director-preview-handled";
+const HANDLED_LIMIT = 64;
+const LEASE_PREFIX = "director-preview-lock:";
+/** 录制最长 60s，加上转码和上传；租约过期后另一个标签页才可接手。 */
+const LEASE_MS = 5 * 60_000;
+
+/**
+ * 本标签页已处理过的 requestId，存 sessionStorage：刷新或导演台卸载后回放的旧请求不再录制。
+ * 存储不可用时退回内存，只影响跨刷新去重，不阻塞录制。
+ */
+export function directorPreviewHandledStore(storage: SyncStorage | undefined = safeSessionStorage()) {
+    const memory = new Set<string>();
+    const read = () => {
+        try {
+            const parsed = JSON.parse(storage?.getItem(HANDLED_STORAGE_KEY) || "[]");
+            return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+        } catch {
+            return [];
+        }
+    };
+    return {
+        isHandled: (requestId: string) => memory.has(requestId) || read().includes(requestId),
+        markHandled: (requestId: string) => {
+            memory.add(requestId);
+            try {
+                storage?.setItem(HANDLED_STORAGE_KEY, JSON.stringify([...read().filter((id) => id !== requestId), requestId].slice(-HANDLED_LIMIT)));
+            } catch {
+                // 隐私模式或存储被禁用：保留内存记录即可。
+            }
+        },
+    };
+}
+
+function safeSessionStorage(): SyncStorage | undefined {
     try {
-        result = { videoResourceId: await input.record() };
-    } catch (cause) {
-        if (cause instanceof DirectorPreviewAbandonedError) return "abandoned";
-        result = { error: directorPreviewErrorMessage(cause) };
+        return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
+    } catch {
+        return undefined;
+    }
+}
+
+function safeLocalStorage(): LeaseStorage | undefined {
+    try {
+        return typeof localStorage === "undefined" ? undefined : localStorage;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * 同一 requestId 只允许一个标签页录制与回传。优先 Web Locks（ifAvailable，拿不到立即放弃）；
+ * 没有 navigator.locks 时用 localStorage 租约兜底（写后回读确认归属，过期租约可接手）。
+ * 两者都不可用时直接执行：单标签页场景不能因此失去预演能力。
+ */
+export async function withDirectorPreviewLock<T>(requestId: string, fn: () => Promise<T>, deps: { locks?: LockManager; storage?: LeaseStorage; owner?: string; now?: () => number } = defaultLockDeps()): Promise<{ acquired: true; value: T } | { acquired: false }> {
+    const name = `${LEASE_PREFIX}${requestId}`;
+    if (deps.locks) {
+        let outcome: { acquired: true; value: T } | { acquired: false } = { acquired: false };
+        await deps.locks.request(name, { ifAvailable: true }, async (lock) => {
+            if (lock) outcome = { acquired: true, value: await fn() };
+        });
+        return outcome;
+    }
+    const storage = deps.storage;
+    if (!storage) return { acquired: true, value: await fn() };
+    const now = deps.now ?? Date.now;
+    const owner = deps.owner || `tab-${Math.random().toString(36).slice(2)}`;
+    try {
+        const current = JSON.parse(storage.getItem(name) || "null") as { owner?: string; expiresAt?: number } | null;
+        if (current && current.owner !== owner && Number(current.expiresAt) > now()) return { acquired: false };
+        storage.setItem(name, JSON.stringify({ owner, expiresAt: now() + LEASE_MS }));
+        if ((JSON.parse(storage.getItem(name) || "null") as { owner?: string } | null)?.owner !== owner) return { acquired: false };
+    } catch {
+        return { acquired: true, value: await fn() };
     }
     try {
-        await input.submit(input.runId, input.requestId, result);
-        return "submitted";
-    } catch (cause) {
-        if (cause instanceof ApiError && cause.reason === API_ERROR_REASONS.directorPreviewNotFound) return "expired";
-        throw cause;
+        return { acquired: true, value: await fn() };
+    } finally {
+        try {
+            if ((JSON.parse(storage.getItem(name) || "null") as { owner?: string } | null)?.owner === owner) storage.removeItem(name);
+        } catch {
+            // 租约会自然过期。
+        }
     }
+}
+
+function defaultLockDeps() {
+    const locks = typeof navigator !== "undefined" ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
+    return locks ? { locks } : { storage: safeLocalStorage() };
+}
+
+/**
+ * 录制并回传一次预演。
+ * - 后台标签页（hidden）直接放弃：录制会因页面不可见中止，不能抢先回传失败。
+ * - 本标签页处理过、其他标签页持锁、或运行已不再等待这次请求时跳过。
+ * - 录制失败回传 { error }（submitted_error），让 Agent 立即拿到结论而不是等超时；
+ *   请求已超时或已完成（director_preview_not_found）视为 expired，其余提交失败向上抛。
+ */
+export async function runDirectorPreview(input: {
+    runId: string;
+    requestId: string;
+    record: () => Promise<string>;
+    submit: (runId: string, requestId: string, result: DirectorPreviewResult) => Promise<void>;
+    isHidden?: () => boolean;
+    isPending?: () => Promise<boolean>;
+    handled?: { isHandled(requestId: string): boolean; markHandled(requestId: string): void };
+    withLock?: DirectorPreviewLock;
+}): Promise<DirectorPreviewOutcome> {
+    if (input.isHidden?.()) return "abandoned";
+    if (input.handled?.isHandled(input.requestId)) return "skipped";
+    const lock: DirectorPreviewLock = input.withLock ?? (async (_name, fn) => ({ acquired: true, value: await fn() }));
+    const locked = await lock(input.requestId, async (): Promise<DirectorPreviewOutcome> => {
+        if (input.isPending && !(await input.isPending())) return "skipped";
+        if (input.handled?.isHandled(input.requestId)) return "skipped";
+        input.handled?.markHandled(input.requestId);
+        let result: DirectorPreviewResult;
+        try {
+            result = { videoResourceId: await input.record() };
+        } catch (cause) {
+            if (cause instanceof DirectorPreviewAbandonedError) return "abandoned";
+            result = { error: directorPreviewErrorMessage(cause) };
+        }
+        try {
+            await input.submit(input.runId, input.requestId, result);
+            return "error" in result ? "submitted_error" : "submitted";
+        } catch (cause) {
+            if (cause instanceof ApiError && cause.reason === API_ERROR_REASONS.directorPreviewNotFound) return "expired";
+            throw cause;
+        }
+    });
+    return locked.acquired ? locked.value : "skipped";
+}
+
+export type DirectorPreviewOutcome = "submitted" | "submitted_error" | "expired" | "abandoned" | "skipped";
+
+/** 结果提示：只有真正回传了视频才报成功；录制失败回传给 Agent 时用警告。 */
+export function directorPreviewOutcomeNotice(outcome: DirectorPreviewOutcome): { level: "success" | "warning"; text: string } | null {
+    if (outcome === "submitted") return { level: "success", text: "预演视频已回传给 Agent" };
+    if (outcome === "submitted_error") return { level: "warning", text: "预演录制失败，已把失败原因告知 Agent" };
+    if (outcome === "expired") return { level: "warning", text: "Agent 的预演请求已超时或已结束" };
+    return null;
 }
 
 /** 导演台刚挂载时 WebGL 上下文尚未登记；轮询到可捕捉再录制。 */
