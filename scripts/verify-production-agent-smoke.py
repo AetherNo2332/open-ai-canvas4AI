@@ -275,7 +275,7 @@ class Smoke:
     def agent_generate_image(self, canvas, node_id, intent):
         scenario = "media_" + uuid.uuid4().hex[:8]
         args = {"mode": "image", "nodeId": node_id, "title": "Version image", "prompt": "Media version acceptance",
-                "channelId": self.channel, "channelModelKey": "gpt-image-1", "size": "1024x1024",
+                "referenceNodeIds": [], "channelId": self.channel, "channelModelKey": "gpt-image-1", "size": "1024x1024",
                 "snapshotHash": "$snapshotHash"}
         if intent == "new_version":
             args["intent"] = "new_version"
