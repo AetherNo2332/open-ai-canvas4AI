@@ -217,7 +217,7 @@ eval "$status"
             commands = '''
 docker() {
     case "$*" in
-        *" build backend web agent") command docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" config --format json > config.json ;;
+        *" build migrate backend web agent") command docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" config --format json > config.json ;;
         *" up -d "*) return 0 ;;
         *) return 1 ;;
     esac
