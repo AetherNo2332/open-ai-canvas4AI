@@ -80,6 +80,16 @@ func cloudAgentToolErrorClass(req CloudAgentRequest, call cloudAgentCall, err er
 	if errors.As(err, &argumentErr) {
 		return cloudAgentToolErrorSchemaError, true, "fix_arguments"
 	}
+	var versionErr *cloudAgentMediaVersionError
+	if errors.As(err, &versionErr) {
+		if cloudAgentMediaVersionRetryable(versionErr.reason) {
+			return cloudAgentToolErrorStateConflict, true, "wait_for_generation"
+		}
+		if versionErr.reason == "media_version_missing" {
+			return cloudAgentToolErrorStateConflict, false, "reread_media_versions"
+		}
+		return cloudAgentToolErrorStateConflict, false, "ask_user"
+	}
 	var admissionErr *cloudAgentMediaAdmissionError
 	if errors.As(err, &admissionErr) {
 		switch admissionErr.Reason {

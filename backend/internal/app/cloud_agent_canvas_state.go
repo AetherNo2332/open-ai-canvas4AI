@@ -453,19 +453,16 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			}
 			item["generation"] = generation
 			if mediaversions.Supported(capability.GenerationMode) {
-				state := mediaversions.ReadState(node)
-				generation["currentVersionId"], generation["pendingVersionId"], generation["activeTaskId"], generation["versionCount"] = state.CurrentVersionID, state.PendingVersionID, state.ActiveTaskID, state.VersionCount
+				if current := mediaversions.Current(node); current != nil {
+					generation["currentMediaVersionId"] = current["id"]
+				}
+				generation["versionCount"] = len(mediaversions.List(node))
 				scope, scopeErr := mediaversions.ScopeForNode(repo, userID, canvasID, id)
 				if scopeErr == nil {
 					admission := mediaversions.CheckAdmission(repo, scope, node, "new_version")
 					generation["canCreateVersion"] = admission == nil
 					if e, ok := admission.(*mediaversions.Error); ok {
 						generation["newVersionBlockedReason"] = e.Reason
-					}
-				}
-				if state.ActiveTaskID != "" {
-					if pending, err := repo.TaskForUser(userID, state.ActiveTaskID); err == nil {
-						generation["pendingTask"] = cloudAgentTaskDiagnostic(repo, pending)
 					}
 				}
 			}

@@ -50,7 +50,7 @@ func (r *Repository) projectCanvasWrite(before, after *model.CanvasProject, rese
 	if next == nil {
 		return fmt.Errorf("canvas document is null")
 	}
-	if err := guardLegacyMediaVersions(old, next); err != nil {
+	if err := guardMediaVersionRecords(old, next); err != nil {
 		return err
 	}
 	epoch, err := r.CommandEpoch(after.UserID, after.ID)

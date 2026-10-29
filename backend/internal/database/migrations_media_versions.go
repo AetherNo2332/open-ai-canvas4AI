@@ -331,3 +331,16 @@ func stringValue(value any) any {
 	}
 	return nil
 }
+
+// mediaVersionBindingMigrationVersion 给 canvas_task_bindings 增加 media_version_json：媒体版本任务在提交时
+// 冻结节点当前版本、输出归属与几何，写回时据此判断是否自动采用。v77 之后版本历史只在节点 metadata 中。
+const mediaVersionBindingMigrationVersion int64 = 78
+
+const mediaVersionBindingChecksum = "sha256:canvas-task-binding-media-version-v78-20261029"
+
+func migrateMediaVersionBinding(tx *gorm.DB) error {
+	if !tx.Migrator().HasTable(&model.CanvasTaskBinding{}) || tx.Migrator().HasColumn(&model.CanvasTaskBinding{}, "MediaVersionJSON") {
+		return nil
+	}
+	return tx.Migrator().AddColumn(&model.CanvasTaskBinding{}, "MediaVersionJSON")
+}

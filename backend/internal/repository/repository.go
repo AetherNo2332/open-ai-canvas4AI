@@ -41,7 +41,6 @@ type Repository struct {
 	// Agent 消息队列表是否存在。只读 fixture 没有迁移 Agent 表时，队列准入整体关闭。
 	agentMessageQueueEnabled bool
 	// Agent 画布命令使用的媒体版本表是否存在。
-	mediaVersionsEnabled bool
 	structuredWriteQuota StructuredWriteQuota
 }
 
@@ -57,7 +56,7 @@ type UserStorageUsage struct {
 
 func New(db *gorm.DB) *Repository {
 	database.InstallAgentEventCallbacks(db)
-	return &Repository{db: db, agentMessageQueueEnabled: db.Migrator().HasTable(&model.AgentConversationQueue{}), mediaVersionsEnabled: db.Migrator().HasTable(&model.CanvasMediaVersion{})}
+	return &Repository{db: db, agentMessageQueueEnabled: db.Migrator().HasTable(&model.AgentConversationQueue{})}
 }
 
 func (r *Repository) WithContext(ctx context.Context) *Repository {

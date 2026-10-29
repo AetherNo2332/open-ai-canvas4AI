@@ -11,13 +11,13 @@
       "file": "MEDIA_POLICY.md",
       "source": "backend/internal/prompts/agent-media-policy.md",
       "stripFrontmatter": true,
-      "sha256": "a8d236300db4cd9660312c13f8bc58ef3700988ad85ae4fb9782fcf95489c6db"
+      "sha256": "4d925bb2e6a7d2bab9eedcfd14a505de5549a504d2ab42c78ddecf4e41c284d5"
     },
     {
       "file": "TOOL_DESCRIPTIONS.md",
       "source": "backend/internal/app/agent-tool-descriptions.md",
       "stripFrontmatter": false,
-      "sha256": "0d3840a82638b00298479b826c39e86846ef1f0c2d78318ed37aca0742e5d52e"
+      "sha256": "a6f938fa126fda17e199100b9dea24e2e53d0ab64fb5c29f7f997165e64db4b1"
     }
   ]
 }

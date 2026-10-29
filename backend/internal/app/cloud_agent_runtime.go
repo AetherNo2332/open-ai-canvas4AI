@@ -1244,9 +1244,13 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		}
 		var admissionErr *cloudAgentMediaAdmissionError
 		var lease *repository.CanvasEditLeaseError
+		var versionErr *cloudAgentMediaVersionError
 		if errors.As(err, &lease) {
 			detail["reason"], detail["canvasId"], detail["nodeId"] = lease.Reason, lease.CanvasID, lease.NodeID
 			detail["guidance"] = "本次工具副作用已回滚；不要立即重复写入。等待节点编辑结束，或让编辑客户端重新获取有效证明；可继续处理其他节点或只读工作"
+		}
+		if errors.As(err, &versionErr) {
+			detail["reason"] = versionErr.reason
 		}
 		if errors.As(err, &admissionErr) {
 			detail["reason"], detail["nodeId"] = admissionErr.Reason, admissionErr.NodeID
@@ -2507,10 +2511,8 @@ func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, sta
 				// the same-run snapshot cache just like ordinary canvas writes.
 				cloudAgentInvalidateReadCache(state)
 				result["summary"] = "生成结果已回写画布节点"
-				if version, err := repo.CanvasMediaVersionForTask(run.UserID, task.ID); err != nil {
-					return err
-				} else if version != nil && version.Adoption == "selection_changed" {
-					result["summary"] = "新版本已保存，保留手动选择的当前版本"
+				if result["adopted"] == false {
+					result["summary"] = "新版本已加入节点版本历史，保留手动选择的当前版本"
 				}
 			}
 			if writeErr != nil {

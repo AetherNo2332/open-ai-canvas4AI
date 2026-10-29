@@ -299,7 +299,7 @@ func checkMigrateMediaVersionsFailsClosedWithoutProjector(t *testing.T, db *gorm
 func TestMigrateMediaVersionsToMetadata(t *testing.T) {
 	checkMigrateMediaVersions(t, openMediaVersionsSQLite(t))
 	status, err := database.ReadSchemaStatus(openMediaVersionsSQLite(t))
-	if err != nil || !status.Ready || database.CurrentSchemaVersion != mediaVersionsMigrationVersion {
+	if err != nil || !status.Ready || database.CurrentSchemaVersion < mediaVersionsMigrationVersion {
 		t.Fatalf("schema status = %+v %v", status, err)
 	}
 }

@@ -20,7 +20,7 @@ summary 必填，内容为给用户的最终答复全文。通过后持久化回
 
 ## canvas_get_state
 
-首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=media_versions 指定一个媒体节点，固定20版，用 nextBeforeVersion 作为 beforeVersion 续页；返回当前/待生成版本、可否新建和阻断原因，不含原始请求。references 查有效引用，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断按 nextRead 续读；kind 是业务类型。角色卡读 character 的 resolvedImage 和来源；结构化行用专用 read。
+首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=media_versions 指定一个媒体节点，一次返回全部版本（最多30，不分页），含 currentMediaVersionId、每版 isCurrent，在途生成单列 generating.taskId（不是版本）；另给可否新建和阻断原因，不含存储地址。references 查有效引用，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断按 nextRead 续读；kind 是业务类型。角色卡读 character 的 resolvedImage 和来源；结构化行用专用 read。
 
 ## canvas_read_batch_table
 
@@ -76,7 +76,7 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 ## canvas_apply_ops
 
-基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的就绪 versionId，无生成费用；即使选择当前版本，也会阻止在途结果自动采用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。
+基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的版本 id 切换当前媒体，已是当前版本即成功；锁定 media_version_locked、生成或上传中 media_version_loading（可稍后重试）、版本不存在或无媒体 media_version_missing。extract_media_version 给 versionId 和新 nodeId，把该版取出为右侧独立节点（无版本历史和任务绑定）。均无生成费用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。
 
 ## canvas_arrange_nodes
 

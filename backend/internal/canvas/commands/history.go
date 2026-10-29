@@ -367,10 +367,8 @@ func (s *Service) RestoreVersion(ctx context.Context, p identity.Principal, canv
 		}
 		epoch.Epoch = newID()
 		for _, node := range maps(after["nodes"]) {
-			scope := mediaversions.Scope{OwnerID: p.OwnerID, CanvasID: canvasID, Epoch: epoch.Epoch, NodeID: text(node["id"]), Generation: row.Revision + 1}
-			if err = mediaversions.Rebase(tx, scope, node); err != nil {
-				return PersistenceError(err)
-			}
+			// 新纪元不继承旧任务的生成标记；版本历史随文档一起恢复。
+			mediaversions.ReleaseRestored(node)
 		}
 		plan := PlanResult{Document: after, Changes: Diff(before, after), Inverse: Diff(after, before), WriteSet: writes, ResourceIDs: resources}
 		emitted, err = s.persist(tx, p, req, body, row, epoch, before, plan, false, "before_restore")

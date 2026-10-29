@@ -2,46 +2,16 @@ package repository
 
 import (
 	"errors"
-	"reflect"
 	"yingce/backend/internal/model"
 )
 
-var ErrCanvasMediaVersionManaged = errors.New("媒体由版本记录管理，请通过版本命令更改")
+var ErrCanvasMediaVersionManaged = errors.New("媒体版本记录不可改写，请新增版本或切换版本")
 
-func mediaString(value any) string { s, _ := value.(string); return s }
-
-func guardLegacyMediaVersions(before, after map[string]any) error {
-	prior := map[string]map[string]any{}
-	if before != nil {
-		if nodes, ok := before["nodes"].([]any); ok {
-			for _, value := range nodes {
-				if node, ok := value.(map[string]any); ok {
-					prior[mediaString(node["id"])] = node
-				}
-			}
-		}
-	}
-	nodes, _ := after["nodes"].([]any)
-	for _, value := range nodes {
-		node, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		old := prior[mediaString(node["id"])]
-		meta, _ := node["metadata"].(map[string]any)
-		if old == nil {
-			if meta["mediaVersion"] != nil {
-				return ErrCanvasMediaVersionManaged
-			}
-			continue
-		}
-		oldMeta, _ := old["metadata"].(map[string]any)
-		if oldMeta["mediaVersion"] == nil && meta["mediaVersion"] != nil {
-			return ErrCanvasMediaVersionManaged
-		}
-		if oldMeta["mediaVersion"] != nil && !reflect.DeepEqual(model.CanvasMediaProjection(old), model.CanvasMediaProjection(node)) {
-			return ErrCanvasMediaVersionManaged
-		}
+// guardMediaVersionRecords 对所有画布写入生效：节点可以新增、删除、切换版本（上游浏览器的正常操作），
+// 但已存在的版本记录不能换成另一份媒体。
+func guardMediaVersionRecords(before, after map[string]any) error {
+	if before != nil && model.CanvasMediaVersionRecordChanged(before, after) {
+		return ErrCanvasMediaVersionManaged
 	}
 	return nil
 }

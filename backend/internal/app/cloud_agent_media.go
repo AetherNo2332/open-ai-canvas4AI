@@ -474,10 +474,7 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 	}
 	if existing != nil {
 		if aReason, aIssue := cloudAgentMediaVersionTargetIssue(repo, userID, canvasID, existing, args); aReason != "" {
-			original := mediaversions.ReadState(existing).ActiveTaskID
-			if original == "" {
-				original = stringValue(existingMeta["taskId"])
-			}
+			original := stringValue(existingMeta["taskId"])
 			if original == "" {
 				original = stringValue(existingMeta["generationTaskId"])
 			}
@@ -1087,50 +1084,16 @@ type cloudAgentMediaWritebackError struct {
 func (e *cloudAgentMediaWritebackError) Unwrap() error { return e.error }
 
 func completeCloudAgentMediaNode(repo *repository.Repository, userID, canvasID, targetNodeID string, task *model.Task, policy RuntimePolicySetting) (string, error) {
-	if version, err := repo.CanvasMediaVersionForTask(userID, task.ID); err != nil {
+	if binding, err := repo.CanvasTaskBinding(task.ID); err != nil && !repo.IsMissing(err) {
 		return "", err
-	} else if version != nil {
-		job, err := repo.CanvasMaterialization(task.ID)
+	} else if err == nil {
+		base, versioned, err := mediaversions.BindingBase(binding)
 		if err != nil {
 			return "", err
 		}
-		key, bound, err := cloudAgentMediaResultKey(repo, userID, canvasID, task.ID)
-		if err != nil {
-			return "", err
+		if versioned {
+			return cloudAgentMediaVersionWriteback(repo, userID, canvasID, task, base)
 		}
-		if bound && job.State == "done" {
-			if _, err = repo.CommandReceipt(key); err == nil {
-				switch version.Adoption {
-				case "target_changed", "output_binding_changed", "row_deleted", "binding_changed":
-					return version.NodeID, &cloudAgentMediaWritebackError{creationConflict("输出归属已变化，版本保留在资源库"), version.Adoption}
-				}
-				return version.NodeID, nil
-			} else if !repo.IsMissing(err) {
-				return "", err
-			}
-		}
-		canvas, err := repo.CanvasProjectForUser(userID, canvasID)
-		if err != nil {
-			return "", &cloudAgentMediaWritebackError{creationConflict("目标画布不可用，版本保留在资源库"), "canvas_unavailable"}
-		}
-		doc, err := creationDocument(canvas.PayloadJSON)
-		if err != nil {
-			return "", err
-		}
-		nodes, _ := creationObjects(doc["nodes"])
-		if nodes[version.NodeID] == nil {
-			return "", &cloudAgentMediaWritebackError{creationConflict("目标节点不存在，版本保留在资源库"), "target_node_missing"}
-		}
-		if job.State != "done" {
-			return "", &cloudAgentMediaWritebackError{creationConflict("媒体仍待保存或写回，请恢复原任务"), "result_resource_unavailable"}
-		}
-		if version.Adoption == "target_changed" && mediaversions.ReadState(nodes[version.NodeID]).ActiveTaskID != task.ID {
-			return "", &cloudAgentMediaWritebackError{creationConflict("目标节点的任务绑定已变化，版本保留在资源库"), "task_binding_changed"}
-		}
-		if version.Adoption == "target_changed" || version.Adoption == "output_binding_changed" || version.Adoption == "row_deleted" || version.Adoption == "binding_changed" {
-			return "", &cloudAgentMediaWritebackError{creationConflict("输出归属已变化，版本保留在资源库"), version.Adoption}
-		}
-		return version.NodeID, nil
 	}
 	if cloudAgentHasStoryboardTarget(task) {
 		if binding, consumer, err := cloudAgentStoryboardConsumer(repo, task.ID); err != nil {
@@ -1208,4 +1171,37 @@ func (s *Service) cloudAgentModelListItem(userID string, item map[string]any, se
 	}
 	item["selectionId"] = token
 	return item
+}
+
+// cloudAgentMediaVersionWriteback 报告节点版本任务的写回结果：由画布任务写回器完成，这里只读状态。
+func cloudAgentMediaVersionWriteback(repo *repository.Repository, userID, canvasID string, task *model.Task, base mediaversions.Base) (string, error) {
+	job, err := repo.CanvasMaterialization(task.ID)
+	if err != nil {
+		return "", err
+	}
+	canvas, err := repo.CanvasProjectForUser(userID, canvasID)
+	if err != nil {
+		return "", &cloudAgentMediaWritebackError{creationConflict("目标画布不可用，作品保留在资源库"), "canvas_unavailable"}
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		return "", err
+	}
+	nodes, _ := creationObjects(doc["nodes"])
+	if nodes[base.NodeID] == nil && job.Outcome != "applied" {
+		return "", &cloudAgentMediaWritebackError{creationConflict("目标节点不存在，作品保留在资源库"), "target_node_missing"}
+	}
+	if job.State != "done" {
+		return "", &cloudAgentMediaWritebackError{creationConflict("媒体仍待保存或写回，请恢复原任务"), "result_resource_unavailable"}
+	}
+	switch job.Outcome {
+	case "applied", "selection_changed", "media_save_pending":
+		return base.NodeID, nil
+	case "target_deleted", "entity_deleted", "document_epoch_mismatch":
+		return "", &cloudAgentMediaWritebackError{creationConflict("目标节点不存在，作品保留在资源库"), "target_node_missing"}
+	case "binding_changed":
+		return "", &cloudAgentMediaWritebackError{creationConflict("目标节点的任务绑定已变化，版本保留在节点历史或资源库"), "task_binding_changed"}
+	}
+	// 写回已提交（释放了生成标记）：返回节点让完成事件照常回放，同时报告结果未进入该节点。
+	return base.NodeID, &cloudAgentMediaWritebackError{creationConflict("输出归属已变化，作品保留在资源库"), job.Outcome}
 }

@@ -6,7 +6,6 @@ import (
 	"unicode/utf8"
 	"yingce/backend/internal/canvas/capability"
 	"yingce/backend/internal/canvas/connection"
-	"yingce/backend/internal/canvas/mediaversions"
 	"yingce/backend/internal/canvas/references"
 )
 
@@ -49,18 +48,8 @@ func (p *planner) applyOperation(doc Document, op Operation, ctx ValidationConte
 		}
 	}
 	switch op.Type {
-	case "use_media_version":
-		selection, ok := ctx.MediaVersionSelections[op.VersionID]
-		if !ok {
-			return nil, failure("version_missing", "媒体版本不存在或不属于当前节点")
-		}
-		idx := p.canvasNodeIndex(maps(doc["nodes"]), op.ID)
-		if idx < 0 {
-			return nil, failure("entity_deleted", "目标节点不存在")
-		}
-		if err := mediaversions.ApplySelection(maps(doc["nodes"])[idx], selection); err != nil {
-			return nil, PersistenceError(err)
-		}
+	case "use_media_version", "extract_media_version":
+		return p.applyMediaVersionOperation(doc, op)
 	case "duplicate_node":
 		return p.duplicateNativeNode(doc, op)
 	case "select_node_version":

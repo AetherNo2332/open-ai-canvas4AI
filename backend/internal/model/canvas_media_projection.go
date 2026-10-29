@@ -7,7 +7,7 @@ var CanvasMediaFields = []string{"content", "storageKey", "assetId", "naturalWid
 func CanvasMediaProjection(node map[string]any) map[string]any {
 	metadata, _ := node["metadata"].(map[string]any)
 	out := map[string]any{"type": node["type"]}
-	for _, field := range append(append([]string{}, CanvasMediaFields...), "mediaVersion", "status", "errorDetails") {
+	for _, field := range append(append([]string{}, CanvasMediaFields...), "status", "errorDetails") {
 		if value, ok := metadata[field]; ok {
 			out[field] = value
 		}

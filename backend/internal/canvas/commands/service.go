@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 	"yingce/backend/internal/assets"
 	canvasdomain "yingce/backend/internal/canvas"
-	"yingce/backend/internal/canvas/mediaversions"
 	"yingce/backend/internal/canvas/references"
 	"yingce/backend/internal/identity"
 	"yingce/backend/internal/model"
@@ -338,25 +337,6 @@ func (s *Service) validation(ctx context.Context, tx *repository.Repository, p i
 			}
 			owned[resource.ID] = additionalResourcePolicy == nil || additionalResourcePolicy(resource.ID)
 			v.Resources[resource.ID] = ResourceMetadata{ID: resource.ID, Kind: resource.Kind, MimeType: resource.MimeType, Size: resource.Size, Width: resource.Width, Height: resource.Height, DurationMs: resource.DurationMs}
-		}
-		if op.Type == "use_media_version" {
-			canvasID := text(doc["id"])
-			if len(canvasIDs) > 0 {
-				canvasID = canvasIDs[0]
-			}
-			scope, err := mediaversions.ScopeForNode(tx, p.OwnerID, canvasID, op.ID)
-			if err != nil {
-				return v, PersistenceError(err)
-			}
-			selection, err := mediaversions.PrepareSelection(tx, scope, op.VersionID)
-			if err != nil {
-				return v, PersistenceError(err)
-			}
-			if v.MediaVersionSelections == nil {
-				v.MediaVersionSelections = map[string]mediaversions.Selection{}
-			}
-			v.MediaVersionSelections[op.VersionID] = selection
-			owned[selection.Version.ResourceID] = additionalResourcePolicy == nil || additionalResourcePolicy(selection.Version.ResourceID)
 		}
 		if len(op.PrevisEntityOperations) > 0 {
 			ids := map[string]bool{}
@@ -741,9 +721,6 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 	}
 	// Return the exact persisted wire representation, including numeric JSON
 	// values and omitted empty fields, so retries are identical to the first ACK.
-	if err = tx.PruneCanvasMediaVersions(p.OwnerID, row.ID); err != nil {
-		return Receipt{}, err
-	}
 	var durable Receipt
 	if err = json.Unmarshal([]byte(encoded), &durable); err != nil {
 		return Receipt{}, err

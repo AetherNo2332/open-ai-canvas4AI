@@ -12,7 +12,7 @@ import (
 // 不安装 Agent 事件回调，也没有画布变更通知器。
 func init() {
 	database.RegisterCanvasWriteProjector(func(tx *gorm.DB, before, after *model.CanvasProject) error {
-		repo := &Repository{db: tx, mediaVersionsEnabled: tx.Migrator().HasTable(&model.CanvasMediaVersion{})}
+		repo := &Repository{db: tx}
 		return repo.syncLegacyCanvasWrite(before, after, false)
 	})
 }

@@ -2,44 +2,28 @@ package commands
 
 import (
 	"reflect"
+
 	"yingce/backend/internal/canvas/mediaversions"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
 
-// Undo changes authoring and an explicit ready selection, never a real task's
+// 任务生命周期字段由任务写回管理；撤销/重做只恢复创作内容和版本选择，不能让已结束的任务重新变成生成中。
+var taskLifecycleFields = []string{"taskId", "taskStatus", "taskProgress", "taskStage", "taskMediaStage", "taskStartedAt", "taskCompletedAt", "taskCreatedAt", "taskUpdatedAt", "status", "errorDetails"}
+
+// Undo changes authoring and an explicit version selection, never a real task's
 // lifecycle. In particular a completed task cannot become pending again.
-func reconcileHistoryMedia(tx *repository.Repository, owner, canvas, epoch string, birth int64, before, after Document, recreated map[string]bool) ([]Operation, error) {
+func reconcileHistoryMedia(_ *repository.Repository, _, _, _ string, _ int64, before, after Document, recreated map[string]bool) ([]Operation, error) {
 	allowed := []Operation{}
 	for _, node := range maps(after["nodes"]) {
 		id := text(node["id"])
+		if !mediaversions.Supported(text(node["type"])) {
+			continue
+		}
 		old := entity(before, "node:"+id)
-		wanted := mediaversions.ReadState(node)
 		if old == nil || recreated["node:"+id] {
-			if wanted.Epoch != "" {
-				scope := mediaversions.Scope{OwnerID: owner, CanvasID: canvas, Epoch: epoch, NodeID: id, Generation: birth}
-				if err := mediaversions.Rebase(tx, scope, node); err != nil {
-					return nil, PersistenceError(err)
-				}
-				allowed = append(allowed, Operation{Type: "use_media_version", ID: id})
-			}
-			continue
-		}
-		live := mediaversions.ReadState(old)
-		if live.Epoch == "" {
-			if wanted.CurrentVersionID != "" {
-				scope, err := mediaversions.ScopeForNode(tx, owner, canvas, id)
-				if err != nil {
-					return nil, PersistenceError(err)
-				}
-				if err = mediaversions.Rebase(tx, scope, node); err != nil {
-					return nil, PersistenceError(err)
-				}
-				allowed = append(allowed, Operation{Type: "use_media_version", ID: id})
-			}
-			continue
-		}
-		if reflect.DeepEqual(model.CanvasMediaProjection(old), model.CanvasMediaProjection(node)) {
+			mediaversions.ReleaseRestored(node)
+			allowed = append(allowed, Operation{Type: "use_media_version", ID: id})
 			continue
 		}
 		m, _ := node["metadata"].(map[string]any)
@@ -47,25 +31,16 @@ func reconcileHistoryMedia(tx *repository.Repository, owner, canvas, epoch strin
 			m = map[string]any{}
 			node["metadata"] = m
 		}
-		projection := model.CanvasMediaProjection(old)
-		for _, key := range append(append([]string{}, model.CanvasMediaFields...), "mediaVersion", "status", "errorDetails") {
-			delete(m, key)
-		}
-		node["type"] = old["type"]
-		for key, value := range projection {
-			if key != "type" {
+		live, _ := old["metadata"].(map[string]any)
+		for _, key := range taskLifecycleFields {
+			if value, ok := live[key]; ok {
 				m[key] = value
+			} else {
+				delete(m, key)
 			}
 		}
-		if wanted.CurrentVersionID != "" {
-			scope := mediaversions.Scope{OwnerID: owner, CanvasID: canvas, Epoch: live.Epoch, NodeID: id, Generation: live.Generation}
-			source := scope
-			source.Epoch = wanted.Epoch
-			source.Generation = wanted.Generation
-			if err := mediaversions.UseHistorical(tx, scope, node, source, wanted.CurrentVersionID); err != nil {
-				return nil, PersistenceError(err)
-			}
-			allowed = append(allowed, Operation{Type: "use_media_version", ID: id, VersionID: wanted.CurrentVersionID})
+		if !reflect.DeepEqual(model.CanvasMediaProjection(old), model.CanvasMediaProjection(node)) || !reflect.DeepEqual(live["currentMediaVersionId"], m["currentMediaVersionId"]) || !reflect.DeepEqual(live["mediaVersions"], m["mediaVersions"]) {
+			allowed = append(allowed, Operation{Type: "use_media_version", ID: id})
 		}
 	}
 	return allowed, nil
@@ -74,13 +49,15 @@ func reconcileHistoryMedia(tx *repository.Repository, owner, canvas, epoch strin
 // Only a successful same-client undo/redo uses this comparison to advance its
 // neighbor's precondition. External edits still fail the entity-version guard.
 func historyEntityValue(value, other map[string]any) map[string]any {
-	if value == nil || other == nil || (mediaversions.ReadState(value).Epoch == "" && mediaversions.ReadState(other).Epoch == "") {
+	// 媒体节点的媒体、版本与任务生命周期由写回和版本操作管理，撤销时按 reconcileHistoryMedia 规则处理，
+	// 比较前统一去掉，其余创作字段仍须完全一致。
+	if value == nil || other == nil || !mediaversions.Supported(text(value["type"])) && !mediaversions.Supported(text(other["type"])) {
 		return value
 	}
 	raw, _ := cloneDocument(Document(value))
 	out := map[string]any(raw)
 	m, _ := out["metadata"].(map[string]any)
-	for _, key := range append(append([]string{}, model.CanvasMediaFields...), "mediaVersion", "status", "errorDetails") {
+	for _, key := range append(append(append([]string{}, model.CanvasMediaFields...), taskLifecycleFields...), "mediaVersions", "currentMediaVersionId") {
 		delete(m, key)
 	}
 	return out

@@ -133,6 +133,10 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 			required = "rowIds"
 		case op.Type == "use_media_version" && op.VersionID == "":
 			required = "versionId"
+		case op.Type == "extract_media_version" && op.VersionID == "":
+			required = "versionId"
+		case op.Type == "extract_media_version" && op.NodeID == "":
+			required = "nodeId"
 		}
 		if required != "" {
 			field := path + "." + required

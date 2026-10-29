@@ -176,21 +176,14 @@ func (r *Repository) CanvasHistoryReferencesObject(resource *model.Resource) (bo
 	err := r.db.Model(&model.CanvasSnapshotResource{}).
 		Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).
 		Count(&count).Error
-	// Agent 画布命令历史、已提交任务输入与媒体版本族也持有物理对象，别名资源同样受保护。
+	// Agent 画布命令历史与已提交任务输入也持有物理对象，别名资源同样受保护。节点 metadata.mediaVersions
+	// 与节点当前媒体一样属于画布正文：受保护删除在引用快照里扫描画布正文拦截；彻底删除不改写画布，
+	// 断链由画布修复处理（与上游一致），因此物理删除检查不扫描画布正文，彻底删除的对象删除任务可以完成。
 	if err == nil && count == 0 && r.db.Migrator().HasTable(&model.CanvasCommandResource{}) {
 		err = r.db.Model(&model.CanvasCommandResource{}).Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).Count(&count).Error
 	}
 	if err == nil && count == 0 && r.db.Migrator().HasTable(&model.CanvasTaskResource{}) {
 		err = r.db.Model(&model.CanvasTaskResource{}).Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).Count(&count).Error
-	}
-	if err == nil && count == 0 && r.mediaVersionsEnabled {
-		ids := []string{resource.ID}
-		var other []string
-		if err = aliases.Pluck("id", &other).Error; err == nil {
-			refs, e := r.MediaVersionResourceReferences(resource.UserID, append(ids, other...))
-			err = e
-			count = int64(len(refs))
-		}
 	}
 	return count > 0, err
 }

@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"yingce/backend/internal/canvas/commands"
-	"yingce/backend/internal/canvas/mediaversions"
 	"yingce/backend/internal/identity"
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
@@ -175,7 +174,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v15"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v16"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -279,8 +278,7 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 			"query":           str("搜索文字，大小写不敏感"), "type": str("可选业务 kind 或底层存储 type，角色卡可用 character"), "offset": map[string]any{"type": "integer", "minimum": 0},
 		}, "query")
 		add("canvas_get_state", cloudAgentToolText("canvas_get_state"), map[string]any{
-			"view":             map[string]any{"type": "string", "enum": []string{"catalog", "detail", "references", "edit", "media_versions"}, "description": "默认目录；指定节点默认 detail。media_versions 指定单个媒体 nodeId，固定20版；references 查关系；edit 才返回 editable/richText"},
-			"beforeVersion":    map[string]any{"type": "integer", "minimum": 0, "description": "media_versions 的 nextBeforeVersion 游标"},
+			"view":             map[string]any{"type": "string", "enum": []string{"catalog", "detail", "references", "edit", "media_versions"}, "description": "默认目录；指定节点默认 detail。media_versions 指定单个媒体 nodeId，返回全部版本（最多30）；references 查关系；edit 才返回 editable/richText"},
 			"connections":      map[string]any{"type": "string", "enum": []string{"none", "selected", "incident"}, "description": "默认不返回连线；子图默认 selected；incident 包含所读节点的关联边"},
 			"offset":           map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_008")},
 			"connectionOffset": map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_009")},
@@ -384,8 +382,9 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 			"globalPrompt": str(cloudAgentToolText("parameter_055")),
 		}, "snapshotHash", "nodeId", "action")
 		opProperties := map[string]any{
-			"type":         map[string]any{"type": "string", "enum": []string{"add_node", "update_node", "delete_node", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows", "use_media_version"}, "description": "创建、修改、删除、复制节点，维护分组和排序，或精确替换文本；use_media_version 用 versionId 选择已有就绪媒体，无生成费用；输入引用写引用字段"},
-			"versionId":    str("media_versions 返回的当前节点就绪版本 ID"),
+			"type":         map[string]any{"type": "string", "enum": []string{"add_node", "update_node", "delete_node", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows", "use_media_version", "extract_media_version"}, "description": "创建、修改、删除、复制节点，维护分组和排序，或精确替换文本；use_media_version 切换节点到已有版本，extract_media_version 把版本取出为右侧独立节点，均无生成费用；输入引用写引用字段"},
+			"versionId":    str("media_versions 返回的版本 id"),
+			"nodeId":       str("extract_media_version 新节点 ID"),
 			"id":           str(cloudAgentToolText("parameter_057")),
 			"nodeType":     map[string]any{"type": "string", "enum": cloudAgentNodeTypeNames()},
 			"title":        str(cloudAgentToolText("parameter_058")),
@@ -415,6 +414,7 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 				{"properties": map[string]any{"type": map[string]any{"const": "reorder_nodes"}}, "required": []string{"nodeIds"}},
 				{"properties": map[string]any{"type": map[string]any{"const": "reorder_rows"}}, "required": []string{"rowIds"}},
 				{"properties": map[string]any{"type": map[string]any{"const": "use_media_version"}}, "required": []string{"versionId"}},
+				{"properties": map[string]any{"type": map[string]any{"const": "extract_media_version"}}, "required": []string{"versionId", "nodeId"}},
 			},
 		}
 		add("canvas_apply_ops", cloudAgentToolText("canvas_apply_ops"), map[string]any{"snapshotHash": str(cloudAgentToolText("parameter_062")), "ops": map[string]any{"type": "array", "maxItems": 20, "items": opItem}}, "snapshotHash", "ops")
@@ -436,7 +436,7 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
 		add("generate_media", cloudAgentToolText("generate_media"), map[string]any{
-			"intent":           map[string]any{"type": "string", "enum": []string{"create", "new_version"}, "description": "默认 create；已有媒体须明确 new_version，在原节点生成版本，成功自动采用，期间旧版可用。原任务未完成、接单未知或待保存时先恢复原任务，不重付生成"},
+			"intent":           map[string]any{"type": "string", "enum": []string{"create", "new_version"}, "description": "默认 create；已有媒体须明确 new_version，在原节点生成新版本，期间旧版可用；成功自动采用，期间用户手动换过版本时只进历史，回执给 versionId 与 adopted。原任务未完成、接单未知或待保存时先恢复原任务，不重付生成"},
 			"storyboardNodeId": str("分镜表节点 ID；分镜模式不传 prompt、引用和时长，由服务端读取行字段"), "storyboardRowId": str("分镜行 ID，与 storyboardNodeId 同时传入"),
 			"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "prompt": str(cloudAgentToolText("parameter_070")),
 			"selectionId": str(cloudAgentToolText("model_selection_id")), "logicalModelId": str(cloudAgentToolText("parameter_071")), "channelId": str(cloudAgentToolText("parameter_038")), "channelModelKey": str(cloudAgentToolText("parameter_039")),
@@ -782,7 +782,6 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 	case "canvas_get_state":
 		var args struct {
 			View             string   `json:"view"`
-			BeforeVersion    int64    `json:"beforeVersion"`
 			Connections      string   `json:"connections"`
 			Offset           int      `json:"offset"`
 			ConnectionOffset int      `json:"connectionOffset"`
@@ -801,7 +800,7 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 			}
 			cs := commands.NewService(repo, commands.ServiceOptions{})
 			p := identity.Principal{ID: userID, OwnerID: userID, Role: "owner", Scopes: identity.OwnerScopes()}
-			page, err := cs.ReadMediaVersions(context.Background(), p, state.Request.CanvasID, args.NodeIDs[0], args.BeforeVersion)
+			page, err := cs.ReadMediaVersions(context.Background(), p, state.Request.CanvasID, args.NodeIDs[0])
 			if err != nil {
 				return nil, BadAuthRequest(err.Error())
 			}
@@ -814,9 +813,6 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 				return nil, err
 			}
 			return map[string]any{"nodeId": args.NodeIDs[0], "mediaVersions": page, "snapshotHash": cloudAgentCanvasHash(doc)}, nil
-		}
-		if args.BeforeVersion != 0 {
-			return nil, BadAuthRequest("beforeVersion 只能与 media_versions 一起使用")
 		}
 		depth := 0
 		if args.Depth != nil {
@@ -941,14 +937,15 @@ type agentCanvasArgs struct {
 }
 
 type agentCanvasOp struct {
-	VersionID      string                   `json:"versionId"`
-	MediaSelection *mediaversions.Selection `json:"-"`
-	Type           string                   `json:"type"`
-	ID             string                   `json:"id"`
-	NodeType       string                   `json:"nodeType"`
-	Title          *string                  `json:"title"`
-	Content        *string                  `json:"content"`
-	Patch          map[string]any           `json:"patch"`
+	VersionID string `json:"versionId"`
+	// NodeID 只用于 extract_media_version：取出后新节点的 ID。
+	NodeID   string         `json:"nodeId"`
+	Type     string         `json:"type"`
+	ID       string         `json:"id"`
+	NodeType string         `json:"nodeType"`
+	Title    *string        `json:"title"`
+	Content  *string        `json:"content"`
+	Patch    map[string]any `json:"patch"`
 	// X/Y 为指针：nil 表示模型没有指定坐标，服务端按画布内容自动落位（不再落到原点重叠）。
 	// 指针语义与 canvas/capability/builtin.go 的 positionPatchFields 一致（坐标是可选的数字）。
 	X            *float64 `json:"x"`
@@ -980,27 +977,7 @@ func applyCloudAgentCanvas(repo *repository.Repository, userID, canvasID string,
 	if err != nil {
 		return nil, err
 	}
-	versionSelection := false
-	for _, op := range plan.Args.Ops {
-		versionSelection = versionSelection || op.Type == "use_media_version"
-	}
-	if versionSelection {
-		cs := commands.NewService(repo, commands.ServiceOptions{})
-		p := identity.Principal{ID: userID, OwnerID: userID, Role: "owner", ClientID: "agent-canvas", Scopes: identity.OwnerScopes()}
-		snap, err := cs.ReadSnapshot(context.Background(), p, canvasID)
-		if err != nil {
-			return nil, err
-		}
-		raw, _ := json.Marshal(plan.Args.Ops)
-		var ops []commands.Operation
-		if err = json.Unmarshal(raw, &ops); err != nil {
-			return nil, err
-		}
-		req := commands.Command{Protocol: 1, CanvasID: canvasID, DocumentEpoch: snap.DocumentEpoch, ClientID: p.ClientID, OperationID: "version-op:" + creationHash(plan.Args), BaseRevision: snap.Revision, Operations: ops}
-		if _, err = cs.Execute(context.Background(), p, req); err != nil {
-			return nil, err
-		}
-	} else if err = saveCloudAgentDocument(repo, plan.Canvas, plan.Document, policy); err != nil {
+	if err = saveCloudAgentDocument(repo, plan.Canvas, plan.Document, policy); err != nil {
 		return nil, err
 	}
 	if len(recorder) > 0 && recorder[0] != nil {

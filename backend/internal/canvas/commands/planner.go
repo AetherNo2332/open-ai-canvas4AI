@@ -147,6 +147,9 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 	if err := validateManagedMedia(doc, next, req.Operations); err != nil {
 		return result, err
 	}
+	if err := validateVersionRecords(doc, next); err != nil {
+		return result, err
+	}
 	coordinated, err := reconcileReferenceFields(doc, next, registry)
 	if err != nil {
 		return result, err
@@ -414,7 +417,7 @@ func relatedReadSet(doc Document, ops []Operation) map[string]bool {
 				reads["node:"+id] = true
 			}
 		}
-		if op.Type == "reorder_nodes" || op.Type == "duplicate_node" || op.Type == "select_node_version" {
+		if op.Type == "reorder_nodes" || op.Type == "duplicate_node" || op.Type == "select_node_version" || op.Type == "extract_media_version" {
 			for _, n := range maps(doc["nodes"]) {
 				reads["node:"+text(n["id"])] = true
 			}

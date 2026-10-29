@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"time"
 	"yingce/backend/internal/canvas/capability"
-	"yingce/backend/internal/canvas/mediaversions"
 	"yingce/backend/internal/canvas/references"
 	"yingce/backend/internal/identity"
 )
 
 const ProtocolVersion = 1
 
-var OperationTypes = []string{"add_node", "update_node", "delete_node", "duplicate_node", "select_node_version", "use_media_version", "set_parent", "connect_nodes", "delete_connection", "update_connection", "replace_text", "reorder_nodes", "reorder_connections", "reorder_rows", "edit_drawing", "edit_storyboard", "bind_storyboard_output", "edit_batch_table", "edit_image_batch", "create_previs_scene", "edit_previs_scene", "delete_previs_scene", "bind_asset", "bind_resource", "bind_character", "rename_canvas", "delete_canvas", "edit_canvas_settings", "edit_timeline", "migrate_references"}
+var OperationTypes = []string{"add_node", "update_node", "delete_node", "duplicate_node", "select_node_version", "use_media_version", "extract_media_version", "set_parent", "connect_nodes", "delete_connection", "update_connection", "replace_text", "reorder_nodes", "reorder_connections", "reorder_rows", "edit_drawing", "edit_storyboard", "bind_storyboard_output", "edit_batch_table", "edit_image_batch", "create_previs_scene", "edit_previs_scene", "delete_previs_scene", "bind_asset", "bind_resource", "bind_character", "rename_canvas", "delete_canvas", "edit_canvas_settings", "edit_timeline", "migrate_references"}
 
 type Snapshot struct {
 	Protocol          int              `json:"protocolVersion"`
@@ -152,7 +151,6 @@ type ValidationContext struct {
 	Resources              map[string]ResourceMetadata
 	CharacterBindings      map[string]map[string]any
 	FolderBindings         map[string]bool
-	MediaVersionSelections map[string]mediaversions.Selection
 }
 type ResourceMetadata struct {
 	ID, Kind, MimeType string

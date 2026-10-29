@@ -49,11 +49,11 @@ func TestCanvasMediaNewVersionRetainsAndAdoptsWithoutChangingNode(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if handle.VersionID == "" {
-				t.Fatal("submission omitted durable version identity")
+			if handle.VersionID != "" {
+				t.Fatal("no placeholder version may exist before the result")
 			}
 			replay, err := s.Submit(context.Background(), p, req)
-			if err != nil || replay.TaskID != handle.TaskID || replay.VersionID != handle.VersionID {
+			if err != nil || replay.TaskID != handle.TaskID {
 				t.Fatalf("retry changed identity: %+v %v", replay, err)
 			}
 			snap, err = cs.ReadSnapshot(context.Background(), p, req.Command.CanvasID)
@@ -61,8 +61,7 @@ func TestCanvasMediaNewVersionRetainsAndAdoptsWithoutChangingNode(t *testing.T) 
 				t.Fatal(err)
 			}
 			node := findNode(snap.Document, "target")
-			previousVersionID := mediaversions.ReadState(node).CurrentVersionID
-			if metadata(node)["storageKey"] != "resource:old" || metadata(node)["status"] != "success" || mediaversions.ReadState(node).ActiveTaskID != handle.TaskID {
+			if metadata(node)["storageKey"] != "resource:old" || metadata(node)["status"] != "success" || metadata(node)["taskId"] != handle.TaskID || len(mediaversions.List(node)) != 0 {
 				t.Fatalf("old media unavailable during update: %+v", metadata(node))
 			}
 			result := fmt.Sprintf(`{"%s":{"resourceId":"new"}}`, kind)
@@ -83,8 +82,16 @@ func TestCanvasMediaNewVersionRetainsAndAdoptsWithoutChangingNode(t *testing.T) 
 				t.Fatal(err)
 			}
 			node = findNode(snap.Document, "target")
-			if metadata(node)["storageKey"] != "resource:new" || metadata(node)["composerContent"] != "a newer draft" || mediaversions.ReadState(node).CurrentVersionID != handle.VersionID {
+			versions := mediaversions.List(node)
+			if len(versions) != 2 {
+				t.Fatalf("old and new media must both be versions: %+v", metadata(node))
+			}
+			previousVersionID, newVersionID := str(versions[0]["id"]), str(versions[1]["id"])
+			if metadata(node)["storageKey"] != "resource:new" || metadata(node)["composerContent"] != "a newer draft" || metadata(node)["currentMediaVersionId"] != newVersionID {
 				t.Fatalf("new media not adopted or draft overwritten: %+v", metadata(node))
+			}
+			if read, err := s.ReadSubmission(context.Background(), p, req.Command.CanvasID, req.Command.DocumentEpoch, req.Command.ClientID, req.Command.OperationID); err != nil || read.VersionID != newVersionID {
+				t.Fatalf("receipt lacks written version: %+v %v", read, err)
 			}
 			if len(objectList(snap.Document["nodes"])) != 1 {
 				t.Fatal("regeneration scattered a new canvas node")
@@ -103,19 +110,19 @@ func TestCanvasMediaNewVersionRetainsAndAdoptsWithoutChangingNode(t *testing.T) 
 			if metadata(findNode(snap.Document, "target"))["storageKey"] != "resource:old" {
 				t.Fatal("history selection did not change actual node media")
 			}
-			page, err := cs.ReadMediaVersions(context.Background(), p, snap.CanvasID, "target", 0)
-			if err != nil || len(page.Items) != 2 || !page.CanCreateVersion || page.State.CurrentVersionID != previousVersionID {
+			page, err := cs.ReadMediaVersions(context.Background(), p, snap.CanvasID, "target")
+			if err != nil || len(page.Items) != 2 || !page.CanCreateVersion || page.CurrentMediaVersionID != previousVersionID || page.Generating != nil {
 				t.Fatalf("history read: %+v %v", page, err)
 			}
 			unsafe := choose
 			unsafe.OperationID = "unsafe-media-patch"
 			unsafe.BaseRevision = snap.Revision
-			unsafe.Operations = []commands.Operation{{Type: "bind_asset", ID: "target", AssetID: str(page.Items[0].Media["assetId"])}}
+			unsafe.Operations = []commands.Operation{{Type: "bind_resource", ID: "target", ResourceID: "new"}}
 			if _, err = cs.Execute(context.Background(), p, unsafe); err == nil {
 				t.Fatal("generic edit replaced managed media")
 			}
 			unsafe.OperationID = "mixed-selection-patch"
-			unsafe.Operations = append([]commands.Operation{{Type: "use_media_version", ID: "target", VersionID: handle.VersionID}}, unsafe.Operations...)
+			unsafe.Operations = append([]commands.Operation{{Type: "use_media_version", ID: "target", VersionID: newVersionID}}, unsafe.Operations...)
 			if _, err = cs.Execute(context.Background(), p, unsafe); err == nil {
 				t.Fatal("mixed batch bypassed managed media protection")
 			}
@@ -123,11 +130,12 @@ func TestCanvasMediaNewVersionRetainsAndAdoptsWithoutChangingNode(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			delete(metadata(findNode(snap.Document, "target")), "mediaVersion")
+			tampered := mediaversions.List(findNode(snap.Document, "target"))[0]
+			tampered["media"].(map[string]any)["storageKey"] = "resource:new"
 			raw, _ := json.Marshal(snap.Document)
 			row.PayloadJSON = string(raw)
 			if err = repo.UpsertCanvasProject(row); !errors.Is(err, repository.ErrCanvasMediaVersionManaged) {
-				t.Fatalf("legacy save erased managed state: %v", err)
+				t.Fatalf("browser save rewrote a version record: %v", err)
 			}
 		})
 	}

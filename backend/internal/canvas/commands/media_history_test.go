@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"yingce/backend/internal/canvas/mediaversions"
 	"yingce/backend/internal/model"
@@ -46,6 +47,7 @@ func managedHistoryFixtureWithInitial(t *testing.T, first bool) (*Service, *repo
 	req := command()
 	req.CanvasID, req.DocumentEpoch, req.BaseRevision, req.OperationID = snap.CanvasID, snap.DocumentEpoch, snap.Revision, "version-pending"
 	var oldVersion string
+	var base mediaversions.Base
 	_, _, err := svc.ExecuteHost(ctx, p, req, "task_submit", nil, false, func(tx *repository.Repository, doc Document) (Document, map[string]bool, error) {
 		n := entity(doc, "node:a")
 		if !first {
@@ -60,8 +62,10 @@ func managedHistoryFixtureWithInitial(t *testing.T, first bool) (*Service, *repo
 		if first {
 			intent = "create"
 		}
-		_, e = mediaversions.Begin(tx, scope, n, model.Task{ID: "new-task", UserID: "owner", Status: model.TaskStatusQueued}, intent)
-		oldVersion = mediaversions.ReadState(n).CurrentVersionID
+		if e = mediaversions.CheckAdmission(tx, scope, n, intent); e != nil {
+			return nil, nil, e
+		}
+		base, e = mediaversions.Begin(n, model.Task{ID: "new-task", UserID: "owner", Status: model.TaskStatusQueued}, maps(doc["nodes"]))
 		return doc, nil, e
 	})
 	if err != nil {
@@ -70,12 +74,24 @@ func managedHistoryFixtureWithInitial(t *testing.T, first bool) (*Service, *repo
 	snap, _ = svc.ReadSnapshot(ctx, p, snap.CanvasID)
 	req.BaseRevision, req.OperationID = snap.Revision, "version-finish"
 	_, _, err = svc.ExecuteHost(ctx, p, req, "task_result", nil, true, func(tx *repository.Repository, doc Document) (Document, map[string]bool, error) {
-		scope, e := mediaversions.ScopeForNode(tx, "owner", snap.CanvasID, "a")
-		if e != nil {
-			return nil, nil, e
+		node := entity(doc, "node:a")
+		result, _ := cloneDocument(Document(node))
+		m := result["metadata"].(map[string]any)
+		m["content"], m["storageKey"], m["taskStatus"], m["status"] = "/api/resources/new/file", "resource:new", "succeeded", "success"
+		next, outcome := mediaversions.Finish(node, map[string]any(result), base, model.Task{ID: "new-task", UserID: "owner", Status: model.TaskStatusSucceeded}, "", time.Now())
+		if !outcome.Adopted {
+			return nil, nil, errors.New("result not adopted")
 		}
-		_, _, e = mediaversions.Finish(tx, scope, entity(doc, "node:a"), model.Task{ID: "new-task", UserID: "owner", Status: model.TaskStatusSucceeded}, map[string]any{"content": "/api/resources/new/file", "storageKey": "resource:new"}, nil)
-		return doc, nil, e
+		nodes, _ := doc["nodes"].([]any)
+		for i, value := range nodes {
+			if node, ok := value.(map[string]any); ok && text(node["id"]) == "a" {
+				nodes[i] = next
+			}
+		}
+		if versions := mediaversions.List(next); len(versions) > 1 {
+			oldVersion = text(versions[0]["id"])
+		}
+		return doc, nil, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,10 +100,14 @@ func managedHistoryFixtureWithInitial(t *testing.T, first bool) (*Service, *repo
 	return svc, repo, snap, oldVersion
 }
 
+func currentVersion(node map[string]any) string {
+	return text(mediaversions.Current(node)["id"])
+}
+
 func TestManagedVersionSelectionUndoRedoPreservesReceiptsAndEarlierEdits(t *testing.T) {
 	svc, _, snap, old := managedHistoryFixture(t)
 	ctx, p := context.Background(), ownerContext().Principal
-	current := mediaversions.ReadState(entity(snap.Document, "node:a")).CurrentVersionID
+	current := currentVersion(entity(snap.Document, "node:a"))
 	req := edit(snap, "a", "", "author")
 	req.Operations = []Operation{{Type: "update_node", ID: "a", Patch: map[string]any{"title": "later title"}}}
 	if _, err := svc.Execute(ctx, p, req); err != nil {
@@ -99,6 +119,10 @@ func TestManagedVersionSelectionUndoRedoPreservesReceiptsAndEarlierEdits(t *test
 	if _, err := svc.Execute(ctx, p, req); err != nil {
 		t.Fatal(err)
 	}
+	snap, _ = svc.ReadSnapshot(ctx, p, snap.CanvasID)
+	if currentVersion(entity(snap.Document, "node:a")) != old || entity(snap.Document, "node:a")["metadata"].(map[string]any)["storageKey"] != "resource:old" {
+		t.Fatal("use_media_version did not adopt the old media")
+	}
 	for _, operation := range []string{"undo-selection", "undo-author"} {
 		if _, err := svc.Undo(ctx, p, snap.CanvasID, snap.DocumentEpoch, "client", operation); err != nil {
 			t.Fatal(err)
@@ -107,8 +131,8 @@ func TestManagedVersionSelectionUndoRedoPreservesReceiptsAndEarlierEdits(t *test
 	snap, _ = svc.ReadSnapshot(ctx, p, snap.CanvasID)
 	n := entity(snap.Document, "node:a")
 	m := n["metadata"].(map[string]any)
-	if n["title"] == "later title" || m["composerContent"] != "draft" || mediaversions.ReadState(n).CurrentVersionID != current || mediaversions.ReadState(n).SelectionRevision < 3 {
-		t.Fatalf("undo lost projection or draft: %+v", m)
+	if n["title"] == "later title" || m["composerContent"] != "draft" || currentVersion(n) != current || len(mediaversions.List(n)) != 2 {
+		t.Fatalf("undo lost selection or draft: %+v", m)
 	}
 	for _, operation := range []string{"redo-author", "redo-selection"} {
 		if _, err := svc.Redo(ctx, p, snap.CanvasID, snap.DocumentEpoch, "client", operation); err != nil {
@@ -116,34 +140,30 @@ func TestManagedVersionSelectionUndoRedoPreservesReceiptsAndEarlierEdits(t *test
 		}
 	}
 	snap, _ = svc.ReadSnapshot(ctx, p, snap.CanvasID)
-	if mediaversions.ReadState(entity(snap.Document, "node:a")).CurrentVersionID != old {
+	if currentVersion(entity(snap.Document, "node:a")) != old {
 		t.Fatal("redo did not select history")
 	}
 }
 
 func TestManagedTaskResultUndoDoesNotResurrectPending(t *testing.T) {
-	svc, repo, snap, old := managedHistoryFixture(t)
+	svc, _, snap, _ := managedHistoryFixture(t)
 	ctx, p := context.Background(), ownerContext().Principal
 	if _, err := svc.Undo(ctx, p, snap.CanvasID, snap.DocumentEpoch, "client", "undo-result"); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ = svc.ReadSnapshot(ctx, p, snap.CanvasID)
-	state := mediaversions.ReadState(entity(snap.Document, "node:a"))
-	if state.ActiveTaskID != "" || state.PendingVersionID != "" || state.CurrentVersionID != old {
-		t.Fatalf("task result undo resurrected pending: %+v", state)
-	}
-	version, err := repo.CanvasMediaVersionForTask("owner", "new-task")
-	if err != nil || version == nil || version.Status != "ready" {
-		t.Fatal("undo erased real result", err)
+	m := entity(snap.Document, "node:a")["metadata"].(map[string]any)
+	if m["status"] == "loading" || m["taskStatus"] != "succeeded" {
+		t.Fatalf("task result undo resurrected pending: %+v", m)
 	}
 }
 
-func TestManagedDeleteUndoAndDocumentRestoreRebaseAvailableMedia(t *testing.T) {
+func TestManagedDeleteUndoAndDocumentRestoreKeepVersionHistory(t *testing.T) {
 	for _, action := range []string{"delete-undo", "restore"} {
 		t.Run(action, func(t *testing.T) {
-			svc, repo, snap, _ := managedHistoryFixture(t)
+			svc, _, snap, _ := managedHistoryFixture(t)
 			ctx, p := context.Background(), ownerContext().Principal
-			oldState := mediaversions.ReadState(entity(snap.Document, "node:a"))
+			versions := mediaversions.List(entity(snap.Document, "node:a"))
 			if action == "restore" {
 				var err error
 				snap, err = svc.RestoreVersion(ctx, p, snap.CanvasID, snap.DocumentEpoch, "client", "restore-media", snap.Revision, snap.Document)
@@ -162,27 +182,20 @@ func TestManagedDeleteUndoAndDocumentRestoreRebaseAvailableMedia(t *testing.T) {
 				snap, _ = svc.ReadSnapshot(ctx, p, snap.CanvasID)
 			}
 			n := entity(snap.Document, "node:a")
-			state := mediaversions.ReadState(n)
-			if state.CurrentVersionID == "" || state.CurrentVersionID == oldState.CurrentVersionID || state.ActiveTaskID != "" {
-				t.Fatalf("not rebased: %+v", state)
-			}
-			scope, err := mediaversions.ScopeForNode(repo, "owner", snap.CanvasID, "a")
-			if err != nil {
-				t.Fatal(err)
-			}
-			version, err := repo.CanvasMediaVersion(scope, state.CurrentVersionID)
-			if err != nil || version.SourceVersionID != oldState.CurrentVersionID {
-				t.Fatalf("source not retained: %+v %v", version, err)
+			if len(mediaversions.List(n)) != len(versions) || currentVersion(n) == "" || n["metadata"].(map[string]any)["status"] == "loading" {
+				t.Fatalf("restored node lost history: %+v", n["metadata"])
 			}
 		})
 	}
 }
 
-func TestLegacyPutCannotInjectManagedIdentityIntoExistingNode(t *testing.T) {
-	svc, db, _, snap := commandFixture(t)
-	_ = svc
-	repo := repository.New(db)
-	entity(snap.Document, "node:a")["metadata"].(map[string]any)["mediaVersion"] = map[string]any{"epoch": snap.DocumentEpoch, "generation": snap.EntityGenerations["node:a"], "pendingVersionId": "fake"}
+func TestLegacyPutCannotRewriteExistingVersionRecord(t *testing.T) {
+	_, repo, snap, old := managedHistoryFixture(t)
+	for _, version := range mediaversions.List(entity(snap.Document, "node:a")) {
+		if text(version["id"]) == old {
+			version["media"].(map[string]any)["storageKey"] = "resource:new"
+		}
+	}
 	raw, _ := json.Marshal(snap.Document)
 	row, err := repo.CanvasProjectForUser("owner", snap.CanvasID)
 	if err != nil {
@@ -190,51 +203,41 @@ func TestLegacyPutCannotInjectManagedIdentityIntoExistingNode(t *testing.T) {
 	}
 	row.PayloadJSON = string(raw)
 	if err = repo.UpsertCanvasProject(row); !errors.Is(err, repository.ErrCanvasMediaVersionManaged) {
-		t.Fatalf("untrusted managed identity accepted: %v", err)
+		t.Fatalf("version record rewrite accepted: %v", err)
 	}
 }
 
-func TestManagedHistoryTraversesSelectionsAcrossRestoredNodeGenerations(t *testing.T) {
-	svc, repo, snap, old := managedHistoryFixture(t)
+func TestAgentGenericEditCannotTouchVersionHistory(t *testing.T) {
+	svc, _, snap, _ := managedHistoryFixture(t)
 	ctx, p := context.Background(), ownerContext().Principal
-	newVersion := mediaversions.ReadState(entity(snap.Document, "node:a")).CurrentVersionID
-	req := edit(snap, "a", "", "choose-before-delete")
-	req.Operations = []Operation{{Type: "use_media_version", ID: "a", VersionID: old}}
+	req := edit(snap, "a", "", "bind-over-history")
+	req.Operations = []Operation{{Type: "bind_resource", ID: "a", ResourceID: "old"}}
+	if _, err := svc.Execute(ctx, p, req); err == nil {
+		t.Fatal("generic edit replaced versioned media")
+	}
+}
+
+func TestExtractMediaVersionCreatesStandaloneNode(t *testing.T) {
+	svc, _, snap, old := managedHistoryFixture(t)
+	ctx, p := context.Background(), ownerContext().Principal
+	req := edit(snap, "a", "", "extract")
+	req.Operations = []Operation{{Type: "extract_media_version", ID: "a", VersionID: old, SourceNodeID: "a-v1"}}
 	if _, err := svc.Execute(ctx, p, req); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ = svc.ReadSnapshot(ctx, p, snap.CanvasID)
-	req = edit(snap, "a", "", "delete-chosen")
-	req.Operations = []Operation{{Type: "delete_node", ID: "a"}}
-	if _, err := svc.Execute(ctx, p, req); err != nil {
-		t.Fatal(err)
+	copyNode := entity(snap.Document, "node:a-v1")
+	if copyNode == nil {
+		t.Fatal("extract did not create a node")
 	}
-	for _, op := range []string{"undo-deletion", "undo-choice", "undo-task-result"} {
-		if _, err := svc.Undo(ctx, p, snap.CanvasID, snap.DocumentEpoch, "client", op); err != nil {
-			t.Fatal(op, err)
-		}
-	}
-	for _, op := range []string{"redo-task-result", "redo-choice"} {
-		if _, err := svc.Redo(ctx, p, snap.CanvasID, snap.DocumentEpoch, "client", op); err != nil {
-			t.Fatal(op, err)
-		}
-	}
-	snap, _ = svc.ReadSnapshot(ctx, p, snap.CanvasID)
-	scope, err := mediaversions.ScopeForNode(repo, "owner", snap.CanvasID, "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	versions, err := repo.CanvasMediaVersions(scope, 0, 20)
-	if err != nil || len(versions) != 2 {
-		t.Fatalf("repeated history duplicated restored versions: %+v %v", versions, err)
-	}
-	if versions[0].SourceVersionID != newVersion || versions[1].SourceVersionID != old {
-		t.Fatalf("cross-generation source mapping: %+v", versions)
+	m, _ := copyNode["metadata"].(map[string]any)
+	if m["storageKey"] != "resource:old" || m["mediaVersions"] != nil || m["taskId"] != nil || m["copiedFromNodeId"] != "a" {
+		t.Fatalf("extract: %+v", copyNode)
 	}
 }
 
 func TestFirstManagedGenerationSupportsOriginalAddUndoRedo(t *testing.T) {
-	svc, repo, snap, _ := managedHistoryFixtureWithInitial(t, true)
+	svc, _, snap, _ := managedHistoryFixtureWithInitial(t, true)
 	ctx, p := context.Background(), ownerContext().Principal
 	for _, op := range []string{"undo-first-result", "undo-original-add"} {
 		if _, err := svc.Undo(ctx, p, snap.CanvasID, snap.DocumentEpoch, "client", op); err != nil {
@@ -248,12 +251,8 @@ func TestFirstManagedGenerationSupportsOriginalAddUndoRedo(t *testing.T) {
 	}
 	snap, _ = svc.ReadSnapshot(ctx, p, snap.CanvasID)
 	node := entity(snap.Document, "node:a")
-	scope, err := mediaversions.ScopeForNode(repo, "owner", snap.CanvasID, "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := mediaversions.ReadState(node)
-	if state.ActiveTaskID != "" || state.Generation != scope.Generation || node["metadata"].(map[string]any)["storageKey"] != "resource:new" {
+	m := node["metadata"].(map[string]any)
+	if m["status"] == "loading" || m["storageKey"] != "resource:new" || len(mediaversions.List(node)) != 1 {
 		t.Fatalf("first lifecycle: %+v", node)
 	}
 }

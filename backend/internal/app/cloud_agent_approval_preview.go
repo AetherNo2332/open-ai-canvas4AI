@@ -11,7 +11,6 @@ import (
 
 	"yingce/backend/internal/canvas/capability"
 	"yingce/backend/internal/canvas/layout"
-	"yingce/backend/internal/canvas/mediaversions"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
@@ -83,20 +82,6 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 	// 实际执行共用这里，所以两侧拿到同一个 reference_migration_required。
 	if err := validateCloudAgentReferenceDocument(doc, args.Ops); err != nil {
 		return nil, err
-	}
-	for i := range args.Ops {
-		op := &args.Ops[i]
-		if op.Type == "use_media_version" {
-			scope, err := mediaversions.ScopeForNode(repo, userID, canvasID, op.ID)
-			if err != nil {
-				return nil, BadAuthRequest(err.Error())
-			}
-			selection, err := mediaversions.PrepareSelection(repo, scope, op.VersionID)
-			if err != nil {
-				return nil, BadAuthRequest(err.Error())
-			}
-			op.MediaSelection = &selection
-		}
 	}
 	items, err := applyCloudAgentCanvasPlan(doc, args.Ops)
 	if err != nil {
@@ -180,14 +165,16 @@ func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) (
 		}
 		index := cloudAgentNodeIndex(nodes, op.ID)
 		switch op.Type {
-		case "use_media_version":
-			if index < 0 || op.MediaSelection == nil {
-				return nil, BadAuthRequest("媒体版本未就绪，请读取 media_versions")
+		case "use_media_version", "extract_media_version":
+			if index < 0 {
+				return nil, &cloudAgentMediaVersionError{reason: "media_version_missing", error: BadAuthRequest("媒体节点不存在，请重新读取画布")}
 			}
-			if err := mediaversions.ApplySelection(nodes[index], *op.MediaSelection); err != nil {
-				return nil, BadAuthRequest(err.Error())
+			item, next, err := applyCloudAgentMediaVersionOp(nodes, index, op)
+			if err != nil {
+				return nil, err
 			}
-			items = append(items, cloudAgentApprovalPreviewItem{Operation: op.Type, NodeID: op.ID, NodeTitle: stringValue(nodes[index]["title"]), Summary: "采用媒体版本"})
+			nodes = next
+			items = append(items, item)
 		case "add_node":
 			if index >= 0 {
 				return nil, BadAuthRequest("新增节点ID重复")

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v15",
+  "schemaVersion": "cloud-agent-tools/v16",
   "tools": [
     {
       "function": {
@@ -696,16 +696,11 @@
     },
     {
       "function": {
-        "description": "首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=media_versions 指定一个媒体节点，固定20版，用 nextBeforeVersion 作为 beforeVersion 续页；返回当前/待生成版本、可否新建和阻断原因，不含原始请求。references 查有效引用，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断按 nextRead 续读；kind 是业务类型。角色卡读 character 的 resolvedImage 和来源；结构化行用专用 read。",
+        "description": "首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=media_versions 指定一个媒体节点，一次返回全部版本（最多30，不分页），含 currentMediaVersionId、每版 isCurrent，在途生成单列 generating.taskId（不是版本）；另给可否新建和阻断原因，不含存储地址。references 查有效引用，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断按 nextRead 续读；kind 是业务类型。角色卡读 character 的 resolvedImage 和来源；结构化行用专用 read。",
         "name": "canvas_get_state",
         "parameters": {
           "additionalProperties": false,
           "properties": {
-            "beforeVersion": {
-              "description": "media_versions 的 nextBeforeVersion 游标",
-              "minimum": 0,
-              "type": "integer"
-            },
             "connectionOffset": {
               "description": "连线分页起点；hasMoreConnections 为真时保持节点 offset 不变并使用 nextConnectionOffset",
               "minimum": 0,
@@ -759,7 +754,7 @@
               "type": "integer"
             },
             "view": {
-              "description": "默认目录；指定节点默认 detail。media_versions 指定单个媒体 nodeId，固定20版；references 查关系；edit 才返回 editable/richText",
+              "description": "默认目录；指定节点默认 detail。media_versions 指定单个媒体 nodeId，返回全部版本（最多30）；references 查关系；edit 才返回 editable/richText",
               "enum": [
                 "catalog",
                 "detail",
@@ -3593,7 +3588,7 @@
     },
     {
       "function": {
-        "description": "基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的就绪 versionId，无生成费用；即使选择当前版本，也会阻止在途结果自动采用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的版本 id 切换当前媒体，已是当前版本即成功；锁定 media_version_locked、生成或上传中 media_version_loading（可稍后重试）、版本不存在或无媒体 media_version_missing。extract_media_version 给 versionId 和新 nodeId，把该版取出为右侧独立节点（无版本历史和任务绑定）。均无生成费用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_apply_ops",
         "parameters": {
           "additionalProperties": false,
@@ -3689,6 +3684,17 @@
                     "required": [
                       "versionId"
                     ]
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "extract_media_version"
+                      }
+                    },
+                    "required": [
+                      "versionId",
+                      "nodeId"
+                    ]
                   }
                 ],
                 "properties": {
@@ -3703,6 +3709,10 @@
                   "match": {
                     "maxLength": 16000,
                     "minLength": 1,
+                    "type": "string"
+                  },
+                  "nodeId": {
+                    "description": "extract_media_version 新节点 ID",
                     "type": "string"
                   },
                   "nodeIds": {
@@ -4830,7 +4840,7 @@
                     "type": "string"
                   },
                   "type": {
-                    "description": "创建、修改、删除、复制节点，维护分组和排序，或精确替换文本；use_media_version 用 versionId 选择已有就绪媒体，无生成费用；输入引用写引用字段",
+                    "description": "创建、修改、删除、复制节点，维护分组和排序，或精确替换文本；use_media_version 切换节点到已有版本，extract_media_version 把版本取出为右侧独立节点，均无生成费用；输入引用写引用字段",
                     "enum": [
                       "add_node",
                       "update_node",
@@ -4840,12 +4850,13 @@
                       "replace_text",
                       "reorder_nodes",
                       "reorder_rows",
-                      "use_media_version"
+                      "use_media_version",
+                      "extract_media_version"
                     ],
                     "type": "string"
                   },
                   "versionId": {
-                    "description": "media_versions 返回的当前节点就绪版本 ID",
+                    "description": "media_versions 返回的版本 id",
                     "type": "string"
                   },
                   "x": {
@@ -5109,7 +5120,7 @@
               "type": "integer"
             },
             "intent": {
-              "description": "默认 create；已有媒体须明确 new_version，在原节点生成版本，成功自动采用，期间旧版可用。原任务未完成、接单未知或待保存时先恢复原任务，不重付生成",
+              "description": "默认 create；已有媒体须明确 new_version，在原节点生成新版本，期间旧版可用；成功自动采用，期间用户手动换过版本时只进历史，回执给 versionId 与 adopted。原任务未完成、接单未知或待保存时先恢复原任务，不重付生成",
               "enum": [
                 "create",
                 "new_version"

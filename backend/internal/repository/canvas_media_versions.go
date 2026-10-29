@@ -1,149 +1,75 @@
 package repository
 
 import (
-	"errors"
-	"time"
+	"encoding/json"
 
-	"gorm.io/gorm"
 	"yingce/backend/internal/assets"
 	"yingce/backend/internal/model"
 )
 
+// MediaVersionScope 是节点化身守卫（画布纪元 + 节点实体 generation）。
 type MediaVersionScope struct {
 	OwnerID, CanvasID, Epoch, NodeID string
 	Generation                       int64
 }
 
-func (r *Repository) mediaVersionScope(scope MediaVersionScope) *gorm.DB {
-	return r.db.Model(&model.CanvasMediaVersion{}).Where("owner_id = ? AND canvas_id = ? AND epoch = ? AND node_id = ? AND generation = ?", scope.OwnerID, scope.CanvasID, scope.Epoch, scope.NodeID, scope.Generation)
-}
-func (r *Repository) CanvasMediaVersion(scope MediaVersionScope, id string) (*model.CanvasMediaVersion, error) {
-	var row model.CanvasMediaVersion
-	err := r.mediaVersionScope(scope).Where("id = ?", id).First(&row).Error
-	return &row, err
-}
-func (r *Repository) CanvasMediaVersionFromSource(scope MediaVersionScope, source string) (*model.CanvasMediaVersion, error) {
-	var row model.CanvasMediaVersion
-	err := r.mediaVersionScope(scope).Where("source_version_id = ?", source).Order("sequence").First(&row).Error
-	return &row, err
-}
-func (r *Repository) CanvasMediaVersionForTask(owner, taskID string) (*model.CanvasMediaVersion, error) {
-	var row model.CanvasMediaVersion
-	err := r.db.Where("owner_id = ? AND task_id = ?", owner, taskID).First(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &row, err
-}
-func (r *Repository) CanvasMediaVersions(scope MediaVersionScope, before int64, limit int) ([]model.CanvasMediaVersion, error) {
-	if limit < 1 || limit > 50 {
-		limit = 20
-	}
-	query := r.mediaVersionScope(scope)
-	if before > 0 {
-		query = query.Where("sequence < ?", before)
-	}
-	rows := []model.CanvasMediaVersion{}
-	err := query.Order("sequence DESC").Limit(limit).Find(&rows).Error
-	return rows, err
-}
-func (r *Repository) CanvasMediaVersionSequence(scope MediaVersionScope) (int64, error) {
-	var sequence int64
-	err := r.mediaVersionScope(scope).Select("COALESCE(MAX(sequence),0)").Scan(&sequence).Error
-	return sequence, err
-}
-func (r *Repository) PendingCanvasMediaVersion(scope MediaVersionScope) (*model.CanvasMediaVersion, error) {
-	var row model.CanvasMediaVersion
-	err := r.mediaVersionScope(scope).Where("status IN ?", []string{"queued", "running", "submission_uncertain", "materializing"}).First(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	return &row, err
-}
-func mediaVersionBytes(v *model.CanvasMediaVersion) int64 {
-	return int64(len(v.RequestJSON) + len(v.MediaJSON) + len(v.OutputsJSON) + len(v.Error))
-}
-func (r *Repository) InsertCanvasMediaVersion(row *model.CanvasMediaVersion) error {
-	if r.structuredWriteQuota != nil {
-		if err := r.structuredWriteQuota(r, row.OwnerID, "task", 0, mediaVersionBytes(row)); err != nil {
-			return err
-		}
-	}
-	return r.db.Create(row).Error
-}
-func (r *Repository) UpdateCanvasMediaVersion(row *model.CanvasMediaVersion) error {
-	var before model.CanvasMediaVersion
-	if err := r.db.Where("id = ? AND owner_id = ?", row.ID, row.OwnerID).First(&before).Error; err != nil {
-		return err
-	}
-	if r.structuredWriteQuota != nil {
-		if err := r.structuredWriteQuota(r, row.OwnerID, "task", 0, mediaVersionBytes(row)-mediaVersionBytes(&before)); err != nil {
-			return err
-		}
-	}
-	row.UpdatedAt = time.Now().UTC()
-	return r.db.Model(&model.CanvasMediaVersion{}).Where("id = ? AND owner_id = ?", row.ID, row.OwnerID).
-		Select("status", "media_json", "outputs_json", "resource_id", "adoption", "error", "updated_at").Updates(row).Error
+type canvasVersionDocument struct {
+	Nodes []struct {
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		Metadata struct {
+			Versions []struct {
+				ID    string `json:"id"`
+				Media struct {
+					StorageKey string `json:"storageKey"`
+					Content    string `json:"content"`
+				} `json:"media"`
+			} `json:"mediaVersions"`
+		} `json:"metadata"`
+	} `json:"nodes"`
 }
 
-type mediaVersionRoot struct {
-	CanvasID, Epoch, NodeID string
-	Generation              int64
-}
-
-// The ledger itself is not a permanent root: a live node or retained document
-// must still expose its family. This protects every historical version of a
-// recoverable family while letting ordinary resource cleanup reclaim orphans.
+// MediaVersionResourceReferences 扫描当前画布节点的 metadata.mediaVersions：历史版本仍持有资源，
+// 受保护删除前要列为直接引用（来源写明画布与节点）。版本历史只存在节点 metadata 中。
 func (r *Repository) MediaVersionResourceReferences(owner string, ids []string) ([]ResourceDirectReference, error) {
 	refs := []ResourceDirectReference{}
-	if !r.mediaVersionsEnabled || len(ids) == 0 {
+	if len(ids) == 0 {
 		return refs, nil
 	}
-	var rows []model.CanvasMediaVersion
-	if err := r.db.Where("owner_id = ?", owner).Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return refs, nil
-	}
-	roots, err := r.canvasMediaVersionRoots(owner, "")
-	if err != nil {
-		return nil, err
-	}
-	tasks, err := r.mediaVersionTaskRoots(owner, rows)
-	if err != nil {
-		return nil, err
-	}
-	retained := retainedMediaVersionIDs(rows, roots, tasks)
 	wanted := map[string]bool{}
 	for _, id := range ids {
 		wanted[id] = true
 	}
-	for _, row := range rows {
-		if !retained[row.ID] {
-			continue
+	var canvases []model.CanvasProject
+	if err := r.db.Select("id", "title", "payload_json").Where("user_id = ? AND payload_json LIKE ?", owner, "%mediaVersions%").Find(&canvases).Error; err != nil {
+		return nil, err
+	}
+	for _, canvas := range canvases {
+		var doc canvasVersionDocument
+		if err := json.Unmarshal([]byte(canvas.PayloadJSON), &doc); err != nil {
+			return nil, err
 		}
-		found := map[string]bool{}
-		if row.ResourceID != "" {
-			found[row.ResourceID] = true
-		}
-		for _, raw := range []string{row.RequestJSON, row.MediaJSON, row.OutputsJSON} {
-			if raw == "" {
-				continue
-			}
-			values, err := assets.CollectDocumentResourceReferences(raw)
-			if err != nil {
-				return nil, err
-			}
-			for _, value := range values {
-				found[value.ResourceID] = true
-			}
-		}
-		for id := range found {
-			if wanted[id] {
-				refs = append(refs, ResourceDirectReference{Kind: "画布媒体版本", ID: row.ID, Title: "保留的媒体版本", ResourceID: id})
+		for _, node := range doc.Nodes {
+			seen := map[string]bool{}
+			for _, version := range node.Metadata.Versions {
+				for _, locator := range []string{version.Media.StorageKey, version.Media.Content} {
+					id := assets.ResourceID(locator)
+					if id != "" && wanted[id] && !seen[id] {
+						seen[id] = true
+						title := canvas.Title
+						if node.Title != "" {
+							title += " / " + node.Title
+						}
+						refs = append(refs, ResourceDirectReference{Kind: "画布媒体版本", ID: canvas.ID + ":" + node.ID, Title: title, ResourceID: id})
+					}
+				}
 			}
 		}
 	}
 	return refs, nil
+}
+
+// UpdateCanvasTaskBindingMediaVersion 写入媒体版本任务的冻结上下文或写回结果。
+func (r *Repository) UpdateCanvasTaskBindingMediaVersion(taskID, owner, value string) error {
+	return r.db.Model(&model.CanvasTaskBinding{}).Where("task_id = ? AND owner_id = ?", taskID, owner).Update("media_version_json", value).Error
 }

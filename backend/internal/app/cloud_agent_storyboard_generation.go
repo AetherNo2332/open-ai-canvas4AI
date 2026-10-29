@@ -225,8 +225,16 @@ func registerCloudAgentStoryboardTask(repo *repository.Repository, run *model.Cl
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, err = mediaversions.Begin(tx, scope, node, *task, plan.Args.Intent, creationMaps(doc["nodes"])); err != nil {
+		if err = mediaversions.CheckAdmission(tx, scope, node, plan.Args.Intent, task.ID); err != nil {
 			return nil, nil, BadAuthRequest(err.Error())
+		}
+		base, err := mediaversions.Begin(node, *task, creationMaps(doc["nodes"]))
+		if err != nil {
+			return nil, nil, BadAuthRequest(err.Error())
+		}
+		// 提交时冻结当前版本：写回时若用户期间手动换过版本，新结果只进入历史（决定 3）。
+		if err = tx.UpdateCanvasTaskBindingMediaVersion(task.ID, run.UserID, base.Encode()); err != nil {
+			return nil, nil, err
 		}
 		if plan.Args.StoryboardNodeID != "" {
 			_, _, rows, err := storyboardNodeFromDocument(doc, plan.Args.StoryboardNodeID)

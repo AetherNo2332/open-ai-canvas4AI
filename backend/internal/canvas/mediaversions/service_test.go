@@ -1,151 +1,95 @@
 package mediaversions
 
 import (
-	"context"
-	"path/filepath"
 	"testing"
+	"time"
 
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"yingce/backend/internal/model"
-	"yingce/backend/internal/repository"
 )
 
-func versionFixture(t *testing.T, kind string) (*repository.Repository, Scope, map[string]any) {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "versions.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+func imageNode(storage string, extra map[string]any) map[string]any {
+	m := map[string]any{}
+	if storage != "" {
+		m["storageKey"], m["content"] = "resource:"+storage, "/api/resources/"+storage+"/file"
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return map[string]any{"id": "n", "type": "image", "position": map[string]any{"x": 0.0, "y": 0.0}, "width": 400.0, "height": 300.0, "metadata": m}
+}
+
+func resultFor(node map[string]any, storage, taskID string) map[string]any {
+	out := cloneMap(node)
+	m := meta(out)
+	m["storageKey"], m["content"], m["taskId"], m["prompt"], m["taskStatus"], m["status"] = "resource:"+storage, "/api/resources/"+storage+"/file", taskID, "new prompt", "succeeded", "success"
+	return out
+}
+
+func TestFinishAppendsAndAdoptsNewVersion(t *testing.T) {
+	node := imageNode("old", nil)
+	base, err := Begin(node, model.Task{ID: "t1", Status: model.TaskStatusQueued}, []map[string]any{node})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { conn, _ := db.DB(); _ = conn.Close() })
-	if err = db.AutoMigrate(&model.User{}, &model.Resource{}, &model.Task{}, &model.CanvasMediaVersion{}); err != nil {
+	if meta(node)["status"] == "loading" || meta(node)["storageKey"] != "resource:old" {
+		t.Fatalf("old media must stay usable during generation: %+v", meta(node))
+	}
+	next, outcome := Finish(node, resultFor(node, "new", "t1"), base, model.Task{ID: "t1", Status: model.TaskStatusSucceeded}, "", time.Now())
+	if !outcome.Adopted || outcome.Reason != "applied" || outcome.VersionID == "" {
+		t.Fatalf("outcome %+v", outcome)
+	}
+	versions := List(next)
+	if len(versions) != 2 || meta(next)["storageKey"] != "resource:new" || meta(next)["currentMediaVersionId"] != outcome.VersionID {
+		t.Fatalf("version history: %+v", meta(next))
+	}
+	if str(versionGeneration(Find(next, outcome.VersionID))["taskId"]) != "t1" || Find(next, outcome.VersionID)["source"] != "generate" {
+		t.Fatalf("agent version must be traceable by generation.taskId: %+v", Find(next, outcome.VersionID))
+	}
+}
+
+func TestFinishKeepsManualSelectionMadeDuringGeneration(t *testing.T) {
+	v1 := map[string]any{"id": "v1", "number": 1.0, "createdAt": "x", "source": "upload", "media": map[string]any{"storageKey": "resource:a"}}
+	v2 := map[string]any{"id": "v2", "number": 2.0, "createdAt": "x", "source": "upload", "media": map[string]any{"storageKey": "resource:b"}}
+	node := imageNode("b", map[string]any{"mediaVersions": []any{v1, v2}, "currentMediaVersionId": "v2"})
+	base, _ := Begin(node, model.Task{ID: "t1", Status: model.TaskStatusQueued}, []map[string]any{node})
+	adopted, err := Adopt(node, "v1")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Create(&model.User{ID: "owner"}).Error; err != nil {
-		t.Fatal(err)
+	if meta(adopted)["taskId"] != nil {
+		t.Fatal("upstream adopt releases the task binding")
 	}
-	if err = db.Create(&model.Task{ID: "old-task", UserID: "owner", Status: model.TaskStatusSucceeded}).Error; err != nil {
-		t.Fatal(err)
+	next, outcome := Finish(adopted, resultFor(adopted, "c", "t1"), base, model.Task{ID: "t1", Status: model.TaskStatusSucceeded}, "", time.Now())
+	if outcome.Adopted || outcome.Reason != "selection_changed" || len(List(next)) != 3 || meta(next)["storageKey"] != "resource:a" || meta(next)["currentMediaVersionId"] != "v1" {
+		t.Fatalf("manual selection overwritten: %+v %+v", outcome, meta(next))
 	}
-	for _, id := range []string{"old", "new"} {
-		if err = db.Create(&model.Resource{ID: id, UserID: "owner", MimeType: kind + "/test", Status: model.ResourceStatusReady}).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	return repository.New(db), Scope{OwnerID: "owner", CanvasID: "canvas", Epoch: "epoch", NodeID: "node", Generation: 1}, map[string]any{
-		"id": "node", "type": kind, "metadata": map[string]any{"content": "/api/resources/old/file", "storageKey": "resource:old", "status": "success", "taskId": "old-task", "composerContent": "next draft"},
-	}
-}
-
-func versionTx(t *testing.T, repo *repository.Repository, fn func(*repository.Repository) error) {
-	t.Helper()
-	if err := repo.CommandTransaction(context.Background(), func(tx *repository.Repository) error {
-		if err := tx.LockCanvasWrite("owner", ""); err != nil {
-			return err
-		}
-		return fn(tx)
-	}); err != nil {
-		t.Fatal(err)
+	// Even with the task marker still present, a changed current version means history only.
+	meta(adopted)["taskId"] = "t1"
+	_, outcome = Finish(adopted, resultFor(adopted, "c", "t1"), base, model.Task{ID: "t1", Status: model.TaskStatusSucceeded}, "", time.Now())
+	if outcome.Adopted || outcome.Reason != "selection_changed" {
+		t.Fatalf("pointer change not detected: %+v", outcome)
 	}
 }
 
-func completedMetadata() map[string]any {
-	return map[string]any{"content": "/api/resources/new/file", "storageKey": "resource:new", "status": "success", "taskId": "new-task", "prompt": "submitted prompt"}
-}
-
-func TestMediaVersionsKeepCurrentAndAdoptAllMediaKinds(t *testing.T) {
-	for _, kind := range []string{"image", "video", "audio"} {
-		t.Run(kind, func(t *testing.T) {
-			repo, scope, node := versionFixture(t, kind)
-			task := model.Task{ID: "new-task", UserID: "owner", Type: "canvas_" + kind, Prompt: "submitted prompt", Status: model.TaskStatusQueued}
-			var pending *model.CanvasMediaVersion
-			versionTx(t, repo, func(tx *repository.Repository) error {
-				var err error
-				pending, err = Begin(tx, scope, node, task, "new_version")
-				return err
-			})
-			m := node["metadata"].(map[string]any)
-			if m["storageKey"] != "resource:old" || m["status"] != "success" {
-				t.Fatalf("old output disappeared: %+v", m)
-			}
-			state := ReadState(node)
-			if pending.Sequence != 2 || state.CurrentVersionID == "" || state.PendingVersionID != pending.ID || state.ActiveTaskID != task.ID {
-				t.Fatalf("version state: %+v %+v", pending, state)
-			}
-			var replay *model.CanvasMediaVersion
-			versionTx(t, repo, func(tx *repository.Repository) error {
-				var err error
-				replay, err = Begin(tx, scope, node, task, "new_version")
-				return err
-			})
-			if replay.ID != pending.ID {
-				t.Fatal("replay created another version")
-			}
-			task.Status = model.TaskStatusSucceeded
-			versionTx(t, repo, func(tx *repository.Repository) error {
-				adopted, reason, err := Finish(tx, scope, node, task, completedMetadata(), nil)
-				if err == nil && (!adopted || reason != "adopted") {
-					t.Fatalf("result not adopted: %v %s", adopted, reason)
-				}
-				return err
-			})
-			if m["storageKey"] != "resource:new" || m["composerContent"] != "next draft" {
-				t.Fatalf("media/draft projection: %+v", m)
-			}
-			if ReadState(node).CurrentVersionID != pending.ID || ReadState(node).PendingVersionID != "" {
-				t.Fatal("pending state not settled")
-			}
-			versionTx(t, repo, func(tx *repository.Repository) error { return Use(tx, scope, node, state.CurrentVersionID) })
-			if m["storageKey"] != "resource:old" {
-				t.Fatal("history cannot restore old output")
-			}
-		})
+func TestFinishFailureAndBlockKeepCurrent(t *testing.T) {
+	node := imageNode("old", nil)
+	base, _ := Begin(node, model.Task{ID: "t1", Status: model.TaskStatusQueued}, []map[string]any{node})
+	next, outcome := Finish(cloneMap(node), map[string]any{"id": "n", "type": "image"}, base, model.Task{ID: "t1", Status: model.TaskStatusFailed}, "", time.Now())
+	if outcome.Adopted || meta(next)["storageKey"] != "resource:old" || meta(next)["status"] != "success" || len(List(next)) != 0 {
+		t.Fatalf("failure changed media: %+v", meta(next))
+	}
+	next, outcome = Finish(cloneMap(node), resultFor(node, "new", "t1"), base, model.Task{ID: "t1", Status: model.TaskStatusSucceeded}, "output_binding_changed", time.Now())
+	if outcome.Reason != "output_binding_changed" || meta(next)["storageKey"] != "resource:old" || meta(next)["taskId"] != nil {
+		t.Fatalf("blocked result applied: %+v", meta(next))
 	}
 }
 
-func TestMediaVersionsManualSelectionAndFailureRetainCurrent(t *testing.T) {
-	for _, failure := range []bool{false, true} {
-		repo, scope, node := versionFixture(t, "image")
-		task := model.Task{ID: "new-task", UserID: "owner", Type: "canvas_image", Status: model.TaskStatusQueued}
-		versionTx(t, repo, func(tx *repository.Repository) error {
-			_, err := Begin(tx, scope, node, task, "new_version")
-			return err
-		})
-		current := ReadState(node).CurrentVersionID
-		if !failure {
-			versionTx(t, repo, func(tx *repository.Repository) error { return Use(tx, scope, node, current) })
-		}
-		task.Status = model.TaskStatusSucceeded
-		if failure {
-			task.Status = model.TaskStatusFailed
-		}
-		versionTx(t, repo, func(tx *repository.Repository) error {
-			adopted, _, err := Finish(tx, scope, node, task, completedMetadata(), nil)
-			if adopted {
-				t.Fatal("failed task or explicit user selection was overwritten")
-			}
-			return err
-		})
-		if node["metadata"].(map[string]any)["storageKey"] != "resource:old" || ReadState(node).PendingVersionID != "" {
-			t.Fatal("old output or settlement lost")
-		}
+func TestBeginRejectsLockedAndMarksEmptyNodeLoading(t *testing.T) {
+	if _, err := Begin(imageNode("old", map[string]any{"locked": true}), model.Task{ID: "t"}, nil); err == nil {
+		t.Fatal("locked node accepted")
 	}
-}
-
-func TestMediaVersionsRejectSecondTaskAndWrongOwner(t *testing.T) {
-	repo, scope, node := versionFixture(t, "image")
-	task := model.Task{ID: "new-task", UserID: "owner", Type: "canvas_image", Status: model.TaskStatusQueued}
-	versionTx(t, repo, func(tx *repository.Repository) error {
-		_, err := Begin(tx, scope, node, task, "new_version")
-		return err
-	})
-	task.ID = "second-task"
-	if _, err := Begin(repo, scope, node, task, "new_version"); err == nil {
-		t.Fatal("two unresolved versions accepted")
-	}
-	scope.OwnerID = "other"
-	if err := Use(repo, scope, node, ReadState(node).CurrentVersionID); err == nil {
-		t.Fatal("foreign version selected")
+	empty := imageNode("", nil)
+	if _, err := Begin(empty, model.Task{ID: "t"}, nil); err != nil || meta(empty)["status"] != "loading" {
+		t.Fatalf("empty node: %v %+v", err, meta(empty))
 	}
 }
