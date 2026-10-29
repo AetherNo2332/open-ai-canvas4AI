@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"yingce/backend/internal/canvas/references"
 	"yingce/backend/internal/kernel"
 
 	"yingce/backend/internal/model"
@@ -324,10 +325,13 @@ func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasO
 				if create.ID != "" && create.ID != canvasID {
 					return kernel.BadAuthRequest("画布创建操作的 ID 与请求路径不一致")
 				}
+				// 新画布从空文档开始，没有需要规范化的历史连线，与 commands.Service.Create
+				// 一样直接使用声明式引用；否则 Agent 会把每张新画布都当作待迁移的历史画布。
 				payload = map[string]json.RawMessage{
-					"id":          jsonRawValue(canvasID),
-					"nodes":       json.RawMessage(`[]`),
-					"connections": json.RawMessage(`[]`),
+					"id":                     jsonRawValue(canvasID),
+					"referenceFieldsVersion": jsonRawValue(references.Version),
+					"nodes":                  json.RawMessage(`[]`),
+					"connections":            json.RawMessage(`[]`),
 				}
 				for field, value := range create.Patch {
 					if !allowedCanvasOperationField(field) {

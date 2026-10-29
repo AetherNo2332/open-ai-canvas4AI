@@ -52,3 +52,25 @@ func TestOperationsPreserveReferenceFields(t *testing.T) {
 		t.Fatalf("connections = %#v, want managed reference edge kept", edges)
 	}
 }
+
+// 浏览器 create_canvas 建出的空画布没有历史连线，必须直接标记为声明式引用，
+// 否则 Agent 的生成与引用写入会被历史画布迁移门禁拦下。
+func TestCreateCanvasOperationUsesDeclarativeReferences(t *testing.T) {
+	svc := newCanvasOperationTestService(t)
+	request := CanvasOperationsRequest{MutationID: "create", Operations: []CanvasOperation{{Type: "create_canvas", ID: "canvas",
+		Patch: map[string]json.RawMessage{"title": json.RawMessage(`"新画布"`)}}}}
+	if _, err := svc.ApplyUserCanvasOperations("user", "canvas", request); err != nil {
+		t.Fatal(err)
+	}
+	project, err := svc.repo.CanvasProjectForUser("user", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]any
+	if err := json.Unmarshal([]byte(project.PayloadJSON), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved["referenceFieldsVersion"] != float64(1) {
+		t.Fatalf("referenceFieldsVersion = %#v, want 1", saved["referenceFieldsVersion"])
+	}
+}
