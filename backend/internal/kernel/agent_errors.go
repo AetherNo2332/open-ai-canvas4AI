@@ -8,7 +8,13 @@ const (
 	ReasonAgentSkillDefaultsRevisionConflict ErrorReason = "agent_skill_defaults_revision_conflict"
 	ReasonAgentSkillDefaultsInvalid          ErrorReason = "agent_skill_defaults_invalid"
 	ReasonAgentWorkspaceRevisionConflict     ErrorReason = "agent_workspace_revision_conflict"
+	ReasonAgentUndoConflict                  ErrorReason = "agent_undo_conflict"
 )
+
+// AgentUndoConflict 表示 Agent 本轮改过的内容之后又被编辑过，撤销未写入；details 列出冲突的实体。
+func AgentUndoConflict(message string, details map[string]any) *AppError {
+	return &AppError{Status: CodeConflict, Code: CodeConflict, Reason: ReasonAgentUndoConflict, Message: message, Details: details}
+}
 
 func AgentLeaseLost(message string) *AppError {
 	return &AppError{Status: CodeForbidden, Code: CodeForbidden, Reason: ReasonAgentLeaseLost, Message: message}

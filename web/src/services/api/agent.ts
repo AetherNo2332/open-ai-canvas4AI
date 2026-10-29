@@ -316,8 +316,11 @@ export function cancelAgentRun(runId: string) {
     return http.post<{ accepted: boolean }>(`/agent/runs/${encodeURIComponent(runId)}/cancel`, undefined, { timeout: 15_000 });
 }
 
-export function undoAgentCanvasRun(runId: string, input: { stepId?: string; expectedSnapshotHash: string; reason?: string }, signal?: AbortSignal) {
-    return http.post<{ accepted: boolean; snapshotHash: string }>(`/agent/runs/${encodeURIComponent(runId)}/undo`, input, { signal });
+export type AgentRunUndoResult = { revision: number; restoredNodeIds: string[] };
+
+/** 撤销一次已结束运行的全部画布修改；冲突时抛出 reason 为 agent_undo_conflict 的 ApiError。 */
+export function undoAgentRun(runId: string, input: { reason?: string } = {}, signal?: AbortSignal) {
+    return http.post<AgentRunUndoResult>(`/agent/runs/${encodeURIComponent(runId)}/undo`, { reason: input.reason?.trim() || undefined }, { signal, timeout: 30_000 });
 }
 
 export async function decideAgentApproval(runId: string, approvalId: string, decision: "approve" | "reject", reason?: string, signal?: AbortSignal, mediaSettings?: AgentMediaSettings) {

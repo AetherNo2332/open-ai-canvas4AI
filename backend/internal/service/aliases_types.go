@@ -17,6 +17,7 @@ type (
 	CloudAgentRequest                      = app.CloudAgentRequest
 	CloudAgentRunViewOptions               = app.CloudAgentRunViewOptions
 	CloudAgentMediaSettings                = app.CloudAgentMediaSettings
+	CloudAgentUndoResult                   = app.CloudAgentUndoResult
 	CloudAgentCapabilitySet                = app.CloudAgentCapabilitySet
 	AgentLessonView                        = app.AgentLessonView
 	AgentLessonAdminView                   = app.AgentLessonAdminView

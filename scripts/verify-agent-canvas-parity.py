@@ -487,8 +487,7 @@ class Acceptance:
         identity2 = self.canvas()
         run, _, _ = self.start(identity2, "ui_undo_api", [tool("canvas_get_state"), apply(add("ui_undo"))])
         view = self.finish(run)
-        result = self.results(view, "canvas_apply_ops")[-1]
-        self.api("POST", f"/agent/runs/{run['id']}/undo", {"expectedSnapshotHash": result["snapshotHash"], "reason": "isolated acceptance"})
+        self.api("POST", f"/agent/runs/{run['id']}/undo", {"reason": "isolated acceptance"})
         self.check("existing user undo API restores persisted canvas", not self.project(identity2)["nodes"])
 
     def reload(self):
@@ -540,9 +539,8 @@ class Acceptance:
         self.check("existing history has three undo, two redo and the new branch content", len(self.results(view, "canvas_undo")) == 3 and len(self.results(view, "canvas_redo")) == 2 and self.project(existing["canvasId"])["nodes"][0]["metadata"]["content"] == "new branch")
         identity = self.canvas()
         run, _, _ = self.start(identity, "ui_undo_api", [tool("canvas_get_state"), apply(add("ui_undo"))])
-        undo_view = self.finish(run)
-        result = self.results(undo_view, "canvas_apply_ops")[-1]
-        self.api("POST", f"/agent/runs/{run['id']}/undo", {"expectedSnapshotHash": result["snapshotHash"], "reason": "isolated acceptance continuation"})
+        self.finish(run)
+        self.api("POST", f"/agent/runs/{run['id']}/undo", {"reason": "isolated acceptance continuation"})
         self.check("existing user undo API restores persisted canvas", not self.project(identity)["nodes"])
         crud = next(row for row in source["runs"] if row["scenario"] == "crud_geometry_copy_edges_group_long_text")
         self.persisted_canvas, self.sse_run = crud["canvasId"], crud["runId"]

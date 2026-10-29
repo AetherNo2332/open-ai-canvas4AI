@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
-import { Button, Dropdown, Input, Popover } from "antd";
+import { App, Button, Dropdown, Input, Popover } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
 import { saveAs } from "file-saver";
@@ -32,6 +32,7 @@ import {
     sendAgentConversationMessage,
     sendAgentMessage,
     subscribeAgentEvents,
+    undoAgentRun,
     type AgentEvent,
     type AgentPermissionMode,
     type AgentReasoningMode,
@@ -67,6 +68,9 @@ import { createAgentCanvasSync } from "@/services/agent-canvas-sync";
 import { canvasRealtimeConnected } from "@/services/canvas-realtime";
 import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/skill-runtime";
 import { notifyAgentApproval } from "@/lib/canvas/agent-browser-notifications";
+import { agentRunUndoOffer, agentRunUndoneMessageId } from "@/lib/canvas/agent-run-undo";
+import { ApiError } from "@/services/api/request";
+import { API_ERROR_REASONS } from "@/services/api/error-codes";
 import {
     AgentChatComposer,
     AgentChatMessage,
@@ -75,6 +79,7 @@ import {
     AgentQuestionBar,
     AgentReasoningFeed,
     AgentSceneCapsules,
+    AgentRunUndoAction,
     AgentWorkingMessage,
     AGENT_SCENE_DEFS,
     type AgentSceneBucket,
@@ -326,6 +331,27 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             if (canvasSyncRef.current === sync) canvasSyncRef.current = null;
         };
     }, [canvasId]);
+    const { message: appMessage } = App.useApp();
+    const [undoingRunId, setUndoingRunId] = useState("");
+    const undoOffer = useMemo(() => agentRunUndoOffer(run, messages), [run, messages]);
+    const undoRun = async (runId: string) => {
+        if (undoingRunId) return;
+        setUndoingRunId(runId);
+        try {
+            await undoAgentRun(runId);
+            if (currentRunIdRef.current === runId) setMessages((current) => appendUniqueMessage(current, { id: agentRunUndoneMessageId(runId), role: "system", text: "已撤销本次修改" }));
+            // 实时通道在线时由 canvas_changed 增量合并；离线时退回现有的整份刷新。
+            if (!canvasRealtimeConnected(canvasId)) canvasSyncRef.current?.reconcile();
+        } catch (cause) {
+            if (cause instanceof ApiError && cause.reason === API_ERROR_REASONS.agentUndoConflict) {
+                appMessage.warning(cause.message || "Agent 修改过的内容之后又被编辑过，未执行撤销");
+            } else {
+                appMessage.error(cause instanceof Error && cause.message ? cause.message : "撤销失败，请稍后重试");
+            }
+        } finally {
+            setUndoingRunId("");
+        }
+    };
     const skillPageRequestRef = useRef(false);
     const approvalRequestRef = useRef<string | null>(null);
     const pendingSubmission = useRef<CloudAgentPendingSubmission | null>(null);
@@ -1364,6 +1390,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                             onApprovalReasonChange={(reason) => setApproval((current) => (current ? { ...current, reason } : current))}
                                             onApprove={(settings) => void submitApproval("approve", settings)}
                                             onReject={() => void submitApproval("reject")}
+                                            footer={undoOffer && !busy ? <AgentRunUndoAction theme={theme} pending={undoingRunId === undoOffer} onUndo={() => void undoRun(undoOffer)} /> : null}
                                         />
                                         {planVisible ? (
                                             <AgentPlanBar
@@ -1825,6 +1852,7 @@ function AgentConversation({
     onApprovalReasonChange,
     onApprove,
     onReject,
+    footer,
 }: {
     theme: CanvasTheme;
     messages: CloudAgentChatMessage[];
@@ -1839,6 +1867,7 @@ function AgentConversation({
     onApprovalReasonChange: (reason: string) => void;
     onApprove: (settings?: AgentMediaSettings) => void;
     onReject: () => void;
+    footer?: ReactNode;
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -1893,6 +1922,7 @@ function AgentConversation({
                 )}
                 {approval ? <ApprovalCard key={approval.approvalId} approval={approval} theme={theme} submitting={approvalSubmitting} onFocusNode={onFocusNode} onReasonChange={onApprovalReasonChange} onApprove={onApprove} onReject={onReject} /> : null}
                 {busy && !approval ? <AgentWorkingMessage theme={theme} label="正在处理当前画布" /> : null}
+                {footer}
             </div>
         </div>
     );

@@ -677,6 +677,24 @@ export function AgentOperationFeed({
     );
 }
 
+/**
+ * 运行结束后的撤销入口：撤销本轮对画布的全部修改。它不是本卡片的主要命令，
+ * 所以用 default 按钮；结果由画布实时同步呈现，冲突提示由调用方展示。
+ */
+export function AgentRunUndoAction({ theme, pending, onUndo }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; pending: boolean; onUndo: () => void }) {
+    return (
+        <div className="agent-status-message flex items-center gap-2 text-xs">
+            <AgentTimelineMarker theme={theme} tone="muted" icon={<RotateCcw className="size-3" />} />
+            <span className="min-w-0 flex-1 leading-5" style={{ color: theme.node.muted }}>
+                本轮已结束，可撤销本轮对画布的修改
+            </span>
+            <Button type="default" size="small" disabled={pending} icon={pending ? <LoaderCircle className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />} onClick={onUndo}>
+                {pending ? "正在撤销…" : "撤销本次修改"}
+            </Button>
+        </div>
+    );
+}
+
 export function AgentWorkingMessage({ theme, label = WORKING_TEXT }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; label?: string }) {
     return (
         <div role="status" aria-live="polite" className="agent-working-indicator" style={{ color: theme.node.muted }}>

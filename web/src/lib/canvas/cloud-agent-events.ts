@@ -4,6 +4,7 @@ import { reduceAgentRun } from "@/lib/canvas/agent-run-state";
 import { agentRunErrorMessage } from "@/lib/canvas/agent-error-presentation";
 import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-retry";
 import { nativeSkillEventPresentation } from "@/lib/canvas/agent-tool-presentation";
+import { agentRunUndoneMessageId } from "@/lib/canvas/agent-run-undo";
 import { agentAssistantFinality, agentControlMessage, type CloudAgentChatMessage, type CloudAgentPlanItem } from "@/components/canvas/canvas-cloud-agent-chat-ui";
 
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
@@ -53,6 +54,10 @@ export function applyAgentEvent(
     }
     if (event.type === "progress_summary") {
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: text || "Agent 正在整理执行计划" }));
+        return;
+    }
+    if (event.type === "canvas_undone" && payload.scope === "run") {
+        setMessages((current) => appendUniqueMessage(current, { id: agentRunUndoneMessageId(event.runId), role: "system", text: "已撤销本次修改", detail: { ...payload, eventType: event.type } }));
         return;
     }
     if (event.type === "context_compaction_requested") {

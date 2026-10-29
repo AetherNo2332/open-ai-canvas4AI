@@ -146,12 +146,20 @@ func TestCloudAgentPrevisSceneCreateAndPatchKeepSemanticAndCanvasHashesSeparate(
 	if mutation.Operation != "previs_apply_patch" || mutation.BeforeSnapshotHash != createdCanvasHash || mutation.AfterSnapshotHash != patchedCanvasHash {
 		t.Fatalf("mutation recorded scene hash instead of canvas hash: %+v", mutation)
 	}
-	undoResult, err := s.UndoCloudAgentCanvas("user", run.ID, patchCall.ID, patchedCanvasHash, "测试撤销")
+	execution, err := s.repo.CloudAgent("user", run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if undoResult["accepted"] != true || undoResult["snapshotHash"] != createdCanvasHash {
-		t.Fatalf("unexpected previs undo result: %+v", undoResult)
+	if err := s.repo.MarkCloudAgentCancelled("user", run.ID, execution.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UndoCloudAgentRun("user", run.ID, "测试撤销"); err != nil {
+		t.Fatal(err)
+	}
+	undone, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
+	undoneDoc, _ := creationDocument(undone.PayloadJSON)
+	if cloudAgentCanvasHash(undoneDoc) != beforeCanvasHash {
+		t.Fatalf("run undo did not restore the canvas before the previs run")
 	}
 }
 

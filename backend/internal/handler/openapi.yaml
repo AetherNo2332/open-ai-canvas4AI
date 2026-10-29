@@ -1289,35 +1289,43 @@ paths:
       - $ref: "#/components/parameters/AgentRunID"
     post:
       tags: [agent]
-      summary: 撤销当前 Agent 运行产生的最新画布变更
-      description: 仅撤销仍是最新快照、且未提交生成任务的画布变更；不会取消任务或退款。
+      summary: 撤销当前用户一次已结束 Agent 运行的全部画布修改
+      description: 只恢复本次运行改过的节点、连线和画布字段，其他人之后对别的节点的修改保留；撤销作为一次新修订写入。本次运行提交过生成任务时拒绝，不会取消任务或退款。
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               type: object
               additionalProperties: false
-              required: [expectedSnapshotHash]
               properties:
-                stepId:
-                  type: string
-                  maxLength: 160
-                expectedSnapshotHash:
-                  type: string
-                  minLength: 64
-                  maxLength: 64
-                  pattern: '^[0-9a-fA-F]{64}$'
                 reason:
                   type: string
                   maxLength: 2000
       responses:
         "200":
-          description: 信封 data.accepted 与当前快照哈希
+          description: 信封 data 为 { revision, restoredNodeIds }：撤销后的画布 revision 与被恢复（删除或还原）的节点 ID
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: {type: integer, enum: [0]}
+                  msg: {type: string}
+                  data:
+                    type: object
+                    required: [revision, restoredNodeIds]
+                    properties:
+                      revision: {type: integer, format: int64}
+                      restoredNodeIds:
+                        type: array
+                        items: {type: string}
         "400":
-          description: 请求无效、快照不可撤销或已提交任务不能撤销
+          description: 请求无效、快照未完整保留或本次运行已提交生成任务
+        "404":
+          description: 运行不存在或不属于当前用户，或本次运行没有可撤销的画布修改
         "409":
-          description: 画布已发生后续变化、操作已处理或 stepId 不匹配
+          description: reason=agent_undo_conflict 表示本次运行改过的内容之后又被编辑过，画布未改动，details.ids 为冲突的节点/连线/字段；运行仍在进行时返回 reason=conflict
   /agent/runs/{id}/approvals/{approvalId}/decision:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
