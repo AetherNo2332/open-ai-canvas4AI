@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import parity from "../../backend/internal/canvas/references/testdata/reference-projection-parity.json";
-import { addReferenceConnections, applyConnectionToReferenceFields, projectReferenceConnections, removeReferenceConnection } from "../src/lib/canvas/canvas-reference-fields";
+import { addReferenceConnections, applyConnectionToReferenceFields, FIRST_FRAME_REFERENCE_MESSAGE, projectReferenceConnections, removeReferenceConnection, SHARED_REFERENCE_MESSAGE } from "../src/lib/canvas/canvas-reference-fields";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
 const node = (id: string, type: CanvasNodeType, metadata: Record<string, unknown> = {}): CanvasNodeData => ({ id, type, title: id, position: { x: 0, y: 0 }, width: 300, height: 200, metadata });
@@ -71,3 +71,37 @@ for (const item of parity as unknown as ParityCase[]) {
         expect(lines).toEqual(item.lines);
     });
 }
+
+const storyboard = (rowPatch: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    node("board", CanvasNodeType.Script, { ...extra, storyboard: { referenceNodeIds: [], visibleColumns: [], ...((extra.storyboard as object) || {}), rows: [{ id: "shot", shotNumber: 1, characters: [], assetBindings: [], ...rowPatch }] } });
+
+test("分镜表级共享引用画出的行连线拒绝删除且图不变", () => {
+    const nodes = [node("img", CanvasNodeType.Image), storyboard({}, { storyboard: { referenceNodeIds: ["img"] } })];
+    const connections = projectReferenceConnections(nodes, [], 1);
+    const rowLine = connections.find((edge) => edge.toHandleId === "row:shot")!;
+    const before = structuredClone({ nodes, connections });
+    expect(() => removeReferenceConnection({ nodes, connections }, rowLine.id, 1)).toThrow(SHARED_REFERENCE_MESSAGE);
+    expect({ nodes, connections }).toEqual(before);
+});
+
+test("按 characterAssetId 匹配的出镜角色连线拒绝删除（按 fork 语义由人物字段维护）", () => {
+    const hero = node("hero", CanvasNodeType.Text, { workflowKind: "character", characterAssetId: "hero-asset" });
+    const nodes = [hero, storyboard({ characters: [{ characterName: "主角", characterAssetId: "hero-asset" }] })];
+    const connections = projectReferenceConnections(nodes, [], 1);
+    const line = connections.find((edge) => edge.fromNodeId === "hero")!;
+    expect(line).toMatchObject({ toHandleId: "row:shot" });
+    expect(() => removeReferenceConnection({ nodes, connections }, line.id, 1)).toThrow(SHARED_REFERENCE_MESSAGE);
+});
+
+test("关键帧模式下的首帧连线拒绝删除", () => {
+    const nodes = [node("frame", CanvasNodeType.Image), node("clip", CanvasNodeType.Video), storyboard({ imageNodeId: "frame", videoNodeId: "clip" }, { storyboardVideoInputMode: "keyframe" })];
+    const connections: CanvasConnection[] = [...projectReferenceConnections(nodes, [], 1), { id: "first", fromNodeId: "frame", toNodeId: "clip" }];
+    expect(() => removeReferenceConnection({ nodes, connections }, "first", 1)).toThrow(FIRST_FRAME_REFERENCE_MESSAGE);
+});
+
+test("同一文档两次投影得到相同的连线 id", () => {
+    const first = projectReferenceConnections(declared(), [], 1);
+    const second = projectReferenceConnections(declared(), [], 1);
+    expect(first.map((edge) => edge.id)).toEqual(second.map((edge) => edge.id));
+    expect(first[0].id).toMatch(/^ref-[0-9a-f]{16}$/);
+});

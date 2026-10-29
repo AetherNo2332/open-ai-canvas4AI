@@ -19,6 +19,17 @@ export type ReferenceConnectionChange = { kind: "add" | "remove"; connection: Ca
 type Line = Omit<ReferenceConnection, "id">;
 type LineBinding = Pick<ReferenceBinding, "id" | "nodeId" | "role">;
 type InputKind = "text" | "image" | "video" | "audio" | "character";
+type LineId = (line: Line) => string;
+
+/** Same refusals as the fork editor: the line is drawn by another field, so deleting it here would only redraw it. */
+export const SHARED_REFERENCE_MESSAGE = "这是共享引用或人物引用，请在所属表或人物字段中修改";
+export const FIRST_FRAME_REFERENCE_MESSAGE = "首帧引用由镜头的首帧选择管理";
+export class ReferenceLineOwnedError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "ReferenceLineOwnedError";
+    }
+}
 
 // Mirrors backend capability.BuiltinRegistry: InputKind, CanSource / CanReference and the target policy.
 // generation-contract.generated.ts carries no per-node slot table, and web/ cannot import backend files at build time.
@@ -69,6 +80,22 @@ function lineKey(edge: Line) {
 // Only row, storyboard context and batch handles move a line's anchor; other handle ids draw the same path.
 function anchorHandle(handle?: string) {
     return handle && (handle.startsWith("row:") || handle === "storyboard:context" || handle.startsWith("batch-")) ? handle : "";
+}
+
+// FNV-1a over the backend edge key: every window derives the same id for the same projected line,
+// so two editors opening one canvas converge instead of saving duplicate managed lines.
+function hash32(value: string, seed: number) {
+    let hash = seed >>> 0;
+    for (let index = 0; index < value.length; index++) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash.toString(16).padStart(8, "0");
+}
+
+export function referenceLineId(line: Line) {
+    const key = lineKey(line);
+    return `ref-${hash32(key, 0x811c9dc5)}${hash32(key, 0x9747b28c)}`;
 }
 
 /** Lines with the same endpoints and anchors are the same visible reference, whoever owns them. */
@@ -147,7 +174,7 @@ function ownerLines(owner: CanvasNodeData, nodes: CanvasNodeData[], nodeById: Ma
  * fields still project keep their id, stale ones go, and free lines that duplicate one are dropped.
  * `adopt` lets a freshly drawn line become the managed line so its id and anchors survive.
  */
-function reconcileOwners(nodes: CanvasNodeData[], connections: CanvasConnection[], ownerIds: Set<string>, createId: () => string, adopt: CanvasConnection[] = []): CanvasConnection[] {
+function reconcileOwners(nodes: CanvasNodeData[], connections: CanvasConnection[], ownerIds: Set<string>, createId: LineId, adopt: CanvasConnection[] = []): CanvasConnection[] {
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const owners = new Set<string>();
     const desired = new Map<string, Line>();
@@ -184,7 +211,8 @@ function reconcileOwners(nodes: CanvasNodeData[], connections: CanvasConnection[
         if (found.has(key)) continue;
         const drawn = adopt.find((edge) => !usedIds.has(edge.id) && twinKey(edge) === twinKey(line));
         const anchors = drawn ? { ...(drawn.fromAnchorRatio !== undefined ? { fromAnchorRatio: drawn.fromAnchorRatio } : {}), ...(drawn.toAnchorRatio !== undefined ? { toAnchorRatio: drawn.toAnchorRatio } : {}) } : {};
-        const id = drawn?.id || createId();
+        const derived = drawn?.id || createId(line);
+        const id = usedIds.has(derived) ? nanoid() : derived;
         usedIds.add(id);
         next.push({ id, ...line, ...anchors });
         changed = true;
@@ -193,7 +221,7 @@ function reconcileOwners(nodes: CanvasNodeData[], connections: CanvasConnection[
 }
 
 /** Draws every line the reference fields declare; documents without referenceFieldsVersion are left as they are. */
-export function projectReferenceConnections(nodes: CanvasNodeData[], connections: CanvasConnection[], version: unknown, createId: () => string = nanoid): CanvasConnection[] {
+export function projectReferenceConnections(nodes: CanvasNodeData[], connections: CanvasConnection[], version: unknown, createId: LineId = referenceLineId): CanvasConnection[] {
     if (!referenceFieldsEnabled(version)) return connections;
     return reconcileOwners(nodes, connections, new Set(nodes.filter(ownerScoped).map((node) => node.id)), createId);
 }
@@ -279,9 +307,9 @@ function removeInput(nodes: CanvasNodeData[], edge: CanvasConnection): CanvasNod
         const storyboard = target.metadata?.storyboard;
         if (!storyboard) return nodes;
         const rowId = storyboardRowId(edge.toHandleId);
-        // Shared (board-level) references are owned by referenceNodeIds and still draw a line into every row.
+        // Only a row's own assets are edited here; shared referenceNodeIds and cast characters redraw the line and are refused by the caller.
         const next = rowId
-            ? { ...storyboard, rows: storyboard.rows.map((row) => (row.id !== rowId ? row : { ...row, assetBindings: (row.assetBindings || []).filter((binding) => binding.nodeId !== source.id), characters: (row.characters || []).filter((character) => character.characterImageNodeId !== source.id) })) }
+            ? { ...storyboard, rows: storyboard.rows.map((row) => (row.id !== rowId ? row : { ...row, assetBindings: (row.assetBindings || []).filter((binding) => binding.nodeId !== source.id) })) }
             : edge.toHandleId === "storyboard:context" ? { ...storyboard, referenceNodeIds: storyboard.referenceNodeIds.filter((id) => id !== source.id) } : storyboard;
         return next === storyboard ? nodes : nodes.map((node) => (node.id === target.id ? { ...node, metadata: { ...node.metadata, storyboard: next } } : node));
     }
@@ -308,7 +336,7 @@ export function applyConnectionToReferenceFields(nodes: CanvasNodeData[], change
  * Adds drawn lines through the fields that own them. A line the fields now project becomes the managed
  * line (same id); lines no field accepts stay free, so behaviour on undeclared targets is unchanged.
  */
-export function addReferenceConnections(graph: ReferenceGraph, candidates: CanvasConnection[], version: unknown, createId: () => string = nanoid): ReferenceGraph {
+export function addReferenceConnections(graph: ReferenceGraph, candidates: CanvasConnection[], version: unknown, createId: LineId = referenceLineId): ReferenceGraph {
     if (!referenceFieldsEnabled(version)) return { nodes: graph.nodes, connections: [...graph.connections, ...candidates] };
     let nodes = graph.nodes;
     for (const candidate of candidates) nodes = applyConnectionToReferenceFields(nodes, { kind: "add", connection: candidate }, version);
@@ -319,16 +347,28 @@ export function addReferenceConnections(graph: ReferenceGraph, candidates: Canva
     return { nodes, connections: [...projected, ...free] };
 }
 
-/** Removes a line with the field that would draw it again, and its exact twins; owner lines are then redrawn. */
-export function removeReferenceConnection(graph: ReferenceGraph, connectionId: string, version: unknown, createId: () => string = nanoid): ReferenceGraph {
+// A keyframe storyboard's video takes its first frame from the row's image selection, not from the line.
+function keyframeFirstFrame(nodes: CanvasNodeData[], edge: CanvasConnection) {
+    return nodes.some((board) => board.metadata?.storyboardVideoInputMode === "keyframe" && board.metadata.storyboard?.rows.some((row) => row.videoNodeId === edge.toNodeId && row.imageNodeId === edge.fromNodeId));
+}
+
+/**
+ * Removes a line with the field that would draw it again, and its exact twins; owner lines are then redrawn.
+ * Throws ReferenceLineOwnedError, with the graph untouched, when another field (shared board reference,
+ * cast character, keyframe first frame) would draw the line again.
+ */
+export function removeReferenceConnection(graph: ReferenceGraph, connectionId: string, version: unknown, createId: LineId = referenceLineId): ReferenceGraph {
     const edge = graph.connections.find((item) => item.id === connectionId);
     if (!edge) return graph;
     if (!referenceFieldsEnabled(version)) return { nodes: graph.nodes, connections: graph.connections.filter((item) => item.id !== connectionId) };
+    if (keyframeFirstFrame(graph.nodes, edge)) throw new ReferenceLineOwnedError(FIRST_FRAME_REFERENCE_MESSAGE);
     const nodes = applyConnectionToReferenceFields(graph.nodes, { kind: "remove", connection: edge }, version);
     const twin = twinKey(edge);
     const remaining = graph.connections.filter((item) => item.id !== connectionId && twinKey(item) !== twin);
     const owners = new Set([edge.toNodeId, edge.fromNodeId, (edge as ReferenceConnection).referenceOwnerNodeId || ""]);
-    return { nodes, connections: reconcileOwners(nodes, remaining, owners, createId) };
+    const connections = reconcileOwners(nodes, remaining, owners, createId);
+    if (connections.some((item) => twinKey(item) === twin)) throw new ReferenceLineOwnedError(SHARED_REFERENCE_MESSAGE);
+    return { nodes, connections };
 }
 
 /** Drops declared inputs that point at deleted nodes; a dangling reference fails the next server reconcile. */

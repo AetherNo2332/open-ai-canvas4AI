@@ -202,6 +202,8 @@ export function useCanvasConnectionController({
             return plan;
         }
         const graph = connectReferences(nodesRef.current, connectionsRef.current, plan.connections);
+        nodesRef.current = graph.nodes;
+        connectionsRef.current = graph.connections;
         setNodes(graph.nodes);
         setConnections(graph.connections);
         setContextMenu(null);
@@ -243,6 +245,8 @@ export function useCanvasConnectionController({
             setConnections((currentConnections) => currentConnections.map((item) => item.id === exists.id ? { ...item, fromAnchorRatio, toAnchorRatio } : item));
         } else {
             const graph = connectReferences(nodesRef.current, connectionsRef.current, [{ id: `conn-${Date.now()}`, fromNodeId, toNodeId, fromHandleId, toHandleId, fromAnchorRatio, toAnchorRatio }]);
+            nodesRef.current = graph.nodes;
+            connectionsRef.current = graph.connections;
             setNodes(graph.nodes);
             setConnections(graph.connections);
         }
@@ -409,6 +413,8 @@ export function useCanvasConnectionController({
         const toAnchorRatio = connection.toNodeId === pending.connection.nodeId ? pending.connection.anchorRatio : 0.5;
         const connected = { ...connection, fromHandleId, toHandleId, fromAnchorRatio, toAnchorRatio };
         const graph = connectReferences([...nodesRef.current, newNode], connectionsRef.current, [{ id: nanoid(), ...connected }]);
+        nodesRef.current = graph.nodes;
+        connectionsRef.current = graph.connections;
         setNodes(graph.nodes);
         setConnections(graph.connections);
         setSelectedNodeIds(new Set([newNode.id]));
