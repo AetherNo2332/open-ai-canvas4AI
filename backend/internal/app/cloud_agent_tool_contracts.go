@@ -182,6 +182,8 @@ func validateCloudAgentReferenceDocument(doc map[string]any, ops []agentCanvasOp
 func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 	p := schema["properties"].(map[string]any)
 	switch name {
+	case "director":
+		cloudAgentDirectorContracts(schema)
 	case "canvas_read_storyboard":
 		schema["allOf"] = []map[string]any{
 			{"oneOf": []map[string]any{

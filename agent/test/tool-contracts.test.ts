@@ -78,6 +78,17 @@ const cases: [string, ToolCall["arguments"], boolean][] = [
   ["canvas_edit_batch_table", { snapshotHash: "h", nodeId: "n", action: "set_concurrency", concurrency: 5, patch: {} }, false],
   ["canvas_inspect_image", { nodeId: "n", sha256: "a".repeat(64), summary: { short: "cat", detailed: { subjects: ["cat"] } } }, true],
   ["canvas_inspect_image", { nodeId: "n", summary: { short: "cat", detailed: {} } }, false],
+  // director：一个工具按 action 分支约束必填字段。
+  ["director", { action: "read" }, true],
+  ["director", { action: "read", sceneId: "scene" }, true],
+  ["director", { action: "create_scene", template: "dialogue" }, true],
+  ["director", { action: "create_scene" }, false],
+  ["director", { action: "apply_patch", sceneId: "scene", expectedSceneHash: "h", patch: { operations: [{ type: "scene_update", id: "scene", title: "t" }] } }, true],
+  ["director", { action: "apply_patch", sceneId: "scene", patch: { operations: [{ type: "scene_update", id: "scene", title: "t" }] } }, false],
+  ["director", { action: "apply_patch", expectedSceneHash: "h", patch: { operations: [{ type: "scene_update", id: "scene" }] } }, false],
+  ["director", { action: "preview", sceneId: "scene" }, true],
+  ["director", { action: "render" }, false],
+  ["director", { sceneId: "scene" }, false],
 ];
 test("Pi validates the shared conditional contracts before execution", () => {
   for (const [name, args, valid] of cases) {

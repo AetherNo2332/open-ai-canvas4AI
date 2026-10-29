@@ -82,10 +82,11 @@ func (r *Repository) setAgentPhaseOnce(userID, runID, owner string, epoch int64,
 		}
 		updates := map[string]any{"runtime_phase": phase, "wait_kind": kind, "wait_id": waitID, "wait_reason": reason, "revision": gorm.Expr("revision + 1")}
 		if phase == "waiting_tool" && kind == "tool" {
-			// The async worker may commit a dependency wait before Node reports its
-			// generic tool phase. Preserve the authoritative wait in the same write.
+			// The async worker may commit a dependency wait (subagents, or a
+			// director preview awaiting the browser viewport) before Node reports
+			// its generic tool phase. Preserve the authoritative wait in the same write.
 			for _, field := range []string{"runtime_phase", "wait_kind", "wait_id", "wait_reason"} {
-				updates[field] = gorm.Expr("CASE WHEN wait_kind = 'subagents' THEN "+field+" ELSE ? END", updates[field])
+				updates[field] = gorm.Expr("CASE WHEN wait_kind IN ('subagents', 'director_preview') THEN "+field+" ELSE ? END", updates[field])
 			}
 		}
 		updated := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND lease_owner = ? AND lease_expires_at > ? AND status IN ?", runID, userID, owner, time.Now().UTC(), []string{"running", "waiting_approval"}).

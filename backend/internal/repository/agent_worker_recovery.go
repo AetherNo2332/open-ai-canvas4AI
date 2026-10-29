@@ -87,7 +87,9 @@ func (r *Repository) WorkerRecoveryRuns(after string, limit int) ([]model.CloudA
 // A takeover without progress spends a persisted attempt even when the worker
 // died before sending an error report. Explicit release and user waits do not.
 func (r *Repository) WorkerRecoveryProtectedWait(run model.CloudAgentExecution) (bool, error) {
-	if run.Status == "waiting_approval" || run.WaitKind == "subagents" {
+	// Approvals, subagents and director previews wait on people or a browser,
+	// not on this worker; a lease lapse there must not spend recovery budget.
+	if run.Status == "waiting_approval" || run.WaitKind == "subagents" || run.WaitKind == "director_preview" {
 		return true, nil
 	}
 	resourceTask := run.RuntimePhase == "waiting_resource" && (run.WaitKind == "model" || run.WaitKind == "tool" || run.WaitKind == "compaction")

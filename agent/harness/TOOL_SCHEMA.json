@@ -143,6 +143,44 @@
         "name": "director",
         "parameters": {
           "additionalProperties": false,
+          "oneOf": [
+            {
+              "properties": {
+                "action": {
+                  "const": "read"
+                }
+              }
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "create_scene"
+                }
+              },
+              "required": [
+                "template"
+              ]
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "apply_patch"
+                }
+              },
+              "required": [
+                "sceneId",
+                "patch",
+                "expectedSceneHash"
+              ]
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "preview"
+                }
+              }
+            }
+          ],
           "properties": {
             "action": {
               "description": "read 只读；其余为写，按权限审批",

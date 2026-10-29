@@ -112,6 +112,8 @@ eval "$status"
                 self.assertEqual(result.returncode, 0, result.stderr)
                 backend_env = json.loads(result.stdout)["services"]["backend"]["environment"]
                 self.assertEqual(backend_env["CANVAS_AGENT_MAX_SESSIONS_PER_USER"], "2")
+                # director preview 等待浏览器视口的超时与 .env.example 默认值一致。
+                self.assertEqual(backend_env["CANVAS_AGENT_DIRECTOR_PREVIEW_TIMEOUT"], "120s")
 
     def test_production_postgres_health_waits_for_tcp_listener(self):
         # The entrypoint's temporary initialization server only listens on a

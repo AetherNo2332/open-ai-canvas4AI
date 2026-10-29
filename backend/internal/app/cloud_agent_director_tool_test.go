@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -370,8 +371,24 @@ func TestDirectorPreviewThroughPiToolAdvance(t *testing.T) {
 			t.Fatalf("waiting preview must stay pending: %+v %v", receipt, err)
 		}
 	}
+	// The Node bridge reports a generic waiting_tool/tool phase after the first
+	// pending receipt; it must not erase the durable director_preview wait.
+	session, _, err := s.repo.CloudAgentPiSession(run.UserID, run.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := fmt.Sprintf("%s@%d", "worker-a", session.LeaseEpoch)
+	if err := s.PiRuntimePhase(run.UserID, run.ID, owner, PiRuntimePhaseRequest{Phase: "waiting_tool", Kind: "tool", WaitID: "batch-task:" + call.ID, Reason: "等待工具结果"}); err != nil {
+		t.Fatal(err)
+	}
 	latest, state := reloadPiRun(t, s, run.ID)
-	if latest.WaitKind != cloudAgentDirectorPreviewWaitKind || len(directorEvents(state, "director_open")) != 1 {
+	if latest.WaitKind != cloudAgentDirectorPreviewWaitKind || latest.WaitID != state.DirectorPreview.RequestID || latest.WaitReason != cloudAgentDirectorPreviewWaitLabel {
+		t.Fatalf("phase report overwrote the director wait: kind=%s id=%s reason=%s", latest.WaitKind, latest.WaitID, latest.WaitReason)
+	}
+	if protected, err := s.repo.WorkerRecoveryProtectedWait(*latest); err != nil || !protected {
+		t.Fatalf("director preview must be a protected user wait: %v %v", protected, err)
+	}
+	if len(directorEvents(state, "director_open")) != 1 {
 		t.Fatalf("wait kind=%s opens=%d", latest.WaitKind, len(directorEvents(state, "director_open")))
 	}
 	if err := s.SubmitCloudAgentDirectorPreview("user", run.ID, state.DirectorPreview.RequestID, "", "用户关闭了导演台"); err != nil {
@@ -380,5 +397,31 @@ func TestDirectorPreviewThroughPiToolAdvance(t *testing.T) {
 	receipt, err := s.PiToolAdvance("user", run.ID, "worker-a", "batch-task", call.ID)
 	if err != nil || receipt == nil || receipt.Pending || !receipt.IsError {
 		t.Fatalf("browser error must settle as a failed receipt: %+v %v", receipt, err)
+	}
+}
+
+// The shared schema (Go preflight and Pi) must carry the per-action required fields.
+func TestDirectorSchemaRequiresActionFields(t *testing.T) {
+	var parameters map[string]any
+	for _, tool := range CloudAgentToolSchemaArtifact().Tools {
+		function := tool["function"].(map[string]any)
+		if function["name"] == "director" {
+			parameters = function["parameters"].(map[string]any)
+		}
+	}
+	if parameters == nil {
+		t.Fatal("director missing from artifact")
+	}
+	for raw, valid := range map[string]bool{
+		`{"action":"read"}`:                            true,
+		`{"action":"create_scene","template":"empty"}`: true,
+		`{"action":"create_scene"}`:                    false,
+		`{"action":"apply_patch","sceneId":"s","expectedSceneHash":"h","patch":{"operations":[{"type":"scene_update","id":"s"}]}}`: true,
+		`{"action":"apply_patch","sceneId":"s","patch":{"operations":[{"type":"scene_update","id":"s"}]}}`:                         false,
+		`{"action":"preview"}`: true,
+	} {
+		if err := validateCloudAgentToolArguments(parameters, raw); (err == nil) != valid {
+			t.Fatalf("%s: valid=%v err=%v", raw, valid, err)
+		}
 	}
 }
