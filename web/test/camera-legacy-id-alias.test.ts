@@ -1,15 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-    CAMERA_PROFILES,
-    LEGACY_CAMERA_ID_ALIASES,
-    LEGACY_LENS_ID_ALIASES,
-    LENS_PROFILES,
-    cameraProfileIndex,
-    lensProfileIndex,
-    resolveCameraId,
-    resolveLensId,
-} from "../src/lib/canvas/camera-prompt-library";
+import { CAMERA_PROFILES, LEGACY_CAMERA_ID_ALIASES, LEGACY_LENS_ID_ALIASES, LENS_PROFILES, cameraProfileIndex, lensProfileIndex, resolveCameraId, resolveLensId } from "../src/lib/canvas/camera-prompt-library";
 import { canvasGenerationInputPrompt } from "../src/lib/canvas/canvas-generation-input-prompt";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 

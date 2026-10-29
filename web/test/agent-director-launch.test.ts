@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
-import { DirectorPreviewAbandonedError, directorOpenTargetReady, directorPreviewErrorMessage, directorPreviewVideoResourceId, isDirectorOpenStale, directorToolAction, handleDirectorOpen, parseDirectorOpenEvent, runDirectorPreview, waitForDirectorViewport } from "@/lib/canvas/agent-director-launch";
+import {
+    DirectorPreviewAbandonedError,
+    directorOpenTargetReady,
+    directorPreviewErrorMessage,
+    directorPreviewVideoResourceId,
+    isDirectorOpenStale,
+    directorToolAction,
+    handleDirectorOpen,
+    parseDirectorOpenEvent,
+    runDirectorPreview,
+    waitForDirectorViewport,
+} from "@/lib/canvas/agent-director-launch";
 import { ApiError } from "@/services/api/request";
 
 const openEvent = { canvasId: "canvas-1", nodeId: "previs-scene-1", sceneId: "scene-1", shotId: "shot-1", action: "create_scene" };

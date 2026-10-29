@@ -45,7 +45,17 @@ const SOURCE_KINDS: Record<string, { kind: InputKind; canSource: boolean; canRef
     character: { kind: "character", canSource: true, canReference: true },
 };
 // backend InputKind after completeBuiltinEditableFields; storyboard scopes bind any node that has one.
-const INPUT_KINDS: Record<string, InputKind> = { ...Object.fromEntries(Object.entries(SOURCE_KINDS).map(([type, item]) => [type, item.kind])), chart: "text", script: "text", "batch-table": "text", drawing: "image", panorama: "image", compare: "image", colorgrade: "image", "media-conversion": "image" };
+const INPUT_KINDS: Record<string, InputKind> = {
+    ...Object.fromEntries(Object.entries(SOURCE_KINDS).map(([type, item]) => [type, item.kind])),
+    chart: "text",
+    script: "text",
+    "batch-table": "text",
+    drawing: "image",
+    panorama: "image",
+    compare: "image",
+    colorgrade: "image",
+    "media-conversion": "image",
+};
 const TARGETS: Record<string, { field: "generation" | "node"; accepts: InputKind[]; max?: number }> = {
     image: { field: "generation", accepts: ["text", "image", "character"] },
     video: { field: "generation", accepts: ["text", "image", "video", "audio", "character"] },
@@ -310,13 +320,23 @@ function removeInput(nodes: CanvasNodeData[], edge: CanvasConnection): CanvasNod
         // Only a row's own assets are edited here; shared referenceNodeIds and cast characters redraw the line and are refused by the caller.
         const next = rowId
             ? { ...storyboard, rows: storyboard.rows.map((row) => (row.id !== rowId ? row : { ...row, assetBindings: (row.assetBindings || []).filter((binding) => binding.nodeId !== source.id) })) }
-            : edge.toHandleId === "storyboard:context" ? { ...storyboard, referenceNodeIds: storyboard.referenceNodeIds.filter((id) => id !== source.id) } : storyboard;
+            : edge.toHandleId === "storyboard:context"
+              ? { ...storyboard, referenceNodeIds: storyboard.referenceNodeIds.filter((id) => id !== source.id) }
+              : storyboard;
         return next === storyboard ? nodes : nodes.map((node) => (node.id === target.id ? { ...node, metadata: { ...node.metadata, storyboard: next } } : node));
     }
     const current = declaredBindings(target);
     if (!current?.some((binding) => binding.nodeId === source.id)) return nodes;
     const spec = target.metadata?.generationSpec != null ? validateGenerationSpec(target.metadata.generationSpec) : undefined;
-    return nodes.map((node) => (node.id === target.id ? withBindings(node, current.filter((binding) => binding.nodeId !== source.id), spec) : node));
+    return nodes.map((node) =>
+        node.id === target.id
+            ? withBindings(
+                  node,
+                  current.filter((binding) => binding.nodeId !== source.id),
+                  spec,
+              )
+            : node,
+    );
 }
 
 /** Applies one drawn or removed line to the owning reference field; documents without referenceFieldsVersion are returned unchanged. */
@@ -380,7 +400,11 @@ export function pruneReferenceFields(nodes: CanvasNodeData[], removedIds: Set<st
         if (!current?.some((binding) => binding.nodeId && removedIds.has(binding.nodeId))) return node;
         changed = true;
         const spec = node.metadata?.generationSpec != null ? validateGenerationSpec(node.metadata.generationSpec) : undefined;
-        return withBindings(node, current.filter((binding) => !binding.nodeId || !removedIds.has(binding.nodeId)), spec);
+        return withBindings(
+            node,
+            current.filter((binding) => !binding.nodeId || !removedIds.has(binding.nodeId)),
+            spec,
+        );
     });
     return changed ? next : nodes;
 }

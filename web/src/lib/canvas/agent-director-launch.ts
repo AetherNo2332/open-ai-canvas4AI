@@ -92,8 +92,13 @@ export function directorPreviewVideoResourceId(storageKey: string | undefined) {
 /** 后端只接受不含控制字符、最多 500 字的错误说明。 */
 export function directorPreviewErrorMessage(cause: unknown) {
     const raw = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
-    const compact = raw.replace(/[\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim();
-    return Array.from(compact || "导演台预演录制失败").slice(0, DIRECTOR_PREVIEW_ERROR_MAX).join("");
+    const compact = raw
+        .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+        .replace(/\s+/gu, " ")
+        .trim();
+    return Array.from(compact || "导演台预演录制失败")
+        .slice(0, DIRECTOR_PREVIEW_ERROR_MAX)
+        .join("");
 }
 
 /**
@@ -187,7 +192,11 @@ function safeLocalStorage(): LeaseStorage | undefined {
  * 没有 navigator.locks 时用 localStorage 租约兜底（写后回读确认归属，过期租约可接手）。
  * 两者都不可用时直接执行：单标签页场景不能因此失去预演能力。
  */
-export async function withDirectorPreviewLock<T>(requestId: string, fn: () => Promise<T>, deps: { locks?: LockManager; storage?: LeaseStorage; owner?: string; now?: () => number } = defaultLockDeps()): Promise<{ acquired: true; value: T } | { acquired: false }> {
+export async function withDirectorPreviewLock<T>(
+    requestId: string,
+    fn: () => Promise<T>,
+    deps: { locks?: LockManager; storage?: LeaseStorage; owner?: string; now?: () => number } = defaultLockDeps(),
+): Promise<{ acquired: true; value: T } | { acquired: false }> {
     const name = `${LEASE_PREFIX}${requestId}`;
     if (deps.locks) {
         let outcome: { acquired: true; value: T } | { acquired: false } = { acquired: false };

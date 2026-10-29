@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
-import { directorPreviewHandledStore, directorPreviewJobPending, directorPreviewOutcomeNotice, directorPreviewPending, directorPreviewRunQuery, parseDirectorOpenEvent, handleDirectorOpen, isDirectorOpenStale, runDirectorPreview, withDirectorPreviewLock } from "@/lib/canvas/agent-director-launch";
+import {
+    directorPreviewHandledStore,
+    directorPreviewJobPending,
+    directorPreviewOutcomeNotice,
+    directorPreviewPending,
+    directorPreviewRunQuery,
+    parseDirectorOpenEvent,
+    handleDirectorOpen,
+    isDirectorOpenStale,
+    runDirectorPreview,
+    withDirectorPreviewLock,
+} from "@/lib/canvas/agent-director-launch";
 import type { AgentRun } from "@/services/api/agent";
 
 const openEvent = { canvasId: "canvas-1", nodeId: "previs-scene-1", sceneId: "scene-1", shotId: "shot-1", action: "create_scene" };
@@ -9,7 +20,7 @@ const memoryHandled = () => {
     const set = new Set<string>();
     return { handled: { isHandled: (id: string) => set.has(id), markHandled: (id: string) => void set.add(id) }, set };
 };
-const freeLock = <T,>(_name: string, fn: () => Promise<T>) => fn().then((value) => ({ acquired: true as const, value }));
+const freeLock = <T>(_name: string, fn: () => Promise<T>) => fn().then((value) => ({ acquired: true as const, value }));
 
 describe("director preview guards", () => {
     test("hidden tab abandons without recording or submitting", async () => {

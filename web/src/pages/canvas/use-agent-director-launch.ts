@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App } from "antd";
 
-import { directorOpenTargetReady, directorPreviewHandledStore, directorPreviewJobPending, directorPreviewOutcomeNotice, directorPreviewVideoResourceId, handleDirectorOpen, runDirectorPreview, withDirectorPreviewLock, type DirectorOpenRunEvent, type DirectorPreviewJob } from "@/lib/canvas/agent-director-launch";
+import {
+    directorOpenTargetReady,
+    directorPreviewHandledStore,
+    directorPreviewJobPending,
+    directorPreviewOutcomeNotice,
+    directorPreviewVideoResourceId,
+    handleDirectorOpen,
+    runDirectorPreview,
+    withDirectorPreviewLock,
+    type DirectorOpenRunEvent,
+    type DirectorPreviewJob,
+} from "@/lib/canvas/agent-director-launch";
 import { getAgentRun, submitDirectorPreviewResult } from "@/services/api/agent";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { PrevisScene } from "@/types/previs";

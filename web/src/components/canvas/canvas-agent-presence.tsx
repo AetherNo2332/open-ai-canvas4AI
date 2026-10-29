@@ -45,7 +45,7 @@ export function CanvasAgentPresence({ canvasId, enabled, nodes }: { canvasId: st
         if (!enabled) return;
         const unsubscribe = subscribeCanvasRealtime(canvasId, (snapshot, event) => {
             if (event !== "agent" && event !== "connection") return;
-            const next = snapshot.connected ? snapshot.agents ?? [] : [];
+            const next = snapshot.connected ? (snapshot.agents ?? []) : [];
             setAgents((current) => (current.length === 0 && next.length === 0 ? current : next));
         });
         return () => {

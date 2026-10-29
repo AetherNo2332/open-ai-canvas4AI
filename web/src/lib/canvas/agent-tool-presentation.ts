@@ -113,7 +113,7 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
             if (action === "preview") return pending ? "等待导演台录制预演" : "导演台预演已录制并回传";
             return pending ? "准备操作导演台" : "导演台操作已完成";
         },
-        failureMessage: ({ detail }) => ({ read: "读取导演台场景失败", create_scene: "创建导演场景失败", apply_patch: "修改导演场景失败", preview: "导演台预演未完成" } as Record<string, string>)[directorAction(detail)] || "导演台操作失败",
+        failureMessage: ({ detail }) => (({ read: "读取导演台场景失败", create_scene: "创建导演场景失败", apply_patch: "修改导演场景失败", preview: "导演台预演未完成" }) as Record<string, string>)[directorAction(detail)] || "导演台操作失败",
     },
     model_list: { summary: "已获取可用模型", failureMessage: "获取可用模型失败" },
     generate_media: { summary: ({ pending, detail }) => (pending ? "准备创建媒体节点并生成" : field(detail, "eventType") === "tool_completed" ? "生成结果已回写画布节点" : "媒体节点已创建，生成任务已提交"), failureMessage: "媒体生成未完成" },
@@ -139,31 +139,12 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
 };
 
 /** 画布上"读到清单"的只读工具：无像素，chip 必须是存在式。 */
-const AGENT_CANVAS_READ_TOOLS = new Set([
-    "canvas_get_state",
-    "canvas_list_node_types",
-    "canvas_read_storyboard",
-    "canvas_read_batch_table",
-    "canvas_read_content",
-    "canvas_search_nodes",
-    "canvas_read_drawing",
-]);
+const AGENT_CANVAS_READ_TOOLS = new Set(["canvas_get_state", "canvas_list_node_types", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_read_content", "canvas_search_nodes", "canvas_read_drawing"]);
 /** 非画布信息的只读工具（模型、任务、技能、偏好）。`skills_load` 是历史事件名，保留兼容。 */
 const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "read", "native_skill_enabled", "canvas_list_assets"]);
 const AGENT_VISION_TOOLS = new Set(["canvas_inspect_image"]);
 const AGENT_CREATE_TOOLS = new Set(["generate_media", "canvas_create_storyboard", "image_annotation_render", "canvas_create_character"]);
-const AGENT_OPERATE_TOOLS = new Set([
-    "canvas_apply_ops",
-    "canvas_arrange_nodes",
-    "canvas_edit_storyboard",
-    "canvas_edit_batch_table",
-    "canvas_edit_drawing",
-    "canvas_bind_asset",
-    "canvas_undo",
-    "canvas_redo",
-    "image_layer_split",
-    "image_text_detect",
-]);
+const AGENT_OPERATE_TOOLS = new Set(["canvas_apply_ops", "canvas_arrange_nodes", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_edit_drawing", "canvas_bind_asset", "canvas_undo", "canvas_redo", "image_layer_split", "image_text_detect"]);
 
 export type AgentToolCategory = "read" | "vision" | "create" | "operate" | "other";
 
@@ -229,7 +210,18 @@ export function agentToolCategory(toolName: string, detail?: unknown): AgentTool
 
 export function agentToolCategoryLabel(toolName: string, category: AgentToolCategory): string {
     if (category === "vision") return "查看画面";
-    if (category === "read") return toolName === "director" ? "读取场景" : toolName === "canvas_read_content" ? "读取正文" : toolName === "canvas_read_drawing" ? "读取绘图" : toolName === "canvas_search_nodes" ? "搜索节点" : AGENT_CANVAS_READ_TOOLS.has(toolName) ? "读取清单" : "读取信息";
+    if (category === "read")
+        return toolName === "director"
+            ? "读取场景"
+            : toolName === "canvas_read_content"
+              ? "读取正文"
+              : toolName === "canvas_read_drawing"
+                ? "读取绘图"
+                : toolName === "canvas_search_nodes"
+                  ? "搜索节点"
+                  : AGENT_CANVAS_READ_TOOLS.has(toolName)
+                    ? "读取清单"
+                    : "读取信息";
     if (category === "create") return "创建节点";
     if (category === "operate") return "修改画布";
     return "其他操作";
