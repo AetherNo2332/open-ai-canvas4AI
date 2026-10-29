@@ -406,7 +406,7 @@ func (r *Repository) writeCanvasProjectAssociation(expectedProjectID string, aft
 	}
 	after.Title = before.Title
 	after.Revision = expected + 1
-	r.canvasChanged(after.UserID, after.ID)
+	r.canvasRevisionChanged(after.UserID, after.ID, after.Revision, CanvasChangeActorBrowser)
 	return r.syncLegacyCanvasWrite(before, after, false)
 }
 

@@ -10,8 +10,8 @@ import (
 // MutateCloudAgentControl can terminate a run even if its transcript is damaged.
 // Only fresh append-only events are accepted; existing messages remain untouched.
 func (r *Repository) MutateCloudAgentControl(userID, id string, revision int64, fn func(*model.CloudAgentExecution, *Repository) error) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		repo := r.transactionRepository(tx)
+	return r.transact(r.db, func(repo *Repository) error {
+		tx := repo.db
 		if err := repo.LockCanvasWrite(userID, ""); err != nil {
 			return err
 		}

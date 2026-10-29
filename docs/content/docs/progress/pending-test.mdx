@@ -3877,3 +3877,9 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 - 已验证：`go test ./... -count=1 -timeout=20m`、`go vet ./...`、`go build ./...`、前端 2716 项测试、`bun run lint`、`bun run build` 通过；数据库与API迁移测试包含SQLite。四篇修改后的MDX逐篇编译及OpenAPI引用解析通过。
 - 环境阻塞：文档站 `bun run types:check` 在 MDX 扫描前失败，当前忽略的 `docs/node_modules/fdir/dist/index.mjs` 调用了 `Dirent.isPrevisy()`（Node Dirent 无此方法）；为避免改依赖，本轮未继续修补 node_modules。
 - [ ] 真实模型/收费生成与多次运行pass^k、provider缓存命中率、PostgreSQL 58迁移、浏览器记忆提案与历史撤销尚未人工验收。
+
+## Agent 在线状态与增量推送
+
+- 已实现：Agent 画布写入提交后经实时通道推送带 revision 与 actor 的 `canvas_changed`；浏览器以 `applyAgentCanvasChange` 按 revision 增量合并，实时在线时 Agent 事件不再触发整份刷新，断线时退回整份刷新。
+- 已实现：Agent 工具读写节点前推送 `agent_presence`，画布在对应节点显示“Agent 正在读取/编辑”标记，运行结束发 `idle`；客户端 45 秒未更新自动清除。
+- [ ] 浏览器验收：Agent 运行时在另一节点本地编辑未保存，确认两者都保留；断开 Redis/WebSocket 后 Agent 写入仍能刷新；明暗主题、0px/非零圆角皮肤及减少动态效果下的标记显示。

@@ -359,9 +359,28 @@ export function subscribeAgentCanvasRefresh(listener: (project: CanvasProject, p
 }
 
 export async function refreshCanvasAfterAgent(id: string, source: "sync" | "agent" = "agent") {
+    return refreshRemoteCanvas(id, source);
+}
+
+/**
+ * Catch up to a committed Agent revision announced over realtime. Revisions the
+ * baseline already contains (e.g. applied from SSE patches) cost nothing; newer
+ * ones are verified (ETag) and rebased onto local edits, never overwritten.
+ */
+export async function applyAgentCanvasChange(current: CanvasProject, event: { revision: number }): Promise<CanvasProject> {
+    if (!Number.isSafeInteger(event.revision) || event.revision <= 0) throw new Error("Agent 画布变更缺少版本");
+    const projected = await refreshRemoteCanvas(current.id, "agent", event.revision);
+    return projected || useCanvasStore.getState().openProject(current.id) || current;
+}
+
+async function refreshRemoteCanvas(id: string, source: "sync" | "agent", minRevision?: number) {
     const epoch = sessionEpoch;
     return withRemoteUserDataSyncExclusive(async () => {
         if (!activeRemoteUserId) throw new Error("请先登录再刷新 Agent 画布结果");
+        if (minRevision !== undefined) {
+            const known = verifiedProjects.has(id) ? acknowledgedProjects.get(id) : undefined;
+            if (known && Number.isSafeInteger(known.revision) && known.revision! >= minRevision) return useCanvasStore.getState().openProject(id) || undefined;
+        }
         // A lost response may already include our submitted text. Resolve its
         // receipt before merging snapshots, or its insertion could be applied twice.
         if (pendingCanvasMutations.has(id)) {

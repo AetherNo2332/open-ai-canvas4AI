@@ -21,7 +21,8 @@ func TestCanvasNotificationsWaitForOuterCommitAndDiscardRollback(t *testing.T) {
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
 	var revisions []int64
-	repo := New(db).WithCanvasChangeNotifier(func(userID, canvasID string) {
+	repo := New(db).WithCanvasChangeNotifier(func(change CanvasChange) {
+		userID, canvasID := change.UserID, change.CanvasID
 		var project model.CanvasProject
 		if err := db.First(&project, "id = ? AND user_id = ?", canvasID, userID).Error; err != nil {
 			t.Error(err)

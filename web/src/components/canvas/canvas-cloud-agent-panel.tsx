@@ -64,6 +64,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { applyAgentCanvasPatches, refreshCanvasAfterAgent, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { createAgentCanvasSync } from "@/services/agent-canvas-sync";
+import { canvasRealtimeConnected } from "@/services/canvas-realtime";
 import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/skill-runtime";
 import { notifyAgentApproval } from "@/lib/canvas/agent-browser-notifications";
 import {
@@ -316,6 +317,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             canvasId,
             applyPatches: (patches) => applyAgentCanvasPatches(canvasId, patches),
             refresh: () => refreshCanvasAfterAgent(canvasId),
+            realtimeConnected: () => canvasRealtimeConnected(canvasId),
             onError: (cause) => setMessages((current) => appendAgentError(current, `canvas-sync-${canvasId}`, cause, "画布同步冲突")),
         });
         canvasSyncRef.current = sync;

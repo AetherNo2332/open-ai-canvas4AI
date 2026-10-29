@@ -7,7 +7,9 @@ description: 信封、错误码与 OpenAPI
 
 ## 画布实时会话
 
-`GET /api/canvas-projects/:id/realtime` 使用登录 Cookie 升级为 WebSocket，握手校验当前用户对画布的归属和请求 Origin。首帧 `welcome` 提供服务端分配的 `selfId` 和窗口 Presence；客户端发送 `presence`，服务端推送 `peer`、`leave`、`invalidate` 和 `heartbeat`。Presence 只含有界世界坐标和拖拽矩形，不包含密钥、编辑租约 token、画布正文或实际保存指令。
+`GET /api/canvas-projects/:id/realtime` 使用登录 Cookie 升级为 WebSocket，握手校验当前用户对画布的归属和请求 Origin。首帧 `welcome` 提供服务端分配的 `selfId` 和窗口 Presence；客户端发送 `presence`，服务端推送 `peer`、`leave`、`invalidate`、`canvas_changed`、`agent_presence` 和 `heartbeat`。Presence 只含有界世界坐标和拖拽矩形，不包含密钥、编辑租约 token、画布正文或实际保存指令。
+
+产生新 revision 的画布写入（浏览器保存与 Agent 写入共用同一序列）在事务提交后推送 `{"type":"canvas_changed","revision":<int>,"actor":"agent"|"browser"}`；同一事务多次写入只推送最终 revision，回滚不推送。租约、删除和任务准入等不产生 revision 的变化仍推送 `invalidate`。`agent_presence` 为 `{"type":"agent_presence","agent":{"runId":"…","nodeIds":["…"],"phase":"reading"|"editing"|"idle"}}`，由服务端在 Agent 工具读写节点前发出、运行结束时发 `idle`，最多 100 个节点 ID，只用于界面提示，不持久化，也不能由客户端发送。
 
 `invalidate` 在事务提交后发送，客户端通过 `GET /api/canvas-projects/:id/sync-status` 校验版本与租约，再按需读取正文；长连接不代表云端保存成功。正常且无活动 Agent 时每 30 秒补偿查询，断线或活动 Agent 期间使用原有轮询。未登录返回 401，画布缺失或不属于当前用户返回 404，不允许的来源返回 403，实时服务不可用返回 503。完整协议和部署边界见[画布操作同步](./canvas-operations-sync)。
 

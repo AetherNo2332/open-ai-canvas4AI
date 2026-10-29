@@ -1,8 +1,12 @@
 export type PresencePoint = { x: number; y: number };
 export type PresenceNode = PresencePoint & { id: string; width: number; height: number };
 export type CanvasPresence = { id: string; number: number; cursor: PresencePoint | null; drag: PresenceNode[] | null; updatedAt: number };
-export type CanvasRealtimeSnapshot = { connected: boolean; selfId: string | null; peers: CanvasPresence[] };
-export type CanvasRealtimeEvent = "connection" | "presence" | "invalidate";
+export type AgentCanvasPresencePhase = "reading" | "editing";
+export type AgentCanvasPresence = { runId: string; nodeIds: string[]; phase: AgentCanvasPresencePhase; updatedAt: number };
+/** Latest committed revision announced by canvas_changed; null until one arrives on this connection. */
+export type CanvasRealtimeChange = { revision: number; actor: "agent" | "browser" };
+export type CanvasRealtimeSnapshot = { connected: boolean; selfId: string | null; peers: CanvasPresence[]; agents?: AgentCanvasPresence[]; change?: CanvasRealtimeChange | null };
+export type CanvasRealtimeEvent = "connection" | "presence" | "invalidate" | "canvas_changed" | "agent";
 type Listener = (snapshot: CanvasRealtimeSnapshot, event: CanvasRealtimeEvent) => void;
 type Timer = ReturnType<typeof setTimeout>;
 
@@ -33,13 +37,26 @@ function validPeer(value: unknown): value is CanvasPresence {
     );
 }
 
+function validAgentPresence(value: unknown): value is { runId: string; nodeIds: string[]; phase: "reading" | "editing" | "idle" } {
+    const agent = value as { runId?: unknown; nodeIds?: unknown; phase?: unknown } | null;
+    return Boolean(
+        agent &&
+        typeof agent.runId === "string" &&
+        agent.runId.length > 0 &&
+        agent.runId.length <= 160 &&
+        (agent.phase === "reading" || agent.phase === "editing" || agent.phase === "idle") &&
+        (agent.nodeIds === null || agent.nodeIds === undefined || (Array.isArray(agent.nodeIds) && agent.nodeIds.length <= 100 && agent.nodeIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 160))),
+    );
+}
+
 export function createCanvasRealtimeClient(options: { url: string; socket?: (url: string) => WebSocket; schedule?: (callback: () => void, delay: number) => Timer; clear?: (timer: Timer) => void; now?: () => number; random?: () => number }) {
     const schedule = options.schedule ?? setTimeout;
     const clear = options.clear ?? clearTimeout;
     const now = options.now ?? Date.now;
     const listeners = new Set<Listener>();
     const peers = new Map<string, { peer: CanvasPresence; seenAt: number }>();
-    let state: CanvasRealtimeSnapshot = { connected: false, selfId: null, peers: [] };
+    const agents = new Map<string, AgentCanvasPresence>();
+    let state: CanvasRealtimeSnapshot = { connected: false, selfId: null, peers: [], agents: [], change: null };
     let socket: WebSocket | undefined;
     let stopped = false;
     let retry: Timer | undefined;
@@ -51,7 +68,7 @@ export function createCanvasRealtimeClient(options: { url: string; socket?: (url
     let lastPayload: string | undefined;
     let presence: { cursor: PresencePoint | null; drag: PresenceNode[] | null } = { cursor: null, drag: null };
     const emit = (event: CanvasRealtimeEvent) => {
-        state = { ...state, peers: [...peers.values()].map(({ peer }) => peer) };
+        state = { ...state, peers: [...peers.values()].map(({ peer }) => peer), agents: [...agents.values()] };
         for (const listener of listeners) listener(state, event);
     };
     const flush = () => {
@@ -87,7 +104,7 @@ export function createCanvasRealtimeClient(options: { url: string; socket?: (url
         socket = current;
         current.onmessage = (message) => {
             if (stopped || socket !== current) return;
-            let event: { type: string; selfId?: string; peers?: unknown[]; peer?: unknown; peerId?: string };
+            let event: { type: string; selfId?: string; peers?: unknown[]; peer?: unknown; peerId?: string; agent?: unknown; revision?: unknown; actor?: unknown };
             try {
                 event = JSON.parse(String(message.data));
             } catch {
@@ -97,8 +114,9 @@ export function createCanvasRealtimeClient(options: { url: string; socket?: (url
             lastMessage = now();
             if (event.type === "welcome" && typeof event.selfId === "string" && Array.isArray(event.peers)) {
                 peers.clear();
+                agents.clear();
                 for (const peer of event.peers.slice(0, 256)) if (validPeer(peer)) peers.set(peer.id, { peer, seenAt: now() });
-                state = { connected: true, selfId: event.selfId, peers: [] };
+                state = { connected: true, selfId: event.selfId, peers: [], agents: [], change: null };
                 failures = 0;
                 lastPayload = undefined;
                 emit("connection");
@@ -112,14 +130,29 @@ export function createCanvasRealtimeClient(options: { url: string; socket?: (url
                 peers.delete(event.peerId);
                 emit("presence");
             } else if (event.type === "invalidate") emit("invalidate");
+            else if (event.type === "canvas_changed" && Number.isSafeInteger(event.revision) && (event.revision as number) > 0) {
+                const revision = event.revision as number;
+                // Redis fan-out may reorder; never move the announced revision backwards.
+                if (!state.change || revision > state.change.revision) state = { ...state, change: { revision, actor: event.actor === "agent" ? "agent" : "browser" } };
+                emit("canvas_changed");
+            } else if (event.type === "agent_presence" && validAgentPresence(event.agent)) {
+                const agent = event.agent;
+                if (agent.phase === "idle") agents.delete(agent.runId);
+                else {
+                    if (agents.size >= 32 && !agents.has(agent.runId)) return;
+                    agents.set(agent.runId, { runId: agent.runId, nodeIds: [...new Set(agent.nodeIds ?? [])], phase: agent.phase, updatedAt: now() });
+                }
+                emit("agent");
+            }
         };
         current.onerror = () => {
             current.close();
         };
         current.onclose = (event) => {
             if (stopped || socket !== current) return;
-            state = { connected: false, selfId: null, peers: [] };
+            state = { connected: false, selfId: null, peers: [], agents: [], change: null };
             peers.clear();
+            agents.clear();
             if (sending !== undefined) clear(sending);
             sending = undefined;
             emit("connection");
@@ -140,9 +173,17 @@ export function createCanvasRealtimeClient(options: { url: string; socket?: (url
                 expired = true;
             }
         if (expired) emit("presence");
+        let agentExpired = false;
+        for (const [id, agent] of agents)
+            if (now() - agent.updatedAt > 45000) {
+                agents.delete(id);
+                agentExpired = true;
+            }
+        if (agentExpired) emit("agent");
         watchdog = schedule(inspect, 15000);
     };
     return {
+        snapshot: () => state,
         subscribe(listener: Listener) {
             listeners.add(listener);
             listener(state, "connection");
@@ -170,6 +211,7 @@ export function createCanvasRealtimeClient(options: { url: string; socket?: (url
             if (watchdog !== undefined) clear(watchdog);
             socket?.close();
             peers.clear();
+            agents.clear();
             listeners.clear();
         },
     };

@@ -68,6 +68,7 @@ import { CanvasUploadModal } from "@/components/canvas/canvas-upload-modal";
 import { CanvasPanoramaConfigModal } from "@/components/canvas/canvas-panorama-config-modal";
 import { CanvasViewport } from "@/components/canvas/canvas-viewport";
 import { CanvasCollaborationLayer } from "@/components/canvas/canvas-collaboration-layer";
+import { CanvasAgentPresence } from "@/components/canvas/canvas-agent-presence";
 import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { handleListGenerate } from "./list-mode-generator";
@@ -2877,6 +2878,7 @@ function CanvasViewportPage() {
                                                 />
                                             </CanvasNodeGraphContext.Provider>
                                         </CanvasNodeActionContext.Provider>
+                                        <CanvasAgentPresence canvasId={projectId} enabled={projectLoaded} nodes={nodes} />
                                     </CanvasViewport>
 
                                     <CanvasCollaborationLayer key={`${canvasStorageScope}:${projectId}`} canvasId={projectId} enabled={projectLoaded} containerRef={containerRef} nodesRef={nodesRef} viewportRef={viewportRef} />

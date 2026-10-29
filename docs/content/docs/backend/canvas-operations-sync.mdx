@@ -9,7 +9,7 @@ description: 画布对象级写入、并发校验、幂等重放与删除边界
 
 本功能处理同一账号在多个浏览器或设备编辑画布，不增加跨账号共享权限，也不是逐字符 CRDT。浏览器持久保存已确认基线和未确认操作，以基线、云端最新内容、本地草稿三方合并；不同节点或字段直接合并。同一节点的标题、提示词、文本或 Markdown 内容按共同基线上的增删合并，同一位置的不同输入按已提交文字在前、本地新增在后的顺序保留；相同修改只应用一次，删除只作用于基线原有文字，不删除另一端新输入。富文本通过编辑器文档切片重放，保留段落、插入文字的格式与独立格式变化。无关云端更新和新增对象继续合入，不用整张云端快照替换本地编辑，不创建替代画布，也不复活已删除对象。
 
-`GET /api/canvas-projects/:id/sync-status` 返回 revision、服务端时间、有效节点租约与 Agent 占用摘要，不返回画布正文或 Agent 历史。客户端订阅 `GET /api/canvas-projects/:id/realtime` 的 WebSocket 通知；画布或租约事务成功提交后发出 `invalidate`，客户端再核对状态，只有 revision 改变才读取正文。连接正常且无活动 Agent 时每 30 秒补偿校验；断线或活动 Agent 期间前台每 2 秒、后台至少每 15 秒检查。离线暂停、失败退避至最长 30 秒；单请求超时 8 秒且不重叠，401/403/404 停止轮询。租约维护使用独立的 2 秒计时器，不依赖轮询频率。
+`GET /api/canvas-projects/:id/sync-status` 返回 revision、服务端时间、有效节点租约与 Agent 占用摘要，不返回画布正文或 Agent 历史。客户端订阅 `GET /api/canvas-projects/:id/realtime` 的 WebSocket 通知；画布或租约事务成功提交后发出通知：产生新 revision 的写入发 `canvas_changed`（带 revision 与 actor），其他变化发 `invalidate`。Agent 写入的 `canvas_changed` 由 `applyAgentCanvasChange` 按 revision 增量合并：基线已包含该 revision 时不读取，否则带 ETag 读取并以三方合并保留本地未保存编辑；实时断开时 Agent 事件流退回原有整份刷新。其余通知由客户端核对状态，只有 revision 改变才读取正文。连接正常且无活动 Agent 时每 30 秒补偿校验；断线或活动 Agent 期间前台每 2 秒、后台至少每 15 秒检查。离线暂停、失败退避至最长 30 秒；单请求超时 8 秒且不重叠，401/403/404 停止轮询。租约维护使用独立的 2 秒计时器，不依赖轮询频率。
 
 ### 多窗口光标与拖拽预览
 

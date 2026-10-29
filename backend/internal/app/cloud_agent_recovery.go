@@ -48,6 +48,8 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 	if decodeErr == nil {
 		activeID, mediaID, canvasID = state.ActiveTaskID, state.MediaTaskID, state.Request.CanvasID
 	}
+	// Failed/cancelled runs always pass through cleanup: clear their presence.
+	s.publishCloudAgentIdle(run.UserID, run.ID, canvasID)
 	// 本轮若正停在压缩上（被取消/失败收尾），要在取消子任务之前把保底检查点落盘并清掉压缩态：
 	// 终态轮次不会再被调度器推进，否则 ContextCompaction 会永远挂在"正在压缩"、检查点永久丢失。
 	// keepTerminal=true：收尾只落检查点与事件，绝不把 failed/cancelled 复活成 completed。

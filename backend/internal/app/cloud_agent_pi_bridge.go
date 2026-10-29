@@ -778,6 +778,9 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 		state.PiNoToolNudge = decision.Nudge
 		return cloudAgentSave(current, &state)
 	})
+	if err == nil && cloudAgentRunTerminal(decision.Status) {
+		s.publishCloudAgentIdle(userID, runID, state.Request.CanvasID)
+	}
 	return decision, err
 }
 
@@ -1528,6 +1531,9 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 	latest, err := s.repo.CloudAgent(userID, runID)
 	if err != nil {
 		return nil, err
+	}
+	if cloudAgentRunTerminal(latest.Status) {
+		s.publishCloudAgentIdle(userID, runID, latest.CanvasID)
 	}
 	updated, err := cloudAgentDecode(latest)
 	if err != nil {

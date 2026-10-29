@@ -112,8 +112,8 @@ func (r *Repository) AgentSubagentMessages(userID, parentRunID string) ([]model.
 // Always lock the parent before the child, including parent-to-child messages,
 // so opposite-direction deliveries cannot deadlock on PostgreSQL.
 func (r *Repository) WithAgentSubagentFamily(userID, parentRunID, childRunID string, fn func(*Repository) error) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		writer := r.transactionRepository(tx)
+	return r.transact(r.db, func(writer *Repository) error {
+		tx := writer.db
 		if err := writer.LockCanvasWrite(userID, ""); err != nil {
 			return err
 		}

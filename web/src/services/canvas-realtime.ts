@@ -30,6 +30,11 @@ export function subscribeCanvasRealtime(canvasId: string, listener: (state: Canv
     };
 }
 
+/** True only while this window holds a live realtime socket for the canvas. */
+export function canvasRealtimeConnected(canvasId: string) {
+    return Boolean(clients.get(keyFor(canvasId))?.client.snapshot().connected);
+}
+
 export function updateCanvasPresence(canvasId: string, cursor: PresencePoint | null, drag: PresenceNode[] | null, immediate = false) {
     clients.get(keyFor(canvasId))?.client.update(cursor, drag, immediate);
 }

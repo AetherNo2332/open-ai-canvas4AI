@@ -13,7 +13,7 @@ import { canvasPersistentNodes } from "@/lib/canvas/canvas-persistent-nodes";
 import { projectReferenceConnections } from "@/lib/canvas/canvas-reference-fields";
 import { hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
-import { createCanvasProjectWithRemoteSync, deleteCanvasProjectsWithRemoteSync, loadCanvasProjectForEditing, saveRemoteUserDataNow, prepareCanvasForCloudAction, subscribeAgentCanvasRefresh, refreshCanvasAfterAgent } from "@/services/user-data-sync";
+import { createCanvasProjectWithRemoteSync, deleteCanvasProjectsWithRemoteSync, loadCanvasProjectForEditing, saveRemoteUserDataNow, prepareCanvasForCloudAction, subscribeAgentCanvasRefresh, refreshCanvasAfterAgent, applyAgentCanvasChange } from "@/services/user-data-sync";
 import { getCanvasSyncStatus } from "@/services/api/user-data";
 import { canvasEditLeases } from "@/services/canvas-edit-leases";
 import { startCanvasSyncPolling } from "@/services/canvas-sync-polling";
@@ -306,7 +306,13 @@ export function useCanvasProjectLifecycle({
             listen: (wake) => subscribeCanvasRealtime(projectId, (state, event) => {
                 const disconnected = connected && !state.connected;
                 connected = state.connected;
-                if (event === "invalidate" || disconnected) wake();
+                if (event === "canvas_changed" && state.change?.actor === "agent") {
+                    const current = useCanvasStore.getState().openProject(projectId);
+                    // Agent 提交后按 revision 增量合并；失败时退回状态校验与整份刷新。
+                    if (current && scope === getActiveUserScope()) void applyAgentCanvasChange(current, { revision: state.change.revision }).catch(() => wake());
+                    return;
+                }
+                if (event === "invalidate" || event === "canvas_changed" || disconnected) wake();
             }),
         });
         return () => { stop(); clearInterval(leaseTimer); };

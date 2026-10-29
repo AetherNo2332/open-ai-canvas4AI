@@ -12,6 +12,9 @@ import (
 // MutateCloudAgent transaction rolls back document, asset and billing effects.
 // Only afterwards may a new CAS checkpoint acknowledge a business rejection.
 func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
+	if run != nil && state != nil && state.CallIndex >= 0 && state.CallIndex < len(state.Calls) && (run.Status == "running" || run.Status == "queued") {
+		s.publishCloudAgentToolPresence(run, state, state.Calls[state.CallIndex])
+	}
 	if run == nil || state == nil || state.CallIndex < 0 || state.CallIndex >= len(state.Calls) || !cloudAgentWrite(state.Calls[state.CallIndex].Function.Name) {
 		return s.executeCloudAgentToolCallAttempt(run, state)
 	}

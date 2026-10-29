@@ -146,7 +146,9 @@ func New(repo *repository.Repository, dataDir string) *Service {
 func newService(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := platform.NewCoordinator(repo.Dialect())
 	canvasRealtime := canvas.NewRealtimeHub(coordinator.Redis())
-	repo = repo.WithCanvasChangeNotifier(canvasRealtime.Changed)
+	repo = repo.WithCanvasChangeNotifier(func(change repository.CanvasChange) {
+		canvasRealtime.CanvasChanged(change.UserID, change.CanvasID, change.Revision, change.Actor)
+	})
 	pluginRuntime, pluginRuntimeErr := newPluginRuntime(dataDir)
 	paymentRegistry, _ := payment.NewRegistry()
 	if pluginRuntime != nil {

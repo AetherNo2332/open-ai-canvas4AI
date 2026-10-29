@@ -150,7 +150,7 @@ func (r *Repository) upsertCanvasProject(project *model.CanvasProject) error {
 			return ErrCanvasRevisionConflict
 		}
 		project.Revision = 1
-		r.canvasChanged(project.UserID, project.ID)
+		r.canvasRevisionChanged(project.UserID, project.ID, project.Revision, CanvasChangeActorBrowser)
 		return nil
 	}
 	// The revision predicate and increment must be in the same SQL statement.
@@ -165,7 +165,7 @@ func (r *Repository) upsertCanvasProject(project *model.CanvasProject) error {
 		return ErrCanvasRevisionConflict
 	}
 	project.Revision = expected + 1
-	r.canvasChanged(project.UserID, project.ID)
+	r.canvasRevisionChanged(project.UserID, project.ID, project.Revision, CanvasChangeActorBrowser)
 	return nil
 }
 

@@ -34,10 +34,24 @@ type CanvasPresence struct {
 	UpdatedAt int64          `json:"updatedAt"`
 }
 
+// AgentPresence tells open windows which nodes an Agent run is reading or
+// editing. Like cursor presence it is ephemeral and never persisted.
+type AgentPresence struct {
+	RunID   string   `json:"runId"`
+	NodeIDs []string `json:"nodeIds"`
+	Phase   string   `json:"phase"` // "reading" | "editing" | "idle"
+}
+
+const maxAgentPresenceNodes = 100
+
 type RealtimeEvent struct {
 	Type   string          `json:"type"`
 	Peer   *CanvasPresence `json:"peer,omitempty"`
 	PeerID string          `json:"peerId,omitempty"`
+	Agent  *AgentPresence  `json:"agent,omitempty"`
+	// canvas_changed only: the committed revision and who wrote it.
+	Revision int64  `json:"revision,omitempty"`
+	Actor    string `json:"actor,omitempty"`
 }
 
 type realtimeEnvelope struct {
@@ -133,6 +147,43 @@ func (h *RealtimeHub) Open(ctx context.Context, userID, canvasID string) (*Realt
 
 func (h *RealtimeHub) Changed(userID, canvasID string) {
 	h.publish(realtimeRoom(userID, canvasID), RealtimeEvent{Type: "invalidate"})
+}
+
+// CanvasChanged is called after commit. A new document revision is announced
+// as canvas_changed so clients can catch up incrementally; other changes
+// (leases, deletion, task admission) keep the revision-less invalidate.
+func (h *RealtimeHub) CanvasChanged(userID, canvasID string, revision int64, actor string) {
+	if revision <= 0 {
+		h.Changed(userID, canvasID)
+		return
+	}
+	if actor != "agent" {
+		actor = "browser"
+	}
+	h.publish(realtimeRoom(userID, canvasID), RealtimeEvent{Type: "canvas_changed", Revision: revision, Actor: actor})
+}
+
+// AgentPresence publishes which nodes an Agent run is touching. Callers own
+// authorization: userID/canvasID must come from the run, never from a client.
+func (h *RealtimeHub) AgentPresence(userID, canvasID string, p AgentPresence) {
+	if h == nil || p.RunID == "" || len(p.RunID) > 160 || (p.Phase != "reading" && p.Phase != "editing" && p.Phase != "idle") {
+		return
+	}
+	nodes := make([]string, 0, min(len(p.NodeIDs), maxAgentPresenceNodes))
+	if p.Phase != "idle" {
+		seen := make(map[string]bool, len(p.NodeIDs))
+		for _, id := range p.NodeIDs {
+			if id == "" || len(id) > 160 || seen[id] {
+				continue
+			}
+			seen[id] = true
+			nodes = append(nodes, id)
+			if len(nodes) == maxAgentPresenceNodes {
+				break
+			}
+		}
+	}
+	h.publish(realtimeRoom(userID, canvasID), RealtimeEvent{Type: "agent_presence", Agent: &AgentPresence{RunID: p.RunID, NodeIDs: nodes, Phase: p.Phase}})
 }
 
 func (h *RealtimeHub) deliver(room string, event RealtimeEvent) {

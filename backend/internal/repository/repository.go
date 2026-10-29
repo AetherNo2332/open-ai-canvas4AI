@@ -36,8 +36,8 @@ var ErrCanvasRevisionConflict = errors.New("画布已被更新，请刷新后重
 type Repository struct {
 	db                   *gorm.DB
 	canvasEditProofs     []model.CanvasEditProof
-	canvasChangeNotifier func(string, string)
-	canvasChanges        map[canvasChange]struct{}
+	canvasChangeNotifier func(CanvasChange)
+	canvasChanges        map[canvasChangeKey]CanvasChange
 	// Agent 消息队列表是否存在。只读 fixture 没有迁移 Agent 表时，队列准入整体关闭。
 	agentMessageQueueEnabled bool
 	// Agent 画布命令使用的媒体版本表是否存在。
@@ -69,16 +69,7 @@ func (r *Repository) WithContext(ctx context.Context) *Repository {
 // Transaction exposes a repository scoped to one database transaction. Domain
 // services use it when a canvas mutation and its receipt must commit together.
 func (r *Repository) Transaction(fn func(*Repository) error) error {
-	changes := make(map[canvasChange]struct{})
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		return fn(&Repository{db: tx, canvasEditProofs: r.canvasEditProofs, canvasChangeNotifier: r.canvasChangeNotifier, canvasChanges: changes, agentMessageQueueEnabled: r.agentMessageQueueEnabled, mediaVersionsEnabled: r.mediaVersionsEnabled, structuredWriteQuota: r.structuredWriteQuota})
-	})
-	if err == nil {
-		for change := range changes {
-			r.canvasChanged(change.userID, change.canvasID)
-		}
-	}
-	return err
+	return r.transact(r.db, fn)
 }
 
 func (r *Repository) Dialect() string {

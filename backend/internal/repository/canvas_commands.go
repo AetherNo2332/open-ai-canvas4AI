@@ -11,7 +11,7 @@ import (
 // CommandTransaction makes all document, version, receipt, event, reference and
 // history writes composable. Callers must not start a nested write transaction.
 func (r *Repository) CommandTransaction(ctx context.Context, fn func(*Repository) error) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return fn(r.transactionRepository(tx)) })
+	return r.transact(r.db.WithContext(ctx), fn)
 }
 
 // CanvasAtomicWrite joins an Agent checkpoint transaction when present. Direct
@@ -212,7 +212,7 @@ func (r *Repository) SaveAgentCanvasWrite(before, after *model.CanvasProject, ac
 		}
 		after.Revision = expected + 1
 		// 浏览器的多端同步依赖画布变更通知；Agent 写入同样要触发，否则打开的画布感知不到。
-		tx.canvasChanged(after.UserID, after.ID)
+		tx.canvasRevisionChanged(after.UserID, after.ID, after.Revision, CanvasChangeActorAgent)
 		if events == nil {
 			return tx.projectCanvasWrite(current, after, false, &actor)
 		}
