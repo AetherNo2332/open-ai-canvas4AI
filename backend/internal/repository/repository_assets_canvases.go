@@ -122,7 +122,7 @@ func (r *Repository) upsertCanvasProjectProjected(project *model.CanvasProject, 
 			if err != nil {
 				return err
 			}
-			if err := tx.checkCanvasEditLeases(current, project); err != nil {
+			if err := tx.checkCanvasEditLeasesFor(current, project, browserLeaseHolder); err != nil {
 				return err
 			}
 			before = current
@@ -184,7 +184,7 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 		if err != nil {
 			return err
 		}
-		if err := New(tx).checkCanvasEditLeases(before, nil); err != nil {
+		if err := New(tx).checkCanvasEditLeasesFor(before, nil, browserLeaseHolder); err != nil {
 			return err
 		}
 		// 删除也投影为 Agent 命令流里的墓碑事件，让在途命令看到画布已删除。

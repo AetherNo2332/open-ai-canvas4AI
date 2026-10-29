@@ -3,7 +3,6 @@ package repository
 import (
 	"errors"
 	"strings"
-	"time"
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
@@ -202,32 +201,6 @@ func (e *CanvasEditLeaseError) Unwrap() error {
 
 // Is 让按上游租约错误分类的调用方（HTTP 映射等）也能识别 Agent 的租约冲突。
 func (e *CanvasEditLeaseError) Is(target error) bool { return target == ErrCanvasEditLease }
-
-// checkAgentCanvasEditLeases 对没有编辑凭证的服务端写入（Agent 命令）执行浏览器编辑租约：
-// 有效租约下的节点文本被改动或节点被删除时拒绝，保留用户正在编辑的草稿。
-func (r *Repository) checkAgentCanvasEditLeases(before, after *model.CanvasProject) error {
-	if before == nil {
-		return nil
-	}
-	leases, err := r.CanvasEditLeases(before.UserID, before.ID, time.Now().UTC())
-	if err != nil || len(leases) == 0 {
-		return err
-	}
-	oldNodes, err := canvasLeaseNodes(before.PayloadJSON)
-	if err != nil {
-		return err
-	}
-	newNodes, err := canvasLeaseNodes(after.PayloadJSON)
-	if err != nil {
-		return err
-	}
-	for _, lease := range leases {
-		if canvasLeaseTextChanged(oldNodes[lease.NodeID], newNodes[lease.NodeID]) {
-			return &CanvasEditLeaseError{Reason: "node_locked", CanvasID: before.ID, NodeID: lease.NodeID}
-		}
-	}
-	return nil
-}
 
 // hasCommandSchema 报告 Agent 画布命令表是否已迁移。只读 fixture 与早于命令表的库
 // 视为没有命令层：软删除投影退化为"全部为活动画布"。

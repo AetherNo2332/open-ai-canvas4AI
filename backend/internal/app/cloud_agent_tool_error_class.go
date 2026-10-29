@@ -60,7 +60,8 @@ func cloudAgentToolErrorClass(req CloudAgentRequest, call cloudAgentCall, err er
 		if lease.Reason == "edit_proof_invalid" {
 			return cloudAgentToolErrorStateConflict, false, "reacquire_edit_lease"
 		}
-		return cloudAgentToolErrorStateConflict, false, "wait_for_edit_lease"
+		// node_locked：用户正在编辑该节点。改其他节点或稍后重读后重试都能纠正，不判死整轮。
+		return cloudAgentToolErrorStateConflict, true, "wait_for_edit_lease"
 	}
 	if cloudAgentReferenceMigrationBlocked(err) {
 		return cloudAgentToolErrorStateConflict, false, "complete_reference_migration"

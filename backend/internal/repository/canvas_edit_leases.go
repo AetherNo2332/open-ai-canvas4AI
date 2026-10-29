@@ -57,12 +57,46 @@ func (r *Repository) ChangeCanvasEditLease(userID, canvasID string, proof model.
 	return &current, r.db.Save(&current).Error
 }
 
-// Authorization is checked in the same transaction as the revision CAS. Comparing
-// authored fields permits result/progress writes without granting text ownership.
-func (r *Repository) checkCanvasEditLeases(before *model.CanvasProject, after *model.CanvasProject) error {
+// LeaseHolder 说明一次画布写入以谁的身份接受编辑租约判定。浏览器写入的编辑凭证由
+// WithCanvasEditProofs 随仓储携带（一次请求可覆盖多个节点）；Agent 写入没有凭证。
+type LeaseHolder struct {
+	Kind string // LeaseHolderBrowser | LeaseHolderAgent
+}
+
+const (
+	LeaseHolderBrowser = "browser"
+	LeaseHolderAgent   = "agent"
+)
+
+var (
+	browserLeaseHolder = LeaseHolder{Kind: LeaseHolderBrowser}
+	agentLeaseHolder   = LeaseHolder{Kind: LeaseHolderAgent}
+)
+
+// checkCanvasEditLeasesFor 是浏览器与 Agent 共用的编辑租约判定，必须与 revision CAS 在同一
+// 事务里调用。只比较作者字段（canvasLeaseAuthoredChanged），结果/进度写入不需要租约。
+// after 为 nil 表示删除整张画布。
+//   - 浏览器：凭证只能为自己持有的有效租约作证；有效租约下的作者字段改动必须带匹配凭证，
+//     否则返回 ErrCanvasEditLease。
+//   - Agent：没有凭证，任何有效租约下的作者字段改动或节点删除都返回
+//     CanvasEditLeaseError{Reason: "node_locked"}，保留用户正在编辑的草稿。
+func (r *Repository) checkCanvasEditLeasesFor(before, after *model.CanvasProject, holder LeaseHolder) error {
+	if before == nil {
+		return nil
+	}
+	if holder.Kind != LeaseHolderBrowser && holder.Kind != LeaseHolderAgent {
+		return errors.New("unknown canvas edit lease holder")
+	}
 	leases, err := r.CanvasEditLeases(before.UserID, before.ID, time.Now().UTC())
 	if err != nil {
 		return err
+	}
+	proofs := r.canvasEditProofs
+	if holder.Kind == LeaseHolderAgent {
+		proofs = nil
+	}
+	if len(leases) == 0 && len(proofs) == 0 {
+		return nil
 	}
 	oldNodes, err := canvasLeaseNodes(before.PayloadJSON)
 	if err != nil {
@@ -79,8 +113,8 @@ func (r *Repository) checkCanvasEditLeases(before *model.CanvasProject, after *m
 	for _, lease := range leases {
 		byNode[lease.NodeID] = lease
 	}
-	for _, proof := range r.canvasEditProofs {
-		if !canvasLeaseTextChanged(oldNodes[proof.NodeID], newNodes[proof.NodeID]) {
+	for _, proof := range proofs {
+		if !canvasLeaseAuthoredChanged(oldNodes[proof.NodeID], newNodes[proof.NodeID]) {
 			continue
 		}
 		lease, exists := byNode[proof.NodeID]
@@ -89,19 +123,23 @@ func (r *Repository) checkCanvasEditLeases(before *model.CanvasProject, after *m
 		}
 	}
 	for _, lease := range leases {
-		if after != nil && !canvasLeaseTextChanged(oldNodes[lease.NodeID], newNodes[lease.NodeID]) {
+		if after != nil && !canvasLeaseAuthoredChanged(oldNodes[lease.NodeID], newNodes[lease.NodeID]) {
 			continue
 		}
 		matched := false
-		for _, proof := range r.canvasEditProofs {
+		for _, proof := range proofs {
 			if proof.NodeID == lease.NodeID && proof.SessionID == lease.SessionID && proof.Token == lease.Token {
 				matched = true
 				break
 			}
 		}
-		if !matched {
-			return ErrCanvasEditLease
+		if matched {
+			continue
 		}
+		if holder.Kind == LeaseHolderAgent {
+			return &CanvasEditLeaseError{Reason: "node_locked", CanvasID: before.ID, NodeID: lease.NodeID}
+		}
+		return ErrCanvasEditLease
 	}
 	return nil
 }
@@ -122,7 +160,10 @@ func canvasLeaseNodes(raw string) (map[string]map[string]any, error) {
 	return nodes, nil
 }
 
-func canvasLeaseTextChanged(before, after map[string]any) bool {
+// canvasLeaseAuthoredChanged 报告节点的作者字段是否变化（含节点新增或删除）：标题、
+// 文本正文、提示词、生成合同（提示词、模型、选项与引用绑定）、inputBindings 以及
+// 分镜 referenceNodeIds。结果、进度和任务状态等字段不在其中，持有租约时仍可回写。
+func canvasLeaseAuthoredChanged(before, after map[string]any) bool {
 	if before == nil || after == nil {
 		return !reflect.DeepEqual(before, after)
 	}
@@ -131,7 +172,7 @@ func canvasLeaseTextChanged(before, after map[string]any) bool {
 	}
 	b, _ := before["metadata"].(map[string]any)
 	a, _ := after["metadata"].(map[string]any)
-	for _, field := range []string{"content", "richText", "prompt", "composerContent"} {
+	for _, field := range []string{"content", "richText", "prompt", "composerContent", "generationSpec", "inputBindings"} {
 		if (field == "content" || field == "richText") && before["type"] != "text" && before["type"] != "markdown" && before["type"] != "script" {
 			continue
 		}
@@ -139,10 +180,7 @@ func canvasLeaseTextChanged(before, after map[string]any) bool {
 			return true
 		}
 	}
-	bs, _ := b["generationSpec"].(map[string]any)
-	as, _ := a["generationSpec"].(map[string]any)
-	if !reflect.DeepEqual(bs["prompt"], as["prompt"]) {
-		return true
-	}
-	return false
+	bs, _ := b["storyboard"].(map[string]any)
+	as, _ := a["storyboard"].(map[string]any)
+	return !reflect.DeepEqual(bs["referenceNodeIds"], as["referenceNodeIds"])
 }

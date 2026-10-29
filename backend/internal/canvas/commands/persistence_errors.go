@@ -23,6 +23,9 @@ func PersistenceError(err error) error {
 	}
 	var lease *repository.CanvasEditLeaseError
 	if errors.As(err, &lease) {
+		if lease.Reason == "node_locked" {
+			return &Error{Reason: lease.Reason, Message: "用户正在编辑该节点（nodeId=" + lease.NodeID + "），请等待编辑结束后重试", Field: lease.NodeID}
+		}
 		return &Error{Reason: lease.Reason, Message: "编辑租约已变化，请保留草稿并重新获取租约", Field: lease.NodeID}
 	}
 	return err

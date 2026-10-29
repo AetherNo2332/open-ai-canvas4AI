@@ -392,7 +392,7 @@ func (r *Repository) writeCanvasProjectAssociation(expectedProjectID string, aft
 	if before.ProjectID != expectedProjectID || before.Revision != expected {
 		return gorm.ErrRecordNotFound
 	}
-	if err := r.checkCanvasEditLeases(before, after); err != nil {
+	if err := r.checkCanvasEditLeasesFor(before, after, browserLeaseHolder); err != nil {
 		return err
 	}
 	result := r.db.Model(&model.CanvasProject{}).

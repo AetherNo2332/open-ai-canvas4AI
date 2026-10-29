@@ -2,10 +2,13 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+
+	"yingce/backend/internal/repository"
 )
 
 // handoff 工作项 B 的第一步：把"模型输出问题"与"权限/状态/上游"分开，并且只加标注不改行为。
@@ -147,5 +150,30 @@ func TestCloudAgentToolResultClassifiesMissingRequiredArguments(t *testing.T) {
 	full.Function.Arguments = `{"nodeId":"node-1"}`
 	if missing := cloudAgentMissingRequiredArguments(state.Canonical.Tools, full); len(missing) != 0 {
 		t.Fatalf("字段齐备却报缺字段：%v", missing)
+	}
+}
+
+// 用户正在编辑的节点挡住 Agent 写入：回执可纠正（retryable）、点名节点，不判死整轮。
+func TestAgentNodeLockedReceiptIsCorrectable(t *testing.T) {
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}}}
+	call := cloudAgentCall{ID: "locked-write"}
+	call.Function.Name = "canvas_apply_ops"
+	call.Function.Arguments = `{"snapshotHash":"snapshot","operations":[]}`
+	lease := &repository.CanvasEditLeaseError{Reason: "node_locked", CanvasID: "canvas", NodeID: "hero"}
+	cloudAgentToolResult("run", state, call, nil, lease)
+	if len(state.Canonical.Messages) == 0 {
+		t.Fatal("no tool receipt recorded")
+	}
+	var receipt map[string]any
+	if err := json.Unmarshal([]byte(state.Canonical.Messages[len(state.Canonical.Messages)-1]["content"].(string)), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	message, _ := receipt["error"].(string)
+	if receipt["reason"] != "node_locked" || receipt["nodeId"] != "hero" || receipt["retryable"] != true || !strings.Contains(message, "用户正在编辑该节点") || !strings.Contains(message, "hero") {
+		t.Fatalf("receipt = %#v", receipt)
+	}
+	proof := &repository.CanvasEditLeaseError{Reason: "edit_proof_invalid", CanvasID: "canvas", NodeID: "hero"}
+	if _, retryable, action := cloudAgentToolErrorClass(state.Request, call, proof, true); retryable || action != "reacquire_edit_lease" {
+		t.Fatalf("edit_proof_invalid = %v/%q", retryable, action)
 	}
 }

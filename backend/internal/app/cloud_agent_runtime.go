@@ -1142,6 +1142,9 @@ func cloudAgentSafeToolError(err error) string {
 	}
 	var lease *repository.CanvasEditLeaseError
 	if errors.As(err, &lease) {
+		if lease.Reason == "node_locked" {
+			return "用户正在编辑该节点（nodeId=" + lease.NodeID + "）；本次写入未生效，请等待用户编辑结束后重读画布再试，或先处理其他节点"
+		}
 		return "节点编辑租约冲突；请保留当前工作，等待编辑结束或重新获取有效证明后再操作"
 	}
 	var readLoopErr *cloudAgentReadLoopError

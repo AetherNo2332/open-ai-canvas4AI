@@ -196,7 +196,7 @@ func (r *Repository) SaveAgentCanvasWrite(before, after *model.CanvasProject, ac
 		if current.Revision != expected {
 			return ErrCanvasRevisionConflict
 		}
-		if err = tx.checkAgentCanvasEditLeases(current, after); err != nil {
+		if err = tx.checkCanvasEditLeasesFor(current, after, agentLeaseHolder); err != nil {
 			return err
 		}
 		if err = tx.checkCanvasWriteQuota(current, after); err != nil {
