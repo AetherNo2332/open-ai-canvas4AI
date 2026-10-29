@@ -197,7 +197,9 @@ class Smoke:
     def complete(self, run):
         view = wait(lambda: (row if (row := self.view(run))["status"] in TERMINAL else None), 180)
         self.report["runs"].append({"id": run["id"], "status": view["status"], "events": [
-            {"seq": e["seq"], "type": e["type"], "tool": e.get("payload", {}).get("toolName")}
+            {"seq": e["seq"], "type": e["type"], "tool": e.get("payload", {}).get("toolName"),
+             **({"error": str(e["payload"].get("text", ""))[:300], "errorClass": e["payload"].get("errorClass")}
+                if e["type"] == "tool_failed" else {})}
             for e in view["events"]]})
         self.check("real run reaches completed", view["status"] == "completed", status=view["status"])
         return view
