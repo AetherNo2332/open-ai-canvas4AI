@@ -20,7 +20,11 @@ import (
 
 // The Agent uses the same public catalog as the composer, never a second routing policy.
 func (s *Service) cloudAgentModelList(userID string, intent *ModelRequestIntent) (any, error) {
-	catalog, err := s.ModelCatalog(intent)
+	access, err := s.userGroupAccess(userID)
+	if err != nil {
+		return nil, err
+	}
+	catalog, err := s.ModelCatalog(access, intent)
 	if err != nil {
 		return nil, err
 	}
@@ -217,8 +221,12 @@ func (s *Service) cloudAgentMediaModelDefaults(userID string, a cloudAgentMediaA
 	if a.Mode != "image" && a.Mode != "video" {
 		return nil, nil
 	}
+	access, err := s.userGroupAccess(userID)
+	if err != nil {
+		return nil, err
+	}
 	if a.LogicalModelID != "" {
-		models, err := s.PublicLogicalModels(nil)
+		models, err := s.PublicLogicalModels(access, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -233,7 +241,7 @@ func (s *Service) cloudAgentMediaModelDefaults(userID string, a cloudAgentMediaA
 		}
 		return nil, BadAuthRequest("所选前台模型不存在或已下架")
 	}
-	catalog, err := s.ModelCatalog(nil)
+	catalog, err := s.ModelCatalog(access, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +360,12 @@ func (s *Service) cloudAgentMediaModelName(a cloudAgentMediaArgs) (string, error
 	if !cloudAgentGenerationModeSupported(a.Mode) {
 		return "", BadAuthRequest("生成模式当前不受 Agent 支持")
 	}
-	catalog, err := s.ModelCatalog(nil)
+	// 只把模型标识翻译成展示名，不做授权；授权在任务准入和账单预留中按用户分组完成。
+	access, err := s.systemGroupAccess()
+	if err != nil {
+		return "", err
+	}
+	catalog, err := s.ModelCatalog(access, nil)
 	if err != nil {
 		return "", err
 	}

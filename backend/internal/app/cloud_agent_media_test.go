@@ -20,7 +20,8 @@ func agentMediaFixture(t *testing.T) (*Service, *gorm.DB, cloudAgentMediaArgs) {
 func agentMediaFixtureWithReferenceVersion(t *testing.T, version int) (*Service, *gorm.DB, cloudAgentMediaArgs) {
 	t.Helper()
 	s, db, _, _ := creationTestService(t)
-	if err := db.Create(&model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
+	// creationTestService 已按用户分组准入建好 "user"；这里只在缺失时补建。
+	if err := db.FirstOrCreate(&model.User{}, model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := database.MigrateCanvasCommands(db); err != nil {

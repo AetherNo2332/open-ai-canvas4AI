@@ -174,7 +174,7 @@ func TestPiMalformedArgumentsHaveAuthoritativeRejectionReceipts(t *testing.T) {
 
 func TestPiMixedMalformedBatchPreservesSuccessfulWriteAcrossRestart(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
-	if err := db.Create(&model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
+	if err := db.FirstOrCreate(&model.User{}, model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
 		t.Fatal(err)
 	}
 	canvas, err := s.repo.CanvasProjectForUser("user", run.CanvasID)

@@ -65,7 +65,7 @@ func TestAgentReferencesApplyAfterWebMigration(t *testing.T) {
 	if err := database.MigrateCanvasCommands(db); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
+	if err := db.FirstOrCreate(&model.User{}, model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
 		t.Fatal(err)
 	}
 	doc, err := creationDocument(canvas.PayloadJSON)
