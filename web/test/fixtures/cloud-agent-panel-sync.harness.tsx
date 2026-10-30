@@ -1023,3 +1023,27 @@ test("a failed history restore settles a waiting auto-submit and does not block 
         await mounted.close();
     }
 });
+
+test("a cloud sync error appears only after consecutive failures and clears once sync recovers", async () => {
+    let failing = true;
+    const loader = async () => {
+        if (failing) throw new Error("后端服务暂时不可用，请稍后重试");
+        return [conversation("desktop")];
+    };
+    const mounted = await mount([conversation("desktop", "local")], null, loader);
+    const errorShown = () => mounted.host.textContent?.includes("后端服务暂时不可用") ?? false;
+    try {
+        // 首次轮询失败：单次抖动不提示。
+        expect(errorShown()).toBe(false);
+        await focus();
+        expect(errorShown()).toBe(false);
+        await focus();
+        expect(errorShown()).toBe(true);
+        expect(local.some((item) => item.messages.some((message) => message.id === "cloud-history-error"))).toBe(false);
+        failing = false;
+        await focus();
+        expect(errorShown()).toBe(false);
+    } finally {
+        await mounted.close();
+    }
+});

@@ -63,6 +63,15 @@ export type CloudAgentPendingSubmission = {
 
 const CLOUD_AGENT_CONVERSATIONS_KEY = "cloud-agent-conversations-v1";
 
+/** 云端同步失败的提示只描述当前连接状态：同步恢复后撤下，也不写进对话历史。 */
+export const CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID = "cloud-history-error";
+
+function withoutTransientMessages(conversation: CloudAgentConversation): CloudAgentConversation {
+    return conversation.messages.some((message) => message.id === CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID)
+        ? { ...conversation, messages: conversation.messages.filter((message) => message.id !== CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID) }
+        : conversation;
+}
+
 export async function loadCloudAgentConversations(canvasId: string, scope = getActiveUserScope()): Promise<CloudAgentConversationDocument> {
     if (!canvasId) throw new Error("缺少画布 ID，无法读取 Agent 对话");
     const value = await localForageStorageForScope(scope).getItem(storageKey(canvasId));
@@ -75,17 +84,18 @@ export async function loadCloudAgentConversations(canvasId: string, scope = getA
         throw new Error("Agent 对话历史已损坏");
     }
     if (!isConversationDocument(parsed)) throw new Error("Agent 对话历史格式无效");
-    return parsed;
+    // 旧版本会把同步失败提示存进历史；读出时一并清掉。
+    return { ...parsed, conversations: parsed.conversations.map(withoutTransientMessages) };
 }
 
 export async function saveCloudAgentConversations(canvasId: string, activeId: string | null, conversations: CloudAgentConversation[], scope = getActiveUserScope()) {
     if (!canvasId) throw new Error("缺少画布 ID，无法保存 Agent 对话");
     // 流式标记只属于内存中的观察状态。若网络在最后一个 delta 后断开，
     // 也不能让下次恢复把思考卡片误判为仍在实时展开。
-    const persistedConversations = conversations.map((conversation) => ({
-        ...conversation,
-        messages: conversation.messages.map((message) => ({ ...message, streaming: false })),
-    }));
+    const persistedConversations = conversations.map((conversation) => {
+        const persisted = withoutTransientMessages(conversation);
+        return { ...persisted, messages: persisted.messages.map((message) => ({ ...message, streaming: false })) };
+    });
     const document: CloudAgentConversationDocument = { version: 1, activeId, conversations: persistedConversations };
     await localForageStorageForScope(scope).setItem(storageKey(canvasId), JSON.stringify(document));
 }

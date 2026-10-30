@@ -50,6 +50,7 @@ import type { AgentMediaSettings } from "@/services/api/agent";
 import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-settings";
 import { addSkill, listAddedSkills, listSkills, listSkillPresets, type Skill, type SkillCategory, type SkillPreset } from "@/services/api/skills";
 import {
+    CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID,
     clearCloudAgentPendingSubmission,
     cloudAgentConversationServerId,
     cloudAgentConversationTitle,
@@ -114,6 +115,8 @@ const EMPTY_IDS: string[] = [];
 export const AGENT_CANVAS_REQUIRED_HINT = "进入画布后使用 Agent";
 
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
+/** 云端对话同步按 4 秒轮询；连续失败这么多次（约 8 秒）才提示，单次抖动不打扰用户。 */
+const CLOUD_AGENT_SYNC_ERROR_THRESHOLD = 3;
 type AgentPanelView = "chat" | "history" | "settings";
 
 /**
@@ -816,17 +819,22 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         if (!historyHydrated || !pendingHydrated || !userId || !canvasId) return;
         const controller = new AbortController();
         let loading = false;
+        let consecutiveFailures = 0;
         const refresh = async () => {
             if (loading || controller.signal.aborted) return;
             loading = true;
             try {
                 const submissionGeneration = acceptedSubmissionGenerationRef.current;
                 const remote = await refreshCloudAgentConversations({ canvasId, scope: userScope, signal: controller.signal, existing: conversationsRef.current });
+                consecutiveFailures = 0;
                 if (controller.signal.aborted || getActiveUserScope() !== userScope || submissionGeneration !== acceptedSubmissionGenerationRef.current) return;
                 const state = historyStateRef.current;
                 const protectedSubmission = state.busy || Boolean(pendingSubmission.current) || submissionRequestRef.current;
+                // 同步已恢复：撤下当前对话里的同步失败提示，否则合并会把它当作本地消息保留下来。
+                const liveMessages = state.messages.some((message) => message.id === CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID) ? state.messages.filter((message) => message.id !== CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID) : state.messages;
+                if (liveMessages !== state.messages) setMessages(liveMessages);
                 const local = conversationsRef.current.map((conversation) => conversation.id === state.activeConversationId
-                    ? { ...conversation, messages: state.messages, run: state.run, draft: state.prompt }
+                    ? { ...conversation, messages: liveMessages, run: state.run, draft: state.prompt }
                     : conversation);
                 const merged = mergeCloudAgentConversations(local, remote);
                 // An unknown POST keeps both its request identity and local view
@@ -867,7 +875,9 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                     });
                 }
             } catch (cause) {
-                if (!controller.signal.aborted) setMessages((current) => appendAgentError(current, "cloud-history-error", cause, "云端对话同步失败，将保留本地记录并重试"));
+                // 单次抖动（重启、短暂断网）由下一次轮询自行恢复；连续失败才提示。
+                consecutiveFailures += 1;
+                if (!controller.signal.aborted && consecutiveFailures >= CLOUD_AGENT_SYNC_ERROR_THRESHOLD) setMessages((current) => appendAgentError(current, CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID, cause, "云端对话同步失败，将保留本地记录并重试"));
             } finally {
                 loading = false;
             }
