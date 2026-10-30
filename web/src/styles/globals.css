@@ -255,6 +255,7 @@
     --z-popover: 200;           /* L10 弹出层 */
     --z-toast: 500;             /* L11 通知 */
     --z-agent-panel: calc(var(--z-toast) + 1); /* 全局 Agent 面板：高于导演台（--z-toast），低于 AntD 弹窗与其浮层 */
+    --z-agent-overlay: calc(var(--z-agent-panel) + 1); /* 画布临时浮层（右键菜单、自绘下拉、模型配置引导）：压在浮动 Agent 面板与启动球之上 */
     --z-dialog-popover: 1100;   /* AntD Modal（1000）之上的设置浮层 */
     --z-tooltip: 1150;          /* L12 提示：必须压过弹窗与弹窗内浮层 */
     --z-loader: 1200;           /* 全屏加载遮罩 */

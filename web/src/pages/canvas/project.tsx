@@ -2655,17 +2655,15 @@ function CanvasViewportPage() {
     const publishAgentCanvas = useGlobalAgentStore((state) => state.setCanvas);
     useEffect(() => {
         if (!projectLoaded || !projectId) return;
+        // 只发布面板实际读取的字段：节点数组、运行节点和领域项目不进 store，拖动或生成进度不会重渲染面板。
         publishAgentCanvas({
             canvasId: projectId,
-            domainProjectId: currentProject?.projectId,
-            canvasNodes: nodes,
-            runningNodeId,
             nodeCount: nodes.length,
             selectedNodeIds: agentSelectedNodeIds,
             references: agentMentionReferences,
             onFocusNode: handleAgentFocusNode,
         });
-    }, [projectLoaded, projectId, currentProject?.projectId, nodes, runningNodeId, agentSelectedNodeIds, agentMentionReferences, handleAgentFocusNode, publishAgentCanvas]);
+    }, [projectLoaded, projectId, nodes.length, agentSelectedNodeIds, agentMentionReferences, handleAgentFocusNode, publishAgentCanvas]);
     // 离开画布（卸载或切换到另一个画布）时撤回上下文：之后面板不再以这个画布发送请求。
     useEffect(() => {
         return () => {

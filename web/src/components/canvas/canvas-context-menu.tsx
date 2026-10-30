@@ -8,6 +8,7 @@ import { aceternityMotion } from "@/lib/aceternity-motion";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasNodeAssetCategory } from "@/lib/canvas/canvas-node-asset";
+import { canvasOverlayRightEdge } from "@/lib/canvas/overlay-viewport";
 import { isCanvasFolderNode } from "@/lib/canvas/canvas-frame";
 import { currentMediaVersion, hasMediaVersionHistory, listMediaVersions } from "@/lib/canvas/canvas-media-versions";
 import { formatRelativeTime } from "@/lib/relative-time";
@@ -190,7 +191,7 @@ export function CanvasNodeContextMenu({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }}
-                className="aceternity-floating-panel fixed z-[var(--z-popover)] flex w-[224px] max-h-[calc(100vh-56px)] origin-top-left flex-col overflow-hidden rounded-[var(--r-lg)] border p-1.5 backdrop-blur-2xl backdrop-saturate-150"
+                className="aceternity-floating-panel fixed z-[var(--z-agent-overlay)] flex w-[224px] max-h-[calc(100vh-56px)] origin-top-left flex-col overflow-hidden rounded-[var(--r-lg)] border p-1.5 backdrop-blur-2xl backdrop-saturate-150"
                 style={{ left: position.left, top: position.top, background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text, "--menu-hover": theme.toolbar.itemHover, "--tw-ring-color": theme.node.muted } as CSSProperties}
                 onContextMenu={(event) => event.preventDefault()}
                 onPointerDown={(event) => event.stopPropagation()}
@@ -364,7 +365,7 @@ function AddNodeContextMenu({ parentPosition, workspaceMode, isProjectLinked, on
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }}
-            className="aceternity-floating-panel fixed z-[var(--z-popover)] w-[360px] origin-top overflow-hidden rounded-[var(--r-lg)] border p-1.5 backdrop-blur-2xl backdrop-saturate-150"
+            className="aceternity-floating-panel fixed z-[var(--z-agent-overlay)] w-[360px] origin-top overflow-hidden rounded-[var(--r-lg)] border p-1.5 backdrop-blur-2xl backdrop-saturate-150"
             style={{ left, top: parentPosition.top, background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text }}
             onContextMenu={(event) => event.preventDefault()}
             onPointerDown={(event) => event.stopPropagation()}
@@ -426,16 +427,18 @@ function MenuDivider() {
 function getContextMenuPosition(menu: ContextMenuState, hasMultiSelection = false) {
     if (typeof window === "undefined") return { left: menu.x, top: menu.y };
     const width = 224;
+    // Agent 停靠时右边界是编辑区右缘，菜单不伸到停靠栏下面。
+    const right = canvasOverlayRightEdge();
     const estimatedHeight = menu.type === "node" ? Math.min(hasMultiSelection ? 290 : 360, window.innerHeight - 72) : menu.type === "canvas" ? (hasMultiSelection ? 350 : 250) : 84;
     return {
-        left: clamp(menu.x, 12, Math.max(12, window.innerWidth - width - 12)),
+        left: clamp(menu.x, 12, Math.max(12, right - width - 12)),
         top: clamp(menu.y, 68, Math.max(68, window.innerHeight - estimatedHeight - 12)),
     };
 }
 
 function getSubmenuLeft(parentLeft: number) {
     if (typeof window === "undefined") return parentLeft + 192;
-    return parentLeft + 224 + 8 + 360 <= window.innerWidth - 12 ? parentLeft + 232 : Math.max(12, parentLeft - 368);
+    return parentLeft + 224 + 8 + 360 <= canvasOverlayRightEdge() - 12 ? parentLeft + 232 : Math.max(12, parentLeft - 368);
 }
 
 function clamp(value: number, min: number, max: number) {

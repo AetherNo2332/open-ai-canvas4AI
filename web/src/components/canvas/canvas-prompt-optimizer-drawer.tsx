@@ -7,6 +7,7 @@ import { ArrowUp, Check, ChevronDown, FileText, Image as ImageIcon, LoaderCircle
 
 import { ModelPicker } from "@/components/model-picker";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { canvasOverlayRightEdge } from "@/lib/canvas/overlay-viewport";
 import type { PromptOptimizationMode, PromptOptimizationResult, PromptOptimizerProvider } from "@/lib/plugins/plugin-types";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -87,7 +88,7 @@ function getInitialPanelPosition(panelSize: PanelSize): PanelPosition {
     if (!anchor) return { left: PANEL_MARGIN, top: PANEL_MARGIN };
 
     const { rect } = anchor;
-    const left = clampPanelValue(rect.left + (rect.width - panelSize.width) / 2, PANEL_MARGIN, window.innerWidth - PANEL_MARGIN - panelSize.width);
+    const left = clampPanelValue(rect.left + (rect.width - panelSize.width) / 2, PANEL_MARGIN, canvasOverlayRightEdge() - PANEL_MARGIN - panelSize.width);
     const aboveTop = rect.top - panelSize.height - PANEL_MARGIN;
     const belowTop = rect.bottom + PANEL_MARGIN;
     const hasRoomBelow = belowTop + panelSize.height <= window.innerHeight - PANEL_MARGIN;
@@ -188,7 +189,7 @@ export function CanvasPromptOptimizerDrawer({ open, children, prompt, generation
         const baseTop = rect.top - currentOffset.y;
         const currentPosition = panelPositionRef.current ?? { left: rect.left, top: rect.top };
         const nextPosition = {
-            left: clampPanelValue(currentPosition.left, PANEL_MARGIN, window.innerWidth - PANEL_MARGIN - rect.width),
+            left: clampPanelValue(currentPosition.left, PANEL_MARGIN, canvasOverlayRightEdge() - PANEL_MARGIN - rect.width),
             top: clampPanelValue(currentPosition.top, PANEL_MARGIN, window.innerHeight - PANEL_MARGIN - rect.height),
         };
         panelPositionRef.current = nextPosition;
@@ -326,7 +327,7 @@ export function CanvasPromptOptimizerDrawer({ open, children, prompt, generation
 
             if (kind === "drag") {
                 schedulePanelLayout({
-                    left: clampPanelValue(startPosition.left + deltaX, PANEL_MARGIN, window.innerWidth - PANEL_MARGIN - startRect.width),
+                    left: clampPanelValue(startPosition.left + deltaX, PANEL_MARGIN, canvasOverlayRightEdge() - PANEL_MARGIN - startRect.width),
                     top: clampPanelValue(startPosition.top + deltaY, PANEL_MARGIN, window.innerHeight - PANEL_MARGIN - startRect.height),
                 });
                 return;
@@ -337,7 +338,7 @@ export function CanvasPromptOptimizerDrawer({ open, children, prompt, generation
             let nextHeight = startSize.height;
 
             if (edges.right) {
-                nextWidth = clampPanelValue(startSize.width + deltaX, bounds.minWidth, Math.min(bounds.maxWidth, window.innerWidth - PANEL_MARGIN - startPosition.left));
+                nextWidth = clampPanelValue(startSize.width + deltaX, bounds.minWidth, Math.min(bounds.maxWidth, canvasOverlayRightEdge() - PANEL_MARGIN - startPosition.left));
             }
             if (edges.left) {
                 nextWidth = clampPanelValue(startSize.width - deltaX, bounds.minWidth, Math.min(bounds.maxWidth, startPosition.left + startSize.width - PANEL_MARGIN));
@@ -350,7 +351,7 @@ export function CanvasPromptOptimizerDrawer({ open, children, prompt, generation
             }
 
             const nextPosition = {
-                left: clampPanelValue(edges.left ? startPosition.left + startSize.width - nextWidth : startPosition.left, PANEL_MARGIN, window.innerWidth - PANEL_MARGIN - nextWidth),
+                left: clampPanelValue(edges.left ? startPosition.left + startSize.width - nextWidth : startPosition.left, PANEL_MARGIN, canvasOverlayRightEdge() - PANEL_MARGIN - nextWidth),
                 top: clampPanelValue(edges.top ? startPosition.top + startSize.height - nextHeight : startPosition.top, PANEL_MARGIN, window.innerHeight - PANEL_MARGIN - nextHeight),
             };
             schedulePanelLayout(nextPosition, { width: nextWidth, height: nextHeight });
@@ -396,7 +397,7 @@ export function CanvasPromptOptimizerDrawer({ open, children, prompt, generation
         const baseLeft = rect.left - currentOffset.x;
         const baseTop = rect.top - currentOffset.y;
         const nextPosition = {
-            left: clampPanelValue(currentPosition.left + deltaX, PANEL_MARGIN, window.innerWidth - PANEL_MARGIN - rect.width),
+            left: clampPanelValue(currentPosition.left + deltaX, PANEL_MARGIN, canvasOverlayRightEdge() - PANEL_MARGIN - rect.width),
             top: clampPanelValue(currentPosition.top + deltaY, PANEL_MARGIN, window.innerHeight - PANEL_MARGIN - rect.height),
         };
         const nextOffset = {

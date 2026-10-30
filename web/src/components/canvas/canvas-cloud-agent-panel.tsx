@@ -204,7 +204,8 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         return () => { active = false; window.clearInterval(timer); };
     }, [open]);
     const [run, setRun] = useState<AgentRun | null>(null);
-    const messageQueue = useAgentMessageQueue(userScope, canvasId, run ? run.conversationId || run.id : undefined);
+    // 画布外不绑定会话：待发队列不轮询，编辑、插队、移除和恢复都不会发出请求。
+    const messageQueue = useAgentMessageQueue(userScope, canvasId, canvasId && run ? run.conversationId || run.id : undefined);
     const currentRunIdRef = useRef(run?.id);
     currentRunIdRef.current = run?.id;
     const [contextUsage, setContextUsage] = useState<AgentContextUsage>(() => emptyAgentContextUsage(""));
@@ -289,6 +290,9 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     const activeHistoryState = conversations.find((conversation) => conversation.id === activeConversationId)?.historyState;
     const [loadedHistoryScope, setLoadedHistoryScope] = useState("");
     const historyHydrated = loadedHistoryScope === `${userScope}:${canvasId}`;
+    // 本画布的对话恢复失败：发送保持暂停，等待中的外部投递按未投递结束，不会一直卡住。
+    const [historyFailedScope, setHistoryFailedScope] = useState("");
+    const historyFailed = historyFailedScope === `${userScope}:${canvasId}`;
     const conversationsRef = useRef(conversations);
     conversationsRef.current = conversations;
     const autoRestoreRef = useRef(true);
@@ -338,7 +342,8 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     const [undoingRunId, setUndoingRunId] = useState("");
     const undoOffer = useMemo(() => agentRunUndoOffer(run, messages), [run, messages]);
     const undoRun = async (runId: string) => {
-        if (undoingRunId) return;
+        // 画布外只读：撤销会改动画布，必须在该画布里执行。
+        if (!canvasId || undoingRunId) return;
         setUndoingRunId(runId);
         try {
             await undoAgentRun(runId);
@@ -555,8 +560,9 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     const statusColor = status === "failed" ? "#e66b6b" : status === "rejected" || status === "cancelled" ? theme.node.muted : status === "waiting_approval" ? "#d6a24a" : status === "running" || status === "queued" ? "#69c29b" : theme.node.muted;
 
     // 画布页投递的一次性输入（替代旧的 ref.sendPrompt）。同一 id 只消费一次；不属于当前画布或账号的请求直接丢弃。
-    const [pendingAutoSubmit, setPendingAutoSubmit] = useState<AgentPrefillRequest | null>(null);
-    const pendingAutoSubmitRef = useRef<AgentPrefillRequest | null>(null);
+    // 取走后先暂存，等历史与待确认记录就绪再写入草稿或提交，否则恢复历史时会把刚写入的草稿覆盖掉。
+    const [heldPrefill, setHeldPrefill] = useState<AgentPrefillRequest | null>(null);
+    const heldPrefillRef = useRef<AgentPrefillRequest | null>(null);
     const busyRef = useRef(false);
     busyRef.current = busy;
     useEffect(() => {
@@ -567,20 +573,24 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
             settleAgentPrefill(request.id, false);
             return;
         }
-        if (request.autoSubmit && (pendingAutoSubmitRef.current || busyRef.current || submissionRequestRef.current)) {
+        if (heldPrefillRef.current || (request.autoSubmit && (busyRef.current || submissionRequestRef.current))) {
             // 已有一条外部请求在等待或发送中：与旧 sendPrompt 一样拒绝重复投递。
             settleAgentPrefill(request.id, false);
             return;
         }
         setView("chat");
-        if (request.autoSubmit) {
-            pendingAutoSubmitRef.current = request;
-            setPendingAutoSubmit(request);
-            return;
-        }
-        setPrompt((current) => appendAgentPromptPrefill(current, request.text));
-        settleAgentPrefill(request.id, "prefilled");
+        heldPrefillRef.current = request;
+        setHeldPrefill(request);
     }, [prefillRequest, canvasId, userScope]);
+    // 面板卸载（账号切换、代码块重载）时，暂存的请求按未投递结束，调用方不会一直等待。
+    useEffect(
+        () => () => {
+            const held = heldPrefillRef.current;
+            heldPrefillRef.current = null;
+            if (held) settleAgentPrefill(held.id, false);
+        },
+        [],
+    );
 
     useEffect(() => {
         if (!open || view !== "chat") setSkillsOpen(false);
@@ -698,6 +708,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
             };
         }
         setLoadedHistoryScope("");
+        setHistoryFailedScope("");
         setPendingHydrated(false);
         pendingSubmission.current = null;
         setBusy(false);
@@ -740,6 +751,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
             })
             .catch((cause) => {
                 if (!active) return;
+                setHistoryFailedScope(`${userScope}:${canvasId}`);
                 setMessages((current) => appendAgentError(current, "history-error", cause, "对话恢复失败，已暂停发送；请重新打开对话核对"));
             })
             .finally(() => {
@@ -751,7 +763,8 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     }, [canvasId, userId]);
 
     useEffect(() => {
-        if (!historyHydrated || (!messages.length && !run && !prompt)) return;
+        // 画布外只读查看历史：不改写对话列表（运行已撤掉，改写会丢失其运行记录）。
+        if (!historyHydrated || !canvasId || (!messages.length && !run && !prompt)) return;
         const now = new Date().toISOString();
         setConversations((current) => {
             const existing = current.find((conversation) => conversation.id === activeConversationId);
@@ -775,7 +788,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
             if (existing && current[0] === existing && sameJsonData({ ...existing, updatedAt: undefined }, { ...next, updatedAt: undefined })) return current;
             return [next, ...current.filter((conversation) => conversation.id !== activeConversationId)];
         });
-    }, [activeConversationId, historyHydrated, messages, permissionMode, run, selectedModel, selectedSkillIds, contextUsage, prompt]);
+    }, [activeConversationId, canvasId, historyHydrated, messages, permissionMode, run, selectedModel, selectedSkillIds, contextUsage, prompt]);
 
     useEffect(() => {
         if (!historyHydrated || !canvasId) return;
@@ -862,7 +875,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     }, [canvasId, userId, userScope, historyHydrated, pendingHydrated]);
 
     useEffect(() => {
-        if (!run?.id) return;
+        if (!run?.id || !canvasId) return;
         const scope = conversationScope;
         let active = true;
         if (lastSeqRunIdRef.current !== run.id) {
@@ -926,12 +939,12 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     }, [run?.id, connectionEpoch, conversationScope]);
 
     useEffect(() => {
-        if (!run?.id || connectionStatus !== "disconnected") return;
+        if (!run?.id || !canvasId || connectionStatus !== "disconnected") return;
         const reconnect = () => setConnectionEpoch((value) => value + 1);
         const timer = window.setTimeout(reconnect, 4_000);
         window.addEventListener("online", reconnect);
         return () => { window.clearTimeout(timer); window.removeEventListener("online", reconnect); };
-    }, [run?.id, connectionStatus]);
+    }, [run?.id, canvasId, connectionStatus]);
 
     const submit = async (override?: string, options: AgentSubmitOptions = {}): Promise<"sent" | "queued" | false> => {
         if (activeHistoryState?.status === "unavailable") return false;
@@ -1083,29 +1096,40 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         return accepted && currentScope.current === scope ? outcome : false;
     };
 
-    // 自动提交等历史与待确认记录就绪后再发；保持 fork sendPrompt 的语义：保留草稿、带上聚焦节点与看图要求。
-    const autoSubmitRef = useRef<number | null>(null);
+    // 暂存的外部输入等历史与待确认记录就绪后再处理：仅写入草稿的直接追加；自动提交保持 fork sendPrompt 的语义（保留草稿、带上聚焦节点与看图要求）。
+    const appliedPrefillRef = useRef<number | null>(null);
     useEffect(() => {
-        const request = pendingAutoSubmit;
-        if (!request || autoSubmitRef.current === request.id) return;
-        if (request.canvasId !== canvasId || request.userScope !== userScope) {
-            pendingAutoSubmitRef.current = null;
-            setPendingAutoSubmit(null);
+        const request = heldPrefill;
+        if (!request || appliedPrefillRef.current === request.id) return;
+        const release = () => {
+            heldPrefillRef.current = null;
+            setHeldPrefill(null);
+        };
+        if (request.canvasId !== canvasId || request.userScope !== userScope || historyFailed) {
+            release();
             settleAgentPrefill(request.id, false);
             return;
         }
-        if (!historyHydrated || !pendingHydrated || busy || submissionRequestRef.current) return;
-        autoSubmitRef.current = request.id;
-        pendingAutoSubmitRef.current = null;
-        setPendingAutoSubmit(null);
+        if (!historyHydrated || !pendingHydrated) return;
+        if (!request.autoSubmit) {
+            appliedPrefillRef.current = request.id;
+            release();
+            setPrompt((current) => appendAgentPromptPrefill(current, request.text));
+            settleAgentPrefill(request.id, "prefilled");
+            return;
+        }
+        if (busy || submissionRequestRef.current) return;
+        appliedPrefillRef.current = request.id;
+        release();
         void submit(request.text, { preserveDraft: true, focusNodeIds: request.focusNodeIds, requiresVision: request.requiresVision }).then(
             (outcome) => settleAgentPrefill(request.id, outcome),
             () => settleAgentPrefill(request.id, false),
         );
-    }, [pendingAutoSubmit, canvasId, userScope, historyHydrated, pendingHydrated, busy]);
+    }, [heldPrefill, canvasId, userScope, historyHydrated, pendingHydrated, historyFailed, busy]);
     const stop = async () => {
         const activeRun = run;
-        if (!activeRun?.id || stopping) return;
+        // 画布外只读：不能停止运行。
+        if (!canvasId || !activeRun?.id || stopping) return;
         setStopping(true);
         try {
             await cancelAgentRun(activeRun.id);
@@ -1197,6 +1221,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         submissionRequestRef.current = false;
         presetApplyingRef.current = null;
         setPresetApplyingId("");
+        setHistoryFailedScope("");
         setPendingHydrated(true);
         setBusy(false);
         pendingSubmission.current = null;
@@ -1221,6 +1246,25 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         submissionRequestRef.current = false;
         presetApplyingRef.current = null;
         setPresetApplyingId("");
+        setHistoryFailedScope("");
+        if (!canvasId) {
+            // 画布外只读：只显示消息。不恢复运行（不订阅事件流、不轮询待发队列、不能停止或撤销），也不读取待确认提交。
+            setPendingHydrated(true);
+            setBusy(false);
+            pendingSubmission.current = null;
+            approvalRequestRef.current = null;
+            setApprovalSubmitting(false);
+            setActiveConversationId(conversation.id);
+            setContextUsage(conversation.contextUsage || emptyAgentContextUsage(""));
+            setRun(null);
+            setMessages(conversation.messages);
+            setPermissionMode(conversation.permissionMode);
+            setSelectedSkillIds(conversation.skillIds || []);
+            setApproval(null);
+            setPrompt(conversation.draft || "");
+            setView("chat");
+            return;
+        }
         setPendingHydrated(false);
         setBusy(false);
         pendingSubmission.current = null;
@@ -1465,7 +1509,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                     onApprovalReasonChange={(reason) => setApproval((current) => (current ? { ...current, reason } : current))}
                                     onApprove={(settings) => void submitApproval("approve", settings)}
                                     onReject={() => void submitApproval("reject")}
-                                    footer={undoOffer && !busy ? <AgentRunUndoAction theme={theme} pending={undoingRunId === undoOffer} onUndo={() => void undoRun(undoOffer)} /> : null}
+                                    footer={undoOffer && onCanvas && !busy ? <AgentRunUndoAction theme={theme} pending={undoingRunId === undoOffer} onUndo={() => void undoRun(undoOffer)} /> : null}
                                 />
                                 {planVisible ? (
                                     <AgentPlanBar
@@ -1514,7 +1558,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                 <AgentChatComposer
                                     visible={open}
                                     queuedMessages={<>
-                                        <AgentMessageQueueList key={conversationScope} queue={messageQueue.queue} error={messageQueue.queueError || messageQueue.settingsError} busy={busy || messageQueue.acting} onEdit={messageQueue.edit} onPromote={messageQueue.promote} onRemove={messageQueue.remove} onResume={messageQueue.resume} onRetry={messageQueue.retry} />
+                                        <AgentMessageQueueList key={conversationScope} queue={onCanvas ? messageQueue.queue : undefined} error={messageQueue.queueError || messageQueue.settingsError} busy={busy || messageQueue.acting} onEdit={messageQueue.edit} onPromote={messageQueue.promote} onRemove={messageQueue.remove} onResume={messageQueue.resume} onRetry={messageQueue.retry} />
                                         {pendingSubmission.current?.request && !busy ? <div className="agent-message-queue agent-message-queue-error"><span>发送结果待确认</span><button type="button" onClick={() => { const request = pendingSubmission.current?.request; if (request) void submit(request.prompt, { preserveDraft: true }); }}>重试发送</button></div> : null}
                                     </>}
                                     prompt={prompt}
@@ -1525,7 +1569,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                     theme={theme}
                                     onPromptChange={setPrompt}
                                     onSubmit={(oppositeMode) => void submit(undefined, { oppositeMode })}
-                                    onStop={run?.id && running ? stop : undefined}
+                                    onStop={onCanvas && run?.id && running ? stop : undefined}
                                     stopping={stopping}
                                     sendMode={messageQueue.mode}
                                     sendModeSaving={messageQueue.savingMode || !messageQueue.mode}
@@ -1727,9 +1771,10 @@ export function AgentHeader({
                         shape="circle"
                         icon={docked ? <PictureInPicture2 className="size-4" /> : <PanelRight className="size-4" />}
                         onClick={onToggleDock}
+                        // 标签固定为动作名，开关状态只由 aria-pressed 表达，读屏不会把状态读两遍或读反。
                         aria-pressed={docked}
-                        aria-label={docked ? "改为浮动窗口" : "停靠到画布右侧"}
-                        title={docked ? "改为浮动窗口" : "停靠到画布右侧，画布让出位置不被遮挡"}
+                        aria-label="停靠到画布右侧"
+                        title={docked ? "已停靠到画布右侧，点击改为浮动窗口" : "停靠到画布右侧，画布让出位置不被遮挡"}
                     />
                 ) : null}
                 {onResetLayout ? (

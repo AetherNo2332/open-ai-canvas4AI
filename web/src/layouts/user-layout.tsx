@@ -7,7 +7,9 @@ import { useAgentPanelDock } from "@/components/canvas/use-agent-panel-dock";
 import { cn } from "@/lib/utils";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
 import { getWorkspaceAntThemeConfig } from "@/lib/app-theme";
+import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { GlobalAgentPanelBoundary } from "./global-agent-panel-boundary";
 import "@/styles/workspace-product.css";
 import "@/styles/workspace-menus.css";
 
@@ -25,6 +27,11 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     // Agent 停靠在画布右侧时，工作区让出同样的宽度，画布、顶栏和角落控件都不被遮挡。
     const agentDock = useAgentPanelDock();
     const agentDocked = Boolean(userId) && canvasEditor && agentDock.active;
+    // 告诉停靠判断当前是否在画布路由：画布加载或切换的空档沿用停靠形态，离开画布立即恢复浮动。
+    const setAgentCanvasRoute = useGlobalAgentStore((state) => state.setCanvasRoute);
+    useLayoutEffect(() => {
+        setAgentCanvasRoute(canvasEditor);
+    }, [canvasEditor, setAgentCanvasRoute]);
 
     useLayoutEffect(() => {
         // Ant Design 浮层挂载在 body，必须用路由级标记隔离用户工作台与画布编辑器、运营后台。
@@ -40,9 +47,11 @@ export default function UserLayout({ children }: { children: ReactNode }) {
 
     // 所有登录页面共用同一个面板实例：跨路由不卸载，对话、运行和事件流都不中断。
     const globalAgent = userId ? (
-        <Suspense fallback={null}>
-            <GlobalAgentPanel key={userId} />
-        </Suspense>
+        <GlobalAgentPanelBoundary key={userId}>
+            <Suspense fallback={null}>
+                <GlobalAgentPanel />
+            </Suspense>
+        </GlobalAgentPanelBoundary>
     ) : null;
 
     if (adminWorkspace)

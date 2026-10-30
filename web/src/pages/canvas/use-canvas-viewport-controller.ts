@@ -120,7 +120,8 @@ export function useCanvasViewportController({
             return;
         }
         const rect = container.getBoundingClientRect();
-        const panel = container.ownerDocument.querySelector(".canvas-agent-panel")?.getBoundingClientRect();
+        // 收起的面板保留 DOM（透明、inert），只有打开的面板才遮挡画布。
+        const panel = container.ownerDocument.querySelector('.canvas-agent-panel[data-agent-open="true"]')?.getBoundingClientRect();
         const area = unobscuredCanvasArea(size, panel ? { left: panel.left - rect.left, top: panel.top - rect.top, right: panel.right - rect.left, bottom: panel.bottom - rect.top } : undefined);
         const current = viewportRef.current;
         // 仅更新的节点已在视野内时只轻闪，不移动镜头。

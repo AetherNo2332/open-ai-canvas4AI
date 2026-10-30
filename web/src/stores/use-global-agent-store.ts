@@ -26,19 +26,26 @@ export type AgentPrefillOutcome = "sent" | "queued" | "prefilled" | false;
  */
 export type AgentCanvasContext = {
     canvasId: string;
-    domainProjectId?: string;
     nodeCount: number;
     selectedNodeIds: string[];
     references: CanvasResourceReference[];
+    onFocusNode?: (nodeId: string) => void;
+    /** 以下三项只为与上游字段名保持一致；fork 面板不读取，画布页也不发布，免得每次节点变化都重渲染面板。 */
+    domainProjectId?: string;
     canvasNodes?: readonly CanvasNodeData[];
     runningNodeId?: string | null;
-    onFocusNode?: (nodeId: string) => void;
 };
 
 type GlobalAgentStore = {
     /** 平台唯一 Agent 面板的开合状态，跨路由保持。 */
     open: boolean;
     canvas: AgentCanvasContext | null;
+    /** 当前路由是画布编辑器（由 user-layout 发布）。 */
+    canvasRoute: boolean;
+    /** 进入画布路由后发布过画布上下文。切换或加载画布时上下文会短暂为空，停靠判断沿用这一位，不闪成浮动窗口。 */
+    canvasHeld: boolean;
+    /** 面板代码加载失败：之后的投递直接按 false 结束，不在 store 里留下无人消费的请求。 */
+    panelUnavailable: boolean;
     /** 待面板消费的一次性输入；同一 id 只消费一次。 */
     prefillRequest: AgentPrefillRequest | null;
     /** 本机 UI 偏好：在画布里是否停靠到右侧，以及停靠宽度。账号切换不影响。 */
@@ -46,6 +53,7 @@ type GlobalAgentStore = {
     openAgent: () => void;
     closeAgent: () => void;
     setCanvas: (canvas: AgentCanvasContext | null) => void;
+    setCanvasRoute: (canvasRoute: boolean) => void;
     setDocked: (docked: boolean) => void;
     setDockWidth: (width: number) => void;
     reset: () => void;
@@ -128,6 +136,9 @@ function settleWaiter(id: number, outcome: AgentPrefillOutcome) {
 export const useGlobalAgentStore = create<GlobalAgentStore>()((set, get) => ({
     open: false,
     canvas: null,
+    canvasRoute: false,
+    canvasHeld: false,
+    panelUnavailable: false,
     prefillRequest: null,
     dock: readAgentPanelDockPreference(),
     openAgent: () => set({ open: true }),
@@ -139,8 +150,10 @@ export const useGlobalAgentStore = create<GlobalAgentStore>()((set, get) => ({
             // 离开或切换画布时，发给旧画布的待消费输入作废。
             const stalePrefill = state.prefillRequest && state.prefillRequest.canvasId !== next?.canvasId ? state.prefillRequest : null;
             if (stalePrefill) settleWaiter(stalePrefill.id, false);
-            return stalePrefill ? { canvas: next, prefillRequest: null } : { canvas: next };
+            const held = { canvas: next, canvasHeld: next !== null || state.canvasHeld };
+            return stalePrefill ? { ...held, prefillRequest: null } : held;
         }),
+    setCanvasRoute: (canvasRoute) => set((state) => (state.canvasRoute === canvasRoute ? state : { canvasRoute, canvasHeld: canvasRoute && state.canvasHeld })),
     setDocked: (docked) => {
         const dock = { ...get().dock, docked };
         set({ dock });
@@ -155,16 +168,33 @@ export const useGlobalAgentStore = create<GlobalAgentStore>()((set, get) => ({
     reset: () => {
         const pending = get().prefillRequest;
         if (pending) settleWaiter(pending.id, false);
-        set({ open: false, canvas: null, prefillRequest: null });
+        // 新账号重新挂载面板；若代码块仍然失败，错误边界会再次标记。
+        set({ open: false, canvas: null, canvasHeld: false, panelUnavailable: false, prefillRequest: null });
     },
 }));
+
+/** 停靠判断用的“在画布里”：有画布上下文，或仍在画布路由且之前发布过（加载 / 切换画布的空档）。 */
+export function selectAgentOnCanvas(state: Pick<GlobalAgentStore, "canvas" | "canvasRoute" | "canvasHeld">) {
+    return state.canvas !== null || (state.canvasRoute && state.canvasHeld);
+}
+
+/**
+ * 面板代码块加载失败时由布局层的错误边界调用：结束正在等待的投递，并让之后的投递立即返回 false，
+ * 调用方不会因为一条无人消费的请求而永远被“已有请求”拒绝。
+ */
+export function markAgentPanelUnavailable() {
+    const pending = useGlobalAgentStore.getState().prefillRequest;
+    if (pending) settleWaiter(pending.id, false);
+    useGlobalAgentStore.setState({ panelUnavailable: true, prefillRequest: null });
+}
 
 /**
  * 画布页向全局面板投递一次输入（替代旧的 ref.sendPrompt）。返回面板处理结果。
  * 与旧 sendPrompt 一样先到先得：已有请求尚未被面板取走时，新请求直接按 false 结束，重复点击不会重复提交。
  */
 export function requestAgentPrefill(input: AgentPrefillInput): Promise<AgentPrefillOutcome> {
-    if (useGlobalAgentStore.getState().prefillRequest) return Promise.resolve(false);
+    const state = useGlobalAgentStore.getState();
+    if (state.panelUnavailable || state.prefillRequest) return Promise.resolve(false);
     const request: AgentPrefillRequest = { ...input, id: ++prefillSequence };
     const outcome = new Promise<AgentPrefillOutcome>((resolve) => prefillWaiters.set(request.id, resolve));
     useGlobalAgentStore.setState({ prefillRequest: request });

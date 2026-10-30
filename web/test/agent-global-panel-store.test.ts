@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { AGENT_DOCK_DEFAULT_WIDTH, AGENT_DOCK_MIN_VIEWPORT, AGENT_PANEL_DOCK_KEY, LEGACY_AGENT_PANEL_WIDTH_KEY, agentDockWidthBounds, clampAgentDockWidth, migrateAgentPanelDock } from "@/lib/canvas/agent-panel-dock";
-import { readAgentPanelDockPreference, requestAgentPrefill, settleAgentPrefill, stabilizeCanvasContext, takeAgentPrefill, useGlobalAgentStore, type AgentCanvasContext } from "@/stores/use-global-agent-store";
+import {
+    markAgentPanelUnavailable,
+    readAgentPanelDockPreference,
+    requestAgentPrefill,
+    selectAgentOnCanvas,
+    settleAgentPrefill,
+    stabilizeCanvasContext,
+    takeAgentPrefill,
+    useGlobalAgentStore,
+    type AgentCanvasContext,
+} from "@/stores/use-global-agent-store";
 import { DIRECTOR_OPEN_EVENT, dispatchDirectorOpen, subscribeDirectorOpen, type DirectorOpenRunEvent } from "@/lib/canvas/agent-director-launch";
 
 const memory = new Map<string, string>();
@@ -23,7 +33,7 @@ const context = (patch: Partial<AgentCanvasContext> = {}): AgentCanvasContext =>
 beforeEach(() => {
     memory.clear();
     Object.defineProperty(globalThis, "localStorage", { configurable: true, writable: true, value: storage });
-    useGlobalAgentStore.setState({ open: false, canvas: null, prefillRequest: null });
+    useGlobalAgentStore.setState({ open: false, canvas: null, canvasRoute: false, canvasHeld: false, panelUnavailable: false, prefillRequest: null });
 });
 afterEach(() => {
     if (previousStorage) Object.defineProperty(globalThis, "localStorage", previousStorage);
@@ -89,6 +99,42 @@ describe("prefill requests", () => {
         expect(await first).toBe("prefilled");
         void requestAgentPrefill({ canvasId: "canvas-a", userScope: "user-a", text: "three" });
         expect(useGlobalAgentStore.getState().prefillRequest!.id).toBeGreaterThan(firstId);
+    });
+});
+
+describe("panel chunk failure", () => {
+    test("settles the waiting prefill and refuses later ones immediately until the next account mount", async () => {
+        const pending = requestAgentPrefill({ canvasId: "canvas-a", userScope: "user-a", text: "hi", autoSubmit: true });
+        markAgentPanelUnavailable();
+        expect(await pending).toBe(false);
+        expect(useGlobalAgentStore.getState().prefillRequest).toBeNull();
+        expect(await requestAgentPrefill({ canvasId: "canvas-a", userScope: "user-a", text: "again" })).toBe(false);
+        expect(useGlobalAgentStore.getState().prefillRequest).toBeNull();
+        useGlobalAgentStore.getState().reset();
+        void requestAgentPrefill({ canvasId: "canvas-a", userScope: "user-b", text: "new account" });
+        expect(useGlobalAgentStore.getState().prefillRequest?.text).toBe("new account");
+    });
+});
+
+describe("dock shell during canvas load and switch", () => {
+    test("keeps the canvas decision while the context is briefly empty on a canvas route", () => {
+        const store = useGlobalAgentStore.getState();
+        store.setCanvasRoute(true);
+        // 首次进入画布、尚未发布上下文：还不算在画布里。
+        expect(selectAgentOnCanvas(useGlobalAgentStore.getState())).toBe(false);
+        store.setCanvas(context());
+        expect(selectAgentOnCanvas(useGlobalAgentStore.getState())).toBe(true);
+        // 切换画布：旧画布撤回上下文，新画布尚未加载完。
+        store.setCanvas(null);
+        expect(selectAgentOnCanvas(useGlobalAgentStore.getState())).toBe(true);
+        store.setCanvas(context({ canvasId: "canvas-b" }));
+        expect(selectAgentOnCanvas(useGlobalAgentStore.getState())).toBe(true);
+        // 离开画布路由后立即不再停靠。
+        store.setCanvas(null);
+        store.setCanvasRoute(false);
+        expect(selectAgentOnCanvas(useGlobalAgentStore.getState())).toBe(false);
+        store.setCanvasRoute(true);
+        expect(selectAgentOnCanvas(useGlobalAgentStore.getState())).toBe(false);
     });
 });
 

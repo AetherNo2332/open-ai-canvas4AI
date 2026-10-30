@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import { AGENT_DOCK_MIN_VIEWPORT, agentDockWidthBounds, clampAgentDockWidth } from "@/lib/canvas/agent-panel-dock";
-import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
+import { selectAgentOnCanvas, useGlobalAgentStore } from "@/stores/use-global-agent-store";
 
 function subscribeViewport(onChange: () => void) {
     window.addEventListener("resize", onChange);
@@ -17,7 +17,8 @@ const serverViewportWidth = () => 0;
  */
 export function useAgentPanelDock() {
     const open = useGlobalAgentStore((state) => state.open);
-    const onCanvas = useGlobalAgentStore((state) => state.canvas !== null);
+    // 画布加载或切换时上下文会短暂为空；仍在画布路由就沿用停靠形态，不闪成浮动窗口。
+    const onCanvas = useGlobalAgentStore(selectAgentOnCanvas);
     const docked = useGlobalAgentStore((state) => state.dock.docked);
     const storedWidth = useGlobalAgentStore((state) => state.dock.width);
     const width = useSyncExternalStore(subscribeViewport, viewportWidth, serverViewportWidth);

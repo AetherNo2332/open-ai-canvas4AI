@@ -707,7 +707,9 @@ test("viewport below 960px falls back to the floating window and hides the dock 
 test("dock toggle uses aria-pressed and switches between docked and floating", async () => {
     const mounted = await mount();
     try {
-        const toggle = () => mounted.aside().querySelector<HTMLButtonElement>('[aria-label="改为浮动窗口"], [aria-label="停靠到画布右侧"]')!;
+        // 标签固定，状态只由 aria-pressed 表达。
+        const toggle = () => mounted.aside().querySelector<HTMLButtonElement>('[aria-label="停靠到画布右侧"]')!;
+        expect(mounted.aside().querySelector('[aria-label="改为浮动窗口"]')).toBeNull();
         expect(toggle().getAttribute("aria-pressed")).toBe("true");
         await act(async () => {
             toggle().click();

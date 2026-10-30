@@ -8,6 +8,7 @@ import { Camera, Check, ChevronDown, ChevronRight, Ellipsis, Grid3x3, Palette, P
 import { canvasDockStyle } from "@/lib/canvas/canvas-aceternity-style";
 import { avoidCanvasNodePanels, canvasNodePanelBounds, canvasOverlayBounds, canvasToolbarLayoutLevel, observeCanvasOverlayBounds, subscribeCanvasNodePanelBounds } from "@/lib/canvas/canvas-overlay-layout";
 import { ASSET_CATEGORY_OPTIONS } from "@/lib/asset-category";
+import { canvasOverlayRightEdge } from "@/lib/canvas/overlay-viewport";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { resolveNodeToolbarPlacement, resolveToolbarTools, type NodeToolbarGroup, type ToolContext, type ToolbarHandlers } from "@/lib/canvas/tool-registry";
 import { subscribeCanvasGraphicsViewportPreview, subscribeCanvasNodeDragPreview } from "@/lib/canvas/canvas-live-viewport";
@@ -448,9 +449,10 @@ function NodeDockMenuButton({ menuId, label, icon, tools, openMenuId, onOpenChan
             const height = picker.offsetHeight;
             const gap = 4;
             const inset = 12;
-            const preferredLeft = anchor.right + gap + width <= window.innerWidth - inset
+            const right = canvasOverlayRightEdge();
+            const preferredLeft = anchor.right + gap + width <= right - inset
                 ? anchor.right + gap : anchor.left - width - gap;
-            const left = Math.max(inset, Math.min(preferredLeft, window.innerWidth - width - inset));
+            const left = Math.max(inset, Math.min(preferredLeft, right - width - inset));
             const top = Math.max(inset, Math.min(anchor.top, window.innerHeight - height - inset));
             picker.style.left = `${left - anchor.left}px`;
             picker.style.top = `${top - anchor.top}px`;

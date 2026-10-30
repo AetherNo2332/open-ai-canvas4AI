@@ -3,6 +3,7 @@ import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 
 import { getNodeInputKind } from "@/lib/canvas/node-registry";
+import { canvasOverlayRightEdge } from "@/lib/canvas/overlay-viewport";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import {
     createDefaultMediaConversionState,
@@ -392,7 +393,7 @@ function OperationPicker({ theme, nodeId, value, disabled, onSelect }: { theme: 
         const spaceBelow = window.innerHeight - rect.bottom - OPERATION_MENU_MARGIN;
         const spaceAbove = rect.top - OPERATION_MENU_MARGIN;
         const openAbove = spaceBelow < menuHeight + OPERATION_MENU_GAP || spaceAbove >= spaceBelow;
-        const maxLeft = Math.max(OPERATION_MENU_MARGIN, window.innerWidth - menuWidth - OPERATION_MENU_MARGIN);
+        const maxLeft = Math.max(OPERATION_MENU_MARGIN, canvasOverlayRightEdge() - menuWidth - OPERATION_MENU_MARGIN);
         const maxTop = Math.max(OPERATION_MENU_MARGIN, window.innerHeight - menuHeight - OPERATION_MENU_MARGIN);
         const left = Math.min(Math.max(OPERATION_MENU_MARGIN, rect.left), maxLeft);
         const top = openAbove
@@ -445,7 +446,7 @@ function OperationPicker({ theme, nodeId, value, disabled, onSelect }: { theme: 
         ? createPortal(
               <>
                   <div
-                      className="fixed inset-0 z-[calc(var(--z-toast)-1)]"
+                      className="fixed inset-0 z-[var(--z-agent-overlay)]"
                       aria-hidden="true"
                       onMouseDown={(event) => { event.stopPropagation(); setOpen(false); }}
                       onPointerDown={(event) => event.stopPropagation()}
@@ -456,7 +457,7 @@ function OperationPicker({ theme, nodeId, value, disabled, onSelect }: { theme: 
                       role="listbox"
                       aria-label="转换方式"
                       data-canvas-no-zoom
-                      className="fixed z-[var(--z-toast)] overflow-hidden rounded-[var(--r-lg)] border"
+                      className="fixed z-[var(--z-agent-overlay)] overflow-hidden rounded-[var(--r-lg)] border"
                       style={menuStyle}
                       onMouseDown={(event) => event.stopPropagation()}
                       onPointerDown={(event) => event.stopPropagation()}
