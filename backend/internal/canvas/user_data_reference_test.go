@@ -53,24 +53,70 @@ func TestOperationsPreserveReferenceFields(t *testing.T) {
 	}
 }
 
-// 浏览器 create_canvas 建出的空画布没有历史连线，必须直接标记为声明式引用，
-// 否则 Agent 的生成与引用写入会被历史画布迁移门禁拦下。
-func TestCreateCanvasOperationUsesDeclarativeReferences(t *testing.T) {
-	svc := newCanvasOperationTestService(t)
-	request := CanvasOperationsRequest{MutationID: "create", Operations: []CanvasOperation{{Type: "create_canvas", ID: "canvas",
-		Patch: map[string]json.RawMessage{"title": json.RawMessage(`"新画布"`)}}}}
-	if _, err := svc.ApplyUserCanvasOperations("user", "canvas", request); err != nil {
-		t.Fatal(err)
+// 浏览器 create_canvas 建出的新画布与命令层建画布一致使用声明式引用；同一请求带入
+// 历史节点与连线（导入、离线首次同步）时先规范化，有冲突则保持历史画布。
+func TestCreateCanvasOperationAdoptsDeclarativeReferences(t *testing.T) {
+	create := func(t *testing.T, id string, extra ...CanvasOperation) map[string]any {
+		t.Helper()
+		svc := newCanvasOperationTestService(t)
+		operations := append([]CanvasOperation{{Type: "create_canvas", ID: id, Patch: map[string]json.RawMessage{"title": json.RawMessage(`"新画布"`)}}}, extra...)
+		if _, err := svc.ApplyUserCanvasOperations("user", id, CanvasOperationsRequest{MutationID: "create-" + id, Operations: operations}); err != nil {
+			t.Fatal(err)
+		}
+		project, err := svc.repo.CanvasProjectForUser("user", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved map[string]any
+		if err := json.Unmarshal([]byte(project.PayloadJSON), &saved); err != nil {
+			t.Fatal(err)
+		}
+		return saved
 	}
-	project, err := svc.repo.CanvasProjectForUser("user", "canvas")
-	if err != nil {
-		t.Fatal(err)
+	node := func(raw string) CanvasOperation {
+		return CanvasOperation{Type: "create_node", Node: json.RawMessage(raw)}
 	}
-	var saved map[string]any
-	if err := json.Unmarshal([]byte(project.PayloadJSON), &saved); err != nil {
-		t.Fatal(err)
+	edge := func(raw string) CanvasOperation {
+		return CanvasOperation{Type: "create_connection", Connection: json.RawMessage(raw)}
 	}
-	if saved["referenceFieldsVersion"] != float64(1) {
-		t.Fatalf("referenceFieldsVersion = %#v, want 1", saved["referenceFieldsVersion"])
-	}
+
+	t.Run("empty", func(t *testing.T) {
+		if saved := create(t, "empty"); saved["referenceFieldsVersion"] != float64(1) {
+			t.Fatalf("referenceFieldsVersion = %#v, want 1", saved["referenceFieldsVersion"])
+		}
+	})
+	t.Run("legacy edge is normalized into a field", func(t *testing.T) {
+		saved := create(t, "imported",
+			node(`{"id":"img","type":"image","title":"参考图","metadata":{}}`),
+			node(`{"id":"clip","type":"video","title":"视频","metadata":{}}`),
+			edge(`{"id":"legacy","fromNodeId":"img","toNodeId":"clip"}`))
+		if saved["referenceFieldsVersion"] != float64(1) {
+			t.Fatalf("referenceFieldsVersion = %#v, want 1", saved["referenceFieldsVersion"])
+		}
+		for _, item := range saved["nodes"].([]any) {
+			if n := item.(map[string]any); n["id"] == "clip" {
+				spec, _ := n["metadata"].(map[string]any)["generationSpec"].(map[string]any)
+				if bindings, _ := spec["referenceBindings"].([]any); len(bindings) != 1 {
+					t.Fatalf("legacy edge was not normalized into referenceBindings: %#v", n["metadata"])
+				}
+			}
+		}
+	})
+	t.Run("conflict stays legacy", func(t *testing.T) {
+		saved := create(t, "conflict",
+			node(`{"id":"hero","type":"text","metadata":{"workflowKind":"character","characterAssetId":"hero-asset"}}`),
+			node(`{"id":"scene","type":"image","metadata":{}}`),
+			node(`{"id":"board","type":"script","metadata":{"storyboard":{"referenceNodeIds":[],"rows":[{"id":"shot","assetBindings":[{"nodeId":"hero","role":"character","priority":100}],"imageNodeId":"old-product","videoNodeId":"old-clip"}]}}}`),
+			node(`{"id":"old-product","type":"image","metadata":{}}`),
+			node(`{"id":"old-clip","type":"video","metadata":{}}`),
+			node(`{"id":"new-product","type":"image","metadata":{}}`),
+			edge(`{"id":"row-scene","fromNodeId":"scene","toNodeId":"board","toHandleId":"row:shot"}`),
+			edge(`{"id":"output-new","fromNodeId":"board","toNodeId":"new-product","fromHandleId":"row:shot"}`))
+		if _, marked := saved["referenceFieldsVersion"]; marked {
+			t.Fatalf("conflicting import was marked declarative: %#v", saved["referenceFieldsVersion"])
+		}
+		if edges := saved["connections"].([]any); len(edges) != 2 {
+			t.Fatalf("conflicting import connections changed: %#v", edges)
+		}
+	})
 }

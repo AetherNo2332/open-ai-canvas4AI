@@ -325,13 +325,10 @@ func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasO
 				if create.ID != "" && create.ID != canvasID {
 					return kernel.BadAuthRequest("画布创建操作的 ID 与请求路径不一致")
 				}
-				// 新画布从空文档开始，没有需要规范化的历史连线，与 commands.Service.Create
-				// 一样直接使用声明式引用；否则 Agent 会把每张新画布都当作待迁移的历史画布。
 				payload = map[string]json.RawMessage{
-					"id":                     jsonRawValue(canvasID),
-					"referenceFieldsVersion": jsonRawValue(references.Version),
-					"nodes":                  json.RawMessage(`[]`),
-					"connections":            json.RawMessage(`[]`),
+					"id":          jsonRawValue(canvasID),
+					"nodes":       json.RawMessage(`[]`),
+					"connections": json.RawMessage(`[]`),
 				}
 				for field, value := range create.Patch {
 					if !allowedCanvasOperationField(field) {
@@ -357,6 +354,11 @@ func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasO
 					return err
 				}
 				return kernel.BadAuthRequest(err.Error())
+			}
+			if isCreate {
+				if err := adoptDeclarativeReferences(payload); err != nil {
+					return err
+				}
 			}
 			delete(payload, "revision")
 			delete(payload, "remoteContentHash")
@@ -652,4 +654,34 @@ func parseClientTime(value string, fallback time.Time) time.Time {
 		return parsed
 	}
 	return fallback
+}
+
+// adoptDeclarativeReferences 让新建画布与 commands.Service.Create 一样使用声明式引用，
+// 否则 Agent 会把每张新画布都当作待迁移的历史画布。同一请求带入节点与连线（导入、
+// 离线后首次同步）时先按历史画布规范化：无冲突才采用规范化结果，有冲突则保持历史
+// 画布，不在未核对字段与连线时直接打标记。
+func adoptDeclarativeReferences(payload map[string]json.RawMessage) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return err
+	}
+	migrated, err := references.NormalizeLegacy(doc, nil, nil, nil)
+	if err != nil {
+		return err
+	}
+	if len(migrated.Conflicts) > 0 {
+		return nil
+	}
+	for _, field := range []string{"referenceFieldsVersion", "nodes", "connections"} {
+		value, err := json.Marshal(migrated.Document[field])
+		if err != nil {
+			return err
+		}
+		payload[field] = value
+	}
+	return nil
 }

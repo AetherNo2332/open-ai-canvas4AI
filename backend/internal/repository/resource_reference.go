@@ -98,14 +98,15 @@ func (r *Repository) CanvasCommandResourceReferences(resourceIDs []string, viewe
 		return refs, nil
 	}
 	var rows []struct {
-		CanvasID   string
-		Kind       string
-		ResourceID string
-		Title      string
-		OwnerID    string
+		CanvasID     string
+		Kind         string
+		ResourceID   string
+		Title        string
+		OwnerID      string
+		CanvasExists bool
 	}
 	if err := r.db.Table("canvas_command_resources AS refs").
-		Select("refs.canvas_id, refs.kind, refs.resource_id, canvas_projects.title, canvas_projects.user_id AS owner_id").
+		Select("refs.canvas_id, refs.kind, refs.resource_id, canvas_projects.title, refs.owner_id, canvas_projects.id IS NOT NULL AS canvas_exists").
 		Joins("LEFT JOIN canvas_projects ON canvas_projects.id = refs.canvas_id").
 		Where("refs.resource_id IN ?", resourceIDs).Distinct().Scan(&rows).Error; err != nil {
 		return nil, err
@@ -117,6 +118,8 @@ func (r *Repository) CanvasCommandResourceReferences(resourceIDs []string, viewe
 		}
 		if len(viewerID) > 0 && row.OwnerID != viewerID[0] {
 			row.CanvasID, row.Title = "", "其他用户的画布"
+		} else if !row.CanvasExists {
+			row.Title = "已删除的画布"
 		}
 		refs = append(refs, ResourceDirectReference{Kind: kind, ID: row.CanvasID, Title: row.Title, ResourceID: row.ResourceID})
 	}

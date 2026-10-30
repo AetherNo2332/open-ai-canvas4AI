@@ -89,6 +89,20 @@ func TestResourceReferenceSnapshotHidesOtherOwnersCanvas(t *testing.T) {
 	}
 }
 
+func TestResourceReferenceSnapshotLabelsOwnDeletedCanvas(t *testing.T) {
+	db, repo := commandResourceTestDB(t)
+	if err := db.Create(&model.CanvasCommandResource{OwnerID: "user", CanvasID: "gone", Epoch: "e1", OperationID: "op-1", Kind: "history", ResourceID: "r1"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := repo.ResourceReferenceSnapshotExcludingAssets("user", nil, []string{"r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Direct) != 1 || snapshot.Direct[0].ID != "gone" || snapshot.Direct[0].Title != "已删除的画布" {
+		t.Fatalf("own deleted canvas must keep its id and be labelled deleted: %#v", snapshot.Direct)
+	}
+}
+
 func TestDeleteDetachedResourcesKeepsCommandReferenced(t *testing.T) {
 	db, repo := commandResourceTestDB(t)
 	resource := model.Resource{ID: "r1", UserID: "user", Provider: "local", ObjectKey: "users/user/r1.png", Status: model.ResourceStatusReady}

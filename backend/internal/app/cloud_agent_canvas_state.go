@@ -549,7 +549,7 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 	migration := map[string]any{"required": !references.Enabled(doc)}
 	if !references.Enabled(doc) {
 		migration["reason"] = "reference_migration_required"
-		migration["nextAction"] = "请用户在画布迁移面板完成引用规范化后再关联资产；不要重试或改写其他字段来替代绑定"
+		migration["nextAction"] = "这是旧版引用格式的画布，Agent 暂不能在其上关联素材或生成媒体；请如实告知用户，建议在新建的画布上继续；不要重试或改写其他字段来替代绑定"
 	}
 	result["referenceMigration"] = migration
 	if selectedMode {

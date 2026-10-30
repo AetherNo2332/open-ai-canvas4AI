@@ -36,7 +36,9 @@ export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = pr
     // 被检查的改动：其第二父提交即改动内容，不能当作旧文件，只沿它的首父链继续找。
     const legacyRefs = base ? [base] : [];
     if (base) {
-        const tip = headParents.length > 1 && headParents[0] === base ? headParents[1] : head;
+        // 基线分支在事件之后又前进时，合成合并的首父提交会晚于 base，按祖先关系判断。
+        const landsOnBase = headParents.length > 1 && spawnSync("git", ["merge-base", "--is-ancestor", base, headParents[0]], { cwd }).status === 0;
+        const tip = landsOnBase ? headParents[1] : head;
         for (const line of git(["rev-list", "--merges", "--first-parent", "--parents", tip, `^${base}`]).split("\n")) {
             legacyRefs.push(...line.trim().split(" ").slice(2).filter(Boolean));
         }
