@@ -460,6 +460,12 @@
 /* 状态行的图标只是语义标记，不应把正文向右推成另一条内容轴。 */
 .agent-status-message {
     min-width: 0;
+    line-height: 1.45;
+}
+
+/* 系统提示（已停止、已撤销等）是旁注，弱于正文与操作行（与上游一致）。 */
+.agent-status-message--system {
+    opacity: 0.78;
 }
 
 .agent-message-user {
@@ -2898,3 +2904,238 @@
     }
 }
 /* agent-chat-motion:end */
+
+/* ===== Agent 活动流（对齐上游 ddcat：思考过程与操作记录共用一套行几何）===== */
+/* 交互期只暂停需要逐帧重绘文字的流光；不用 `*`，否则每次平移、拖拽开始和结束都要重算面板内全部元素的样式。 */
+:root:has([data-canvas-viewport-interacting="true"], [data-canvas-node-dragging="true"]) .canvas-agent-panel :is(.agent-operation-latest, .agent-activity-title),
+:root:has([data-canvas-viewport-interacting="true"], [data-canvas-node-dragging="true"]) .canvas-agent-panel .agent-activity-glyph::after {
+    animation-play-state: paused;
+}
+
+/*
+ * Agent 活动流：思考过程与操作记录共用一套行几何（20px 图标块 + 标题 + 单行摘要 + 计数 + 箭头），
+ * 两者交替出现时读起来是一条整齐的步骤列表，而不是一排粗细不一的灰条。
+ *
+ * 类别只靠图标块的色调区分：色值取自节点调色板（读 = 音频蓝、创建 = 图片琥珀、
+ * 修改 = 画框绿、其他 = 配置灰），查看画面跟随画布主题强调色，思考是偏中性的主题色。
+ * 展开内容挂在图标中线的一根细导线下，与标题文字左对齐。
+ */
+.agent-activity,
+.agent-tool-row,
+.agent-tool-retry {
+    --agent-activity-ink: var(--agent-ink, var(--foreground));
+    --agent-tone: color-mix(in srgb, var(--agent-activity-ink) 55%, transparent);
+}
+
+:is(.agent-activity, .agent-tool-row, .agent-tool-retry)[data-agent-tone="think"] {
+    --agent-tone: color-mix(in srgb, var(--agent-reasoning-accent, var(--agent-accent, var(--agent-activity-ink))) 45%, var(--agent-activity-ink));
+}
+
+:is(.agent-activity, .agent-tool-row, .agent-tool-retry)[data-agent-tone="read"] {
+    --agent-tone: var(--palette-node-audio);
+}
+
+:is(.agent-activity, .agent-tool-row, .agent-tool-retry)[data-agent-tone="vision"] {
+    --agent-tone: var(--agent-accent, var(--palette-node-script));
+}
+
+:is(.agent-activity, .agent-tool-row, .agent-tool-retry)[data-agent-tone="create"] {
+    --agent-tone: var(--palette-node-image);
+}
+
+:is(.agent-activity, .agent-tool-row, .agent-tool-retry)[data-agent-tone="operate"] {
+    --agent-tone: var(--palette-node-frame);
+}
+
+:is(.agent-activity, .agent-tool-row, .agent-tool-retry)[data-agent-tone="other"] {
+    --agent-tone: var(--palette-node-config);
+}
+
+:is(.agent-activity, .agent-tool-row, .agent-tool-retry)[data-agent-tone="warning"] {
+    --agent-tone: var(--palette-status-warning);
+}
+
+:is(.agent-activity, .agent-tool-row, .agent-tool-retry)[data-agent-tone="error"] {
+    --agent-tone: var(--palette-status-error);
+}
+
+.agent-activity {
+    min-width: 0;
+}
+
+/* 连续的思考 / 操作行收成一组，组与正文之间保留消息列表的常规间距。 */
+.agent-activity + .agent-activity {
+    margin-top: 2px;
+}
+
+.agent-activity-row {
+    display: flex;
+    width: calc(100% + 12px);
+    min-width: 0;
+    min-height: 30px;
+    align-items: center;
+    gap: 8px;
+    margin-inline: -6px;
+    border: 0;
+    border-radius: var(--menu-radius);
+    background: transparent;
+    padding: 5px 6px;
+    color: color-mix(in srgb, var(--agent-activity-ink) 50%, transparent);
+    font: inherit;
+    font-size: var(--fs-caption);
+    line-height: 18px;
+    list-style: none;
+    text-align: left;
+    cursor: pointer;
+    user-select: none;
+    transition:
+        background-color var(--motion-instant) ease-out,
+        color var(--motion-instant) ease-out;
+}
+
+.agent-activity-row::-webkit-details-marker {
+    display: none;
+}
+
+.agent-activity-row:hover {
+    background: color-mix(in srgb, var(--agent-activity-ink) 4.5%, transparent);
+}
+
+.agent-activity-row:focus-visible {
+    outline: 2px solid var(--agent-focus-ring, var(--ring));
+    outline-offset: 0;
+}
+
+.agent-activity-glyph {
+    position: relative;
+    display: grid;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+    place-items: center;
+    border-radius: calc(var(--menu-radius) * 0.75);
+    background: color-mix(in srgb, var(--agent-tone) 13%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--agent-tone) 15%, transparent);
+    color: color-mix(in srgb, var(--agent-tone) 80%, var(--agent-activity-ink));
+    font-size: 13px;
+}
+
+/* 仍在推进的一段：图标块外圈缓慢呼吸，不让整行闪烁。 */
+.agent-activity.is-live .agent-activity-glyph::after {
+    position: absolute;
+    inset: -3px;
+    border: 1px solid color-mix(in srgb, var(--agent-tone) 40%, transparent);
+    border-radius: var(--menu-radius);
+    content: "";
+    animation: agent-activity-breathe 1.8s ease-in-out infinite;
+    pointer-events: none;
+}
+
+.agent-activity-title {
+    flex: 0 0 auto;
+    color: color-mix(in srgb, var(--agent-activity-ink) 84%, transparent);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.agent-activity-detail {
+    min-width: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-activity-meta {
+    flex: 0 0 auto;
+    border-radius: var(--button-radius);
+    background: color-mix(in srgb, var(--agent-activity-ink) 6%, transparent);
+    padding: 0 6px;
+    color: color-mix(in srgb, var(--agent-activity-ink) 50%, transparent);
+    font-size: var(--fs-label);
+    font-variant-numeric: tabular-nums;
+    line-height: 16px;
+}
+
+.agent-activity-chevron {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 12px;
+    color: color-mix(in srgb, var(--agent-activity-ink) 40%, transparent);
+    transition:
+        opacity var(--motion-instant) ease-out,
+        transform var(--motion-instant) ease-out;
+}
+
+.agent-activity[open] > .agent-activity-row .agent-activity-chevron,
+.agent-activity.is-open > .agent-activity-row .agent-activity-chevron,
+.agent-tool-retry[open] > summary .agent-activity-chevron {
+    transform: rotate(90deg);
+}
+
+.agent-activity[open] > .agent-activity-row .agent-activity-title,
+.agent-activity.is-open > .agent-activity-row .agent-activity-title,
+.agent-activity-row:hover .agent-activity-title {
+    color: var(--agent-activity-ink);
+}
+
+.agent-activity-body {
+    position: relative;
+    min-width: 0;
+    padding: 2px 0 6px 28px;
+}
+
+/* 细导线落在 20px 图标块的中线上（行左侧 -6px 外扩 + 6px 内边距 = 0）。 */
+.agent-activity-body::before {
+    position: absolute;
+    top: 0;
+    bottom: 6px;
+    left: 9.5px;
+    width: 1px;
+    border-radius: 1px;
+    background: color-mix(in srgb, var(--agent-activity-ink) 10%, transparent);
+    content: "";
+}
+
+/* ---- 思考过程 ---- */
+
+.agent-reasoning[open] .agent-reasoning-preview {
+    display: none;
+}
+
+/* ---- 操作记录 ---- */
+
+.agent-operation-feed.is-failed > .agent-activity-row {
+    background: color-mix(in srgb, var(--palette-status-error) 6%, transparent);
+}
+
+.agent-operation-feed.is-failed .agent-operation-latest {
+    --agent-operation-ink: var(--palette-status-error);
+    color: color-mix(in srgb, var(--palette-status-error) 85%, var(--agent-activity-ink));
+}
+
+.agent-tool-step .agent-activity-chevron {
+    margin-top: 3px;
+}
+
+@keyframes agent-activity-breathe {
+    0%,
+    100% {
+        opacity: 0;
+        transform: scale(0.86);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .agent-activity.is-live .agent-activity-glyph::after {
+        animation: none;
+    }
+    .agent-activity-row,
+    .agent-activity-chevron {
+        transition: none;
+    }
+}

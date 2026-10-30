@@ -525,7 +525,7 @@ test("close retains the real conversation, message DOM, reading position and dis
         const aside = mounted.aside();
         const conversation = aside.querySelector<HTMLElement>("[data-agent-conversation]")!;
         const message = conversation.querySelector(".agent-message-body")!;
-        const disclosure = conversation.querySelector<HTMLButtonElement>(".agent-reasoning-summary")!;
+        const disclosure = conversation.querySelector<HTMLButtonElement>(".agent-reasoning > .agent-activity-row")!;
         expect(message).not.toBeNull();
         expect(conversation.textContent).toContain("A user message");
         await act(async () => disclosure.click());
@@ -544,7 +544,7 @@ test("close retains the real conversation, message DOM, reading position and dis
         await mounted.render(true);
         expect(mounted.aside().querySelector("[data-agent-conversation]")).toBe(conversation);
         expect(conversation.querySelector(".agent-message-body") === message).toBe(true);
-        expect(conversation.querySelector(".agent-reasoning-summary")).toBe(disclosure);
+        expect(conversation.querySelector(".agent-reasoning > .agent-activity-row")).toBe(disclosure);
         expect(disclosure.getAttribute("aria-expanded")).toBe("true");
         expect(conversation.scrollTop).toBe(175);
         expect(aside.hasAttribute("inert")).toBe(false);
@@ -594,10 +594,10 @@ test("reopening preserves the reading position without restoring to the end", as
 test("reopening preserves the real reasoning component's local disclosure state", async () => {
     const mounted = await mount();
     try {
-        await act(async () => mounted.aside().querySelector<HTMLButtonElement>(".agent-reasoning-summary")!.click());
+        await act(async () => mounted.aside().querySelector<HTMLButtonElement>(".agent-reasoning > .agent-activity-row")!.click());
         await mounted.render(false);
         await mounted.render(true);
-        expect(mounted.aside().querySelector(".agent-reasoning-summary")!.getAttribute("aria-expanded")).toBe("true");
+        expect(mounted.aside().querySelector(".agent-reasoning > .agent-activity-row")!.getAttribute("aria-expanded")).toBe("true");
     } finally {
         await mounted.close();
     }

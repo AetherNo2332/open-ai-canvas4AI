@@ -60,7 +60,15 @@ export function applyAgentEvent(
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: agentPermissionChangedText(payload.from, payload.to), detail: { ...payload, eventType: event.type } }));
         return;
     }
-    if (event.type === "permission_notice_delivered") return;
+    if (event.type === "permission_notice_delivered" || event.type === "generation_notice_delivered") return;
+    if (event.type === "generation_settled") {
+        // 异步生成在后台结束：时间线留一行结果；失败或回写未完成用警示语气，不打断正在进行的运行。
+        const title = String(payload.title || "") || (payload.mode === "video" ? "视频" : payload.mode === "audio" ? "音频" : "图片");
+        const summary = String(payload.summary || "生成已结束");
+        const error = typeof payload.error === "string" && payload.error ? `：${payload.error}` : "";
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: `生成结果 · ${title}${summary ? ` ${summary}` : ""}${error}`, detail: { ...payload, eventType: event.type } }));
+        return;
+    }
     if (event.type === "progress_summary") {
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: text || "Agent 正在整理执行计划" }));
         return;
