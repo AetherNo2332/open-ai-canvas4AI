@@ -7,6 +7,7 @@ import (
 
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 	"yingce/backend/internal/skills"
 
 	"gorm.io/gorm"
@@ -183,6 +184,129 @@ func boolToInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+// platformAgentSkillDefaultIDs 是平台为新会话预置的默认技能，补种时按列表顺序排在默认集合最前。
+var platformAgentSkillDefaultIDs = []string{"yingce-canvas-tools-guide"}
+
+// platformAgentSkillDefaultsActor 标记由启动流程而不是管理员写入的默认技能行与设置。
+const platformAgentSkillDefaultsActor = "system"
+
+// EnsureBuiltinAgentSkillDefaults 在 EnsureBuiltinSkills 之后维护平台默认技能，管理员仍可在后台停用或移除。
+// 从未补种的技能插入为首位启用行；已有行改指技能当前版本，保留管理员的启用状态与顺序；
+// 技能缺失、已删除或已停用时跳过。补种记录持久化在 system_settings，管理员移除后不再补回。
+// 写入与 ReplaceAgentSkillDefaults 共用修订行锁并递增 revision，基于旧修订的后台保存得到冲突；
+// 没有变化时不写默认技能行，也不递增 revision。
+func (s *Service) EnsureBuiltinAgentSkillDefaults() error {
+	s.agentSkillDefaultsMu.Lock()
+	defer s.agentSkillDefaultsMu.Unlock()
+	return s.repo.Transaction(func(repo *repository.Repository) error {
+		revision, err := repo.LockAgentSkillDefaults()
+		if err != nil {
+			return err
+		}
+		seeded, err := repo.AgentSkillDefaultsSeeded()
+		if err != nil {
+			return err
+		}
+		rows, err := repo.AgentSkillDefaultRows()
+		if err != nil {
+			return err
+		}
+		marked := make(map[string]bool, len(seeded))
+		for _, id := range seeded {
+			marked[id] = true
+		}
+		existing := make(map[string]model.AgentSkillDefault, len(rows))
+		for _, row := range rows {
+			existing[row.SkillID] = row
+		}
+		applied := append([]string(nil), seeded...)
+		type versionMove struct{ skillID, from, to string }
+		var moves []versionMove
+		var inserts []model.AgentSkillDefault
+		for _, skillID := range platformAgentSkillDefaultIDs {
+			versionID, err := platformAgentSkillDefaultVersion(repo, skillID)
+			if err != nil {
+				return err
+			}
+			if versionID == "" {
+				continue
+			}
+			if row, ok := existing[skillID]; ok {
+				if row.SkillVersionID != versionID {
+					moves = append(moves, versionMove{skillID: skillID, from: row.SkillVersionID, to: versionID})
+				}
+			} else if !marked[skillID] {
+				inserts = append(inserts, model.AgentSkillDefault{ID: newID(), SkillID: skillID, SkillVersionID: versionID, Enabled: true})
+			}
+			if !marked[skillID] {
+				marked[skillID] = true
+				applied = append(applied, skillID)
+			}
+		}
+		// 行按 position 升序读出；新行排在现有最小 position 之前，可能为负数，
+		// 管理员下次保存时按列表顺序重新编号。
+		start := 0
+		if len(rows) > 0 {
+			start = rows[0].Position - len(inserts)
+		}
+		next := revision + 1
+		changed := false
+		for _, move := range moves {
+			ok, err := repo.UpdateAgentSkillDefaultVersion(move.skillID, move.from, move.to, next, platformAgentSkillDefaultsActor)
+			if err != nil {
+				return err
+			}
+			changed = changed || ok
+		}
+		for i := range inserts {
+			inserts[i].Position = start + i
+			inserts[i].Revision = next
+			inserts[i].UpdatedBy = platformAgentSkillDefaultsActor
+			ok, err := repo.CreateAgentSkillDefaultIfMissing(&inserts[i])
+			if err != nil {
+				return err
+			}
+			changed = changed || ok
+		}
+		if changed {
+			if err := repo.SetAgentSkillDefaultsRevision(next, platformAgentSkillDefaultsActor); err != nil {
+				return err
+			}
+		}
+		if len(applied) > len(seeded) {
+			return repo.SaveAgentSkillDefaultsSeeded(applied, platformAgentSkillDefaultsActor)
+		}
+		return nil
+	})
+}
+
+// platformAgentSkillDefaultVersion 按管理员保存的准入条件返回技能当前版本 ID。
+// 技能缺失、已停用、私有或版本记录缺失时返回空串；内置技能删除时技能行与 tombstone 同事务写入，
+// 因此已删除的内置技能同样查不到技能行。
+func platformAgentSkillDefaultVersion(repo *repository.Repository, skillID string) (string, error) {
+	skill, err := repo.Skill(skillID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if skill.IsPrivate || skill.CurrentVersionID == "" {
+		return "", nil
+	}
+	version, err := repo.SkillVersion(skill.CurrentVersionID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if version.SkillID != skillID {
+		return "", nil
+	}
+	return version.ID, nil
 }
 
 type AgentSkillDefaultsSummary struct {

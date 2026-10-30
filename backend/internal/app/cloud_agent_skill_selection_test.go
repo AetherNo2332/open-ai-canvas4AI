@@ -473,6 +473,36 @@ func resolveAndCommitSelectionForTest(t *testing.T, s *Service, userID, conversa
 	return snapshots, s.repo.SaveAgentConversationSkills(cloudAgentConversationSkillRows(conversationID, snapshots))
 }
 
+// 真实内置指南经启动补种后进入新会话，来源为 global，且用户无需安装。
+func TestResolveRunSkillsNewConversationIncludesPlatformGuide(t *testing.T) {
+	s, db := newRunSkillSelectionService(t)
+	if err := db.AutoMigrate(&model.BuiltinSkillTombstone{}); err != nil {
+		t.Fatal(err)
+	}
+	s.dataDir = t.TempDir()
+	if err := s.EnsureBuiltinSkills(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnsureBuiltinAgentSkillDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-guide", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].ID != canvasToolsGuideSkillID || snapshots[0].Source != skills.SkillSourceGlobal {
+		t.Fatalf("new conversation lacks the platform guide: %+v", snapshots)
+	}
+	rows := conversationRows(t, db, "conv-guide")
+	if len(rows) != 1 || rows[0].SkillID != canvasToolsGuideSkillID || rows[0].Source != skills.SkillSourceGlobal {
+		t.Fatalf("guide baseline not frozen as global: %+v", rows)
+	}
+	native, err := s.piNativeSkillSnapshots("user", snapshots)
+	if err != nil || len(native) != 1 || native[0].EntryContent == "" {
+		t.Fatalf("guide must materialize for the Pi worker without installation: %+v %v", native, err)
+	}
+}
+
 func TestCloudAgentConversationIDFor(t *testing.T) {
 	s, db := newRunSkillSelectionService(t)
 	if got := s.cloudAgentConversationIDFor("user", "run-1", ""); got != "run-1" {

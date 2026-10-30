@@ -334,6 +334,8 @@ docker compose -f docker-compose.deploy.yml up -d backend web
 
 技能库分类由 schema migration 39 创建/扩展；内置技能删除记录由 schema migration 40 创建。删除分类时在事务内清空对应 `user_skill_states.library_category_id` 后删除分类记录，不会级联删除任何技能。删除内置技能时写入 tombstone，后续启动同步会跳过该技能。
 
+Agent 默认技能的修订号保存在 `system_settings` 的 `agent_skill_defaults_revision` 键。键 `agent_skill_defaults_platform_seeded` 保存启动时已补种为默认技能的平台技能 ID（JSON 字符串数组），管理员移除这些默认技能后不再补回。两者复用既有表，不新增结构迁移。
+
 规范化技能包保存在后端数据目录的 `skill-packages/<skill-id>/<version-id>.zip`，数据库只保存索引和版本指针。上传 ZIP 时强制校验 `SKILL.md`、路径越界、软链接、重复路径、文件数量和解压大小；GitHub 技能保存公开仓库、分支、子目录和提交 SHA，后台每 6 小时检查一次开启自动更新的技能，并记录最近检查、同步时间及失败状态。
 
 ## 提示词模板

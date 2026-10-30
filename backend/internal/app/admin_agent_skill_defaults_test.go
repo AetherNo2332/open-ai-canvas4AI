@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -374,5 +375,239 @@ func TestAdminAgentSkillDefaultsConcurrentReplaceSingleWinner(t *testing.T) {
 	}
 	if len(rows) != 1 {
 		t.Fatalf("并发后应只剩赢家的一行，实际：%#v", rows)
+	}
+}
+
+const canvasToolsGuideSkillID = "yingce-canvas-tools-guide"
+
+func agentSkillDefaultsState(t *testing.T, db *gorm.DB) ([]model.AgentSkillDefault, int64, []string) {
+	t.Helper()
+	repo := repository.New(db)
+	rows, revision, err := repo.AgentSkillDefaultsSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := repo.AgentSkillDefaultsSeeded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows, revision, seeded
+}
+
+func TestEnsureBuiltinAgentSkillDefaultsSeedsEmptyTable(t *testing.T) {
+	svc, db := newAgentSkillDefaultsService(t)
+	seedAgentSkill(t, db, canvasToolsGuideSkillID, 128, nil)
+	if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	rows, revision, seeded := agentSkillDefaultsState(t, db)
+	if revision != 1 || len(rows) != 1 {
+		t.Fatalf("seed into empty table: revision %d rows %+v", revision, rows)
+	}
+	if row := rows[0]; row.SkillID != canvasToolsGuideSkillID || row.SkillVersionID != canvasToolsGuideSkillID+"-v1" || !row.Enabled || row.Position != 0 || row.Revision != 1 {
+		t.Fatalf("unexpected seeded row: %+v", row)
+	}
+	if len(seeded) != 1 || seeded[0] != canvasToolsGuideSkillID {
+		t.Fatalf("seed marker = %v", seeded)
+	}
+	view, err := svc.AdminAgentSkillDefaults(adminSkillDefaultsActor())
+	if err != nil || view.Revision != 1 || len(view.Items) != 1 || view.Items[0].Enabled != 1 {
+		t.Fatalf("seeded default must be visible to admins: %+v %v", view, err)
+	}
+}
+
+func TestEnsureBuiltinAgentSkillDefaultsSeedsOnceAfterEmptyAdminSave(t *testing.T) {
+	svc, db := newAgentSkillDefaultsService(t)
+	seedAgentSkill(t, db, canvasToolsGuideSkillID, 128, nil)
+	if _, err := svc.ReplaceAgentSkillDefaults(adminSkillDefaultsActor(), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, revision, _ := agentSkillDefaultsState(t, db)
+	if revision != 2 || len(rows) != 1 || rows[0].SkillID != canvasToolsGuideSkillID || rows[0].Revision != 2 {
+		t.Fatalf("seed after empty admin save: revision %d rows %+v", revision, rows)
+	}
+}
+
+func TestEnsureBuiltinAgentSkillDefaultsSeedsFirstAndBumpsRevision(t *testing.T) {
+	svc, db := newAgentSkillDefaultsService(t)
+	seedAgentSkill(t, db, canvasToolsGuideSkillID, 128, nil)
+	seedAgentSkill(t, db, "skill-a", 128, nil)
+	admin := adminSkillDefaultsActor()
+	adminRows := []AgentSkillDefaultItem{{SkillID: "skill-a", SkillVersionID: "skill-a-v1", Position: 0, Enabled: 1}}
+	if _, err := svc.ReplaceAgentSkillDefaults(admin, 0, adminRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	rows, revision, _ := agentSkillDefaultsState(t, db)
+	if revision != 2 || len(rows) != 2 || rows[0].SkillID != canvasToolsGuideSkillID || rows[1].SkillID != "skill-a" {
+		t.Fatalf("guide must be seeded first: revision %d rows %+v", revision, rows)
+	}
+	if rows[1].Position != 0 || rows[1].Revision != 1 || rows[1].UpdatedBy != admin.ID {
+		t.Fatalf("seeding touched the admin row: %+v", rows[1])
+	}
+	// 基于补种前修订号的后台保存必须冲突，不能静默覆盖补种结果。
+	_, err := svc.ReplaceAgentSkillDefaults(admin, 1, adminRows)
+	var appErr *kernel.AppError
+	if !errors.As(err, &appErr) || appErr.Reason != kernel.ReasonAgentSkillDefaultsRevisionConflict {
+		t.Fatalf("stale admin save after seeding: %v", err)
+	}
+}
+
+func TestEnsureBuiltinAgentSkillDefaultsKeepsAdminRemoval(t *testing.T) {
+	svc, db := newAgentSkillDefaultsService(t)
+	seedAgentSkill(t, db, canvasToolsGuideSkillID, 128, nil)
+	if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ReplaceAgentSkillDefaults(adminSkillDefaultsActor(), 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	rows, revision, seeded := agentSkillDefaultsState(t, db)
+	if revision != 2 || len(rows) != 0 || len(seeded) != 1 {
+		t.Fatalf("removed default was re-seeded: revision %d rows %+v marker %v", revision, rows, seeded)
+	}
+}
+
+func TestEnsureBuiltinAgentSkillDefaultsFollowsCurrentVersion(t *testing.T) {
+	svc, db := newAgentSkillDefaultsService(t)
+	seedAgentSkill(t, db, canvasToolsGuideSkillID, 128, nil)
+	seedAgentSkill(t, db, "skill-a", 128, nil)
+	admin := adminSkillDefaultsActor()
+	if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	// 管理员保留指南但停用它，并把它排到 skill-a 之后。
+	if _, err := svc.ReplaceAgentSkillDefaults(admin, 1, []AgentSkillDefaultItem{
+		{SkillID: "skill-a", SkillVersionID: "skill-a-v1", Position: 0, Enabled: 1},
+		{SkillID: canvasToolsGuideSkillID, SkillVersionID: canvasToolsGuideSkillID + "-v1", Position: 1, Enabled: 0},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 部署新内容后 EnsureBuiltinSkills 新增版本并移动当前版本指针。
+	next := model.SkillVersion{ID: canvasToolsGuideSkillID + "-v2", SkillID: canvasToolsGuideSkillID, VersionLabel: "v2", ContentHash: "hash-v2", EntryPath: "SKILL.md", FileCount: 2, TotalBytes: 256, CreatedAt: time.Now()}
+	if err := db.Create(&next).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Skill{}).Where("id = ?", canvasToolsGuideSkillID).Update("current_version_id", next.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, revision, _ := agentSkillDefaultsState(t, db)
+	if revision != 3 || len(rows) != 2 {
+		t.Fatalf("version follow: revision %d rows %+v", revision, rows)
+	}
+	other, guide := rows[0], rows[1]
+	if guide.SkillID != canvasToolsGuideSkillID || guide.SkillVersionID != next.ID || guide.Enabled || guide.Position != 1 || guide.Revision != 3 {
+		t.Fatalf("guide must follow the current version and keep admin settings: %+v", guide)
+	}
+	if other.SkillID != "skill-a" || other.SkillVersionID != "skill-a-v1" || other.Revision != 2 || other.UpdatedBy != admin.ID {
+		t.Fatalf("version follow touched another row: %+v", other)
+	}
+}
+
+func TestEnsureBuiltinAgentSkillDefaultsSkipsUnavailableSkill(t *testing.T) {
+	cases := map[string]func(t *testing.T, db *gorm.DB){
+		"absent": func(*testing.T, *gorm.DB) {},
+		"tombstoned": func(t *testing.T, db *gorm.DB) {
+			if err := db.AutoMigrate(&model.BuiltinSkillTombstone{}, &model.SkillCurationAssignment{}, &model.SkillCurationRootAssignment{}); err != nil {
+				t.Fatal(err)
+			}
+			seedAgentSkill(t, db, canvasToolsGuideSkillID, 128, nil)
+			if err := repository.New(db).DeleteBuiltinSkill(canvasToolsGuideSkillID, "admin-1"); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"disabled": func(t *testing.T, db *gorm.DB) {
+			seedAgentSkill(t, db, canvasToolsGuideSkillID, 128, func(skill *model.Skill) { skill.Status = 0 })
+		},
+	}
+	for name, prepare := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc, db := newAgentSkillDefaultsService(t)
+			prepare(t, db)
+			if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+				t.Fatal(err)
+			}
+			rows, revision, seeded := agentSkillDefaultsState(t, db)
+			if len(rows) != 0 || revision != 0 || len(seeded) != 0 {
+				t.Fatalf("unavailable skill was seeded: revision %d rows %+v marker %v", revision, rows, seeded)
+			}
+		})
+	}
+}
+
+func TestEnsureBuiltinAgentSkillDefaultsRestartLeavesRevision(t *testing.T) {
+	svc, db := newAgentSkillDefaultsService(t)
+	seedAgentSkill(t, db, canvasToolsGuideSkillID, 128, nil)
+	if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	before, revision, _ := agentSkillDefaultsState(t, db)
+	for i := 0; i < 2; i++ {
+		if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, again, seeded := agentSkillDefaultsState(t, db)
+	if again != revision || len(after) != 1 || after[0].SkillVersionID != before[0].SkillVersionID || !after[0].UpdatedAt.Equal(before[0].UpdatedAt) || len(seeded) != 1 {
+		t.Fatalf("restart changed defaults: revision %d -> %d, rows %+v -> %+v, marker %v", revision, again, before, after, seeded)
+	}
+}
+
+// 两个后端同时启动：修订行锁串行化补种，只留一行、只递增一次。
+func TestEnsureBuiltinAgentSkillDefaultsConcurrentStartupSeedsOnce(t *testing.T) {
+	dsn := filepath.ToSlash(filepath.Join(t.TempDir(), "defaults.db")) + "?_journal_mode=WAL&_busy_timeout=5000"
+	services := make([]*Service, 2)
+	var shared *gorm.DB
+	for i := range services {
+		db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = sqlDB.Close() })
+		if i == 0 {
+			if err := db.AutoMigrate(&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.UserSkillState{}, &model.AgentSkillDefault{}, &model.SystemSetting{}); err != nil {
+				t.Fatal(err)
+			}
+			seedAgentSkill(t, db, canvasToolsGuideSkillID, 128, nil)
+			shared = db
+		}
+		services[i] = New(repository.New(db), t.TempDir())
+	}
+	start := make(chan struct{})
+	results := make(chan error, len(services))
+	for _, svc := range services {
+		go func(svc *Service) {
+			<-start
+			results <- svc.EnsureBuiltinAgentSkillDefaults()
+		}(svc)
+	}
+	close(start)
+	for range services {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, revision, _ := agentSkillDefaultsState(t, shared)
+	if revision != 1 || len(rows) != 1 {
+		t.Fatalf("concurrent startup: revision %d rows %+v", revision, rows)
 	}
 }
