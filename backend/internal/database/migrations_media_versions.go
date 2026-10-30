@@ -18,9 +18,9 @@ import (
 
 // mediaVersionsMigrationVersion 把 fork 的 canvas_media_versions 就绪行搬进节点
 // metadata.mediaVersions（上游版本历史格式）。旧表保留，迁移后只读。
-const mediaVersionsMigrationVersion int64 = 77
+const mediaVersionsMigrationVersion int64 = 80
 
-const mediaVersionsChecksum = "sha256:media-versions-to-metadata-v77-20261029"
+const mediaVersionsChecksum = "sha256:media-versions-to-metadata-v80-20261029"
 
 // mediaVersionLimit 与前端 MEDIA_VERSION_LIMIT 一致。
 const mediaVersionLimit = 30
@@ -333,10 +333,10 @@ func stringValue(value any) any {
 }
 
 // mediaVersionBindingMigrationVersion 给 canvas_task_bindings 增加 media_version_json：媒体版本任务在提交时
-// 冻结节点当前版本、输出归属与几何，写回时据此判断是否自动采用。v77 之后版本历史只在节点 metadata 中。
-const mediaVersionBindingMigrationVersion int64 = 78
+// 冻结节点当前版本、输出归属与几何，写回时据此判断是否自动采用。v80 之后版本历史只在节点 metadata 中。
+const mediaVersionBindingMigrationVersion int64 = 81
 
-const mediaVersionBindingChecksum = "sha256:canvas-task-binding-media-version-v78-20261029"
+const mediaVersionBindingChecksum = "sha256:canvas-task-binding-media-version-v81-20261029"
 
 func migrateMediaVersionBinding(tx *gorm.DB) error {
 	if !tx.Migrator().HasTable(&model.CanvasTaskBinding{}) || tx.Migrator().HasColumn(&model.CanvasTaskBinding{}, "MediaVersionJSON") {

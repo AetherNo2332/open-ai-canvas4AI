@@ -12,9 +12,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// CurrentSchemaVersion 跟随上游迁移到 v74；v75 起是 fork 云端 Agent 子系统（见 migrations_agent.go），
-// v76 退役服务端预演渲染任务（见 migrations_previs_render.go），v77 把媒体版本表迁入节点 metadata，
-// v78 为 canvas_task_bindings 增加媒体版本快照列 media_version_json（均见 migrations_media_versions.go）。
+// CurrentSchemaVersion：v1–v77 归上游迁移（v75–v77 随上游合并引入）；v78 起是 fork 云端 Agent 子系统（见 migrations_agent.go），
+// v79 退役服务端预演渲染任务（见 migrations_previs_render.go），v80 把媒体版本表迁入节点 metadata，
+// v81 为 canvas_task_bindings 增加媒体版本快照列 media_version_json（均见 migrations_media_versions.go）。
+// 迁移计划按列表逐项执行，不要求版本连续（v44 与上游合并前的 v75–v77 均为空号）。
 const CurrentSchemaVersion int64 = mediaVersionBindingMigrationVersion
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
