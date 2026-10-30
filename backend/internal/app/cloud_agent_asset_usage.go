@@ -11,7 +11,7 @@ func cloudAgentNodeUsageStatus(node map[string]any) string {
 func cloudAgentNodeUsageView(node map[string]any) map[string]any {
 	metadata, _ := node["metadata"].(map[string]any)
 	status := cloudAgentNodeUsageStatus(node)
-	view := map[string]any{"scope": "canvas_node", "status": status, "automaticSelectionEligible": status == "active"}
+	view := map[string]any{"status": status}
 	if note := stringValue(metadata["usageNote"]); note != "" {
 		view["note"] = truncateRunes(note, 500)
 	}
