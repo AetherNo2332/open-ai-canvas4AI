@@ -198,6 +198,11 @@ function toolArguments(detail?: unknown) {
  *
  * 未登记的工具落 `other`（"其他操作"）：兜底不能让任何工具看起来像在写画布。
  */
+/** 读的是画布清单（节点存在与规模），不是外部信息；活动图标据此区分网格与文档。 */
+export function isAgentCanvasReadTool(toolName: string): boolean {
+    return AGENT_CANVAS_READ_TOOLS.has(toolName);
+}
+
 export function agentToolCategory(toolName: string, detail?: unknown): AgentToolCategory {
     if (AGENT_VISION_TOOLS.has(toolName)) return "vision";
     if (toolName === "director") {

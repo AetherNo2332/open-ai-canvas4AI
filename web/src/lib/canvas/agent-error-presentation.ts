@@ -15,6 +15,16 @@ export function agentRunErrorMessage(event: AgentEvent): CloudAgentChatMessage {
     };
 }
 
+/**
+ * 把服务端公开提示末尾的“诊断号”尾注拆出来：正文只留可操作的提示，诊断号折叠到卡片底部。
+ * 只拆分固定措辞的尾注，不据此推断错误类型或改变业务语义。
+ */
+export function agentErrorContent(text: string, title: string) {
+    const diagnostic = text.trim().match(/^([\s\S]*?)；如反复出现，请把诊断号\s+([a-zA-Z0-9:_-]+)\s+反馈给管理员[。.]?$/);
+    const description = (diagnostic?.[1] ?? text).trim();
+    return { description: description === title.trim() ? "" : description, diagnosticId: diagnostic?.[2] };
+}
+
 export function agentErrorPresentation(cause: unknown, fallback = "Agent 执行失败") {
     const text = typeof cause === "string" ? cause.trim() : cause instanceof Error ? cause.message : fallback;
     if (cause instanceof ApiError && cause.reason === "agent_skill_budget_exceeded") {
