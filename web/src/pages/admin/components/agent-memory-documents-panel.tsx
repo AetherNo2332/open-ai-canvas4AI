@@ -4,7 +4,7 @@ import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Select } from "@/components/ui/base/select";
-import { listAdminAgentMemoryDocuments, type AdminAgentMemoryDocument } from "@/services/api/admin-agent-lessons";
+import { listAdminAgentMemoryDocuments, type AdminAgentMemoryDocument } from "@/services/api/admin-agent-memory";
 import { AGENT_MEMORY_MODES, AGENT_MEMORY_SECTIONS } from "@/services/api/agent-memory";
 import { AdminDataTable, AdminStatusBadge, AdminTableEmpty } from "./admin-ui";
 import { useAdminUserOptions } from "./use-admin-user-options";

@@ -9,7 +9,6 @@ import { CanvasRefreshShell } from "@/pages/canvas/canvas-refresh-shell";
 import { AuthScene } from "@/pages/auth/auth-scene";
 import RouteErrorPage from "@/pages/route-error";
 import { isGuestWorkspacePath } from "@/lib/guest-workspace";
-import { agentMemoryRedirect } from "@/lib/agent-admin-route";
 
 const AdminPage = lazy(() => import("@/pages/admin"));
 const AnalyticsPage = lazyAdminPage(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.AnalyticsPage })));
@@ -19,6 +18,7 @@ const StorageResourcesPage = lazyAdminPage(() => import("@/pages/admin/admin-rou
 const CreditOperationsPage = lazyAdminPage(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.CreditOperationsPage })));
 const AccessSettingsPage = lazyAdminPage(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.AccessSettingsPage })));
 const EmailSettingsPage = lazyAdminPage(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.EmailSettingsPage })));
+const AgentMemoryDocumentsPage = lazyAdminPage(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.AgentMemoryDocumentsPage })));
 const FeatureAvailabilityPage = lazyAdminPage(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.FeatureAvailabilityPage })));
 // 云端 Agent 后台：调度、动态子代理、默认技能、联网搜索与记忆管理集中在同一页。
 const AgentSettingsPage = lazyAdminPage(() => import("@/pages/admin/settings/agent-settings-page"));
@@ -70,11 +70,6 @@ const TestVoiceRecording = lazy(() => import("@/pages/test-voice-recording"));
 const UserLayout = lazy(() => import("@/layouts/user-layout"));
 const RequireFeature = lazy(() => import("@/components/auth/require-feature").then((module) => ({ default: module.RequireFeature })));
 
-// 旧的「Agent 记忆」后台入口并入 Agent 设置页的记忆分区，保留查询参数。
-function LegacyAgentMemoryRedirect() {
-    const location = useLocation();
-    return <Navigate to={agentMemoryRedirect(location.search)} replace />;
-}
 function deferred(element: ReactNode) {
     return <Suspense fallback={<WorkspaceRouteLoader />}>{element}</Suspense>;
 }
@@ -245,7 +240,7 @@ export const router = createBrowserRouter([
                     { path: "storyboard-prompts", element: <Navigate to="/admin/prompt-templates" replace /> },
                     { path: "announcements", element: <AnnouncementsPage /> },
                     { path: "banner-announcements", element: <BannerAnnouncementsPage /> },
-                    { path: "agent-lessons", element: <LegacyAgentMemoryRedirect /> },
+                    { path: "agent-lessons", element: <AgentMemoryDocumentsPage /> },
                     { path: "resources", element: <StorageResourcesPage /> },
                     { path: "credit-operations", element: <CreditOperationsPage /> },
                     { path: "redemption-codes", element: <RedemptionCodesPage /> },

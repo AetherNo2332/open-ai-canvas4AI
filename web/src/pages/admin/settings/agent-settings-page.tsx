@@ -1,8 +1,7 @@
 import { Alert, App, Button, InputNumber, Skeleton } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router";
+import { Link } from "react-router";
 import { AdminPageFrame } from "../components/admin-shell";
-import AgentLessonsPanel from "../components/agent-lessons-panel";
 import { RefreshCw, Save } from "lucide-react";
 import AgentSkillDefaultsSection from "./components/agent-skill-defaults-section";
 import AgentSubagentsAvailabilitySection from "./components/agent-subagents-availability-section";
@@ -20,8 +19,6 @@ const fields: Array<{ key: keyof AgentSchedulerDraft; label: string; detail: str
 
 export default function AgentSettingsPage() {
     const { message } = App.useApp();
-    const location = useLocation();
-    const memory = useRef<HTMLElement>(null);
     const mounted = useRef(true);
     const [toolCount, setToolCount] = useState<number>();
     const [setting, setSetting] = useState<AgentSchedulerSetting>();
@@ -58,9 +55,6 @@ export default function AgentSettingsPage() {
             window.clearInterval(timer);
         };
     }, [loadConfig]);
-    useEffect(() => {
-        if (location.hash === "#memory") memory.current?.scrollIntoView({ block: "start" });
-    }, [location.hash]);
     const valid =
         draft &&
         Number.isInteger(draft.dispatchConcurrency) &&
@@ -98,7 +92,7 @@ export default function AgentSettingsPage() {
         }
     }
     return (
-        <AdminPageFrame title="Agent（beta）" description="统一管理 Agent 调度、动态子代理、联网搜索、默认技能与用户记忆" scroll>
+        <AdminPageFrame title="Agent（beta）" description="统一管理 Agent 调度、动态子代理、联网搜索与默认技能" scroll>
             <div className="agent-settings">
                 <nav className="agent-settings-nav" aria-label="Agent 配置区域">
                     <a href="#tools">工具总数</a>
@@ -106,7 +100,6 @@ export default function AgentSettingsPage() {
                     <a href="#subagents">动态子代理</a>
                     <a href="#web-search">联网搜索</a>
                     <a href="#skill-defaults">默认技能</a>
-                    <a href="#memory">记忆管理</a>
                 </nav>
                 <AgentToolCount count={configError ? undefined : toolCount} loading={!draft && !configError} />
                 <section className="agent-settings-section space-y-2" aria-label="Agent Worker 状态">
@@ -191,9 +184,13 @@ export default function AgentSettingsPage() {
                 <section id="skill-defaults" className="agent-settings-section" aria-labelledby="agent-skill-defaults-heading">
                     <AgentSkillDefaultsSection />
                 </section>
-                <section id="memory" ref={memory} className="agent-settings-section space-y-3">
-                    <h2 className="text-base font-semibold">记忆管理</h2>
-                    <AgentLessonsPanel />
+                <section id="memory" className="agent-settings-section space-y-2" aria-labelledby="agent-memory-heading">
+                    <h2 id="agent-memory-heading" className="text-base font-semibold">
+                        用户记忆
+                    </h2>
+                    <p className="text-sm text-foreground/60">
+                        每个用户一份长期记忆文件，由 Agent 用 memory_update 维护、用户本人确认或撤销。管理员只读查看见 <Link to="/admin/agent-lessons">Agent 记忆</Link>。
+                    </p>
                 </section>
             </div>
         </AdminPageFrame>

@@ -49,6 +49,7 @@ import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary, type AgentToolCategory } from "@/lib/canvas/agent-tool-presentation";
 import { agentOperationCategory, agentOperationFailed, agentOperationSegmentLabel } from "@/lib/canvas/agent-operation-feed";
 import { agentToolRetry, type AgentToolRetryAttempt } from "@/lib/canvas/agent-tool-retry";
+import { AgentMemoryUpdateCard, type CloudAgentMemoryUpdate } from "./canvas-cloud-agent-memory-cards";
 
 export type CloudAgentChatAttachment = { id: string; name: string; url: string };
 type CloudAgentOperationImpact = {
@@ -88,6 +89,8 @@ export type CloudAgentChatMessage = {
     attachments?: CloudAgentChatAttachment[];
     /** withdrawn 由撤回插话（U8）写入；当前只保留状态与标签。 */
     interjection?: AgentInterjectionStatus;
+    /** memory_updated 事件：渲染为记忆变更卡（可撤销 / 等确认）。 */
+    memoryUpdate?: CloudAgentMemoryUpdate;
 };
 
 /**
@@ -180,6 +183,7 @@ export function AgentChatMessage({
     if (objectField(item.detail, "eventType") === "context_compaction") {
         return <AgentContextCompactionNotice item={item} theme={theme} />;
     }
+    if (item.memoryUpdate) return <AgentMemoryUpdateCard update={item.memoryUpdate} theme={theme} />;
     if (isSystem) {
         return (
             <div className="agent-status-message flex items-start gap-2 text-xs">

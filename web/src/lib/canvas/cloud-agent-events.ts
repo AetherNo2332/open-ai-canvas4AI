@@ -211,6 +211,22 @@ export function applyAgentEvent(
         setMessages((current) => appendUniqueMessage(current, { id, role: "tool", title: "canvas_apply_ops", text: text || "画布操作已完成", detail: { ...payload, eventType: event.type } }));
         return;
     }
+    if (event.type === "memory_updated") {
+        const revisionId = String(payload.revisionId || "");
+        const changes = Array.isArray(payload.changes)
+            ? (payload.changes as Array<Record<string, unknown>>).map((change) => ({
+                  kind: (["add", "replace", "remove"].includes(String(change.kind)) ? String(change.kind) : "add") as "add" | "replace" | "remove",
+                  section: String(change.section || ""),
+                  before: change.before === undefined ? undefined : String(change.before),
+                  after: change.after === undefined ? undefined : String(change.after),
+              }))
+            : [];
+        const memoryUpdate = { revisionId, status: payload.status === "pending_review" ? ("pending" as const) : ("applied" as const), summary: String(payload.summary || ""), changes };
+        setMessages((current) => appendUniqueMessage(current, { id: `memory-${revisionId || event.eventId}`, role: "system", text: text || "长期记忆已更新", memoryUpdate }));
+        return;
+    }
+    // 记忆写入成功时已有专门的记忆卡，不再重复渲染通用工具行；失败仍按工具行展示。
+    if (event.type === "tool_completed" && payload.toolName === "memory_update") return;
     if (event.type === "generation_task_created") {
         const message: CloudAgentChatMessage = { id: event.eventId, role: "tool", title: "generate_media", text: text || event.type, detail: { ...payload, eventType: event.type } };
         setMessages((current) => upsertMediaToolTrace(current, message));

@@ -166,11 +166,11 @@ test("admin navigation keeps one sidebar entry per page inside collapsible group
     expect(compacted).toContain('className="admin-nav-group-toggle" aria-expanded={expanded}');
     // 不再用页头页签合并页面：页签入口不易发现，切换时还会触发懒加载白屏。
     expect(compacted).not.toContain("admin-page-tabs");
-    for (const path of ["/admin/logs", "/admin/login-logs", "/admin/users", "/admin/user-groups", "/admin/settings/agent", "/admin/settings/system-update"]) {
+    for (const path of ["/admin/logs", "/admin/login-logs", "/admin/users", "/admin/user-groups", "/admin/settings/agent", "/admin/agent-lessons", "/admin/settings/system-update"]) {
         expect(compacted).toContain(`path: "${path}"`);
     }
-    // fork：Agent 记忆并入 Agent（beta）设置页，/admin/agent-lessons 只保留重定向，不再单独占一个入口。
-    expect(compacted).not.toContain('path: "/admin/agent-lessons"');
+    // Agent（beta）设置与上游「Agent 记忆」（用户记忆文件只读查看）各占一个入口。
+    expect(router).toContain('{ path: "agent-lessons", element: <AgentMemoryDocumentsPage /> }');
     // 后台页面代码在进入后台后空闲预取，切换菜单不经过 Suspense 加载态。
     expect(compacted).toContain("preloadAdminPages();");
     expect(router).toContain('const LogsPage = lazyAdminPage(() => import("@/pages/admin/logs/logs-page"));');

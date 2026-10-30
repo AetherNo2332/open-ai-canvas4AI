@@ -5,6 +5,7 @@ import {
     ArrowLeft,
     BarChart3,
     BellRing,
+    BookMarked,
     Bot,
     ChevronDown,
     CloudUpload,
@@ -115,8 +116,9 @@ const adminNavigation: AdminNavigationGroup[] = [
             { path: "/admin/workbench-tools", label: "工作台工具", shortLabel: "工具", icon: <Shapes className="size-4" /> },
             { path: "/admin/prompt-templates", label: "提示词模板", shortLabel: "模板", icon: <MessageSquareText className="size-4" /> },
             { path: "/admin/settings/drawing-engine", label: "绘图工具", shortLabel: "绘图", icon: <Paintbrush className="size-4" /> },
-            // fork 云端 Agent：调度、动态子代理、默认技能与记忆管理集中在同一页（/admin/agent-lessons 重定向到这里）。
+            // fork 云端 Agent：调度、动态子代理、联网与默认技能集中在同一页；用户记忆文件单独一页（上游入口）。
             { path: "/admin/settings/agent", label: "Agent（beta）", shortLabel: "Agent", icon: <Bot className="size-4" /> },
+            { path: "/admin/agent-lessons", label: "Agent 记忆", shortLabel: "记忆", icon: <BookMarked className="size-4" /> },
             { path: "/admin/plugins", label: "插件管理", shortLabel: "插件", icon: <PlugZap className="size-4" /> },
             { path: "/admin/skill-curation", label: "技能分类", shortLabel: "技能", icon: <Sparkles className="size-4" /> },
             { path: "/admin/resources", label: "存储资源", shortLabel: "资源", icon: <Database className="size-4" /> },
