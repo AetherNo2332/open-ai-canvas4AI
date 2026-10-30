@@ -12,7 +12,7 @@ export function agentToolArguments(detail: unknown) {
     try { return agentRecord(JSON.parse(value)); } catch { return {}; }
 }
 
-export function agentCanvasActions(toolName: string, detail: unknown, references: CanvasResourceReference[] = []): AgentCanvasAction[] {
+export function agentCanvasActions(toolName: string, detail: unknown, references: readonly CanvasResourceReference[] = []): AgentCanvasAction[] {
     const payload = agentRecord(detail);
     const result = agentRecord(payload.result);
     const args = agentToolArguments(detail);
