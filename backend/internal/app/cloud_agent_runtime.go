@@ -1350,6 +1350,9 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 			// 必须赶在下面序列化回执之前补上，否则这条说明对模型不可见。
 			cloudAgentDescribeImageBatch(state, inspection.Receipt)
 		}
+		// 看图成功（含按修正后的格式保存摘要）同样结束这个工具的纠错组并恢复完整工具集，
+		// 否则修好一张图后，另一张图的新错误会接着旧次数熔断。
+		cloudAgentTrackToolRepair(runID, state, call, result, nil, payload)
 		receipt, _ := json.Marshal(inspection.Receipt)
 		payload["result"] = inspection.Receipt
 		state.event(runID, kind, payload)
@@ -1366,7 +1369,6 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		}
 		state.CallIndex++
 		state.Approval = nil
-		// 看图是只读成功路径，不占自动纠错名额（那名额只给写/生成类工具的预执行参数错误）。
 		return false
 	}
 	exhausted := cloudAgentTrackToolRepair(runID, state, call, result, err, payload)

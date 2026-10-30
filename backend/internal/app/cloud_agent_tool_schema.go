@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -88,7 +89,7 @@ func validateCloudAgentSchemaValue(field string, schema map[string]any, value an
 		case "object":
 			object, ok := value.(map[string]any)
 			if !ok {
-				return cloudAgentSchemaTypeError(path, "对象")
+				return cloudAgentSchemaStructuredTypeError(path, "对象", value)
 			}
 			if err := validateCloudAgentSchemaObject(path, schema, object, depth); err != nil {
 				return err
@@ -96,7 +97,7 @@ func validateCloudAgentSchemaValue(field string, schema map[string]any, value an
 		case "array":
 			items, ok := value.([]any)
 			if !ok {
-				return cloudAgentSchemaTypeError(path, "数组")
+				return cloudAgentSchemaStructuredTypeError(path, "数组", value)
 			}
 			if err := validateCloudAgentSchemaArray(path, schema, items, depth); err != nil {
 				return err
@@ -319,6 +320,25 @@ func validateCloudAgentSchemaOneOf(path string, schema map[string]any, value any
 
 func cloudAgentSchemaTypeError(path, expected string) error {
 	return cloudAgentFieldError(path, "type_mismatch", fmt.Sprintf("工具参数 %s 必须是%s；本次调用未执行，请按字段提示修正后重试", path, expected))
+}
+
+// 模型常把对象或数组先序列化成字符串再传，手写的 JSON 还常有括号没配对、全角逗号或被截断。
+// 只回"必须是对象"时它会照原样再交一次，所以点明传成了字符串；字符串像 JSON 却解析不了时给出出错位置。
+// 不回显字符串内容：参数里可能有从图片读到的文字。
+func cloudAgentSchemaStructuredTypeError(path, expected string, value any) error {
+	text, ok := value.(string)
+	if !ok {
+		return cloudAgentSchemaTypeError(path, expected)
+	}
+	message := fmt.Sprintf("工具参数 %s 必须直接传 JSON %s，本次传成了字符串；本次调用未执行", path, expected)
+	var syntax *json.SyntaxError
+	if trimmed := strings.TrimSpace(text); strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		if err := json.Unmarshal([]byte(text), new(any)); errors.As(err, &syntax) {
+			position := utf8.RuneCountInString(text[:min(int(syntax.Offset), len(text))])
+			message += fmt.Sprintf("。这个字符串本身也不是合法 JSON，第 %d 个字符附近出错，常见原因是括号没有配对、用了全角逗号或内容被截断", position)
+		}
+	}
+	return cloudAgentFieldError(path, "type_mismatch", message+fmt.Sprintf("。请把它改成结构化的%s直接放进参数后重试", expected))
 }
 
 func cloudAgentSchemaPath(parent, name string) string {
