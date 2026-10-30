@@ -196,6 +196,18 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] 后台「Agent（beta）」：调度配置、Worker 管理、联网搜索与默认技能可读写；系统性能页不再显示上游 Agent 服务卡片。
 - [ ] PostgreSQL：全新库升级到 Schema 81；已有上游 v77 库升级后旧 Pi 会话表改名留存，Agent 新表齐全。
 
+## 上游同步整合：长期记忆文件替代本仓库经验库
+- 已实现：云端 Agent 改用上游的每用户长期记忆文件。建 run 时冻结快照与模式（`request.memoryMode`，服务端推导），快照作为 `agent_memory_doc` 来源的 user 数据消息放在当前用户消息之前，不进系统提示；记忆不变时两轮的系统提示与记忆消息逐字节相同，`off` 时两者都不出现，续轮不带上一轮快照。子代理不读写记忆。
+- 已实现：新工具 `memory_update`（合同 `cloud-agent-tools/v17`），在记忆为 auto / review、非只读、非子代理时暴露；不是画布写入，不进审批链。执行时按文件当前模式：auto 立即生效，review 生成待确认修订，运行中关闭则返回工具失败；同一调用 ID 重放不重复写入；每轮最多 8 次。成功时发出 `memory_updated` 事件，面板渲染记忆卡（已生效可撤销，待确认提示去设置里确认），成功的工具行不再重复显示。
+- 已实现：退役 `recall_lessons` / `remember_lesson`、经验索引注入、经验压缩调度与任务、`/api/agent/memories*` 与 `/api/admin/agent-lessons*` 接口、后台经验巡查面板；注册上游 `/api/agent/memory*` 与 `/api/admin/agent-memory-documents`（OpenAPI 同步）。账户设置与画布 Agent 设置的「长期记忆」改用上游记忆面板（模式、编辑、历史、采纳/拒绝）。后台恢复上游「Agent 记忆」入口（`/admin/agent-lessons`，只读查看记忆文件），与「Agent（beta）」并列。
+- 已实现：Schema v82 `fork_lessons_to_memory_document` 把每个用户已批准的经验并入记忆文件（截断、校验、去重、容量与条数上限，`source=lesson_import`，留可撤销的 `seed` 修订）；已有记忆文件的用户在原条目后追加且模式不变；待审、已拒绝不迁移；重跑不改写；排队或运行中的经验压缩任务标为失败。`agent_lessons` 表保留只读。系统策略升到 23，用「长期记忆」一节替换经验库说明。
+- 已验证：`go build ./...`、`go vet ./...` 通过；新增 app（可见性、注入与缓存稳定、auto/review/off、重放、跨用户、只读）、database（v82 迁移、容量、压缩任务退役）、handler（登录、归属、管理员、旧路由 404）、agentmemory、prompts 用例通过；`internal/app` 全量失败名单与改动前相同。PostgreSQL 版 v82 用例在本机无 `TEST_AGENT_POSTGRES_DSN` 时跳过。web typecheck、lint、build 与新增记忆卡/面板用例通过。未做浏览器验收，未接真实模型。
+- [ ] PostgreSQL：带 `TEST_AGENT_POSTGRES_DSN` 跑 `go test ./internal/database -run LessonsToMemory`，3 条 Postgres 用例必须 PASS 而不是 SKIP；用真实存量库（含已批准、待审经验和已有记忆文件的用户）升级到 82，核对条目、修订和模式。
+- [ ] 真实模型：说“以后都用竖屏”后 Agent 调用 `memory_update`，面板出现记忆卡，点撤销后设置页条目消失；切到「需我确认」后出现待确认卡，在设置里采纳/拒绝；切到「关闭」后新一轮工具表与上下文里都没有记忆。
+- [ ] 只读模式与子代理：工具表里没有 `memory_update`。
+- [ ] 后台：「Agent 记忆」入口可见，按用户只读查看记忆文件；「Agent（beta）」页不再有经验巡查面板；普通用户访问管理员接口返回 403。
+- [ ] 明暗主题、0px 与非零圆角皮肤下检查记忆卡与设置面板。
+
 ## 上游同步整合：全局 Agent 侧拉面板（上游外壳 + 本仓库面板主体）
 - 已实现：Agent 面板改为平台唯一实例，由 `layouts/user-layout.tsx` 按账号懒加载挂载，跨路由不卸载；画布页不再并列渲染面板，只在加载完成后向 `stores/use-global-agent-store.ts` 发布画布上下文，离开或切换画布时撤回。切换账号或退出时清空开合状态、画布上下文与待投递消息。
 - 已实现：外壳用上游形态。画布内且视口 ≥ 960px 时可停靠为右侧全高栏（360–720px，不超过半屏，默认 420），工作区让出同等宽度；否则是可拖动标题栏、从左上三个方向调整大小的浮动窗口；窄于 640px 铺满视口。标题栏有停靠/浮动切换（`aria-pressed`）与恢复默认尺寸。首次读取停靠偏好时沿用本仓库旧版保存的侧栏宽度（`canvas-agent-panel-width`）作初始停靠宽度，与上游一致默认浮动，之后旧键删除。

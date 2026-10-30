@@ -137,7 +137,7 @@ description: 从产品功能快速定位主要代码入口
 - 前端管理：`web/src/services/api/admin-skill-defaults.ts`、`web/src/pages/admin/settings/components/agent-skill-defaults-section.tsx`；页面已移除运行状态及其轮询。
 - 子智能体列表：`web/src/components/canvas/canvas-agent-subagent-list.tsx` 与同目录 CSS；让位算法 `web/src/lib/canvas/agent-subagent-layout.ts`。画布入口由 `canvas-cloud-agent-panel.tsx` 的持续授权开关和父运行子代理状态列表组成。
 
-- 页面与 API：`web/src/pages/admin/settings/agent-settings-page.tsx`、`web/src/services/api/admin-agent-settings.ts`；复用 `agent-lessons-panel.tsx`。
+- 页面与 API：`web/src/pages/admin/settings/agent-settings-page.tsx`、`web/src/services/api/admin-agent-settings.ts`；用户记忆文件的只读查看在独立入口「Agent 记忆」（`/admin/agent-lessons` → `admin-route-pages.tsx` 的 `AgentMemoryDocumentsPage`，面板 `components/agent-memory-documents-panel.tsx`，接口 `services/api/admin-agent-memory.ts`）。
 - Go 配置和公平领取：`internal/app/agent_scheduler_policy.go`、`internal/platform/agent_scheduler_policy.go`、`internal/repository/agent_admission.go`；管理员路由 `internal/handler/agent_scheduler.go`。
 - Node 热更新与驻留准入：`agent/src/runtime-config.ts`、`agent/src/event-scheduler.ts`、`agent/src/server.ts`；Pi SDK 保持 0.87.1。
 
@@ -168,7 +168,7 @@ description: 从产品功能快速定位主要代码入口
 | 画布列表 | `web/src/pages/canvas/index.tsx` | `stores/canvas/use-canvas-store.ts` |
 | 画布编辑器 | `web/src/pages/canvas/project.tsx` | `pages/canvas/canvas-project-*`、`pages/canvas/use-canvas-*`、`components/canvas/`、`lib/canvas/`、`stores/canvas/` |
 | 公开分享 | `web/src/pages/canvas/shared.tsx` | `components/canvas/canvas-viewport.tsx`、`services/api/canvas-share.ts` |
-| 管理后台 | `web/src/pages/admin/`、`router.tsx` | `admin-context.tsx`、`users/`、`channels/`、`logs/`、`storyboard-prompts/`、`settings/`、`components/agent-lessons-panel.tsx` |
+| 管理后台 | `web/src/pages/admin/`、`router.tsx` | `admin-context.tsx`、`users/`、`channels/`、`logs/`、`storyboard-prompts/`、`settings/`、`components/agent-memory-documents-panel.tsx` |
 | 支付 CSV 导出 | `web/src/pages/admin/payments/payments-page.tsx` | `services/api/payments.ts`、`AdminExportButton`；后端 `handler/payment_export.go`、`app/payment_export.go`、`repository/payment_export.go`（共享筛选、只读快照） |
 
 ## AI 拆图工作流
@@ -228,6 +228,7 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 视口节点选择与输入关系解析 | `web/src/lib/canvas/canvas-node-visibility.ts`、`canvas-resource-references.ts` |
 | 本地持久化状态 | `web/src/stores/canvas/use-canvas-store.ts` |
 | 云端 Agent 运行与事件 API | `web/src/services/api/agent.ts`、`web/src/components/canvas/canvas-cloud-agent-panel.tsx` |
+| Agent 长期记忆 | 后端：`backend/internal/app/cloud_agent_memory_document*.go`（条目校验、快照、修订、撤销、采纳）、`cloud_agent_tools_memory.go`（`memory_update` 执行与 `memory_updated` 事件）、`backend/internal/agentmemory`（条目文本规则与旧经验映射，迁移 v82 共用）、`backend/internal/database/migrations_lessons_memory.go`（v82）、`handler/agent_memory_document.go`（经 `agent_settings.go` 注册）；前端：`web/src/services/api/agent-memory.ts`、设置面板 `web/src/pages/settings/agent-memory-pane.tsx`、聊天记忆卡 `web/src/components/canvas/canvas-cloud-agent-memory-cards.tsx`、事件归并 `web/src/lib/canvas/cloud-agent-events.ts` |
 | Agent 画布上下文、操作与历史 | `web/src/lib/canvas/canvas-context-discovery.ts`、`canvas-operation-contract.ts`、`web/src/pages/canvas/use-canvas-operation-history.ts` |
 | 官方提示词目录与客户端起始稿 | `backend/internal/prompts/`、`web/src/lib/prompts/` |
 
