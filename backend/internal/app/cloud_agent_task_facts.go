@@ -13,24 +13,24 @@ import (
 // Keep this typed: canvas reads, task_get and the fresh context frame must not
 // independently invent string-key contracts for the same execution facts.
 type cloudAgentTaskFacts struct {
-	TaskID             string                       `json:"taskId"`
-	TaskStatus         model.TaskStatus             `json:"taskStatus"`
-	TaskType           string                       `json:"taskType,omitempty"`
-	Operation          string                       `json:"operation,omitempty"`
-	NodeID             string                       `json:"nodeId,omitempty"`
-	TaskSubmitted      bool                         `json:"taskSubmitted"`
-	SubmissionOutcome  string                       `json:"submissionOutcome"`
-	Phase              string                       `json:"phase,omitempty"`
-	DiagnosticCode     string                       `json:"diagnosticCode,omitempty"`
-	FieldPath          string                       `json:"fieldPath,omitempty"`
-	RetryClass         string                       `json:"retryClass,omitempty"`
-	Error              string                       `json:"error,omitempty"`
-	WritebackOutcome   string                       `json:"writebackOutcome,omitempty"`
-	WritebackReason    string                       `json:"writebackReason,omitempty"`
-	WritebackNodeID    string                       `json:"writebackNodeId,omitempty"`
-	WritebackError     string                       `json:"writebackError,omitempty"`
-	CancellationSource string                       `json:"cancellationSource,omitempty"`
-	Billing            *cloudAgentTaskBillingFacts  `json:"billing,omitempty"`
+	TaskID             string                      `json:"taskId"`
+	TaskStatus         model.TaskStatus            `json:"taskStatus"`
+	TaskType           string                      `json:"taskType,omitempty"`
+	Operation          string                      `json:"operation,omitempty"`
+	NodeID             string                      `json:"nodeId,omitempty"`
+	TaskSubmitted      bool                        `json:"taskSubmitted"`
+	SubmissionOutcome  string                      `json:"submissionOutcome"`
+	Phase              string                      `json:"phase,omitempty"`
+	DiagnosticCode     string                      `json:"diagnosticCode,omitempty"`
+	FieldPath          string                      `json:"fieldPath,omitempty"`
+	RetryClass         string                      `json:"retryClass,omitempty"`
+	Error              string                      `json:"error,omitempty"`
+	WritebackOutcome   string                      `json:"writebackOutcome,omitempty"`
+	WritebackReason    string                      `json:"writebackReason,omitempty"`
+	WritebackNodeID    string                      `json:"writebackNodeId,omitempty"`
+	WritebackError     string                      `json:"writebackError,omitempty"`
+	CancellationSource string                      `json:"cancellationSource,omitempty"`
+	Billing            *cloudAgentTaskBillingFacts `json:"billing,omitempty"`
 }
 
 // cloudAgentTaskBillingFacts 只给模型可读的积分数与结论；订单号、微积分整数和
