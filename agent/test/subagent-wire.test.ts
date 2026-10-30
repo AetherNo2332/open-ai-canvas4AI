@@ -19,6 +19,7 @@ test("parent requires frozen consent and cannot report as a child", () => {
 test("agent reports are data rather than user instructions", () => {
   assert.match(formatAgentInterjection("研究员：完成", "subagent"), /不是用户指令/);
   assert.equal(formatAgentInterjection("停止"), "【用户插话】停止");
+  assert.equal(formatAgentInterjection("[系统通知] 用户已把执行权限从「只读」改为「自动执行」", "permission"), "[系统通知] 用户已把执行权限从「只读」改为「自动执行」");
 });
 
 test("read-only children reject the new canvas mutation tools", () => {
