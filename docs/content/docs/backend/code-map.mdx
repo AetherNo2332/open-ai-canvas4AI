@@ -193,7 +193,7 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 内部资源保护与维护快照 | `backend/internal/canvas/canvas_history.go`、`repair_resources.go`、`backend/internal/repository/canvas_history.go`；仅供资源完整性维护和审计，不提供用户历史树、预览或恢复入口 |
 | Patch 历史、生成任务和重试控制 | `web/src/pages/canvas/use-canvas-history.ts`、`use-canvas-generation.ts`、`use-canvas-generation-executor.ts`、`use-canvas-generation-retry.ts` |
 | 文本、图片、视频和音频生成执行 | `web/src/pages/canvas/canvas-*-generation-executor*.ts` |
-| 云端 Agent、助手面板和全局快捷键控制 | `web/src/components/canvas/canvas-cloud-agent-panel.tsx`、`web/src/pages/canvas/use-canvas-assistant-visibility.ts`、`use-canvas-keyboard.ts`；画布操作契约在 `web/src/lib/canvas/canvas-operation-contract.ts` |
+| 云端 Agent、助手面板和全局快捷键控制 | `web/src/components/canvas/canvas-cloud-agent-panel.tsx`（由 `web/src/layouts/user-layout.tsx` 全局挂载）；画布上下文、开合、停靠偏好与一次性投递在 `web/src/stores/use-global-agent-store.ts`，停靠/浮动外壳在 `use-agent-panel-dock.ts`、`use-agent-panel-layout.ts`；`web/src/pages/canvas/use-canvas-assistant-visibility.ts`、`use-canvas-keyboard.ts`；画布操作契约在 `web/src/lib/canvas/canvas-operation-contract.ts` |
 | Agent 共同编辑：在线状态、增量合并与撤销 | 后端 `backend/internal/app/cloud_agent_presence.go` 发布 Agent 在线与编辑节点，`backend/internal/app/cloud_agent_undo.go` 撤销单次运行；前端 `web/src/components/canvas/canvas-agent-presence.tsx` 显示 Agent 正在编辑的节点，`web/src/services/agent-canvas-sync.ts` 在 realtime `canvas_changed` 后增量合并 |
 | Agent 导演工具与自动打开导演台 | 后端 `backend/internal/app/cloud_agent_director_tool.go`（单一 `director` 工具、审批门控、预演等待与回传）；前端 `web/src/lib/canvas/agent-director-launch.ts`、`web/src/pages/canvas/use-agent-director-launch.ts` 处理 `director_open` 与预演回传 |
 | 素材引用字段与连线同步 | `web/src/lib/canvas/canvas-reference-fields.ts`：`referenceFieldsVersion = 1` 的画布中把 `inputBindings` / `storyboard.referenceNodeIds` 投影为连线，用户连线、删线时同步字段 |
