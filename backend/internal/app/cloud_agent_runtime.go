@@ -1377,6 +1377,18 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	return exhausted
 }
 
+// cloudAgentReadOnlyDirectorWrite：只读运行仍列出 director（仅 action=read），写 action 必须拒绝。
+func cloudAgentReadOnlyDirectorWrite(state *cloudAgentRuntime, call cloudAgentCall) bool {
+	return call.Function.Name == cloudAgentDirectorTool && state.Request.PermissionMode == "read_only" && cloudAgentWriteCall(call)
+}
+
+// cloudAgentCallPermitted 判断当前权限下这次调用能否执行，审批决定与执行前检查共用同一规则。
+func cloudAgentCallPermitted(state *cloudAgentRuntime, call cloudAgentCall) bool {
+	request := state.Request
+	request.subagent = state.Subagent
+	return cloudAgentToolAllowed(request, call.Function.Name) && !cloudAgentReadOnlyDirectorWrite(state, call)
+}
+
 // cloudAgentModelHiddenFields 列出只供界面、版本链与审计使用、模型不会回传给任何工具参数的字段。
 // 处理函数照常返回完整结果（recordCanvasBatchHash 等在投影之前读取），这里只从模型那份里去掉。
 var cloudAgentModelHiddenFields = map[string][]string{
@@ -1631,7 +1643,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		state.Calls[state.CallIndex] = call
 	}
 	// read_only 只放行 director read；写 action 即使绕过了预检 schema 也在执行前拒绝。
-	if allowed && call.Function.Name == cloudAgentDirectorTool && state.Request.PermissionMode == "read_only" && cloudAgentWriteCall(call) {
+	if allowed && cloudAgentReadOnlyDirectorWrite(state, call) {
 		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 			cloudAgentRecordToolResult(current, state, call, nil, kernel.Forbidden("只读模式下 director 只允许 action=read"))
 			return cloudAgentSave(current, state)
@@ -2652,7 +2664,7 @@ func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, rea
 	}
 	// 运行中把权限收紧到只读后，卡片上的写入已不被允许：批准也不会执行，直接拒绝并说明，
 	// 不让用户先看到“已批准”再看到失败。卡片仍在，用户可改回权限后再批准，或选择拒绝。
-	if decision == "approve" && !cloudAgentToolAllowed(state.Request, state.Approval.Call.Function.Name) {
+	if decision == "approve" && !cloudAgentCallPermitted(&state, state.Approval.Call) {
 		return &kernel.AppError{Status: 409, Code: 409, Reason: kernel.ReasonAgentApprovalNotPermitted, Message: "当前执行权限不允许这次写入；请先切换权限后再批准，或拒绝本次操作"}
 	}
 	s.storageMu.Lock()

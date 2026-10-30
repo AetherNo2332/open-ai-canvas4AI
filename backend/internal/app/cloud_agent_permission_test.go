@@ -391,3 +391,21 @@ func TestCloudAgentPermissionApproveAfterTighteningIsRefused(t *testing.T) {
 		t.Fatal("approved write did not execute after restoring permission")
 	}
 }
+
+// 审批决定与执行前检查共用 cloudAgentCallPermitted：只读下 director 仍列出（仅 read），
+// 待批准的 director 写入必须判为不允许，不能“批准后再失败”。
+func TestCloudAgentCallPermittedTreatsReadOnlyDirectorWritesAsForbidden(t *testing.T) {
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{PermissionMode: "read_only", ContextScope: []string{"canvas"}}}
+	write := directorTestCall("director-write", map[string]any{"action": "create_scene", "template": "empty"})
+	read := directorTestCall("director-read", map[string]any{"action": "read"})
+	if cloudAgentCallPermitted(state, write) {
+		t.Fatal("read_only must not permit a director write")
+	}
+	if !cloudAgentCallPermitted(state, read) {
+		t.Fatal("read_only must still permit director read")
+	}
+	state.Request.PermissionMode = "request_approval"
+	if !cloudAgentCallPermitted(state, write) {
+		t.Fatal("request_approval must permit a director write")
+	}
+}
