@@ -130,6 +130,9 @@ import { CanvasAssetView } from "@/components/canvas/canvas-asset-view";
 import type { CanvasAssetVersion } from "@/lib/canvas/canvas-asset-catalog";
 import { canDownloadCanvasNodeMedia } from "@/lib/canvas/canvas-media-download";
 import { CanvasSyncStatus } from "./canvas-sync-status";
+import { CanvasReferenceMigrationBanner } from "./canvas-reference-migration-banner";
+import { useCanvasReferenceMigration } from "./use-canvas-reference-migration";
+import { CanvasReferenceMigrationPanel } from "@/components/canvas/canvas-reference-migration-panel";
 import { LibTVImportDialog } from "./components/libtv-import-dialog";
 import { TapNowImportDialog } from "./components/tapnow-import-dialog";
 import { CanvasFocusModeBar } from "@/components/canvas/canvas-focus-mode-bar";
@@ -2685,6 +2688,7 @@ function CanvasViewportPage() {
         setToolbarNodeId(null);
         setHoveredNodeId(null);
     }, [setDialogNodeId, setSearchParams]);
+    const referenceMigration = useCanvasReferenceMigration(projectId, { enabled: projectLoaded, legacy: currentProject?.referenceFieldsVersion !== 1 });
     const locateAssetNode = useCallback((nodeId: string) => {
         changeCanvasView("canvas");
         const selection = new Set([nodeId]);
@@ -2842,6 +2846,21 @@ function CanvasViewportPage() {
                                     shortDramaGuide={shortDramaGuide}
                                 />
                             ) : null}
+                            {referenceMigration.required ? <CanvasReferenceMigrationBanner onOpen={() => referenceMigration.setOpen(true)} /> : null}
+                            <CanvasReferenceMigrationPanel
+                                open={referenceMigration.open}
+                                conflicts={referenceMigration.conflicts}
+                                nodes={nodes}
+                                projectId={projectId}
+                                onLocate={(nodeId) => {
+                                    referenceMigration.setOpen(false);
+                                    locateAssetNode(nodeId);
+                                }}
+                                applying={referenceMigration.applying}
+                                error={referenceMigration.error}
+                                onCancel={() => referenceMigration.setOpen(false)}
+                                onApply={(choices) => void referenceMigration.apply(choices)}
+                            />
 
                             <CanvasNodeSearchModal
                                 open={nodeSearchOpen}
