@@ -35,6 +35,7 @@ import {
     sendAgentMessage,
     subscribeAgentEvents,
     undoAgentRun,
+    changeAgentRunPermission,
     type AgentEvent,
     type AgentPermissionMode,
     type AgentReasoningMode,
@@ -71,6 +72,7 @@ import { canvasRealtimeConnected } from "@/services/canvas-realtime";
 import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/skill-runtime";
 import { notifyAgentApproval } from "@/lib/canvas/agent-browser-notifications";
 import { agentRunUndoOffer, agentRunUndoneMessageId } from "@/lib/canvas/agent-run-undo";
+import { agentPermissionModeValue, switchAgentPermission } from "@/lib/canvas/agent-permission-switch";
 import { ApiError } from "@/services/api/request";
 import { API_ERROR_REASONS } from "@/services/api/error-codes";
 import {
@@ -359,6 +361,20 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         } finally {
             setUndoingRunId("");
         }
+    };
+    // 运行中切换权限：当前画布上有进行中的运行时同步到这一轮，失败退回原值。
+    const changePermission = (next: AgentPermissionMode) => {
+        void switchAgentPermission(next, permissionMode, run, onCanvas, {
+            change: changeAgentRunPermission,
+            setMode: setPermissionMode,
+            requestId: () => nanoid(),
+            onApplied: () => appMessage.success("已在本轮生效"),
+            onFailed: (cause) => {
+                if (cause instanceof ApiError && cause.reason === API_ERROR_REASONS.agentRunFinished) appMessage.info(cause.message || "本轮已经结束，权限将用于下一轮");
+                else if (cause instanceof ApiError && cause.reason === API_ERROR_REASONS.agentSubagentPermissionFixed) appMessage.warning(cause.message || "子代理固定为只读，不能切换执行权限");
+                else appMessage.error(cause instanceof Error && cause.message ? cause.message : "切换执行权限失败，请稍后重试");
+            },
+        });
     };
     const skillPageRequestRef = useRef(false);
     const approvalRequestRef = useRef<string | null>(null);
@@ -902,6 +918,11 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                 setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
                 setContextUsage((current) => reduceAgentContextUsage(current, event));
                 applyAgentEvent(event, setMessages, setRun, setApproval, setPrompt);
+                // 其他标签页切换了本轮权限：控件跟随服务端事件。
+                if (event.type === "permission_changed") {
+                    const mode = agentPermissionModeValue(event.payload?.to);
+                    if (mode) setPermissionMode(mode);
+                }
                 // 只有持久事件（seq>0）且未过期才拉起导演台：快照合成事件与重连回放的旧请求不派发；画布页按 canvasId 过滤。
                 dispatchDirectorOpen(event);
                 if (["user_question", "run_completed", "run_failed", "run_cancelled"].includes(event.type)) void messageQueue.refresh();
@@ -1399,7 +1420,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                     maxVideoSeconds={maxVideoSeconds}
                                     onBack={() => setView("chat")}
                                     onModelChange={setModel}
-                                    onPermissionChange={setPermissionMode}
+                                    onPermissionChange={changePermission}
                                     reasoningMode={reasoningMode}
                                     onReasoningModeChange={setReasoningMode}
                                     canvasId={canvasId}
@@ -1590,7 +1611,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                             permissionMode={permissionMode}
                                             theme={theme}
                                             onModelChange={setModel}
-                                            onPermissionChange={setPermissionMode}
+                                            onPermissionChange={changePermission}
                                         />
                                     }
                                 />

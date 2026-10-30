@@ -214,6 +214,11 @@ export async function submitDirectorPreviewResult(runId: string, requestId: stri
     await http.post<{ accepted: boolean }>(`/agent/runs/${encodeURIComponent(runId)}/director-preview`, { requestId, ...result }, { timeout: 20_000 });
 }
 
+/** 运行中切换执行权限：下一次工具调用生效；正在等待的审批仍需用户决定。 */
+export function changeAgentRunPermission(runId: string, input: { permissionMode: AgentPermissionMode; requestId: string }) {
+    return http.post<{ permissionMode: AgentPermissionMode; changed: boolean }>(`/agent/runs/${encodeURIComponent(runId)}/permission`, input, { timeout: 20_000 });
+}
+
 export function sendAgentInterjection(runId: string, input: { text: string; messageId: string }) {
     return http.post<{ accepted: boolean; pending: number }>(`/agent/runs/${encodeURIComponent(runId)}/interjections`, input, { timeout: 20_000 });
 }

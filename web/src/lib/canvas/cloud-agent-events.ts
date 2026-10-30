@@ -5,6 +5,7 @@ import { agentRunErrorMessage } from "@/lib/canvas/agent-error-presentation";
 import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-retry";
 import { nativeSkillEventPresentation } from "@/lib/canvas/agent-tool-presentation";
 import { agentRunUndoneMessageId } from "@/lib/canvas/agent-run-undo";
+import { agentPermissionChangedText, agentPermissionModeValue } from "@/lib/canvas/agent-permission-switch";
 import { agentAssistantFinality, agentControlMessage, type CloudAgentChatMessage, type CloudAgentPlanItem } from "@/components/canvas/canvas-cloud-agent-chat-ui";
 
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
@@ -52,6 +53,14 @@ export function applyAgentEvent(
         }
         return;
     }
+    if (event.type === "permission_changed") {
+        // 运行中切换权限：时间线留一行，并同步运行快照（其他标签页由面板据此更新控件）。
+        const to = agentPermissionModeValue(payload.to);
+        if (to) setRun((current) => (current && current.id === event.runId ? { ...current, permissionMode: to } : current));
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: agentPermissionChangedText(payload.from, payload.to), detail: { ...payload, eventType: event.type } }));
+        return;
+    }
+    if (event.type === "permission_notice_delivered") return;
     if (event.type === "progress_summary") {
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: text || "Agent 正在整理执行计划" }));
         return;
