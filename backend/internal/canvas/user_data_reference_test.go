@@ -102,6 +102,30 @@ func TestCreateCanvasOperationAdoptsDeclarativeReferences(t *testing.T) {
 			}
 		}
 	})
+	stayedLegacy := func(t *testing.T, saved map[string]any, edges int) {
+		t.Helper()
+		if _, marked := saved["referenceFieldsVersion"]; marked {
+			t.Fatalf("document was marked declarative: %#v", saved["referenceFieldsVersion"])
+		}
+		if got := saved["connections"].([]any); len(got) != edges {
+			t.Fatalf("connections changed: %#v", got)
+		}
+	}
+	t.Run("unresolvable references save as legacy", func(t *testing.T) {
+		saved := create(t, "cycle",
+			node(`{"id":"a","type":"image","title":"A","metadata":{}}`),
+			node(`{"id":"b","type":"image","title":"B","metadata":{}}`),
+			edge(`{"id":"ab","fromNodeId":"a","toNodeId":"b"}`),
+			edge(`{"id":"ba","fromNodeId":"b","toNodeId":"a"}`))
+		stayedLegacy(t, saved, 2)
+	})
+	t.Run("unknown node type saves as legacy", func(t *testing.T) {
+		saved := create(t, "plugin",
+			node(`{"id":"img","type":"image","title":"参考图","metadata":{}}`),
+			node(`{"id":"ext","type":"plugin-widget","title":"插件","metadata":{}}`),
+			edge(`{"id":"legacy","fromNodeId":"img","toNodeId":"ext"}`))
+		stayedLegacy(t, saved, 1)
+	})
 	t.Run("conflict stays legacy", func(t *testing.T) {
 		saved := create(t, "conflict",
 			node(`{"id":"hero","type":"text","metadata":{"workflowKind":"character","characterAssetId":"hero-asset"}}`),

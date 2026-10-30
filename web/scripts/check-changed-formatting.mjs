@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as prettier from "prettier";
 
-export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = process.env.BASE_SHA, headSha = process.env.GITHUB_SHA || "HEAD", log = console.log } = {}) {
+export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = process.env.BASE_SHA, headSha = process.env.GITHUB_SHA || "HEAD", pullRequest = process.env.GITHUB_EVENT_NAME === "pull_request", log = console.log } = {}) {
     const git = (args) => {
         const result = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
         if (result.error) throw result.error;
@@ -36,8 +36,9 @@ export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = pr
     // 被检查的改动：其第二父提交即改动内容，不能当作旧文件，只沿它的首父链继续找。
     const legacyRefs = base ? [base] : [];
     if (base) {
-        // 基线分支在事件之后又前进时，合成合并的首父提交会晚于 base，按祖先关系判断。
-        const landsOnBase = headParents.length > 1 && spawnSync("git", ["merge-base", "--is-ancestor", base, headParents[0]], { cwd }).status === 0;
+        // 基线分支在事件之后又前进时，PR 合成合并的首父提交会晚于 base，按祖先关系判断；
+        // push 事件里的合并没有这种漂移，仍要求首父提交就是 before。
+        const landsOnBase = headParents.length > 1 && (headParents[0] === base || (pullRequest && spawnSync("git", ["merge-base", "--is-ancestor", base, headParents[0]], { cwd }).status === 0));
         const tip = landsOnBase ? headParents[1] : head;
         for (const line of git(["rev-list", "--merges", "--first-parent", "--parents", tip, `^${base}`]).split("\n")) {
             legacyRefs.push(...line.trim().split(" ").slice(2).filter(Boolean));

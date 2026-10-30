@@ -143,7 +143,7 @@ describe("changed-file formatting gate", () => {
         repo.write("later.ts", "const value = 1;\n");
         repo.commit();
         repo.git("-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", "synthetic pr merge", "pr");
-        await expect(repo.check()).rejects.toThrow("added.ts");
+        await expect(repo.check({ pullRequest: true })).rejects.toThrow("added.ts");
     });
 
     test("deletions do not attempt to read missing files", async () => {

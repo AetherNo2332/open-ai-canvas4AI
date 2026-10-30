@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"yingce/backend/internal/canvas/capability"
 	"yingce/backend/internal/canvas/references"
 	"yingce/backend/internal/kernel"
 
@@ -356,7 +357,8 @@ func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasO
 				return kernel.BadAuthRequest(err.Error())
 			}
 			if isCreate {
-				if err := adoptDeclarativeReferences(payload); err != nil {
+				// ApplyUserCanvasOperations 每批最多 500 个操作；满批说明客户端拆分了创建。
+				if err := adoptDeclarativeReferences(payload, len(req.Operations) >= 500); err != nil {
 					return err
 				}
 			}
@@ -658,9 +660,14 @@ func parseClientTime(value string, fallback time.Time) time.Time {
 
 // adoptDeclarativeReferences 让新建画布与 commands.Service.Create 一样使用声明式引用，
 // 否则 Agent 会把每张新画布都当作待迁移的历史画布。同一请求带入节点与连线（导入、
-// 离线后首次同步）时先按历史画布规范化：无冲突才采用规范化结果，有冲突则保持历史
-// 画布，不在未核对字段与连线时直接打标记。
-func adoptDeclarativeReferences(payload map[string]json.RawMessage) error {
+// 离线后首次同步）时先按历史画布规范化：只有规范化成功且无冲突才采用，冲突、引用
+// 无法解析（循环、悬空、角色多匹配）或含内置能力表以外的节点类型时保持历史画布，
+// 照常保存，不在未核对字段与连线时打标记。
+// truncated 表示客户端把创建拆成了多批，后续批次的连线不在本次文档里，同样保持历史画布。
+func adoptDeclarativeReferences(payload map[string]json.RawMessage, truncated bool) error {
+	if truncated {
+		return nil
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -669,7 +676,21 @@ func adoptDeclarativeReferences(payload map[string]json.RawMessage) error {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return err
 	}
-	migrated, err := references.NormalizeLegacy(doc, nil, nil, nil)
+	registry := capability.BuiltinRegistry()
+	for _, item := range nodesOf(doc) {
+		if node, _ := item.(map[string]any); node != nil {
+			if nodeType, _ := node["type"].(string); nodeType != "" {
+				if _, known := registry.Resolve(nodeType); !known {
+					return nil
+				}
+			}
+		}
+	}
+	migrated, err := references.NormalizeLegacy(doc, nil, registry, nil)
+	var referenceErr *references.Error
+	if errors.As(err, &referenceErr) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -684,4 +705,9 @@ func adoptDeclarativeReferences(payload map[string]json.RawMessage) error {
 		payload[field] = value
 	}
 	return nil
+}
+
+func nodesOf(doc map[string]any) []any {
+	nodes, _ := doc["nodes"].([]any)
+	return nodes
 }
