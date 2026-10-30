@@ -5,7 +5,7 @@
       "file": "SYSTEM_POLICY.md",
       "source": "backend/internal/prompts/agent-system-policy.md",
       "stripFrontmatter": true,
-      "sha256": "550b07dea7ce098b025903e04d4d277254b0d55383f2629f55eedd5b4c102402"
+      "sha256": "632520743780b27949cdcb08fa5e6034bf2738be75bd71ff6a4e21a8c8a65c1d"
     },
     {
       "file": "MEDIA_POLICY.md",

@@ -54,6 +54,25 @@ func TestSystemPolicyDescribesMemoryUpdate(t *testing.T) {
 	}
 }
 
+// 运行中切换权限以系统通知送达：覆盖开局权限、下一次调用生效、不请用户确认、不原样重试旧拒绝。
+func TestSystemPolicyHandlesPermissionChangeNotice(t *testing.T) {
+	system, _, err := LoadAgentPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phrase := range []string{
+		"[系统通知] 用户已把执行权限从…改为…",
+		"覆盖执行上下文里开局的 permissionMode",
+		"从下一次工具调用起按新权限工作",
+		"不要请用户确认这次变更",
+		"旧权限下被拒绝的调用不要原样重试",
+	} {
+		if !strings.Contains(system.Text, phrase) {
+			t.Fatalf("system policy lost permission-change phrase %q", phrase)
+		}
+	}
+}
+
 // 用户纠正、插话和当前画布优先于模型自己的上下文；写入前按需重读，不再以"只有实际冲突才重读"为默认。
 func TestSystemPolicyPrefersUserCorrectionsAndCurrentCanvas(t *testing.T) {
 	system, _, err := LoadAgentPolicies()
