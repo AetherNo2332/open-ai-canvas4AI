@@ -7,7 +7,7 @@ import (
 )
 
 func TestPrevisRenderQueuedTasksFailedByMigration(t *testing.T) {
-	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-previs-render-v76?mode=memory&cache=shared"})
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-previs-render-v79?mode=memory&cache=shared"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestPrevisRenderQueuedTasksFailedByMigration(t *testing.T) {
 	}
 	for range 2 {
 		if err := MigrateSchema(db); err != nil {
-			t.Fatalf("upgrade to v76: %v", err)
+			t.Fatalf("upgrade to v79: %v", err)
 		}
 	}
 	want := map[string]model.TaskStatus{"pv-queued": model.TaskStatusFailed, "pv-running": model.TaskStatusFailed, "pv-done": model.TaskStatusSucceeded, "video-queued": model.TaskStatusQueued}
@@ -47,7 +47,7 @@ func TestPrevisRenderQueuedTasksFailedByMigration(t *testing.T) {
 		}
 	}
 	status, err := ReadSchemaStatus(db)
-	if err != nil || !status.Ready || status.Current != CurrentSchemaVersion || CurrentSchemaVersion < 76 {
+	if err != nil || !status.Ready || status.Current != CurrentSchemaVersion || CurrentSchemaVersion < 79 {
 		t.Fatalf("schema not ready after upgrade: %+v, %v", status, err)
 	}
 }

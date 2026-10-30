@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef,
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Image as ImageIcon } from "lucide-react";
 import { observeMovablePopupAnchor } from "@/lib/movable-popup-anchor";
+import { canvasOverlayRightEdge } from "@/lib/canvas/overlay-viewport";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -133,7 +134,7 @@ function CompactMenuButton({
         const menuHeight = Math.min(maxMenuHeight, items.length * MENU_ITEM_HEIGHT + 8);
         const effectiveMenuWidth = Math.max(menuWidth, Math.round(rect.width));
         const openAbove = rect.bottom + MENU_GAP + menuHeight > window.innerHeight && rect.top > menuHeight + MENU_GAP;
-        const maxLeft = Math.max(MENU_MARGIN, window.innerWidth - effectiveMenuWidth - MENU_MARGIN);
+        const maxLeft = Math.max(MENU_MARGIN, canvasOverlayRightEdge() - effectiveMenuWidth - MENU_MARGIN);
         const maxTop = Math.max(MENU_MARGIN, window.innerHeight - menuHeight - MENU_MARGIN);
         const left = Math.min(Math.max(MENU_MARGIN, rect.left), maxLeft);
         const top = openAbove ? Math.max(MENU_MARGIN, rect.top - menuHeight - MENU_GAP) : Math.min(Math.max(MENU_MARGIN, rect.bottom + MENU_GAP), maxTop);
@@ -190,7 +191,7 @@ function CompactMenuButton({
                   <div
                       ref={menuRef}
                       data-canvas-no-zoom
-                      className="fixed z-[var(--z-toast)] overflow-hidden rounded-[var(--r-lg)] border p-1 backdrop-blur-xl"
+                      className="fixed z-[var(--z-agent-overlay)] overflow-hidden rounded-[var(--r-lg)] border p-1 backdrop-blur-xl"
                       style={menuStyle}
                       onMouseDown={(event) => event.stopPropagation()}
                       onPointerDown={(event) => event.stopPropagation()}

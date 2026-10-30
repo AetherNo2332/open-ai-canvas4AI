@@ -1,93 +1,120 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { AGENT_PANEL_MIN_WIDTH, AGENT_PANEL_WIDTH, agentPanelIsCompact, agentPanelWidth } from "@/lib/canvas/agent-panel-layout";
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type KeyboardEvent } from "react";
+import { AGENT_PANEL_LAYOUT_KEY, changeAgentPanelLayout, clampAgentPanelLayout, defaultAgentPanelLayout, restoreAgentPanelLayout, type AgentPanelGesture, type AgentPanelLayout } from "@/lib/canvas/agent-panel-layout";
+import { AGENT_DOCK_DEFAULT_WIDTH, clampAgentDockWidth } from "@/lib/canvas/agent-panel-dock";
+import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
 
 const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
+/** 窄于这个宽度时浮动窗口铺满视口，不再允许移动和调整大小。 */
+export const AGENT_PANEL_COMPACT_MAX_VIEWPORT = 640;
 
-const widthKey = "canvas-agent-panel-width";
-const storedWidth = () => {
-    try {
-        const value = Number(window.localStorage.getItem(widthKey));
-        return value > 0 && Number.isFinite(value) ? value : AGENT_PANEL_WIDTH;
-    } catch {
-        return AGENT_PANEL_WIDTH;
-    }
-};
+/** 停靠时只能拖左边缘调宽；浮动时可移动和从左上三个方向调整大小。 */
+type PanelGesture = AgentPanelGesture | "dock";
 
-/** 右侧面板可调宽，窄屏自动全宽；视口收窄不覆盖用户原来的宽度偏好。 */
-export function useAgentPanelLayout() {
-    const [viewportSize, setViewportSize] = useState(viewport);
-    const [preferredWidth, setPreferredWidth] = useState(storedWidth);
-    const [resizing, setResizing] = useState(false);
-    const drag = useRef<{ pointerId: number; startX: number; width: number } | null>(null);
+export function useAgentPanelLayout(dock: { active: boolean; width: number } = { active: false, width: AGENT_DOCK_DEFAULT_WIDTH }) {
+    const [compact, setCompact] = useState(() => window.innerWidth < AGENT_PANEL_COMPACT_MAX_VIEWPORT);
+    const [layout, setLayout] = useState(() => {
+        try {
+            return restoreAgentPanelLayout(localStorage.getItem(AGENT_PANEL_LAYOUT_KEY), viewport());
+        } catch (error) {
+            console.warn("Agent 窗口偏好无法读取", error);
+            return restoreAgentPanelLayout(null, viewport());
+        }
+    });
+    const setDockWidth = useGlobalAgentStore((state) => state.setDockWidth);
+    const gestureRef = useRef<{ pointerId: number; kind: PanelGesture; x: number; y: number; start: AgentPanelLayout; dockWidth: number } | null>(null);
 
     useEffect(() => {
-        const resize = () => setViewportSize(viewport());
+        const resize = () => {
+            setCompact(window.innerWidth < AGENT_PANEL_COMPACT_MAX_VIEWPORT);
+            if (window.innerWidth >= AGENT_PANEL_COMPACT_MAX_VIEWPORT) setLayout((current) => clampAgentPanelLayout(current, viewport()));
+        };
         window.addEventListener("resize", resize);
         return () => window.removeEventListener("resize", resize);
     }, []);
 
-    const compact = agentPanelIsCompact(viewportSize);
     useEffect(() => {
-        if (!compact) return;
-        drag.current = null;
-        setResizing(false);
+        if (compact) gestureRef.current = null;
     }, [compact]);
-    const width = agentPanelWidth(viewportSize, preferredWidth);
-    const maxWidth = agentPanelWidth(viewportSize, Number.MAX_SAFE_INTEGER);
-    const updateWidth = (value: number) => setPreferredWidth(agentPanelWidth(viewportSize, value));
+
     useEffect(() => {
-        if (resizing) return;
-        try {
-            window.localStorage.setItem(widthKey, String(preferredWidth));
-        } catch {
-            /* 调宽在禁用存储时仍可使用。 */
+        if (compact) return;
+        const timer = window.setTimeout(() => {
+            try {
+                localStorage.setItem(AGENT_PANEL_LAYOUT_KEY, JSON.stringify(layout));
+            } catch (error) {
+                console.warn("Agent 窗口偏好无法保存", error);
+            }
+        }, 120);
+        return () => window.clearTimeout(timer);
+    }, [compact, layout]);
+
+    const onPointerDown = (event: PointerEvent<HTMLElement>) => {
+        if (compact || event.button !== 0 || !event.isPrimary) return;
+        const target = event.target as HTMLElement;
+        const resize = target.closest<HTMLElement>("[data-agent-resize]");
+        const kind = resize?.dataset.agentResize as PanelGesture | undefined;
+        if (dock.active) {
+            if (kind !== "dock") return;
+        } else {
+            const header = target.closest("[data-agent-drag-handle]");
+            if (kind === "dock" || (!resize && (!header || target.closest("button, input, textarea, a, [role=button]")))) return;
         }
-    }, [preferredWidth, resizing]);
-    const finishResize = (event: PointerEvent<HTMLDivElement>) => {
-        if (drag.current?.pointerId !== event.pointerId) return;
-        drag.current = null;
-        setResizing(false);
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        gestureRef.current = { pointerId: event.pointerId, kind: kind || "move", x: event.clientX, y: event.clientY, start: layout, dockWidth: dock.width };
+    };
+    const onPointerMove = (event: PointerEvent<HTMLElement>) => {
+        const gesture = gestureRef.current;
+        if (!gesture || gesture.pointerId !== event.pointerId) return;
+        event.stopPropagation();
+        if (gesture.kind === "dock") {
+            // 面板贴在右侧：左边缘往左拖是变宽。
+            setDockWidth(clampAgentDockWidth(gesture.dockWidth - (event.clientX - gesture.x), window.innerWidth));
+            return;
+        }
+        setLayout(changeAgentPanelLayout(gesture.start, gesture.kind, event.clientX - gesture.x, event.clientY - gesture.y, viewport()));
+    };
+    const onPointerUp = (event: PointerEvent<HTMLElement>) => {
+        if (gestureRef.current?.pointerId !== event.pointerId) return;
+        gestureRef.current = null;
         if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     };
+    const onResizeKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+        const kind = event.currentTarget.dataset.agentResize as PanelGesture;
+        const delta = event.shiftKey ? 40 : 10;
+        if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (kind === "dock") {
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") setDockWidth(clampAgentDockWidth(dock.width + (event.key === "ArrowLeft" ? delta : -delta), window.innerWidth));
+            return;
+        }
+        setLayout((current) => changeAgentPanelLayout(current, kind, event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0, event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0, viewport()));
+    };
+    /** 面板收起时释放进行中的拖动，避免指针捕获残留在已隐藏的面板上。 */
+    const cancelGesture = (element: HTMLElement) => {
+        const gesture = gestureRef.current;
+        gestureRef.current = null;
+        if (gesture && element.hasPointerCapture?.(gesture.pointerId)) element.releasePointerCapture(gesture.pointerId);
+    };
+
+    const style: CSSProperties = compact ? { left: 0, top: 8, width: "100%", height: "calc(100dvh - 8px)" } : dock.active ? { top: 0, right: 0, width: dock.width, height: "100dvh" } : layout;
 
     return {
         compact,
-        width,
-        resizing,
-        minWidth: AGENT_PANEL_MIN_WIDTH,
-        maxWidth,
-        resizeHandlers: {
-            onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
-                if (compact || event.button !== 0) return;
-                event.preventDefault();
-                event.stopPropagation();
-                drag.current = { pointerId: event.pointerId, startX: event.clientX, width };
-                event.currentTarget.setPointerCapture(event.pointerId);
-                setResizing(true);
+        style,
+        reset: () => (dock.active ? setDockWidth(AGENT_DOCK_DEFAULT_WIDTH) : setLayout(defaultAgentPanelLayout(viewport()))),
+        onResizeKeyDown,
+        cancelGesture,
+        pointerHandlers: {
+            onPointerDown,
+            onPointerMove,
+            onPointerUp,
+            onPointerCancel: onPointerUp,
+            onLostPointerCapture: () => {
+                gestureRef.current = null;
             },
-            onPointerMove: (event: PointerEvent<HTMLDivElement>) => {
-                const start = drag.current;
-                if (!start || start.pointerId !== event.pointerId || compact) return;
-                updateWidth(start.width + start.startX - event.clientX);
-            },
-            onPointerUp: finishResize,
-            onPointerCancel: finishResize,
-            onLostPointerCapture: finishResize,
-            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
-                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-                event.preventDefault();
-                event.stopPropagation();
-                setResizing(true);
-                updateWidth(event.key === "Home" ? AGENT_PANEL_MIN_WIDTH : event.key === "End" ? maxWidth : width + (event.key === "ArrowLeft" ? 20 : -20));
-            },
-            onKeyUp: () => setResizing(false),
-            onBlur: () => {
-                if (!drag.current) setResizing(false);
-            },
-            onDoubleClick: () => setPreferredWidth(AGENT_PANEL_WIDTH),
         },
-        topInset: "var(--canvas-topbar-offset)",
-        bottomInset: "var(--canvas-inset-y)",
-        sideInset: "var(--canvas-inset-x)",
     };
 }

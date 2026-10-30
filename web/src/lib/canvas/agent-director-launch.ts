@@ -42,6 +42,29 @@ export function isDirectorOpenStale(createdAt: string | undefined, now = Date.no
     return !Number.isFinite(at) || now - at > DIRECTOR_OPEN_MAX_AGE_MS;
 }
 
+/**
+ * 全局 Agent 面板挂在布局上，与画布页没有父子关系：实时 director_open 经 window 事件转交，
+ * 由画布页的导演台 hook 订阅，并只处理 canvasId 与自己一致的事件。
+ */
+export const DIRECTOR_OPEN_EVENT = "agent:director-open";
+
+/** 只转发持久（seq>0）且未过期的事件；快照合成事件与重连回放的旧请求不派发。 */
+export function dispatchDirectorOpen(event: { type: string; runId: string; seq?: number; createdAt?: string; payload?: Record<string, unknown> }, target: Pick<EventTarget, "dispatchEvent"> = window): DirectorOpenRunEvent | null {
+    if (!(typeof event.seq === "number" && event.seq > 0) || isDirectorOpenStale(event.createdAt)) return null;
+    const parsed = parseDirectorOpenEvent(event);
+    if (parsed) target.dispatchEvent(new CustomEvent<DirectorOpenRunEvent>(DIRECTOR_OPEN_EVENT, { detail: parsed }));
+    return parsed;
+}
+
+export function subscribeDirectorOpen(canvasId: string, listener: (event: DirectorOpenRunEvent) => void, target: Pick<EventTarget, "addEventListener" | "removeEventListener"> = window) {
+    const handle = (event: Event) => {
+        const detail = (event as CustomEvent<DirectorOpenRunEvent>).detail;
+        if (detail && detail.canvasId === canvasId) listener(detail);
+    };
+    target.addEventListener(DIRECTOR_OPEN_EVENT, handle);
+    return () => target.removeEventListener(DIRECTOR_OPEN_EVENT, handle);
+}
+
 /** 画布不匹配或 read（后端本不发，纵深防御）返回 ignored；已打开同一节点不重复打开。 */
 export function handleDirectorOpen(event: DirectorOpenEvent, deps: { openPrevisWorkbench(nodeId: string): void; currentCanvasId: string; openNodeId?: string | null }): "opened" | "ignored" {
     if (!event.nodeId || event.action === "read" || event.canvasId !== deps.currentCanvasId) return "ignored";

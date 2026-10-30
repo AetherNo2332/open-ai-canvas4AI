@@ -42,9 +42,13 @@ func (s *Service) applyCloudAgentProjectDefaultModel(run *model.CloudAgentExecut
 	if defaultModel == "" {
 		return false, nil
 	}
+	access, err := s.userGroupAccess(run.UserID)
+	if err != nil {
+		return false, err
+	}
 
 	if channelID, channelModelKey, ok := splitCloudAgentChannelModel(defaultModel); ok {
-		catalog, catalogErr := s.ModelCatalog(nil)
+		catalog, catalogErr := s.ModelCatalog(access, nil)
 		if catalogErr != nil {
 			return false, catalogErr
 		}
@@ -62,7 +66,7 @@ func (s *Service) applyCloudAgentProjectDefaultModel(run *model.CloudAgentExecut
 		return false, fmt.Errorf("项目默认%s模型不可用或能力不匹配，请在项目设置中重新选择模型", cloudAgentModeLabel(a.Mode))
 	}
 
-	logicalModels, err := s.PublicLogicalModels(nil)
+	logicalModels, err := s.PublicLogicalModels(access, nil)
 	if err != nil {
 		return false, err
 	}

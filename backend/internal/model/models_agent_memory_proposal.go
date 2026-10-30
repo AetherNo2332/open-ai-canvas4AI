@@ -3,8 +3,8 @@ package model
 import "time"
 
 // AgentMemoryProposal and AgentMemoryRevision only keep upstream schema v58
-// reproducible. The fork Agent applies memory through its own lesson approval
-// flow and never reads or writes these tables.
+// reproducible. The Agent now edits the per-user memory document
+// (AgentMemoryDocument) and never reads or writes these tables.
 type AgentMemoryProposal struct {
 	ID          string    `gorm:"primaryKey;size:36"`
 	UserID      string    `gorm:"size:36;not null;index:idx_memory_proposal_owner_created,priority:1"`

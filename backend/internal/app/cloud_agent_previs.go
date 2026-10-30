@@ -68,7 +68,7 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 			"canvasSnapshotHash": cloudAgentCanvasHash(doc),
 			"scenes":             items,
 			"count":              len(items),
-			"guidance":           "先用返回的 sceneId 读取一个场景，再使用 shotId 进行布局或预演。创建场景时把 canvasSnapshotHash 原样传回。",
+			"guidance":           "先用返回的 sceneId 读取一个场景，再使用 shotId 进行布局或预演；新建场景用 director create_scene。",
 		}, nil
 	}
 

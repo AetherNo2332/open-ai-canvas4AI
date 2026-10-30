@@ -51,7 +51,12 @@ func (s *Service) structuredWriteQuota(tx *repository.Repository, ownerID, kind 
 // CanvasCommandValidation 汇总当前可用媒体模型的参考素材上限，供画布命令校验 Agent 写入的生成配置。
 func (s *Service) CanvasCommandValidation(ctx context.Context, tx *repository.Repository, p identity.Principal) (commands.ValidationContext, error) {
 	v := commands.ValidationContext{Principal: p, ModelInputLimits: map[string]map[string]int{}}
-	catalog, err := s.ModelCatalog(nil)
+	// 只读取参考素材上限，不做授权；授权在任务准入和账单预留中按用户分组完成。
+	access, err := s.systemGroupAccess()
+	if err != nil {
+		return v, err
+	}
+	catalog, err := s.ModelCatalog(access, nil)
 	if err != nil {
 		return v, err
 	}

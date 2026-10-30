@@ -174,7 +174,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v16"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v17"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -306,32 +306,22 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 	if req.VisionEnabled && len(req.ContextScope) > 0 {
 		add("canvas_inspect_image", cloudAgentToolText("canvas_inspect_image"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_023")), "refresh": map[string]any{"type": "boolean", "description": "true：在每图和本轮预算内重新附送真实图片，单图也有效；已保存摘要仍可重看，重复时 repeat=true"}, "purpose": map[string]any{"type": "string", "enum": []string{"inspect", "compare"}, "description": "默认 inspect 读取指定节点；compare 在同一工具批次逐个读取待对比节点，仍遵守图片数量和成本预算"}}, "nodeId")
 	}
-	add("recall_lessons", cloudAgentToolText("recall_lessons"),
-		map[string]any{
-			"category": map[string]any{"type": "string", "enum": cloudAgentLessonCategoryKeys(), "description": cloudAgentToolText("parameter_025")},
-			"topic":    str(cloudAgentToolText("parameter_026")),
-			"keyword":  str(cloudAgentToolText("parameter_027")),
-			"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
-		})
-	if req.PermissionMode != "read_only" {
-		add("remember_lesson", cloudAgentToolText("remember_lesson"),
+	if req.PermissionMode != "read_only" && req.subagent == nil && (req.MemoryMode == model.AgentMemoryDocumentModeAuto || req.MemoryMode == model.AgentMemoryDocumentModeReview) {
+		add("memory_update", cloudAgentToolText("memory_update"),
 			map[string]any{
-				"topic":     str(cloudAgentToolText("parameter_028")),
-				"category":  map[string]any{"type": "string", "enum": cloudAgentLessonCategoryKeys(), "description": cloudAgentToolText("parameter_029")},
-				"situation": str(cloudAgentToolText("parameter_030")),
-				"lesson":    str(cloudAgentToolText("parameter_031")),
-				"steps": map[string]any{"type": "array", "maxItems": 12, "items": map[string]any{
+				"operations": map[string]any{"type": "array", "minItems": 1, "maxItems": agentMemoryOpsMax, "items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tool":   str(cloudAgentToolText("parameter_032")),
-						"action": str(cloudAgentToolText("parameter_033")),
-						"note":   str(cloudAgentToolText("parameter_034")),
+						"action":  map[string]any{"type": "string", "enum": []string{"add", "replace", "remove"}},
+						"id":      str(cloudAgentToolText("memory_update_id")),
+						"section": map[string]any{"type": "string", "enum": []string{model.AgentMemorySectionUser, model.AgentMemorySectionNotes}, "description": cloudAgentToolText("memory_update_section")},
+						"text":    map[string]any{"type": "string", "maxLength": agentMemoryEntryMaxRunes, "description": cloudAgentToolText("memory_update_text")},
 					},
-					"required": []string{"tool", "action"}, "additionalProperties": false,
+					"required": []string{"action"}, "additionalProperties": false,
 				}},
-				"source": str(cloudAgentToolText("parameter_035")),
+				"reason": map[string]any{"type": "string", "maxLength": agentMemoryReasonMaxRunes, "description": cloudAgentToolText("memory_update_reason")},
 			},
-			"topic", "category", "situation")
+			"operations")
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
 		for _, name := range []string{"canvas_undo", "canvas_redo"} {
@@ -480,8 +470,8 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 }
 
 func CloudAgentSupportedToolNames() []string {
-	// 平台支持的工具全集：包含只在特定条件下暴露的工具（图片输入能力、已有个人记忆）。
-	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}, VisionEnabled: true, HasMemories: true, WebSearchEnabled: true}
+	// 平台支持的工具全集：包含只在特定条件下暴露的工具（图片输入能力、长期记忆开启）。
+	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}, VisionEnabled: true, MemoryMode: model.AgentMemoryDocumentModeAuto, WebSearchEnabled: true}
 	req.Budget.MaxGenerationTasks = 1
 	tools := cloudAgentTools(req)
 	names := make([]string, 0, len(tools))
@@ -603,7 +593,7 @@ func cloudAgentReadToolCacheable(name string) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "recall_lessons", "task_get":
+	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "task_get":
 		return true
 	default:
 		return false
@@ -763,10 +753,6 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentApplyPlanUpdate(state, call)
 	case "ask_user":
 		return cloudAgentAskUser(call)
-	case "recall_lessons":
-		return cloudAgentRecallLessons(repo, userID, call)
-	case "remember_lesson":
-		return cloudAgentRememberLesson(repo, userID, state, call)
 	case "canvas_list_node_types":
 		var args struct {
 			NodeType string `json:"nodeType"`

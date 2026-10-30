@@ -9,6 +9,7 @@ import {
     directorPreviewVideoResourceId,
     handleDirectorOpen,
     runDirectorPreview,
+    subscribeDirectorOpen,
     withDirectorPreviewLock,
     type DirectorOpenRunEvent,
     type DirectorPreviewJob,
@@ -45,6 +46,9 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
         },
         [projectId],
     );
+
+    // 全局面板经 window 事件转交 director_open；只订阅当前画布的事件。
+    useEffect(() => subscribeDirectorOpen(projectId, onDirectorOpen), [onDirectorOpen, projectId]);
 
     // 写入后的实时合并可能晚于事件到达：节点与场景都同步到本地后再打开。
     useEffect(() => {
@@ -86,5 +90,5 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
         [message],
     );
 
-    return { onDirectorOpen, directorPreview, onDirectorPreview };
+    return { directorPreview, onDirectorPreview };
 }

@@ -66,7 +66,7 @@ func validateCloudAgentReferenceOperations(ops []agentCanvasOp) error {
 // 排序、绘图、批量表既有行字段）不受影响。
 func cloudAgentReferenceMigrationRequired() error {
 	return cloudAgentFieldError("snapshotHash", "reference_migration_required",
-		"资产关联未执行：这是旧版引用格式的画布，Agent 暂不能在其上关联素材或生成媒体；请如实告知用户并建议在新建的画布上继续，停止重试引用写入，不得改写 characters 或正文来替代绑定，也不得报告资产已关联")
+		"资产关联未执行：这是旧版引用格式的画布，Agent 暂不能在其上关联素材或生成媒体；请告知用户在画布顶部的「引用迁移」提示中完成一次迁移后再继续，停止重试引用写入，不得改写 characters 或正文来替代绑定，也不得报告资产已关联")
 }
 
 func cloudAgentReferenceMigrationBlocked(err error) bool {

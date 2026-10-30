@@ -105,7 +105,7 @@ func verifySQLite(db *gorm.DB) error {
 	return nil
 }
 
-// verifySourceSchema 要求源库已在当前版本的后端上完成全部迁移。数据迁移（如 v77
+// verifySourceSchema 要求源库已在当前版本的后端上完成全部迁移。数据迁移（如 v80
 // 把旧媒体版本表并入节点元数据）只在源库执行；目标库建表时这些表还是空的，
 // 复制旧结构的行会让迁移被标记为已完成却从未转换数据。
 func verifySourceSchema(db *gorm.DB) error {
@@ -387,6 +387,8 @@ func migrations() []tableMigration {
 		migrateTable[model.Tool]("tools"),
 		migrateTable[model.ToolFavorite]("tool_favorites"),
 		migrateTable[model.User]("users"),
+		migrateTable[model.UserGroup]("user_groups"),
+		migrateTable[model.UserGroupChannel]("user_group_channels"),
 		migrateTable[model.UserAvatar]("user_avatars"),
 		migrateTable[model.UserFeedback]("user_feedbacks"),
 		migrateTable[model.DramaProduction]("drama_productions"),
@@ -501,7 +503,9 @@ func migrations() []tableMigration {
 		migrateTable[model.AgentMemorySetting]("agent_memory_settings"),
 		migrateTable[model.AgentMemoryProposal]("agent_memory_proposals"),
 		migrateTable[model.AgentMemoryRevision]("agent_memory_revisions"),
-		// 云端 Agent 子系统（schema v75，见 database.AgentRuntimeModels）。
+		migrateTable[model.AgentMemoryDocument]("agent_memory_documents"),
+		migrateTable[model.AgentMemoryDocumentRevision]("agent_memory_document_revisions"),
+		// 云端 Agent 子系统（schema v78，见 database.AgentRuntimeModels）。
 		migrateTable[model.CloudAgentPiEntry]("cloud_agent_pi_entries"),
 		migrateTable[model.AgentSchedulerSetting]("agent_scheduler_settings"),
 		migrateTable[model.AgentAdmissionCounter]("agent_admission_counters"),

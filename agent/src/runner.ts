@@ -180,6 +180,7 @@ export function withServerPolicy(canonical: PiCanonical, requiredPolicy: string,
 
 // Canonical retains the eligible catalog, including L1 tools not yet disclosed.
 function modelPreflightTools(snapshot: PiSnapshot): PiCanonical["tools"] {
+  // Same filter as SessionToolDisclosure.refresh: the preflight measures exactly the loadout sent next.
   return snapshot.tools
     .filter(tool => tool.allowed && !tool.name.startsWith("agent_tools_"))
     .map(tool => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
@@ -615,7 +616,9 @@ async function bootstrapSession(
       // SDK tools is also a lifetime allowlist. Reserve the eligible catalog;
       // only advertised definitions are registered by our extension, so hidden
       // L1 tools stay absent until a later boundary explicitly registers them.
-      tools: snapshot.tools.filter(tool => !tool.name.startsWith("agent_tools_") && (nativeMode || tool.name!=="read")).map(tool=>tool.name),
+      // The catalog covers every tool a mid-run permission change could allow.
+      tools: [...new Set([...snapshot.tools.map(tool => tool.name), ...(snapshot.toolCatalog || [])])]
+        .filter(name => !name.startsWith("agent_tools_") && (nativeMode || name !== "read")),
     });
     return { session, sessionManager, cleanup: workspace.cleanup };
   } catch (error) {

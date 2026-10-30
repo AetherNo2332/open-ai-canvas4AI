@@ -111,6 +111,8 @@ export interface PiSnapshot {
     tokensBefore: number;
   };
   tools: CanvasToolSpec[];
+  /** Pi 会话的终身工具白名单（平台工具全集）；授权仍看 tools[].allowed 与 Go 校验。 */
+  toolCatalog?: string[];
   piMessages?: Record<string, unknown>[];
   openedCategories?: string[];
   /**

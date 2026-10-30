@@ -14,6 +14,8 @@ description: 从产品功能快速定位主要代码入口
 - 渲染：`app/timeline_render_plan.go` / `task_render.go` 用 ffmpeg 合成，保留段视频自带的声音。
 - 前端：`web/src/services/api/drama.ts`；`pages/projects/index.tsx`（作品列表）、`create.tsx`（上传与预估）、`detail.tsx`（制作台）。制作台子组件在 `pages/projects/studio/`：`storyboard.tsx`（剧情段卡片）、`segment-dialog.tsx`（剧情段弹窗：段视频、生成依据、镜头脚本与完整视频提示词）、`segment-parts.tsx`（状态、视频与生成依据共用组件）、`panels.tsx`（设定、待处理、制作设置）、`final-view.tsx`、`script-view.tsx`、`job-detail.tsx`；样式 `drama.css`。模型选择复用通用 `ModelPicker`（`drama-model-picker.tsx`、`lib/drama/model-choice.ts`）。
 - 回归：`internal/production/production_test.go`、`app/drama_orchestrator_test.go`、`app/drama_storyboard_test.go`、`app/drama_assets_test.go`、`web/src/lib/drama/*.test.ts`。
+- 精修画布（后端）：`app/drama_canvas.go`（作品的精修画布、投送媒体的素材登记、版本记录与来源、段视频采用与尾帧补抽、画布花费计入预算 `dramaTotalSpent`、画布任务预算闸门 `ensureDramaCanvasBudget`）、`repository/repository_drama_canvas.go`（画布花费汇总、段视频采用事务、短剧持有资源的引用 `DramaResourceReferences`）；尾帧抽取与视频时长读取在 `drama_segment_video.go`（`saveDramaTailFrame`、`inspectDramaVideo`）。Agent 工具 `drama_get_context` / `drama_adopt_canvas_media` 在 `app/cloud_agent_drama.go`，只在 `Scope.Drama`（运行画布关联短剧）时暴露。
+- 精修画布（前端）：投送的纯函数在 `web/src/lib/canvas/drama-canvas-projection.ts`（节点、段框、时间线、过期判断、分镜转短剧原文），副作用在 `web/src/services/drama-canvas.ts`（找到或新建精修画布、跳转参数、素材登记、分镜画布关联到新短剧）；画布页编排 `pages/canvas/use-canvas-drama.ts`，侧栏 `components/canvas/canvas-drama-sidebar.tsx`，采用弹窗 `components/canvas/canvas-drama-adopt-modal.tsx`。查询键 `lib/drama/drama-query-keys.ts` 与文案 `lib/drama/drama-format.ts` 由制作台和画布共用；制作台入口 `studio/use-studio.ts` 的 `useOpenDramaCanvas`，版本记录 `studio/take-list.tsx`。
 
 ## 画布实时会话
 
@@ -135,7 +137,7 @@ description: 从产品功能快速定位主要代码入口
 - 前端管理：`web/src/services/api/admin-skill-defaults.ts`、`web/src/pages/admin/settings/components/agent-skill-defaults-section.tsx`；页面已移除运行状态及其轮询。
 - 子智能体列表：`web/src/components/canvas/canvas-agent-subagent-list.tsx` 与同目录 CSS；让位算法 `web/src/lib/canvas/agent-subagent-layout.ts`。画布入口由 `canvas-cloud-agent-panel.tsx` 的持续授权开关和父运行子代理状态列表组成。
 
-- 页面与 API：`web/src/pages/admin/settings/agent-settings-page.tsx`、`web/src/services/api/admin-agent-settings.ts`；复用 `agent-lessons-panel.tsx`。
+- 页面与 API：`web/src/pages/admin/settings/agent-settings-page.tsx`、`web/src/services/api/admin-agent-settings.ts`；用户记忆文件的只读查看在独立入口「Agent 记忆」（`/admin/agent-lessons` → `admin-route-pages.tsx` 的 `AgentMemoryDocumentsPage`，面板 `components/agent-memory-documents-panel.tsx`，接口 `services/api/admin-agent-memory.ts`）。
 - Go 配置和公平领取：`internal/app/agent_scheduler_policy.go`、`internal/platform/agent_scheduler_policy.go`、`internal/repository/agent_admission.go`；管理员路由 `internal/handler/agent_scheduler.go`。
 - Node 热更新与驻留准入：`agent/src/runtime-config.ts`、`agent/src/event-scheduler.ts`、`agent/src/server.ts`；Pi SDK 保持 0.87.1。
 
@@ -166,7 +168,7 @@ description: 从产品功能快速定位主要代码入口
 | 画布列表 | `web/src/pages/canvas/index.tsx` | `stores/canvas/use-canvas-store.ts` |
 | 画布编辑器 | `web/src/pages/canvas/project.tsx` | `pages/canvas/canvas-project-*`、`pages/canvas/use-canvas-*`、`components/canvas/`、`lib/canvas/`、`stores/canvas/` |
 | 公开分享 | `web/src/pages/canvas/shared.tsx` | `components/canvas/canvas-viewport.tsx`、`services/api/canvas-share.ts` |
-| 管理后台 | `web/src/pages/admin/`、`router.tsx` | `admin-context.tsx`、`users/`、`channels/`、`logs/`、`storyboard-prompts/`、`settings/`、`components/agent-lessons-panel.tsx` |
+| 管理后台 | `web/src/pages/admin/`、`router.tsx` | `admin-context.tsx`、`users/`、`channels/`、`logs/`、`storyboard-prompts/`、`settings/`、`components/agent-memory-documents-panel.tsx` |
 | 支付 CSV 导出 | `web/src/pages/admin/payments/payments-page.tsx` | `services/api/payments.ts`、`AdminExportButton`；后端 `handler/payment_export.go`、`app/payment_export.go`、`repository/payment_export.go`（共享筛选、只读快照） |
 
 ## AI 拆图工作流
@@ -191,7 +193,7 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 内部资源保护与维护快照 | `backend/internal/canvas/canvas_history.go`、`repair_resources.go`、`backend/internal/repository/canvas_history.go`；仅供资源完整性维护和审计，不提供用户历史树、预览或恢复入口 |
 | Patch 历史、生成任务和重试控制 | `web/src/pages/canvas/use-canvas-history.ts`、`use-canvas-generation.ts`、`use-canvas-generation-executor.ts`、`use-canvas-generation-retry.ts` |
 | 文本、图片、视频和音频生成执行 | `web/src/pages/canvas/canvas-*-generation-executor*.ts` |
-| 云端 Agent、助手面板和全局快捷键控制 | `web/src/components/canvas/canvas-cloud-agent-panel.tsx`、`web/src/pages/canvas/use-canvas-assistant-visibility.ts`、`use-canvas-keyboard.ts`；画布操作契约在 `web/src/lib/canvas/canvas-operation-contract.ts` |
+| 云端 Agent、助手面板和全局快捷键控制 | `web/src/components/canvas/canvas-cloud-agent-panel.tsx`（由 `web/src/layouts/user-layout.tsx` 全局挂载）；画布上下文、开合、停靠偏好与一次性投递在 `web/src/stores/use-global-agent-store.ts`，停靠/浮动外壳在 `use-agent-panel-dock.ts`、`use-agent-panel-layout.ts`；`web/src/pages/canvas/use-canvas-assistant-visibility.ts`、`use-canvas-keyboard.ts`；画布操作契约在 `web/src/lib/canvas/canvas-operation-contract.ts` |
 | Agent 共同编辑：在线状态、增量合并与撤销 | 后端 `backend/internal/app/cloud_agent_presence.go` 发布 Agent 在线与编辑节点，`backend/internal/app/cloud_agent_undo.go` 撤销单次运行；前端 `web/src/components/canvas/canvas-agent-presence.tsx` 显示 Agent 正在编辑的节点，`web/src/services/agent-canvas-sync.ts` 在 realtime `canvas_changed` 后增量合并 |
 | Agent 导演工具与自动打开导演台 | 后端 `backend/internal/app/cloud_agent_director_tool.go`（单一 `director` 工具、审批门控、预演等待与回传）；前端 `web/src/lib/canvas/agent-director-launch.ts`、`web/src/pages/canvas/use-agent-director-launch.ts` 处理 `director_open` 与预演回传 |
 | 素材引用字段与连线同步 | `web/src/lib/canvas/canvas-reference-fields.ts`：`referenceFieldsVersion = 1` 的画布中把 `inputBindings` / `storyboard.referenceNodeIds` 投影为连线，用户连线、删线时同步字段 |
@@ -226,6 +228,7 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 视口节点选择与输入关系解析 | `web/src/lib/canvas/canvas-node-visibility.ts`、`canvas-resource-references.ts` |
 | 本地持久化状态 | `web/src/stores/canvas/use-canvas-store.ts` |
 | 云端 Agent 运行与事件 API | `web/src/services/api/agent.ts`、`web/src/components/canvas/canvas-cloud-agent-panel.tsx` |
+| Agent 长期记忆 | 后端：`backend/internal/app/cloud_agent_memory_document*.go`（条目校验、快照、修订、撤销、采纳）、`cloud_agent_tools_memory.go`（`memory_update` 执行与 `memory_updated` 事件）、`backend/internal/agentmemory`（条目文本规则与旧经验映射，迁移 v82 共用）、`backend/internal/database/migrations_lessons_memory.go`（v82）、`handler/agent_memory_document.go`（经 `agent_settings.go` 注册）；前端：`web/src/services/api/agent-memory.ts`、设置面板 `web/src/pages/settings/agent-memory-pane.tsx`、聊天记忆卡 `web/src/components/canvas/canvas-cloud-agent-memory-cards.tsx`、事件归并 `web/src/lib/canvas/cloud-agent-events.ts` |
 | Agent 画布上下文、操作与历史 | `web/src/lib/canvas/canvas-context-discovery.ts`、`canvas-operation-contract.ts`、`web/src/pages/canvas/use-canvas-operation-history.ts` |
 | 官方提示词目录与客户端起始稿 | `backend/internal/prompts/`、`web/src/lib/prompts/` |
 
@@ -275,6 +278,7 @@ HTTP 请求 -> handler -> service（稳定导入面 / 别名）-> app（组合�
 | 管理后台批量操作 | `handler/auth.go` | `internal/app/admin.go`、`repository/admin_audit.go`、`repository/analytics.go` |
 | 管理后台存储资源 | `handler/admin_storage.go` | `internal/app/admin_storage.go`、`repository/admin_storage.go` |
 | 资源与请求策略 | `handler/auth.go`、`handler/security.go` | `internal/platform`、`internal/app/upload_quota.go`、`storage_quota.go`、`coordination.go` |
+| 用户分组与多币种计价 | `handler/admin_user_group_routes.go`、`handler/payment.go`（`/payments/settings`） | `internal/app/user_groups.go`（分组快照、`userGroupAccess` 渠道可见性与价格因子、管理端增删改）、`finance.go`（`groupTierPrices` 换算并写入账单快照）、`model_catalog.go` / `logical_models_catalog.go`（按分组过滤并展示实际单价）、`payment_settings.go`（默认充值货币）、`repository/repository_user_groups.go` |
 | 存储空间套餐与只读 | `handler/storage_guard.go`、`handler/storage_grants.go` | `internal/app/storage_capacity.go`（有效容量、宽限期与只读、扩容赠送/撤销）、`payment_products.go`（商品类型）、`repository/storage_grants.go`、`repository/payment.go`（`grantPaymentStorage`） |
 | 推广中心 | `handler/referral.go` | `internal/app/referral.go`（`referral` 设置、`referralEligible`、注册绑定 `bindReferral`、入账后 `grantReferralCommission`）、`repository/referral.go`（`GrantReferralCommission` 同事务写返佣、流水与余额） |
 | 模型响应拦截 | `handler/response_interception.go`、`handler/custom_proxy.go` | `internal/app/response_interception.go`、`repository/repository.go` |

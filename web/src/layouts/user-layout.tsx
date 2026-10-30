@@ -1,23 +1,37 @@
-import { useLayoutEffect, type ReactNode } from "react";
+import { lazy, Suspense, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { ConfigProvider } from "antd";
 
 import { AppWorkspaceShell } from "@/components/layout/app-top-nav";
+import { useAgentPanelDock } from "@/components/canvas/use-agent-panel-dock";
 import { cn } from "@/lib/utils";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
 import { getWorkspaceAntThemeConfig } from "@/lib/app-theme";
+import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
+import { useUserStore } from "@/stores/use-user-store";
+import { GlobalAgentPanelBoundary } from "./global-agent-panel-boundary";
 import "@/styles/workspace-product.css";
 import "@/styles/workspace-menus.css";
 
 const workspaceTheme = getWorkspaceAntThemeConfig();
+// 平台唯一的 Agent 面板按需加载，不拖慢首屏；画布编辑器只发布画布上下文，不再自己渲染面板。
+const GlobalAgentPanel = lazy(() => import("@/components/canvas/canvas-cloud-agent-panel").then((module) => ({ default: module.CanvasCloudAgentPanel })));
 
-// 云端 Agent 面板随画布编辑器挂载（见 pages/canvas/project.tsx），布局层不再渲染全局面板。
 export default function UserLayout({ children }: { children: ReactNode }) {
     const { pathname } = useLocation();
     const adminWorkspace = pathname === "/admin" || pathname.startsWith("/admin/");
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);
     const canvasEditor = /^\/canvas\/[^/]+(?:\/|$)/.test(pathname);
     const productWorkspace = !adminWorkspace && !canvasEditor;
+    const userId = useUserStore((state) => state.user?.id);
+    // Agent 停靠在画布右侧时，工作区让出同样的宽度，画布、顶栏和角落控件都不被遮挡。
+    const agentDock = useAgentPanelDock();
+    const agentDocked = Boolean(userId) && canvasEditor && agentDock.active;
+    // 告诉停靠判断当前是否在画布路由：画布加载或切换的空档沿用停靠形态，离开画布立即恢复浮动。
+    const setAgentCanvasRoute = useGlobalAgentStore((state) => state.setCanvasRoute);
+    useLayoutEffect(() => {
+        setAgentCanvasRoute(canvasEditor);
+    }, [canvasEditor, setAgentCanvasRoute]);
 
     useLayoutEffect(() => {
         // Ant Design 浮层挂载在 body，必须用路由级标记隔离用户工作台与画布编辑器、运营后台。
@@ -31,7 +45,22 @@ export default function UserLayout({ children }: { children: ReactNode }) {
         };
     }, [adminWorkspace, spatialWorkbench, productWorkspace]);
 
-    if (adminWorkspace) return children;
+    // 所有登录页面共用同一个面板实例：跨路由不卸载，对话、运行和事件流都不中断。
+    const globalAgent = userId ? (
+        <GlobalAgentPanelBoundary key={userId}>
+            <Suspense fallback={null}>
+                <GlobalAgentPanel />
+            </Suspense>
+        </GlobalAgentPanelBoundary>
+    ) : null;
+
+    if (adminWorkspace)
+        return (
+            <>
+                {children}
+                {globalAgent}
+            </>
+        );
 
     return (
         <ConfigProvider
@@ -40,9 +69,15 @@ export default function UserLayout({ children }: { children: ReactNode }) {
             dropdown={productWorkspace ? { classNames: { root: "workspace-quiet-popup" } } : undefined}
             popover={productWorkspace ? { classNames: { root: "workspace-quiet-popup" } } : undefined}
         >
-            <div className={cn("app-user-workspace h-dvh overflow-hidden text-foreground", spatialWorkbench && "app-spatial-workspace", productWorkspace && "app-product-workspace")}>
+            <div
+                className={cn("app-user-workspace h-dvh overflow-hidden text-foreground", spatialWorkbench && "app-spatial-workspace", productWorkspace && "app-product-workspace")}
+                // --agent-dock-width 供导演台等全屏层让出停靠栏（见 canvas-cloud-agent.css）。
+                style={agentDocked ? ({ paddingRight: agentDock.width, "--agent-dock-width": `${agentDock.width}px` } as CSSProperties) : undefined}
+                data-agent-docked={agentDocked || undefined}
+            >
                 <AppWorkspaceShell>{children}</AppWorkspaceShell>
             </div>
+            {globalAgent}
         </ConfigProvider>
     );
 }

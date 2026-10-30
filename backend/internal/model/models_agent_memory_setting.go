@@ -15,7 +15,7 @@ const (
 	AgentMemoryCompactStatusFailed    = "failed"
 )
 
-// AgentMemorySetting 是用户私有的记忆压缩偏好与最近一次压缩状态。
+// AgentMemorySetting 是已下线的经验压缩设置；表随 schema v58 保留，运行时不再读写。
 type AgentMemorySetting struct {
 	UserID           string     `json:"userId" gorm:"primaryKey;size:36"`
 	CompactInterval  string     `json:"compactInterval" gorm:"size:16;index"`

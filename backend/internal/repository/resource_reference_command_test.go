@@ -34,6 +34,8 @@ func commandResourceTestDB(t *testing.T) (*gorm.DB, *Repository) {
 		&model.ProjectAssetCandidate{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{},
 		&model.Shot{}, &model.ShotArtifact{}, &model.VoiceProfile{}, &model.Announcement{},
 		&model.AnnouncementImageDraft{}, &model.ArkPrivateAssetBinding{}, &model.ResourceDeletionJob{},
+		// 引用快照同时扫描上游短剧素材引用（Schema 75 起）。
+		&model.DramaProduction{}, &model.DramaCast{}, &model.DramaEpisode{}, &model.DramaSegment{}, &model.DramaTake{},
 	); err != nil {
 		t.Fatal(err)
 	}

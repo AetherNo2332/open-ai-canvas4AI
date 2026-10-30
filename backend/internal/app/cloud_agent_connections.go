@@ -20,7 +20,13 @@ func validateCloudAgentConnectionCapacities(repo *repository.Repository, doc map
 	if len(targets) == 0 {
 		return nil
 	}
-	catalog, err := (&Service{repo: repo}).ModelCatalog(nil)
+	// 只读取连接容量上限，不做授权；放开渠道可见性，避免按用户分组漏掉已在画布上的模型。
+	catalogService := &Service{repo: repo}
+	access, err := catalogService.systemGroupAccess()
+	if err != nil {
+		return err
+	}
+	catalog, err := catalogService.ModelCatalog(access, nil)
 	if err != nil {
 		return err
 	}

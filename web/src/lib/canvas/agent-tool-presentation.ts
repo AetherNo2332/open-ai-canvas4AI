@@ -33,9 +33,8 @@ export const AGENT_TOOL_NAMES = [
     "generate_media",
     "model_list",
     "plan_update",
+    "memory_update",
     "read",
-    "recall_lessons",
-    "remember_lesson",
     "task_get",
 ] as const;
 
@@ -136,6 +135,17 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
         summary: ({ pending, detail }) => (pending ? "准备收尾并给出最终答复" : field(field(detail, "result"), "completionBlocked") === true ? "收尾被拦下，继续处理交付阻塞" : "已收尾并给出最终答复"),
         failureMessage: "收尾未完成",
     },
+    // 长期记忆只属于当前用户，不是画布写入；结果状态来自 memory_update 回执（applied / pending_review / unchanged）。
+    memory_update: {
+        summary: ({ pending, detail }) => {
+            if (pending) return "准备整理长期记忆";
+            const status = field(field(detail, "result"), "status");
+            if (status === "pending_review") return "记忆修改已提交，等你确认";
+            if (status === "unchanged") return "记忆里已有这些内容，未改动";
+            return "长期记忆已更新";
+        },
+        failureMessage: "长期记忆未更新",
+    },
 };
 
 /** 画布上"读到清单"的只读工具：无像素，chip 必须是存在式。 */
@@ -188,6 +198,11 @@ function toolArguments(detail?: unknown) {
  *
  * 未登记的工具落 `other`（"其他操作"）：兜底不能让任何工具看起来像在写画布。
  */
+/** 读的是画布清单（节点存在与规模），不是外部信息；活动图标据此区分网格与文档。 */
+export function isAgentCanvasReadTool(toolName: string): boolean {
+    return AGENT_CANVAS_READ_TOOLS.has(toolName);
+}
+
 export function agentToolCategory(toolName: string, detail?: unknown): AgentToolCategory {
     if (AGENT_VISION_TOOLS.has(toolName)) return "vision";
     if (toolName === "director") {

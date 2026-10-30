@@ -11,7 +11,7 @@ func cloudAgentToolCategory(name string) string {
 		return "agent_tools_web"
 	case "plan_update", "ask_user", "finish_run", "task_get":
 		return "agent_tools_control"
-	case "recall_lessons", "remember_lesson":
+	case "memory_update":
 		return "agent_tools_memory"
 	case "read":
 		return "native_skill"

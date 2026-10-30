@@ -51,11 +51,19 @@ export class SessionToolDisclosure {
     return this.byName.has(name);
   }
 
-  /** Called only at model boundaries, after draining durable checkpoints. */
+  /**
+   * Called only at model boundaries, after draining durable checkpoints.
+   * Newly allowed tools are registered; tools no longer allowed (a mid-run
+   * permission tightening) leave the active loadout. Go still rejects them.
+   */
   refresh(specs: CanvasToolSpec[]): void {
+    const allowed = new Set(specs.filter(spec => spec.allowed && !spec.name.startsWith(legacyCategoryPrefix)).map(spec => spec.name));
+    const removed = this.specs.filter(spec => !allowed.has(spec.name));
+    for (const spec of removed) this.byName.delete(spec.name);
+    if (removed.length > 0) this.specs.splice(0, this.specs.length, ...this.specs.filter(spec => allowed.has(spec.name)));
     const added = specs.filter(spec => spec.allowed && !spec.name.startsWith(legacyCategoryPrefix) && !this.byName.has(spec.name));
     for (const spec of added) {this.specs.push(spec); this.byName.set(spec.name, spec);}
-    if (added.length > 0) this.onAdded?.(added.map(spec => this.makeTool(spec)));
+    if (added.length > 0 || removed.length > 0) this.onAdded?.(added.map(spec => this.makeTool(spec)));
   }
 
   onToolsAdded(listener: (tools: SessionToolDefinitionLike[]) => void): void {

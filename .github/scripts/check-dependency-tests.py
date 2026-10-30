@@ -9,6 +9,15 @@ REQUIRED = {
     ("repository", "TestCanvasRevision/postgres"),
     ("platform", "TestRuntimeCoordinatorRedisLeasePreservesLongestTTL"),
     ("app", "TestClearAdminRuntimeCacheUsesRedisWhitelist"),
+    # v80 媒体版本与 v82 经验并入记忆会改写用户数据，PostgreSQL 版必须实际运行。
+    ("database", "TestMigrateMediaVersionsPostgresToMetadata"),
+    ("database", "TestMigrateMediaVersionsPostgresMergesWithExisting"),
+    ("database", "TestMigrateMediaVersionsPostgresKeepsCurrentWhenTrimming"),
+    ("database", "TestMigrateMediaVersionsPostgresIdempotent"),
+    ("database", "TestMigrateMediaVersionsPostgresFailsClosedWithoutProjector"),
+    ("database", "TestMigrateLessonsToMemoryPostgres"),
+    ("database", "TestMigrateLessonsToMemoryPostgresRespectsCapacity"),
+    ("database", "TestMigrateLessonsToMemoryPostgresRetiresCompactTasks"),
 }
 
 
@@ -31,4 +40,4 @@ if __name__ == "__main__":
         missing = missing_tests(json.loads(line) for line in stream if line.strip())
     if missing:
         sys.exit("Dependency tests missing, skipped or failed: " + repr(sorted(missing)))
-    print("All five dependency-backed tests ran and passed.")
+    print(f"All {len(REQUIRED)} dependency-backed tests ran and passed.")

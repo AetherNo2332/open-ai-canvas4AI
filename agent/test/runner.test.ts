@@ -1167,6 +1167,16 @@ test("生产 runner 不再手写 new Agent 循环（C1 出口）", () => {
   assert.match(source, /createAgentSession/, "生产 runner 必须走 createAgentSession");
 });
 
+test("Pi lifetime allowlist reserves the Go tool catalog for mid-run permission changes", () => {
+  const testDirectory = dirname(fileURLToPath(import.meta.url));
+  const sourcePath = [join(testDirectory, "..", "src", "runner.ts"),
+    join(testDirectory, "..", "..", "src", "runner.ts")].find(existsSync);
+  assert.ok(sourcePath, "runner source must be available from source and compiled tests");
+  const source = readFileSync(sourcePath, "utf8");
+  // 只读开局的运行中途放宽后，写工具要能在下一边界注册：终身白名单必须包含目录。
+  assert.match(source, /tools:\s*\[\.\.\.new Set\(\[\.\.\.snapshot\.tools\.map\(tool => tool\.name\), \.\.\.\(snapshot\.toolCatalog \|\| \[\]\)\]\)\]/);
+});
+
 function snapshotFor(): PiSnapshot {
   return {
     runId: "run-1", userId: "user-1", revision: 1, status: "running",

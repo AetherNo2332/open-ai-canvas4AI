@@ -9,6 +9,11 @@ const (
 	ReasonAgentSkillDefaultsInvalid          ErrorReason = "agent_skill_defaults_invalid"
 	ReasonAgentWorkspaceRevisionConflict     ErrorReason = "agent_workspace_revision_conflict"
 	ReasonAgentUndoConflict                  ErrorReason = "agent_undo_conflict"
+	// 运行中切换执行权限：运行已结束 / 子代理权限固定为只读。
+	ReasonAgentRunFinished             ErrorReason = "agent_run_finished"
+	ReasonAgentSubagentPermissionFixed ErrorReason = "agent_subagent_permission_fixed"
+	// ReasonAgentApprovalNotPermitted：运行中收紧权限后，待批准的写入已不被当前权限允许。
+	ReasonAgentApprovalNotPermitted ErrorReason = "agent_approval_not_permitted"
 )
 
 // AgentUndoConflict 表示 Agent 本轮改过的内容之后又被编辑过，撤销未写入；details 列出冲突的实体。

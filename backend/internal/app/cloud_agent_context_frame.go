@@ -34,7 +34,7 @@ func (s *Service) cloudAgentModelContext(run *model.CloudAgentExecution, state *
 		}
 		state.AdvertisedToolNames = names
 		canonical.Tools = cloudAgentVisibleToolsForCategories(cloudAgentToolsNamed(canonical.Tools, names), cloudAgentActivatedCategories(state), state.Calls, state.ToolScope)
-		canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(state.Request.CanvasID, cloudAgentPromptCacheIdentity(state.Request, state.Policy), canonical.SystemPrompt, canonical.Tools)
+		canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(state.Request.CanvasID, cloudAgentPromptCacheIdentity(cloudAgentCacheRequest(state), state.Policy), canonical.SystemPrompt, canonical.Tools)
 	} else if scope := cloudAgentScopedTools(canonical.Tools, state.ToolScope); scope != nil {
 		canonical.Tools = scope
 	}

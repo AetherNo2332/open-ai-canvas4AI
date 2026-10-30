@@ -18,6 +18,7 @@ import { clearResourceAccessCache } from "@/services/api/resources";
 import { clearResourceBlobCache } from "@/services/resource-blob-cache";
 import { withGenerationConsumersPaused } from "@/services/generation-consumer-lifecycle";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
+import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
 
 export async function switchUserStorageScope(userId?: string | null) {
     await withGenerationConsumersPaused(async () => {
@@ -51,6 +52,7 @@ export async function applyUserSession(payload: AuthSessionPayload) {
     useUserStore.getState().setDrawingEngine(payload.drawingEngine);
     useUserStore.getState().setFeatures(payload.features);
     useUserStore.getState().setReferralAvailable(payload.referralAvailable);
+    useUserStore.getState().setUserGroup(payload.userGroup);
     installRemoteUserDataAutoSync();
     try {
         // 缓存恢复和同步基线必须先于工作区开放，防止生成/编辑抢跑，或被初始化误记为已同步。
@@ -69,6 +71,8 @@ function resetUserScopedMemory() {
     useConfigStore.setState({ config: normalizeConfigSnapshot({ config: defaultConfig }).config });
     usePluginStore.setState({ hydrated: false, installations: [], runtimeStatuses: {}, pluginStates: {} });
     useCreationPreferencesStore.setState({ hydrated: false, preferences: {} });
+    // 全局 Agent 的开合、画布上下文与待投递消息属于账号会话，切换账号必须清空。
+    useGlobalAgentStore.getState().reset();
 }
 
 async function hydrateUserSessionData(payload: AuthSessionPayload, generation: number) {

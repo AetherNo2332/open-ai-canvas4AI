@@ -1,6 +1,10 @@
 package app
 
-import "strings"
+import (
+	"strings"
+
+	"yingce/backend/internal/model"
+)
 
 // AgentToolSchemaArtifact is the exported catalog used by offline documentation
 // and parameter-contract fixtures. It does not participate in worker admission.
@@ -14,7 +18,7 @@ func CloudAgentToolSchemaArtifact() AgentToolSchemaArtifact { return backendTool
 func CloudAgentToolCount() int { return len(backendToolArtifact().Tools) }
 
 func backendToolArtifact() AgentToolSchemaArtifact {
-	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, VisionEnabled: true, HasMemories: true, WebSearchEnabled: true, SkillIDs: []string{"schema-artifact-skill"}}
+	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, VisionEnabled: true, MemoryMode: model.AgentMemoryDocumentModeAuto, WebSearchEnabled: true, SkillIDs: []string{"schema-artifact-skill"}}
 	req.Budget.MaxCredits = 1
 	artifact := AgentToolSchemaArtifact{SchemaVersion: cloudAgentToolSchemaVersion, Tools: append(cloudAgentTools(req), nativeSkillReadToolSchema())}
 	for _, request := range []CloudAgentRequest{{SubagentEnabled: true, PermissionMode: "read_only", ContextScope: []string{"canvas"}}, {PermissionMode: "read_only", ContextScope: []string{"canvas"}, subagent: &SubagentRuntime{Depth: 1}}} {

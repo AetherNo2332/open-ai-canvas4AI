@@ -19,15 +19,6 @@ type (
 	CloudAgentMediaSettings                = app.CloudAgentMediaSettings
 	CloudAgentUndoResult                   = app.CloudAgentUndoResult
 	CloudAgentCapabilitySet                = app.CloudAgentCapabilitySet
-	AgentLessonView                        = app.AgentLessonView
-	AgentLessonAdminView                   = app.AgentLessonAdminView
-	AgentMemoryRequest                     = app.AgentMemoryRequest
-	AgentMemoryBundle                      = app.AgentMemoryBundle
-	AgentMemoryImportResult                = app.AgentMemoryImportResult
-	AgentMemoryCompactRequest              = app.AgentMemoryCompactRequest
-	AgentMemorySettingRequest              = app.AgentMemorySettingRequest
-	AgentMemoryCompactView                 = app.AgentMemoryCompactView
-	AgentMemoryCompactSummary              = app.AgentMemoryCompactSummary
 	APICallLogPage                         = app.APICallLogPage
 	APICallLogQuery                        = app.APICallLogQuery
 	AccountFileStorageUsage                = app.AccountFileStorageUsage
@@ -99,6 +90,8 @@ type (
 	CanvasLibraryPage                      = app.CanvasLibraryPage
 	CanvasLibrarySummary                   = app.CanvasLibrarySummary
 	CanvasOperationsRequest                = app.CanvasOperationsRequest
+	CanvasReferenceMigrationPreview        = app.CanvasReferenceMigrationPreview
+	CanvasReferenceMigrationRequest        = app.CanvasReferenceMigrationRequest
 	CanvasEditLeaseRequest                 = app.CanvasEditLeaseRequest
 	CanvasHistoryList                      = app.CanvasHistoryList
 	CanvasShareRequest                     = app.CanvasShareRequest
@@ -358,6 +351,10 @@ type (
 	UpdateProjectRequest                   = app.UpdateProjectRequest
 	UpdateProjectUnitRequest               = app.UpdateProjectUnitRequest
 	UpdateUserRequest                      = app.UpdateUserRequest
+	UserGroupRequest                       = app.UserGroupRequest
+	UserGroupView                          = app.UserGroupView
+	PublicUserGroup                        = app.PublicUserGroup
+	PaymentSettings                        = app.PaymentSettings
 	UpdateWorkflowStepRequest              = app.UpdateWorkflowStepRequest
 	WorkbenchToolInput                     = app.WorkbenchToolInput
 	WorkbenchPresetInput                   = app.WorkbenchPresetInput

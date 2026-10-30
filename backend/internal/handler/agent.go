@@ -241,6 +241,39 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"accepted": true, "pending": pending})
 	})
+	// 运行中切换执行权限：下一次工具调用生效，正在等待的审批卡保持原样。
+	r.POST("/agent/runs/:id/permission", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "agent-permission:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
+		var req struct {
+			PermissionMode string `json:"permissionMode"`
+			RequestID      string `json:"requestId"`
+		}
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			fail(c, http.StatusBadRequest, errors.New("请求必须只包含一个 JSON 对象"))
+			return
+		}
+		result, err := svc.ChangeCloudAgentPermission(user.ID, c.Param("id"), req.PermissionMode, req.RequestID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
 	r.GET("/agent/runs/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

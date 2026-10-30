@@ -38,8 +38,9 @@ type CloudAgentRequest struct {
 	ChannelModelKey string `json:"channelModelKey,omitempty"`
 	// VisionEnabled is server-derived from the selected model input contract and persisted for the run.
 	VisionEnabled bool `json:"visionEnabled,omitempty"`
-	// HasMemories is server-derived at run creation and controls whether recall_lessons is exposed.
-	HasMemories bool `json:"hasMemories,omitempty"`
+	// MemoryMode 是建 run 时从用户记忆文件冻结的模式（auto / review / off），服务端推导，
+	// 客户端传入值一律被覆盖；为空或 off 时不暴露 memory_update，也不注入记忆快照。
+	MemoryMode string `json:"memoryMode,omitempty"`
 	// WebSearchEnabled is server-derived; no provider credentials enter the run.
 	WebSearchEnabled bool     `json:"webSearchEnabled,omitempty"`
 	PermissionMode   string   `json:"permissionMode"`
@@ -71,6 +72,7 @@ type cloudAgentState struct {
 	CreativeAnchor   cloudAgentCreativeAnchor `json:"creativeAnchor,omitempty"`
 	Plan             []cloudAgentPlanItem     `json:"plan,omitempty"`
 	Skills           []cloudAgentSkill        `json:"skills,omitempty"`
+	Memory           cloudAgentMemorySnapshot `json:"memory,omitempty"`
 	Policy           cloudAgentPolicySnapshot `json:"policy"`
 }
 
@@ -620,8 +622,16 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	}
 	// 看图能力取决于本轮渠道模型自己的合同，在建 run 时定格，运行期间不再变化。
 	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
-	// 个人记忆是长期积累的，建 run 时定格一次（运行期间不再变化）。
-	req.HasMemories = s.cloudAgentHasMemories(userID)
+	// 长期记忆快照建 run 时定格一次（运行期间不再变化）；模式决定是否暴露 memory_update。
+	memory, err := s.cloudAgentMemorySnapshotForRun(userID, req.Prompt)
+	if err != nil {
+		return nil, err
+	}
+	if req.subagent != nil {
+		// 子代理只处理父代理分派的子任务：不读也不写用户的长期记忆。
+		memory = cloudAgentMemorySnapshot{}
+	}
+	req.MemoryMode = memory.Mode
 	req.WebSearchEnabled, err = s.agentWebSearchEnabled()
 	if err != nil {
 		return nil, err
@@ -650,7 +660,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	system += canvasRules
 	cloudAgentRecordSystemSegment(&policy, "canvasRules", "当前画布规则", canvasRules)
 	system += subagentSystemPrompt(req.subagent)
-	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Policy: policy, Subagent: req.subagent}
+	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Memory: memory, Policy: policy, Subagent: req.subagent}
 	state.Workspace = &workspace
 	canonical := cloudAgentCanonical(system, history, req.Prompt, req)
 	canonical.Tools = compileCloudAgentToolsForRuntime(req, cloudAgentSkillRuntimeNative)
@@ -667,11 +677,9 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		last := canonical.Messages[len(canonical.Messages)-1]
 		canonical.Messages = append(append([]map[string]any{}, canonical.Messages[:len(canonical.Messages)-1]...), catalog, last)
 	}
-	s.attachCloudAgentLessons(&canonical, userID, req.Prompt)
-	// 必须登记进 state.Policy（值拷贝）：state 才是随任务持久化、被运行期读取的那份，
-	// 在这里改局部 policy 不会生效（state.Policy 是编译结果的值拷贝）。登记之后压力读数的
-	// "系统提示分段"才能把 memory 摊开，并与 system 桶合计对齐。
-	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
+	// 记忆快照作为有来源的数据消息放在当前用户消息之前，不进系统提示：系统提示（缓存前缀）
+	// 与记忆内容无关，记忆变化也不会让策略/Harness 前缀失效。
+	cloudAgentAttachMemorySnapshot(&canonical, memory)
 	canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(req.CanvasID, cloudAgentPromptCacheIdentity(req, policy), canonical.SystemPrompt, cloudAgentToolsNamed(canonical.Tools, advertisedNames))
 	attachCloudAgentPlan(&canonical, inheritedPlan)
 	if workspace.AgentsMD != "" || len(skillSnapshots) > 0 {
@@ -712,7 +720,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		Subagent:          req.subagent,
 		Workspace:         &workspace,
 		RuntimeRunID:      id, Request: req, Policy: policy, ParentID: linkedParentID, Fingerprint: fingerprint,
-		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots,
+		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Memory: memory,
 		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
 		Plan: inheritedPlan, StepLimits: stepLimits, CallLimits: stepLimits.CallLimits,
 		TokenAnchor:         inheritedUsage,

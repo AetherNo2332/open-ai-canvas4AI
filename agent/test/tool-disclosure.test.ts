@@ -30,7 +30,7 @@ test("only allowed advertised concrete tools are registered; categories are not 
   assert.deepEqual(called, ["canvas_get_state"]);
 });
 
-test("new boundary registers only newly advertised tools and keeps the loadout monotonic", () => {
+test("new boundary registers newly allowed tools and drops tools that are no longer allowed", () => {
   const registry = new SessionToolDisclosure(specs, async () => ({ result: {} }));
   const registered: string[] = [];
   const active: string[][] = [];
@@ -38,10 +38,16 @@ test("new boundary registers only newly advertised tools and keeps the loadout m
   if (typeof extension === "function") throw new Error("expected extension object");
   extension.factory({registerTool(tool: SessionToolDefinitionLike) {registered.push(tool.name);},
     on() {return () => {};}, setActiveTools(names: string[]) {active.push(names);}} as never);
+  // Loosening mid-run: the write tool becomes allowed at the next boundary.
   registry.refresh(specs.map(spec => ({...spec, allowed: spec.name === "canvas_apply_ops" || spec.allowed})));
+  assert.equal(registry.isVisible("canvas_apply_ops"), true);
+  // Same loadout again: no re-registration and no loadout change.
+  registry.refresh(specs.map(spec => ({...spec, allowed: spec.name === "canvas_apply_ops" || spec.allowed})));
+  // Tightening mid-run: the write tool leaves the model-visible loadout.
   registry.refresh(specs);
   assert.deepEqual(registered, ["canvas_get_state", "plan_update", "canvas_apply_ops"]);
-  assert.deepEqual(active, [["canvas_get_state", "plan_update", "canvas_apply_ops"]]);
+  assert.deepEqual(active, [["canvas_get_state", "plan_update", "canvas_apply_ops"], ["canvas_get_state", "plan_update"]]);
+  assert.equal(registry.isVisible("canvas_apply_ops"), false);
   assert.equal(registry.isVisible("agent_tools_canvas_read"), false);
 });
 

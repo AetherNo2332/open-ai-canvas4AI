@@ -14,7 +14,8 @@ test("运行中不再锁死输入框，发送沿用会话消息入口", async ()
     expect(panel).toContain('interjection: "sent"');
 
     // 输入框的禁用条件里不能再有 running —— 只保留「连不上事件流」「历史/待确认未水合」这类真不能发的状态
-    expect(panel).toContain('disabled={activeHistoryState?.status === "unavailable" || !historyHydrated || !pendingHydrated}');
+    // !onCanvas 是全局面板在非画布页的禁用条件（fork 后端要求 canvasId），与运行状态无关。
+    expect(panel).toContain('disabled={!onCanvas || activeHistoryState?.status === "unavailable" || !historyHydrated || !pendingHydrated}');
     const composer = panel.match(/<AgentChatComposer[\s\S]*?disabled=\{([^\n]+)\}/)?.[1];
     expect(composer).toBeDefined();
     expect(composer).not.toMatch(/\bbusy\b|\brunning\b/);
@@ -38,8 +39,11 @@ test("输入框运行中同时给出「发送（插话）」与「停止」", as
     expect(composer).not.toContain("const canStop = Boolean(sending && onStop);");
     expect(composer).toContain('aria-label="停止本轮"');
     // 插话/未送达要有可见标记
-    expect(composer).toContain('interjection?: "sent" | "undelivered";');
-    expect(composer).toContain('item.interjection === "undelivered" ? "插话未送达" : "插话"');
+    // 状态标签与上游面板一致，并区分「已送达 / 已撤回」（撤回动作在 U8 接入）。
+    expect(composer).toContain('export type AgentInterjectionStatus = "sent" | "delivered" | "undelivered" | "withdrawn";');
+    expect(composer).toContain('delivered: "插话已送达"');
+    expect(composer).toContain('withdrawn: "插话已撤回"');
+    expect(composer).toContain("AGENT_INTERJECTION_LABELS[item.interjection]");
 });
 
 test("插话走独立接口，不碰轮次接口", async () => {

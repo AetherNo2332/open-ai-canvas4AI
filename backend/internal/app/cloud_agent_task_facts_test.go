@@ -38,9 +38,9 @@ func TestCloudAgentTaskDiagnosticProjectsDurableExecutionFacts(t *testing.T) {
 
 	facts := cloudAgentTaskDiagnostic(s.repo, task)
 	for key, want := range map[string]any{
-		"taskId": task.ID, "taskStatus": string(model.TaskStatusFailed), "agentRunId": "run-1", "generationId": "generation-1",
-		"approvalId": "approval-1", "nodeId": "video-node", "taskSubmitted": false, "submissionOutcome": "not_submitted",
-		"phase": "preparation", "diagnosticCode": "invalid_duration", "diagnosticId": "diag-1",
+		"taskId": task.ID, "taskStatus": string(model.TaskStatusFailed),
+		"nodeId": "video-node", "taskSubmitted": false, "submissionOutcome": "not_submitted",
+		"phase": "preparation", "diagnosticCode": "invalid_duration",
 		"fieldPath": "generationSpec.options.durationSeconds", "retryClass": "correct_input", "error": "视频时长不受支持",
 		"cancellationSource": model.TaskCancellationUserRequest,
 	} {
@@ -49,12 +49,19 @@ func TestCloudAgentTaskDiagnosticProjectsDurableExecutionFacts(t *testing.T) {
 		}
 	}
 	billing, ok := facts["billing"].(map[string]any)
-	if !ok || billing["orderId"] != order.ID || billing["status"] != string(model.BillingStatusRefunded) || billing["stateAvailable"] != true || billing["chargeLimitSet"] != true {
+	if !ok || billing["status"] != string(model.BillingStatusRefunded) || billing["stateAvailable"] != true || billing["chargeState"] != "refunded" {
 		t.Fatalf("billing facts = %#v", facts["billing"])
 	}
-	receipt, ok := facts["submissionReceipt"].(map[string]any)
-	if !ok || receipt["taskId"] != task.ID || receipt["generationId"] != task.GenerationID {
-		t.Fatalf("submission receipt = %#v", facts["submissionReceipt"])
+	// 模型视图不带内部标识：这些值不会被任何工具参数回传。
+	for _, key := range []string{"agentRunId", "generationId", "approvalId", "diagnosticId", "submissionReceipt", "cancellationRequestedAt"} {
+		if _, leaked := facts[key]; leaked {
+			t.Fatalf("model-facing task facts leaked %s: %#v", key, facts)
+		}
+	}
+	for _, key := range []string{"orderId", "authorizedChargeMicrocredits", "chargeLimitSet", "chargeLimitMicrocredits", "reservedAmountMicrocredits", "refundedAmountMicrocredits"} {
+		if _, leaked := billing[key]; leaked {
+			t.Fatalf("model-facing billing leaked %s: %#v", key, billing)
+		}
 	}
 }
 
@@ -105,9 +112,6 @@ func TestCloudAgentTaskDiagnosticSeparatesReservationFromActualCharge(t *testing
 	billing, ok := facts["billing"].(map[string]any)
 	if !ok {
 		t.Fatalf("billing facts = %#v", facts["billing"])
-	}
-	if billing["reservedAmountMicrocredits"] != float64(100_000) || billing["actualAmountMicrocredits"] != float64(100_000) {
-		t.Fatalf("microcredit facts = %#v", billing)
 	}
 	if billing["reservedCredits"] != 0.1 || billing["actualCredits"] != 0.1 || billing["chargeState"] != "settled" {
 		t.Fatalf("credit facts = %#v", billing)

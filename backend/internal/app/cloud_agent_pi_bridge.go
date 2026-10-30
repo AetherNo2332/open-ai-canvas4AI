@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -73,8 +74,11 @@ type PiAgentSnapshot struct {
 	PendingInterjections     []PiPendingInterjection      `json:"pendingInterjections,omitempty"`
 	PendingContextCompaction *PiPendingContextCompaction  `json:"pendingContextCompaction,omitempty"`
 	Tools                    []PiAgentToolSpec            `json:"tools"`
-	PiMessages               []json.RawMessage            `json:"piMessages"`
-	Opened                   []string                     `json:"openedCategories"`
+	// ToolCatalog 是 Pi 会话的终身工具白名单（平台工具全集）。它不是授权：运行中切换
+	// 权限后新允许的工具要能在下一边界注册，是否可用仍由 tools[].allowed 与服务端校验决定。
+	ToolCatalog []string          `json:"toolCatalog,omitempty"`
+	PiMessages  []json.RawMessage `json:"piMessages"`
+	Opened      []string          `json:"openedCategories"`
 	// Harness 是首步合同冻结的 Harness 正文（版本 2 运行在首步之后非空）。
 	//
 	// Node 恢复时优先用它而不是重读磁盘文件：运维改了 SYSTEM.md / AGENTS.md 再重启进程，
@@ -982,7 +986,7 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 	if err := cloudAgentToolSchemaDrift(state.Canonical.Tools, request.Canonical.Tools); err != nil {
 		return nil, kernel.Forbidden(err.Error())
 	}
-	request.Canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(state.Request.CanvasID, cloudAgentPromptCacheIdentity(state.Request, state.Policy), state.Canonical.SystemPrompt, request.Canonical.Tools)
+	request.Canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(state.Request.CanvasID, cloudAgentPromptCacheIdentity(cloudAgentCacheRequest(&state), state.Policy), state.Canonical.SystemPrompt, request.Canonical.Tools)
 	request.Canonical.Messages = append(request.Canonical.Messages, state.callLimitFacts())
 	state.DisclosureVersion = cloudAgentToolDisclosureVersion
 	state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
@@ -1745,7 +1749,7 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		Subagent:    state.Subagent,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, HistoricalToolReceipts: historicalReceipts, PiActiveLeafID: session.ActiveLeafID,
-		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, Tools: tools,
+		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, Tools: tools, ToolCatalog: cloudAgentPiToolCatalog(state.Canonical.Tools),
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
 		PendingToolBatch: pendingBatch,
 		SkillRuntimeMode: mode, Skills: nativeSkills,
@@ -2020,4 +2024,18 @@ func (s *Service) sweepPiRuns(runs []model.CloudAgentExecution, reason, message 
 		swept++
 	}
 	return swept, nil
+}
+
+// cloudAgentPiToolCatalog 是平台工具全集与本轮目录的并集（含子代理工具与 native read）。
+func cloudAgentPiToolCatalog(tools []map[string]any) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, name := range append(append(cloudAgentToolNames(tools), CloudAgentSupportedToolNames()...), cloudAgentToolNames(CloudAgentToolSchemaArtifact().Tools)...) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

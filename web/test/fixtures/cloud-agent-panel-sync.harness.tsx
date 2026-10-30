@@ -1,7 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { AgentConversationMessageInput, AgentEvent, AgentMessageReceipt, AgentQueuedMessage, AgentRun, AgentSendMode, CreateAgentRunInput } from "@/services/api/agent";
-import type { CanvasCloudAgentPanelHandle } from "@/components/canvas/canvas-cloud-agent-panel";
+import type { AgentPrefillInput, AgentPrefillOutcome } from "@/stores/use-global-agent-store";
 import type { CloudAgentConversation, CloudAgentPendingSubmission } from "@/services/cloud-agent-conversations";
 
 const dom = new Window({ url: "http://localhost/" });
@@ -35,6 +35,7 @@ const chatUI = await import("@/components/canvas/canvas-cloud-agent-chat-ui");
 const { setActiveUserScope } = await import("@/lib/user-scope");
 const { useUserStore } = await import("@/stores/use-user-store");
 const { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } = await import("@/stores/use-config-store");
+const { requestAgentPrefill, useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
 
 let local: CloudAgentConversation[] = [];
 let remote: CloudAgentConversation[] = [];
@@ -56,13 +57,18 @@ let questionBar: any;
 let refreshOverride: ((options: any) => Promise<CloudAgentConversation[]>) | undefined;
 const subscriptions: Array<{ id: string; after: number; closed: boolean; receive: (event: AgentEvent) => void }> = [];
 const reads: Array<{ canvasId: string; scope: string; signal: AbortSignal }> = [];
+let queueReads = 0;
+let pendingReads = 0;
+// 未完成时历史恢复停在加载中；loadFailure 让恢复失败。两者都由用例自行复位。
+let loadGate: Promise<void> | undefined;
+let loadFailure: Error | undefined;
 const silent = () => {};
 mock.module("file-saver", () => ({ saveAs: silent }));
 const Box = ({ children }: any) => <div>{children}</div>;
 mock.module("motion/react", () => ({ AnimatePresence: Box, motion: { aside: Box, div: Box }, useReducedMotion: () => true }));
 mock.module("antd", () => ({
-    Button: ({ children, icon, onClick }: any) => (
-        <button onClick={onClick}>
+    Button: ({ children, icon, onClick, "aria-label": label }: any) => (
+        <button onClick={onClick} aria-label={label}>
             {icon}
             {children}
         </button>
@@ -78,7 +84,7 @@ mock.module("@/services/api/agent", () => ({
         serverSendMode = input.defaultSendMode;
         return { ...input, revision: input.revision + 1 };
     },
-    getAgentMessageQueue: async (id: string) => ({ conversationId: id, canvasId: "canvas", revision: 1, paused: false, awaitingQuestionId, latestRunId: local[0]?.run?.id || "desktop", items: [...queueItems] }),
+    getAgentMessageQueue: async (id: string) => (queueReads++, { conversationId: id, canvasId: "canvas", revision: 1, paused: false, awaitingQuestionId, latestRunId: local[0]?.run?.id || "desktop", items: [...queueItems] }),
     getAgentRun: async (id: string, ...args: any[]) => (acceptedRuns.has(id) ? { run: acceptedRuns.get(id)! } : getRunFromService(id, ...args)),
     sendAgentConversationMessage: async (id: string, input: AgentConversationMessageInput) => {
         conversationRequests.push(structuredClone(input));
@@ -129,11 +135,15 @@ mock.module("@/services/cloud-agent-conversations", () => ({
     clearCloudAgentPendingSubmission: async () => {
         pending = null;
     },
-    loadCloudAgentConversations: async (_canvas: string, scope: string) => ({ version: 1, activeId: scope === "sync-user" ? local[0]?.id : null, conversations: scope === "sync-user" ? local : [] }),
+    loadCloudAgentConversations: async (_canvas: string, scope: string) => {
+        await loadGate;
+        if (loadFailure) throw loadFailure;
+        return { version: 1, activeId: scope === "sync-user" ? local[0]?.id : null, conversations: scope === "sync-user" ? local : [] };
+    },
     saveCloudAgentConversations: async (_canvas: string, _id: string, items: CloudAgentConversation[], scope: string) => {
         if (scope === "sync-user") local = items;
     },
-    loadCloudAgentPendingSubmission: async (_canvas: string, _id: string, scope: string) => (scope === "sync-user" ? pending : null),
+    loadCloudAgentPendingSubmission: async (_canvas: string, _id: string, scope: string) => (pendingReads++, scope === "sync-user" ? pending : null),
 }));
 mock.module("@/services/cloud-agent-history", () => ({
     ...history,
@@ -236,9 +246,11 @@ async function mount(initial: CloudAgentConversation[] = [], initialPending: Clo
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    const handle = React.createRef<CanvasCloudAgentPanelHandle>();
+    // 面板从全局 store 读画布上下文；外部发送改为 prefillRequest（autoSubmit）投递。
+    useGlobalAgentStore.setState({ open: true, prefillRequest: null, canvas: { canvasId: "canvas", nodeCount: 1, selectedNodeIds: [], references: [] } });
+    const handle = { current: { sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => sendExternal(request) } };
     await act(async () => {
-        root.render(<CanvasCloudAgentPanel ref={handle} canvasId="canvas" nodeCount={1} selectedNodeIds={[]} references={[]} open onOpen={silent} onCollapse={silent} />);
+        root.render(<CanvasCloudAgentPanel />);
         await settle();
     });
     return {
@@ -251,6 +263,13 @@ async function mount(initial: CloudAgentConversation[] = [], initialPending: Clo
     };
 }
 afterAll(() => dom.happyDOM.abort());
+
+/** 旧 ref.sendPrompt 的等价投递：经 store 交给面板并等它回报结果；"prefilled" 不会出现在 autoSubmit 请求上。 */
+function sendExternal(request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }): Promise<AgentPrefillOutcome> {
+    const input: AgentPrefillInput = { canvasId: request.canvasId, userScope: request.userScope, text: request.prompt, focusNodeIds: request.focusNodeIds, autoSubmit: true };
+    return requestAgentPrefill(input);
+}
+type SendOutcome = Awaited<ReturnType<typeof sendExternal>>;
 
 const externalPrompt = { canvasId: "canvas", userScope: "sync-user", prompt: "为目标分镜表提出拆镜方案，先询问确认", focusNodeIds: ["storyboard-target"] };
 
@@ -435,7 +454,7 @@ test("restoring an unknown queue send retains the newer draft separately from it
 test("external storyboard request continues the current chat and preserves its composer draft", async () => {
     const mounted = await mount([conversation("desktop", "local", "原来的 Agent 草稿")]);
     try {
-        let accepted: Awaited<ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>> | undefined;
+        let accepted: SendOutcome | undefined;
         await act(async () => {
             accepted = await mounted.handle.current!.sendPrompt(externalPrompt);
             await settle();
@@ -456,7 +475,7 @@ test("external request interjects into the running Agent without creating anothe
     current.run = { ...current.run!, status: "running" };
     const mounted = await mount([current], null, async () => [current]);
     try {
-        let accepted: Awaited<ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>> | undefined;
+        let accepted: SendOutcome | undefined;
         await act(async () => {
             accepted = await mounted.handle.current!.sendPrompt(externalPrompt);
             await settle();
@@ -526,7 +545,7 @@ test("external send rejects stale scopes and synchronously excludes duplicate cl
             new Promise((resolve) => {
                 release = resolve;
             });
-        let first!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>;
+        let first!: Promise<SendOutcome>;
         await act(async () => {
             first = mounted.handle.current!.sendPrompt(externalPrompt);
             expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(false);
@@ -569,7 +588,7 @@ test("switching chats during an interjection releases only the old send lock", a
             new Promise((resolve) => {
                 releaseNew = resolve;
             });
-        let oldSend!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>, newSend!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>;
+        let oldSend!: Promise<SendOutcome>, newSend!: Promise<SendOutcome>;
         await act(async () => {
             oldSend = mounted.handle.current!.sendPrompt(externalPrompt);
             await settle();
@@ -626,7 +645,7 @@ test("an external POST response from the old account cannot replace the new acco
             new Promise((resolve) => {
                 release = resolve;
             });
-        let sending!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>;
+        let sending!: Promise<SendOutcome>;
         await act(async () => {
             sending = mounted.handle.current!.sendPrompt(externalPrompt);
             await settle();
@@ -854,6 +873,176 @@ test("one unavailable conversation keeps its draft and blocks continuation until
         expect(mounted.host.textContent).not.toContain("暂时无法恢复");
         expect(composer.prompt).toBe("保留草稿");
         expect(composer.disabled).toBe(false);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("a prefill without autoSubmit only appends to the composer draft and sends nothing", async () => {
+    const mounted = await mount([conversation("desktop", "local", "已有草稿")]);
+    try {
+        let outcome: SendOutcome | undefined;
+        await act(async () => {
+            outcome = await requestAgentPrefill({ canvasId: "canvas", userScope: "sync-user", text: "@[node:n1] " });
+            await settle();
+        });
+        expect(outcome).toBe("prefilled");
+        expect(composer.prompt).toBe("已有草稿 @[node:n1]");
+        expect(sentRequests).toHaveLength(0);
+        expect(createdRequests).toHaveLength(0);
+        expect(conversationRequests).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("after leaving the canvas the composer is disabled and no request carries the old canvasId", async () => {
+    const mounted = await mount([conversation("desktop", "local", "离开前的草稿")]);
+    try {
+        await act(async () => {
+            useGlobalAgentStore.getState().setCanvas(null);
+            await settle();
+        });
+        expect(composer.disabled).toBe(true);
+        expect(composer.placeholder).toBe("进入画布后使用 Agent");
+        const readsBefore = reads.length;
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        let outcome: SendOutcome | undefined;
+        await act(async () => {
+            outcome = await requestAgentPrefill({ canvasId: "canvas", userScope: "sync-user", text: "旧画布的请求", autoSubmit: true });
+            await settle();
+        });
+        await focus();
+        expect(outcome).toBe(false);
+        expect(sentRequests).toHaveLength(0);
+        expect(createdRequests).toHaveLength(0);
+        expect(conversationRequests).toHaveLength(0);
+        // 离开画布后不再按旧画布轮询会话目录。
+        expect(reads.length).toBe(readsBefore);
+        expect(mounted.host.textContent).toContain("进入画布后使用 Agent");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("off canvas, opening a past conversation shows its messages without restoring the live run", async () => {
+    const current = conversation("desktop", "local");
+    const older = conversation("older-run", "older");
+    older.run = { ...older.run!, status: "running" };
+    older.messages = [{ id: "answer-older", role: "assistant", text: "旧对话的回答" }];
+    const mounted = await mount([current, older], null, async () => [current, older]);
+    try {
+        await act(async () => {
+            useGlobalAgentStore.getState().setCanvas(null);
+            await settle();
+        });
+        await act(async () => {
+            mounted.host.querySelector<HTMLButtonElement>('[aria-label="历史对话"]')!.click();
+            await settle();
+        });
+        const subscriptionsBefore = subscriptions.length;
+        const pendingBefore = pendingReads;
+        const openOlder = Array.from(mounted.host.querySelectorAll<HTMLButtonElement>(".canvas-agent-history-open")).find((button) => button.textContent?.includes("旧对话的回答"))!;
+        await act(async () => {
+            openOlder.click();
+            await settle();
+        });
+        expect(mounted.host.textContent).toContain("旧对话的回答");
+        const queueBefore = queueReads;
+        await focus();
+        // 不订阅事件流、不轮询待发队列、不读取待确认提交，也没有停止入口。
+        expect(subscriptions.length).toBe(subscriptionsBefore);
+        expect(queueReads).toBe(queueBefore);
+        expect(pendingReads).toBe(pendingBefore);
+        expect(composer.onStop).toBeUndefined();
+        expect(composer.disabled).toBe(true);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("a prefill that arrives while history is restoring is applied after hydration instead of being wiped", async () => {
+    let release!: () => void;
+    loadGate = new Promise<void>((resolve) => (release = resolve));
+    const mounted = await mount([conversation("desktop", "local", "已有草稿")]);
+    try {
+        let outcome: SendOutcome | undefined;
+        const request = requestAgentPrefill({ canvasId: "canvas", userScope: "sync-user", text: "@[node:n1] " }).then((value) => (outcome = value));
+        await act(async () => {
+            await settle();
+        });
+        expect(outcome).toBeUndefined();
+        // React 在 act 结束时才冲刷排队的更新，等待结果放在 act 之外。
+        await act(async () => {
+            release();
+            await settle();
+        });
+        await request;
+        expect(outcome).toBe("prefilled");
+        expect(composer.prompt).toBe("已有草稿 @[node:n1]");
+    } finally {
+        loadGate = undefined;
+        await mounted.close();
+    }
+});
+
+test("a failed history restore settles a waiting auto-submit and does not block later requests", async () => {
+    let release!: () => void;
+    loadGate = new Promise<void>((resolve) => (release = resolve));
+    loadFailure = new Error("storage unavailable");
+    const mounted = await mount();
+    const timeout = (promise: Promise<SendOutcome>) => Promise.race([promise, new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 500))]);
+    try {
+        const first = timeout(requestAgentPrefill({ ...externalPrompt, text: externalPrompt.prompt, autoSubmit: true }));
+        await act(async () => {
+            await settle();
+        });
+        await act(async () => {
+            release();
+            await settle();
+        });
+        await act(async () => {
+            await settle();
+        });
+        expect(await first).toBe(false);
+        // 之后的投递立即得到结果，不会被一条无人处理的请求挡住。
+        const second = timeout(requestAgentPrefill({ ...externalPrompt, text: externalPrompt.prompt, autoSubmit: true }));
+        await act(async () => {
+            await settle();
+        });
+        expect(await second).toBe(false);
+        expect(useGlobalAgentStore.getState().prefillRequest).toBeNull();
+        expect(conversationRequests).toHaveLength(0);
+        expect(createdRequests).toHaveLength(0);
+    } finally {
+        loadGate = undefined;
+        loadFailure = undefined;
+        await mounted.close();
+    }
+});
+
+test("a cloud sync error appears only after consecutive failures and clears once sync recovers", async () => {
+    let failing = true;
+    const loader = async () => {
+        if (failing) throw new Error("后端服务暂时不可用，请稍后重试");
+        return [conversation("desktop")];
+    };
+    const mounted = await mount([conversation("desktop", "local")], null, loader);
+    const errorShown = () => mounted.host.textContent?.includes("后端服务暂时不可用") ?? false;
+    try {
+        // 首次轮询失败：单次抖动不提示。
+        expect(errorShown()).toBe(false);
+        await focus();
+        expect(errorShown()).toBe(false);
+        await focus();
+        expect(errorShown()).toBe(true);
+        expect(local.some((item) => item.messages.some((message) => message.id === "cloud-history-error"))).toBe(false);
+        failing = false;
+        await focus();
+        expect(errorShown()).toBe(false);
     } finally {
         await mounted.close();
     }

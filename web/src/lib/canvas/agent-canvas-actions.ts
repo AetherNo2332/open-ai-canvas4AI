@@ -12,7 +12,7 @@ export function agentToolArguments(detail: unknown) {
     try { return agentRecord(JSON.parse(value)); } catch { return {}; }
 }
 
-export function agentCanvasActions(toolName: string, detail: unknown, references: CanvasResourceReference[] = []): AgentCanvasAction[] {
+export function agentCanvasActions(toolName: string, detail: unknown, references: readonly CanvasResourceReference[] = []): AgentCanvasAction[] {
     const payload = agentRecord(detail);
     const result = agentRecord(payload.result);
     const args = agentToolArguments(detail);
@@ -45,7 +45,7 @@ export function agentCanvasActions(toolName: string, detail: unknown, references
             if (Array.isArray(ids)) for (const id of ids) add(id, undefined, undefined, "referenced");
         }
     } else if (["canvas_get_state", "canvas_search_nodes"].includes(toolName) && !failed && Array.isArray(result.nodes)) {
-        for (const value of result.nodes) { const node = agentRecord(value); add(node.id, node.title, node.type, "read"); }
+        for (const value of result.nodes) { const node = agentRecord(value); add(node.id, node.title, node.kind ?? node.type, "read"); }
     } else if (toolName === "canvas_read_content" && !failed) {
         const complete = result.offset === 0 && typeof result.totalCharacters === "number" && Number.isSafeInteger(result.totalCharacters) && result.totalCharacters >= 0 && result.nextOffset === result.totalCharacters && result.hasMore === false;
         add(result.nodeId, undefined, undefined, complete ? "content_read" : "content_read_partial");

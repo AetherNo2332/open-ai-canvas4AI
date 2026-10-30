@@ -12,10 +12,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// CurrentSchemaVersion 跟随上游迁移到 v74；v75 起是 fork 云端 Agent 子系统（见 migrations_agent.go），
-// v76 退役服务端预演渲染任务（见 migrations_previs_render.go），v77 把媒体版本表迁入节点 metadata，
-// v78 为 canvas_task_bindings 增加媒体版本快照列 media_version_json（均见 migrations_media_versions.go）。
-const CurrentSchemaVersion int64 = mediaVersionBindingMigrationVersion
+// CurrentSchemaVersion：v1–v77 归上游迁移（v75–v77 随上游合并引入）；v78 起是 fork 云端 Agent 子系统（见 migrations_agent.go），
+// v79 退役服务端预演渲染任务（见 migrations_previs_render.go），v80 把媒体版本表迁入节点 metadata，
+// v81 为 canvas_task_bindings 增加媒体版本快照列 media_version_json（均见 migrations_media_versions.go），
+// v82 把已批准的 fork 经验并入各用户的长期记忆文件并退役经验压缩任务（见 migrations_lessons_memory.go）。
+// 迁移计划按列表逐项执行，不要求版本连续（v44 与上游合并前的 v75–v77 均为空号）。
+const CurrentSchemaVersion int64 = lessonsToMemoryMigrationVersion
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -274,10 +276,75 @@ var schemaMigrations = []migration{
 		}
 		return tx.Migrator().AddColumn(&model.DramaSegment{}, "ReferenceCastIDsJSON")
 	}},
+	{version: 75, name: "user_groups_pricing_currency", checksum: "sha256:user-groups-pricing-currency-v75-20261028", apply: migrateUserGroupsPricingCurrency},
+	{version: 76, name: "agent_memory_document_skill_discovery", checksum: "sha256:agent-memory-document-skill-discovery-v76-20261028", apply: migrateAgentMemoryDocumentSkillDiscovery},
+	{version: 77, name: "agent_memory_document_columns", checksum: "sha256:agent-memory-document-columns-v77-20261028", apply: migrateAgentMemoryDocumentColumns},
 	{version: forkAgentRuntimeMigrationVersion, name: "fork_agent_runtime", checksum: forkAgentRuntimeChecksum, apply: migrateForkAgentRuntime},
 	{version: previsRenderRetiredMigrationVersion, name: "previs_render_retired", checksum: previsRenderRetiredChecksum, apply: migratePrevisRenderRetired},
 	{version: mediaVersionsMigrationVersion, name: "media_versions_to_metadata", checksum: mediaVersionsChecksum, apply: migrateMediaVersionsToMetadata},
 	{version: mediaVersionBindingMigrationVersion, name: "canvas_task_binding_media_version", checksum: mediaVersionBindingChecksum, apply: migrateMediaVersionBinding},
+	{version: lessonsToMemoryMigrationVersion, name: "fork_lessons_to_memory_document", checksum: lessonsToMemoryChecksum, apply: migrateLessonsToMemoryDocument},
+}
+
+// migrateAgentMemoryDocumentColumns 补齐记忆文件的条目序号与修订的工具调用 ID。
+// 早期构建执行 v76 时这两列还不存在，v76 已记为完成不会重跑；新库由 v76 建全，这里是空操作。
+func migrateAgentMemoryDocumentColumns(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.AgentMemoryDocument{}, &model.AgentMemoryDocumentRevision{}); err != nil {
+		return err
+	}
+	// 新增列对旧行是 NULL；写成零值，与新建行一致。
+	if err := tx.Model(&model.AgentMemoryDocument{}).Where("next_entry_seq IS NULL").Update("next_entry_seq", 0).Error; err != nil {
+		return err
+	}
+	return tx.Model(&model.AgentMemoryDocumentRevision{}).Where("call_id IS NULL").Update("call_id", "").Error
+}
+
+// migrateAgentMemoryDocumentSkillDiscovery 新建用户记忆文件及其修订表，并给用户技能状态补
+// Agent 自动发现模式与读取统计列。旧状态 agent_mode 为空，按 auto 处理，行为与“已安装即可发现”一致。
+func migrateAgentMemoryDocumentSkillDiscovery(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.AgentMemoryDocument{}, &model.AgentMemoryDocumentRevision{}); err != nil {
+		return err
+	}
+	for _, field := range []string{"AgentMode", "AgentUseCount", "AgentLastUsedAt"} {
+		if tx.Migrator().HasColumn(&model.UserSkillState{}, field) {
+			continue
+		}
+		if err := tx.Migrator().AddColumn(&model.UserSkillState{}, field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateUserGroupsPricingCurrency 增加用户分组、分组渠道绑定，以及模型计价货币、充值商品货币和账单分组快照列。
+// 旧用户 user_group 为空（归入 default），旧模型按积分计价，旧商品按人民币计价，计费结果不变。
+func migrateUserGroupsPricingCurrency(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.UserGroup{}, &model.UserGroupChannel{}); err != nil {
+		return err
+	}
+	columns := []struct {
+		model any
+		field string
+	}{
+		{&model.User{}, "UserGroup"},
+		{&model.ChannelModel{}, "PriceCurrency"},
+		{&model.TopupProduct{}, "Currency"},
+		{&model.BillingOrder{}, "UserGroup"},
+		{&model.BillingOrder{}, "PriceCurrency"},
+		{&model.BillingOrder{}, "CurrencyRateMicrocredits"},
+	}
+	for _, column := range columns {
+		if tx.Migrator().HasColumn(column.model, column.field) {
+			continue
+		}
+		if err := tx.Migrator().AddColumn(column.model, column.field); err != nil {
+			return err
+		}
+	}
+	if !tx.Migrator().HasIndex(&model.User{}, "UserGroup") {
+		return tx.Migrator().CreateIndex(&model.User{}, "UserGroup")
+	}
+	return nil
 }
 
 // migrateReferralCenter 增加推广人标记和推广码、绑定、返佣三张表；旧用户默认不是推广人。

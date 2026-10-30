@@ -325,7 +325,7 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 		}
 		precise := len(ids) > 0 || focus[id] || (len(options) > 0 && read.View != "catalog")
 		meta, _ := node["metadata"].(map[string]any)
-		item := map[string]any{"id": id, "type": stringValue(node["type"]), "kind": stringValue(node["type"])}
+		item := map[string]any{"id": id, "kind": stringValue(node["type"])}
 		if title, ok := node["title"].(string); ok {
 			item["title"] = truncateRunes(title, 300)
 		}
@@ -487,10 +487,15 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 				// Provider references contain a storage key for task submission.
 				// The model only needs the verified public characteristics; never
 				// forward the provider payload or storage locator into the read tool.
-				item["asset"] = map[string]any{
-					"mimeType": ref["mimeType"], "bytes": ref["bytes"],
-					"width": ref["width"], "height": ref["height"],
-					"durationMs": ref["durationMs"], "inputKind": ref["inputKind"],
+				// 只给能影响下游决策的特征：画幅与时长。MIME、字节数与输入分类属于底层细节。
+				asset := map[string]any{}
+				for _, key := range []string{"width", "height", "durationMs"} {
+					if value, ok := cloudAgentSafeNumber(ref[key]); ok && numberValue(value, 0) > 0 {
+						asset[key] = value
+					}
+				}
+				if len(asset) > 0 {
+					item["asset"] = asset
 				}
 			}
 		}
@@ -529,7 +534,8 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			includeEdge = fromIncluded || toIncluded
 		}
 		if includeEdge {
-			item := map[string]any{"id": edge["id"], "fromNodeId": edge["fromNodeId"], "toNodeId": edge["toNodeId"]}
+			// 连线只读：没有工具接收连线 ID，模型只需要两端与关系。
+			item := map[string]any{"fromNodeId": edge["fromNodeId"], "toNodeId": edge["toNodeId"]}
 			for _, key := range []string{"fromHandleId", "toHandleId", "relation", "storyboardRowId"} {
 				if value := stringValue(edge[key]); value != "" {
 					item[key] = value
@@ -544,12 +550,19 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			edges = append(edges, item)
 		}
 	}
-	result := map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "mediaSnapshotHash": cloudAgentMediaContentHash(doc), "nodes": nodes, "connections": edges, "totalNodes": len(all), "nextOffset": next, "hasMore": next > 0, "nextConnectionOffset": nextConnection, "hasMoreConnections": nextConnection > 0, "pageByteBudget": cloudAgentReadPageBytes}
+	// mediaSnapshotHash 是 generate_media 的 snapshotHash 取值（只覆盖影响生成的内容），与画布写入用的 snapshotHash 不同，必须保留。
+	result := map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "mediaSnapshotHash": cloudAgentMediaContentHash(doc), "nodes": nodes, "connections": edges, "totalNodes": len(all)}
+	if next > 0 {
+		result["hasMore"], result["nextOffset"] = true, next
+	}
+	if nextConnection > 0 {
+		result["hasMoreConnections"], result["nextConnectionOffset"] = true, nextConnection
+	}
 	result["view"], result["connectionMode"] = read.View, read.Connections
 	migration := map[string]any{"required": !references.Enabled(doc)}
 	if !references.Enabled(doc) {
 		migration["reason"] = "reference_migration_required"
-		migration["nextAction"] = "这是旧版引用格式的画布，Agent 暂不能在其上关联素材或生成媒体；请如实告知用户，建议在新建的画布上继续；不要重试或改写其他字段来替代绑定"
+		migration["nextAction"] = "这是旧版引用格式的画布，Agent 暂不能在其上关联素材或生成媒体；请告知用户在画布顶部的「引用迁移」提示中完成一次迁移后再继续；不要重试或改写其他字段来替代绑定"
 	}
 	result["referenceMigration"] = migration
 	if selectedMode {

@@ -76,14 +76,17 @@ func cloudAgentContentContinuation(node, item map[string]any) {
 func cloudAgentCompactEditable(item map[string]any) {
 	editable, _ := item["editable"].(map[string]any)
 	fields, _ := editable["fields"].(map[string]any)
-	sources := map[string]any{}
+	// 与节点顶层字段相同的可编辑值不再重复下发；坐标已在 position 中。
 	for key, value := range fields {
 		if projected, exists := item[key]; exists && reflect.DeepEqual(value, projected) {
 			delete(fields, key)
-			sources[key] = key
 		}
 	}
-	if len(sources) > 0 {
-		editable["fieldSources"] = sources
+	if position, ok := item["position"].(map[string]any); ok {
+		for _, axis := range []string{"x", "y"} {
+			if value, exists := fields[axis]; exists && reflect.DeepEqual(value, position[axis]) {
+				delete(fields, axis)
+			}
+		}
 	}
 }

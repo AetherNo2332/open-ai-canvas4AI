@@ -8,19 +8,19 @@ import (
 	"gorm.io/gorm"
 )
 
-// forkAgentRuntimeMigrationVersion 接在上游 v74 之后，承载 fork 云端 Agent 子系统的全部表：
+// forkAgentRuntimeMigrationVersion 接在上游 v77 之后（v75–v77 留给上游迁移），承载 fork 云端 Agent 子系统的全部表：
 // Pi 会话树、事件调度与准入、Worker 注册、技能默认与 Workspace、动态子代理、消息队列，
-// 以及 Agent 画布命令/任务回写依赖的版本与绑定表。上游 v1–v74 保持原样。
-const forkAgentRuntimeMigrationVersion int64 = 75
+// 以及 Agent 画布命令/任务回写依赖的版本与绑定表。上游 v1–v77 保持原样。
+const forkAgentRuntimeMigrationVersion int64 = 78
 
-const forkAgentRuntimeChecksum = "sha256:fork-agent-runtime-v75-20261029"
+const forkAgentRuntimeChecksum = "sha256:fork-agent-runtime-v78-20261029"
 
 // upstreamPiSessionLegacyTable 保存上游 Agent 运行时写下的 Pi 会话（run_id 主键 + JSONL 正文）。
 // fork 的 Pi worker 使用按会话归属的条目树，两种格式不能共存在同一张表里；
 // 旧表只改名留存，不删除数据，便于需要时人工核对或回滚。
 const upstreamPiSessionLegacyTable = "cloud_agent_pi_sessions_upstream_legacy"
 
-// AgentRuntimeModels 是 fork 云端 Agent 子系统的表清单；Models() 与 v75 迁移共用。
+// AgentRuntimeModels 是 fork 云端 Agent 子系统的表清单；Models() 与 v78 迁移共用。
 func AgentRuntimeModels() []any {
 	return []any{
 		&model.CloudAgentPiEntry{},
@@ -102,7 +102,7 @@ END $$`).Error
 }
 
 // MigrateCanvasCommands 只建立 Agent 画布命令所需的表，供只迁移局部表的测试夹具使用；
-// 生产库由 v75 迁移统一建立。
+// 生产库由 v78 迁移统一建立。
 func MigrateCanvasCommands(db *gorm.DB) error {
 	return db.AutoMigrate(&model.CanvasDocumentEpoch{}, &model.CanvasEntityVersion{}, &model.CanvasCommandReceipt{}, &model.CanvasCommandEvent{}, &model.CanvasActorHistory{}, &model.CanvasCommandResource{}, &model.CanvasCreateReceipt{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{})
 }

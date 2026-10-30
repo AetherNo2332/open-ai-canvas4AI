@@ -14,16 +14,19 @@
 .agent-send-mode:hover {
     background: color-mix(in oklab, var(--site-text) 8%, transparent);
 }
+/* 与上游面板的输入区托盘一致：待发队列落在输入外壳里、输入卡片之上，无边框与外边距，
+   和输入卡片合成一张整卡（外壳样式见 canvas-cloud-agent.css 的 .agent-composer-shell）。 */
 .agent-message-queue {
     flex: 0 0 auto;
-    margin: 0 var(--space-2);
     padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--site-border);
-    border-bottom: 0;
-    border-radius: var(--card-radius) var(--card-radius) 0 0;
-    background: var(--agent-surface-soft);
+    border: 0;
+    background: transparent;
+    color: var(--agent-caption, color-mix(in oklab, var(--site-text) 60%, transparent));
+    font-size: var(--fs-label, 12px);
+}
+.agent-message-queue-items li,
+.agent-message-queue-content p {
     color: var(--agent-ink, var(--site-text));
-    font-size: 12px;
 }
 .agent-message-queue-header,
 .agent-message-queue-expand,
@@ -50,7 +53,7 @@
     align-items: center;
     gap: var(--space-2);
     padding-block: var(--space-1);
-    border-top: 1px solid var(--site-border);
+    border-top: 1px solid color-mix(in srgb, var(--agent-ink, var(--site-text)) 8%, transparent);
 }
 .agent-message-queue-items li:first-child {
     border-top: 0;
@@ -104,7 +107,7 @@
     border-radius: var(--button-radius);
 }
 .agent-message-queue button:hover:not(:disabled) {
-    background: color-mix(in oklab, var(--site-text) 8%, transparent);
+    background: var(--agent-surface-hover, color-mix(in oklab, var(--site-text) 8%, transparent));
 }
 .agent-message-queue-content textarea {
     width: 100%;

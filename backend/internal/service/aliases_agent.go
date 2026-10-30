@@ -14,6 +14,7 @@ type (
 	AgentWebSearchSettingRequest   = app.AgentWebSearchSettingRequest
 	AgentWorkspaceView             = app.AgentWorkspaceView
 	CharacterListPage              = app.CharacterListPage
+	CloudAgentPermissionResult     = app.CloudAgentPermissionResult
 	PiAgentSnapshot                = app.PiAgentSnapshot
 	PiContextCompactionCommit      = app.PiContextCompactionCommit
 	PiContextCompactionStart       = app.PiContextCompactionStart

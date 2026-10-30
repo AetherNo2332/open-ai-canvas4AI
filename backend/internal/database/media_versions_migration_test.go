@@ -8,12 +8,12 @@ import (
 
 	"yingce/backend/internal/database"
 	"yingce/backend/internal/model"
-	_ "yingce/backend/internal/repository" // registers the canvas write projector used by v77
+	_ "yingce/backend/internal/repository" // registers the canvas write projector used by v80
 
 	"gorm.io/gorm"
 )
 
-const mediaVersionsMigrationVersion int64 = 77
+const mediaVersionsMigrationVersion int64 = 80
 
 func openMediaVersionsSQLite(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -158,7 +158,7 @@ func checkMigrateMediaVersions(t *testing.T, db *gorm.DB) {
 		t.Fatalf("currentMediaVersionId = %v", meta["currentMediaVersionId"])
 	}
 	if meta["mediaVersion"] == nil {
-		t.Fatal("v77 keeps the legacy metadata.mediaVersion object; runtime no longer reads it")
+		t.Fatal("v80 keeps the legacy metadata.mediaVersion object; runtime no longer reads it")
 	}
 	first := meta["mediaVersions"].([]any)[0].(map[string]any)
 	media, _ := first["media"].(map[string]any)
@@ -289,7 +289,7 @@ func checkMigrateMediaVersionsFailsClosedWithoutProjector(t *testing.T, db *gorm
 		t.Fatal("repository did not register a canvas write projector")
 	}
 	if err := rerunMediaVersionsMigration(db); err == nil {
-		t.Fatal("v77 rewrote a canvas without projection")
+		t.Fatal("v80 rewrote a canvas without projection")
 	}
 	if project := f.project(t); project.Revision != 3 {
 		t.Fatalf("failed migration left revision %d", project.Revision)

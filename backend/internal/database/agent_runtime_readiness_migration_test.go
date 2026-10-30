@@ -10,7 +10,7 @@ import (
 )
 
 func TestAgentRuntimeReadinessUpgradeFromOldTable(t *testing.T) {
-	// 只有本仓库 Agent 迁移（v75）建立该表；旧形状的表升级时必须补就绪列并要求重新上报。
+	// 只有本仓库 Agent 迁移（v78）建立该表；旧形状的表升级时必须补就绪列并要求重新上报。
 	for _, version := range []int{74} {
 		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
 			db, err := database.Open(database.Config{Driver: "sqlite", DSN: fmt.Sprintf("file:runtime-readiness-v%d?mode=memory&cache=shared", version)})

@@ -1,6 +1,7 @@
 import type { Asset } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { compactApiParams, http } from "@/services/api/request";
+import type { CanvasReferenceMigrationChoice, CanvasReferenceMigrationPreview } from "@/lib/canvas/canvas-reference-migration";
 
 export type RemoteUserDataSummary = {
     id: string;
@@ -167,4 +168,13 @@ export function applyRemoteCanvasOperations(id: string, request: CanvasOperation
 
 export function deleteRemoteCanvasProject(id: string) {
     return http.delete<{ id: string }>(`/canvas-projects/${encodeURIComponent(id)}`);
+}
+
+/** 旧版画布引用规范化：只读预览与一次性迁移（迁移前后端会留一份可恢复的历史快照）。 */
+export function getCanvasReferenceMigration(canvasId: string, signal?: AbortSignal) {
+    return http.get<CanvasReferenceMigrationPreview>(`/canvas-projects/${encodeURIComponent(canvasId)}/reference-migration`, { signal });
+}
+
+export function migrateCanvasReferences(canvasId: string, revision: number, choices: Record<string, CanvasReferenceMigrationChoice>) {
+    return http.post<{ project: RemoteUserDataSummary & { revision: number } }>(`/canvas-projects/${encodeURIComponent(canvasId)}/reference-migration`, { revision, choices });
 }

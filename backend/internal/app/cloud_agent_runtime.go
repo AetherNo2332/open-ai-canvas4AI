@@ -119,6 +119,8 @@ type cloudAgentRuntime struct {
 	CreativeAnchor    cloudAgentCreativeAnchor `json:"creativeAnchor,omitempty"`
 	TextHistory       []providerTextMessage    `json:"textHistory,omitempty"`
 	Skills            []cloudAgentSkill        `json:"skills"`
+	// Memory 是建 run 时冻结的长期记忆快照（只读参考数据）；本轮内的修改只体现在工具回执里。
+	Memory            cloudAgentMemorySnapshot `json:"memory,omitempty"`
 	SkillReads        map[string]bool          `json:"skillReads,omitempty"`
 	Canonical         canonicalAgentRequest    `json:"canonical"`
 	DisclosureVersion int                      `json:"disclosureVersion,omitempty"`
@@ -228,6 +230,8 @@ type cloudAgentRuntime struct {
 	// ReadToolCalls 记录本轮会读取运行时只读快照的工具调用次数。除了同参缓存护栏，
 	// 还需要一个跨参数的总上限，防止模型通过不断变化 offset/nodeIds 绕过重复读取保护。
 	ReadToolCalls int `json:"readToolCalls,omitempty"`
+	// MemoryWriteCalls 是本轮 memory_update 的调用次数，上限 agentMemoryCallsPerRun。
+	MemoryWriteCalls int `json:"memoryWriteCalls,omitempty"`
 	// Native Skill pages share the read budget; retries of the same step/page are free.
 	NativeReadBudgetKeys map[string]bool `json:"nativeReadBudgetKeys,omitempty"`
 	// PendingImageInspections 暂存"本批还有工具结果没入历史"的看图结果，等整批 tool
@@ -251,6 +255,10 @@ type cloudAgentRuntime struct {
 	Plan                 []cloudAgentPlanItem                    `json:"plan,omitempty"`
 	PendingInterjections []cloudAgentInterjection                `json:"pendingInterjections,omitempty"`
 	InterjectionIDs      []string                                `json:"interjectionIds,omitempty"`
+	// StartPermissionMode 是首次运行中切换权限前的开局权限（为空表示从未切换）：
+	// 系统提示与 prompt cache 身份按它冻结，执行判定读 Request.PermissionMode。
+	StartPermissionMode string                       `json:"startPermissionMode,omitempty"`
+	PermissionChanges   []cloudAgentPermissionChange `json:"permissionChanges,omitempty"`
 	// PiModelStepFingerprint 绑定最近一次模型任务的完整请求，确保丢响应重投复用原任务；
 	// 同一在途任务收到不同请求正文时拒绝，而不是静默复用。
 	PiModelStepFingerprint string `json:"piModelStepFingerprint,omitempty"`
@@ -527,8 +535,14 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if state.Request.CanvasID == "" || state.Request.Prompt == "" || state.Request.PermissionMode == "" {
 		return errors.New("Agent runtime request is incomplete")
 	}
-	if err := validateCloudAgentRequest(&state.Request); err != nil {
+	// 运行中可以切换权限，但预算按开局请求校验（例如自动执行开局带生成预算、中途收紧为只读）。
+	startRequest := state.Request
+	startRequest.PermissionMode = cloudAgentStartPermissionMode(state)
+	if err := validateCloudAgentRequest(&startRequest); err != nil {
 		return fmt.Errorf("invalid Agent runtime request: %w", err)
+	}
+	if !cloudAgentValidPermissionMode(state.Request.PermissionMode) {
+		return errors.New("Agent runtime permission mode is invalid")
 	}
 	if err := validateCloudAgentPolicySnapshotStructure(state.Policy); err != nil {
 		return err
@@ -1363,6 +1377,54 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	return exhausted
 }
 
+// cloudAgentReadOnlyDirectorWrite：只读运行仍列出 director（仅 action=read），写 action 必须拒绝。
+func cloudAgentReadOnlyDirectorWrite(state *cloudAgentRuntime, call cloudAgentCall) bool {
+	return call.Function.Name == cloudAgentDirectorTool && state.Request.PermissionMode == "read_only" && cloudAgentWriteCall(call)
+}
+
+// cloudAgentCallPermitted 判断当前权限下这次调用能否执行，审批决定与执行前检查共用同一规则。
+func cloudAgentCallPermitted(state *cloudAgentRuntime, call cloudAgentCall) bool {
+	request := state.Request
+	request.subagent = state.Subagent
+	return cloudAgentToolAllowed(request, call.Function.Name) && !cloudAgentReadOnlyDirectorWrite(state, call)
+}
+
+// cloudAgentModelHiddenFields 列出只供界面、版本链与审计使用、模型不会回传给任何工具参数的字段。
+// 处理函数照常返回完整结果（recordCanvasBatchHash 等在投影之前读取），这里只从模型那份里去掉。
+var cloudAgentModelHiddenFields = map[string][]string{
+	// 导演写入：模型下一步只需要场景 snapshotHash（作为 expectedSceneHash）。
+	cloudAgentDirectorTool: {"canvasId", "canvasSnapshotHash", "beforeCanvasSnapshotHash"},
+	// 撤销/重做的 operationId 是写入记录行 ID，没有工具接收它。
+	"canvas_undo": {"operationId", "canvasId"},
+	"canvas_redo": {"operationId", "canvasId"},
+}
+
+func cloudAgentWithoutModelHiddenFields(toolName string, fields map[string]any) map[string]any {
+	hidden := cloudAgentModelHiddenFields[toolName]
+	if cloudAgentCanvasWriteTool(toolName) {
+		// canvasId 是本轮唯一画布，beforeSnapshotHash 只给版本链登记使用。
+		hidden = append(append([]string{}, hidden...), "canvasId", "beforeSnapshotHash")
+	}
+	present := false
+	for _, key := range hidden {
+		if _, ok := fields[key]; ok {
+			present = true
+			break
+		}
+	}
+	if !present {
+		return fields
+	}
+	trimmed := make(map[string]any, len(fields))
+	for key, value := range fields {
+		trimmed[key] = value
+	}
+	for _, key := range hidden {
+		delete(trimmed, key)
+	}
+	return trimmed
+}
+
 // cloudAgentModelToolResult 是"面向模型的那一份"工具结果。
 //
 // 审批卡明细是写给人看的，而且已经通过 approval_requested 事件进了 SSE/界面；
@@ -1376,9 +1438,10 @@ func cloudAgentModelToolResult(toolName string, result any) any {
 	if !ok {
 		return result
 	}
+	fields = cloudAgentWithoutModelHiddenFields(toolName, fields)
 	preview, hasPreview := fields["preview"]
 	if !hasPreview {
-		return result
+		return fields
 	}
 	receipt := make(map[string]any, len(fields)+2)
 	for key, value := range fields {
@@ -1580,7 +1643,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		state.Calls[state.CallIndex] = call
 	}
 	// read_only 只放行 director read；写 action 即使绕过了预检 schema 也在执行前拒绝。
-	if allowed && call.Function.Name == cloudAgentDirectorTool && state.Request.PermissionMode == "read_only" && cloudAgentWriteCall(call) {
+	if allowed && cloudAgentReadOnlyDirectorWrite(state, call) {
 		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 			cloudAgentRecordToolResult(current, state, call, nil, kernel.Forbidden("只读模式下 director 只允许 action=read"))
 			return cloudAgentSave(current, state)
@@ -1874,6 +1937,11 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "model_list") {
 		skillResult, skillErr = cloudAgentReadToolCached(s.repo, run.UserID, state, call, s)
 	}
+	// 长期记忆写的是用户自己的记忆文件（独立的 CAS 与修订事务），不是画布：在检查点事务外执行，
+	// 回执与 memory_updated 事件随下面的检查点一起落库。同一 callID 重放时返回原修订，不重复写入。
+	if allowed && call.Function.Name == "memory_update" {
+		skillResult, skillErr = s.cloudAgentHandleMemoryUpdate(s.repo, run.UserID, run.ID, state, call)
+	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	checkpoint := func(dbRepo *repository.Repository) error {
@@ -1917,11 +1985,8 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 						current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "waiting_tool", "subagents", call.ID, "等待子代理结果"
 						return cloudAgentSave(current, state)
 					}
-					messages, messageErr := repo.AgentSubagentMessages(current.UserID, current.ID)
-					if messageErr != nil {
-						return messageErr
-					}
-					result = map[string]any{"pending": false, "subagents": views, "messages": messages}
+					// 子代理消息已按子代理归入 subagents[].messages（含正文）；不再附带原始消息行。
+					result = map[string]any{"pending": false, "subagents": views}
 					current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "running", "", "", ""
 				}
 			case call.Function.Name == "subagent_status":
@@ -1988,7 +2053,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 				}
 				// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
 				result, toolErr = cloudAgentFinishRun(run.ID, state, call)
-			case call.Function.Name == "web_search", call.Function.Name == "model_list":
+			case call.Function.Name == "web_search", call.Function.Name == "model_list", call.Function.Name == "memory_update":
 				result, toolErr = skillResult, skillErr
 			default:
 				result, toolErr = cloudAgentReadToolCached(repo, run.UserID, state, call)
@@ -2335,10 +2400,7 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 					model, channelID := stringValue(config["model"]), stringValue(config["channelId"])
 					signature := cloudAgentRequestSignature(state, requestCanonical, channelID, model)
 					cloudAgentExpireTokenAnchorForRequest(run.ID, state, contextPressure.ContextWindowTokens, signature, model, channelID)
-					// 个人记忆块是编译之后拼上去的，编译器录不到：每一步幂等补登记一次，
-					// 占用分布的分段合计才能与 system 桶对齐。
-					cloudAgentRecordMemorySegment(&state.Policy, requestCanonical.SystemPrompt)
-					// Node 拼在记忆块之后的工作区文件同样要单独登记，否则它们会被
+					// Node 拼在策略之后的工作区文件要单独登记，否则它们会被
 					// 算成"其它"：那是排查时最想看到具体来源的一截。
 					cloudAgentRecordHarnessSegments(&state.Policy, cloudAgentFrozenHarness(state.Snapshot), requestCanonical.SystemPrompt)
 					// requestId 把读数钉在"即将发出的这次请求"上（设计 §4）：没有它，前端只能猜
@@ -2599,6 +2661,11 @@ func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, rea
 	}
 	if run.Status != "waiting_approval" || state.Approval == nil || state.Approval.ID != approvalID {
 		return creationConflict("审批不存在或已过期")
+	}
+	// 运行中把权限收紧到只读后，卡片上的写入已不被允许：批准也不会执行，直接拒绝并说明，
+	// 不让用户先看到“已批准”再看到失败。卡片仍在，用户可改回权限后再批准，或选择拒绝。
+	if decision == "approve" && !cloudAgentCallPermitted(&state, state.Approval.Call) {
+		return &kernel.AppError{Status: 409, Code: 409, Reason: kernel.ReasonAgentApprovalNotPermitted, Message: "当前执行权限不允许这次写入；请先切换权限后再批准，或拒绝本次操作"}
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()

@@ -31,6 +31,10 @@ tags:
     description: 用户反馈与管理员收件箱
   - name: referral
     description: 推广中心：推广码、邀请记录与返佣
+  - name: payment
+    description: 充值与支付设置
+  - name: drama
+    description: 短剧自动制作与精修画布
 paths:
   /projects/{id}/assets/{assetId}/image:
     put:
@@ -57,6 +61,19 @@ paths:
         "401": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
         "500": {$ref: "#/components/responses/Error"}
+  /admin/agent-memory-documents:
+    get:
+      tags: [admin]
+      summary: 管理员只读查看用户的 Agent 记忆文件
+      parameters:
+        - {in: query, name: userId, description: 只看某个用户；为空时按更新时间列出, schema: {type: string}}
+        - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 200}}
+      responses:
+        "200": {description: 标准信封 data.documents；每份含 userId、username、displayName 和记忆文件正文}
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
   /admin/login-logs:
     get:
       tags: [admin]
@@ -450,6 +467,36 @@ paths:
         "200":
           description: 标准信封 data 为 presets 数组；预设只引用公开且启用的种子技能
         "500": {$ref: "#/components/responses/Error"}
+  /skills/recommendations:
+    get:
+      tags: [skills]
+      summary: 按行业列出推荐安装的内置技能
+      responses:
+        "200": {description: "标准信封 data 为 {industries, installedTotal}；每个行业含 industryId、name、description、icon、installedCount 和 skills（skillId、skillName、description、tag、reason、isAdded）。只读目录，不会自动安装"}
+        "401": {$ref: "#/components/responses/Error"}
+  /skills/recommendations/{industryId}/install:
+    parameters:
+      - {in: path, name: industryId, required: true, description: 推荐行业 ID, schema: {type: string}}
+    post:
+      tags: [skills]
+      summary: 把某个行业的推荐技能加入当前用户技能库
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                skillIds:
+                  type: array
+                  maxItems: 12
+                  items: {type: string}
+                  description: 只安装其中这些技能；传 {} 或空数组时安装该行业全部推荐
+      responses:
+        "200": {description: "标准信封 data 为 {industryId, installed, skipped}；已安装、已删除或不在该行业推荐里的技能计入 skipped，不报错"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
   /skills:
     get:
       tags: [skills]
@@ -502,6 +549,26 @@ paths:
         "401": {$ref: "#/components/responses/Error"}
         "403": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
+  /skills/{id}/agent-mode:
+    parameters:
+      - {in: path, name: id, required: true, description: 技能 ID, schema: {type: string}}
+    patch:
+      tags: [skills]
+      summary: 设置已安装技能是否进入 Agent 自动发现目录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode: {type: string, enum: [auto, manual], description: auto 进入技能目录由 Agent 按任务自动发现；manual 只在用户固定或点名时使用}
+      responses:
+        "200": {description: 标准信封 data.skill 为更新后的技能}
+        "400": {description: mode 无效，或技能未安装（自建技能除外）}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {description: 技能不存在或对当前用户不可见}
   /skills/{id}/library-category:
     parameters:
       - {in: path, name: id, required: true, description: 技能 ID, schema: {type: string}}
@@ -898,6 +965,53 @@ paths:
           description: 对象并发冲突、同一 mutationId 对应的请求摘要不同或编辑证明失效（reason 为 canvas_edit_lease_conflict）；原事务不会被覆盖
         "428":
           description: 缺少执行所需的对象基线
+  /canvas-projects/{id}/reference-migration:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 预览旧版画布的引用规范化
+      description: 只读，不写文档。required 为 false 表示画布已使用声明式引用；conflicts 列出字段与旧连线不一致、需要用户选择来源的作用域。
+      responses:
+        "200":
+          description: 信封 data 为 { revision, required, conflicts[{ scopeKey, fieldNodeIds, edgeNodeIds }] }
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+    post:
+      tags: [canvas]
+      summary: 执行旧版画布的引用规范化
+      description: 按 revision 做并发校验，冲突作用域必须全部给出来源后才写入；写入前保留一份画布历史快照（reason before_reference_migration），写入后画布带 referenceFieldsVersion 1，其他标签页经画布变更通知更新。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, format: int64, minimum: 0 }
+                choices:
+                  type: object
+                  description: 冲突作用域 scopeKey 到来源的映射，取值 fields 或 connections
+                  additionalProperties: { type: string, enum: [fields, connections] }
+      responses:
+        "200":
+          description: 信封 data.project 返回迁移后的画布摘要
+        "400":
+          description: 来源取值无效，或引用无法解析（reason reference_migration_invalid）
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+        "409":
+          description: 画布已有更新、仍有冲突未选择（reason reference_migration_conflict）或已完成规范化（reason reference_migration_not_required）
+        "428":
+          description: 缺少 revision
   /public/welcome:
     get:
       tags: [meta]
@@ -924,184 +1038,85 @@ paths:
           description: 信封 data 含 scannedRuns、searchCalls 与按启用次数降序的 skills；每个技能含 runsEnabled、searchHits、readCalls、readFailures、entryReads、cardReads 与 topCards（最多 5 条最热卡路径）。统计仅覆盖调用方本人最近的运行，且不含任何技能正文
         "401":
           description: 未登录
-  /agent/memories:
+  /agent/memory:
     get:
       tags: [agent]
-      summary: 列出当前用户的 Agent 记忆
-      parameters:
-        - in: query
-          name: status
-          schema:
-            type: string
-            enum: [pending, approved, rejected]
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 500
+      summary: 读取当前用户的 Agent 记忆文件
       responses:
-        "200":
-          description: 信封 data.memories
-        "401":
-          $ref: "#/components/responses/Error"
-    post:
+        "200": {description: "标准信封 data 为 {mode, capacity, charCount, revision, entries, pendingCount, updatedAt}；entries 每条含 id、section（user|notes）、text"}
+        "401": {$ref: "#/components/responses/Error"}
+    put:
       tags: [agent]
-      summary: 手动添加一条个人记忆（直接批准）
+      summary: 用户整体保存记忆文件（按 revision CAS）
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [topic, category, situation]
+              required: [revision, entries]
               properties:
-                topic: { type: string }
-                category: { type: string }
-                situation: { type: string }
-                lesson: { type: string }
-                source: { type: string }
-                steps:
+                revision: {type: integer, format: int64, description: 读取时的 revision；不一致返回 409}
+                entries:
                   type: array
+                  maxItems: 80
                   items:
                     type: object
+                    required: [section, text]
                     properties:
-                      tool: { type: string }
-                      action: { type: string }
-                      note: { type: string }
+                      id: {type: string, description: 保留原条目 ID；新条目留空}
+                      section: {type: string, enum: [user, notes]}
+                      text: {type: string, description: 单条最多 400 字}
       responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/export:
-    get:
-      tags: [agent]
-      summary: 导出当前用户的 Agent 记忆
-      responses:
-        "200":
-          description: 信封 data 为 version/kind/exportedAt/memories
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/import:
-    post:
-      tags: [agent]
-      summary: 导入 Agent 记忆 JSON
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                version: { type: integer }
-                kind: { type: string }
-                memories: { type: array }
-      responses:
-        "200":
-          description: 信封 data 含 imported、merged、skipped
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/settings:
-    get:
-      tags: [agent]
-      summary: 读取当前用户的记忆压缩设置与最近一次压缩状态
-      responses:
-        "200":
-          description: 信封 data 含 compactInterval、模型字段、lastStatus、summary
-        "401":
-          $ref: "#/components/responses/Error"
+        "200": {description: 返回保存后的记忆文件；总量不得超过 capacity（5000 字），疑似密钥或敏感内容返回 400}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "409": {description: 记忆文件已被 Agent 或其他页面修改，须重新读取}
+  /agent/memory/settings:
     patch:
       tags: [agent]
-      summary: 更新记忆压缩周期和文本模型
+      summary: 设置记忆模式
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [mode]
               properties:
-                compactInterval:
-                  type: string
-                  enum: [off, daily, weekly, monthly]
-                logicalModelId: { type: string }
-                channelId: { type: string }
-                channelModelKey: { type: string }
-                model: { type: string }
+                mode: {type: string, enum: [auto, review, off], description: auto 直接写入并可撤销；review 先暂存待确认；off 不注入也不提供写入工具}
       responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/compact:
-    post:
+        "200": {description: 返回更新后的记忆文件}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+  /agent/memory/revisions:
+    get:
       tags: [agent]
-      summary: 提交一次个人记忆压缩任务（走用户文本模型计费）
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                logicalModelId: { type: string }
-                channelId: { type: string }
-                channelModelKey: { type: string }
-                model: { type: string }
-      responses:
-        "200":
-          description: 信封 data 为压缩设置视图，lastStatus 为 queued
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/{id}:
-    parameters:
-      - in: path
-        name: id
-        required: true
-        schema: { type: string }
-    patch:
-      tags: [agent]
-      summary: 更新一条属于当前用户的记忆
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "401":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
-    delete:
-      tags: [agent]
-      summary: 删除一条属于当前用户的记忆
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "401":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
-  /agent/memories/{id}/decide:
-    post:
-      tags: [agent]
-      summary: 批准或拒绝一条属于当前用户的待审记忆
+      summary: 列出记忆文件的修改记录
       parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string }
+        - {in: query, name: status, schema: {type: string, enum: [applied, pending, rejected]}}
+        - {in: query, name: limit, description: 默认 50, schema: {type: integer, minimum: 1, maximum: 200}}
+      responses:
+        "200": {description: "标准信封 data.revisions；每条含 id、actor（agent|user|restore|seed|admin）、runId、status、summary、baseRevision、revision、changes、canUndo、createdAt"}
+        "401": {$ref: "#/components/responses/Error"}
+  /agent/memory/revisions/{revisionId}/undo:
+    parameters:
+      - {in: path, name: revisionId, required: true, schema: {type: string}}
+    post:
+      tags: [agent]
+      summary: 撤销一次已生效的修改（恢复到修改前快照，并记一条 restore 修订）
+      responses:
+        "200": {description: 返回撤销后的记忆文件}
+        "400": {description: 修订未生效、已撤销或本身就是撤销；或撤销后会超过记忆容量}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {description: 这条修改涉及的条目之后又被改过，无法自动撤销}
+  /agent/memory/revisions/{revisionId}/decide:
+    parameters:
+      - {in: path, name: revisionId, required: true, schema: {type: string}}
+    post:
+      tags: [agent]
+      summary: 采纳或拒绝 review 模式下的待确认修改
       requestBody:
         required: true
         content:
@@ -1110,18 +1125,13 @@ paths:
               type: object
               required: [decision]
               properties:
-                decision:
-                  type: string
-                  enum: [approve, reject]
+                decision: {type: string, enum: [approve, reject]}
       responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
+        "200": {description: 返回处理后的记忆文件}
+        "400": {description: decision 无效，或这条修改已经处理过}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {description: 记忆文件已在待确认修改之后变化，须重新查看}
   /agent/conversations:
     get:
       tags: [agent]
@@ -1275,6 +1285,37 @@ paths:
           description: 信封 data.accepted 与 data.pending
         "409":
           description: 本轮已结束，应改为新一轮发送
+  /agent/runs/{id}/permission:
+    parameters:
+      - $ref: "#/components/parameters/AgentRunID"
+    post:
+      tags: [agent]
+      summary: 运行中切换 Agent 执行权限
+      description: 放宽与收紧都从下一次工具调用生效；正在等待的审批仍需用户批准或拒绝。模型在下一步收到一条权限变更系统通知，系统提示与 prompt cache 键不变。同一 requestId 重放返回原结果；与当前权限相同时直接成功。生成预算不随权限改变。成功后运行事件流出现 permission_changed（from、to、requestId）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [permissionMode, requestId]
+              properties:
+                permissionMode:
+                  type: string
+                  enum: [read_only, request_approval, auto]
+                requestId:
+                  type: string
+                  maxLength: 160
+      responses:
+        "200":
+          description: 信封 data.permissionMode 为当前生效权限，data.changed 表示本次是否切换
+        "400":
+          description: 权限值或 requestId 无效
+        "404":
+          description: 运行不存在或不属于当前用户
+        "409":
+          description: 运行已结束（reason 为 agent_run_finished）、子代理权限固定为只读（reason 为 agent_subagent_permission_fixed）或写入冲突
   /agent/runs/{id}/cancel:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
@@ -1544,41 +1585,218 @@ paths:
           $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
-  /admin/agent-lessons:
+  /admin/user-groups:
     get:
       tags: [admin]
-      summary: 按用户筛选查看个人 Agent 记忆
-      parameters:
-        - in: query
-          name: status
-          schema:
-            type: string
-            enum: [pending, approved, rejected]
-        - in: query
-          name: userId
-          schema:
-            type: string
-        - in: query
-          name: keyword
-          schema:
-            type: string
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 200
+      summary: 列出用户分组（含渠道权限、倍率与货币换算）
       responses:
         "200":
-          description: 信封 data.lessons 含解析后的 steps、authorUserId、authorUsername、authorDisplayName
+          description: 标准信封 data.groups
+        "400":
+          $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
-  /admin/agent-lessons/{id}:
+    post:
+      tags: [admin]
+      summary: 新建用户分组
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string, description: 分组代码，创建后不可改 }
+                name: { type: string }
+                description: { type: string }
+                badgeLabel: { type: string, description: 侧栏徽章文字，如 VIP / SVIP }
+                badgeStyle: { type: string }
+                sortOrder: { type: integer }
+                ratioBasisPoints: { type: integer, format: int64, description: 分组倍率（万分比） }
+                pointsPerUsdMicrocredits: { type: integer, format: int64 }
+                pointsPerCnyMicrocredits: { type: integer, format: int64 }
+                allChannels: { type: boolean }
+                channelIds: { type: array, items: { type: string } }
+                modelOverrides: { type: array, items: { type: object } }
+      responses:
+        "200":
+          description: 标准信封 data.group
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /admin/user-groups/{id}:
+    patch:
+      tags: [admin]
+      summary: 更新用户分组
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string, description: 分组代码，创建后不可改 }
+                name: { type: string }
+                description: { type: string }
+                badgeLabel: { type: string, description: 侧栏徽章文字，如 VIP / SVIP }
+                badgeStyle: { type: string }
+                sortOrder: { type: integer }
+                ratioBasisPoints: { type: integer, format: int64, description: 分组倍率（万分比） }
+                pointsPerUsdMicrocredits: { type: integer, format: int64 }
+                pointsPerCnyMicrocredits: { type: integer, format: int64 }
+                allChannels: { type: boolean }
+                channelIds: { type: array, items: { type: string } }
+                modelOverrides: { type: array, items: { type: object } }
+      responses:
+        "200":
+          description: 标准信封 data.group
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
     delete:
       tags: [admin]
-      summary: 删除一条用户的 Agent 记忆
+      summary: 删除用户分组；仍有用户归属时拒绝
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 标准信封 data.ok
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /admin/channel-models:
+    get:
+      tags: [admin]
+      summary: 跨渠道列出全部系统渠道模型，用于按模型名称筛选
+      responses:
+        "200":
+          description: 标准信封 data.models；每项含渠道模型字段及 channelName、channelEnabled
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /admin/channel-models/health:
+    get:
+      tags: [admin]
+      summary: 渠道模型近 24 小时稳定性
+      parameters:
+        - in: query
+          name: channelId
+          description: 只看某个渠道；为空时统计全部渠道
+          schema: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /admin/channels/{id}/models/{modelId}/enabled:
+    patch:
+      tags: [admin]
+      summary: 启用或停用单个系统渠道模型
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: modelId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: 标准信封 data.model
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /payments/settings:
+    get:
+      tags: [payment]
+      summary: 读取当前用户可见的充值货币设置
+      responses:
+        "200":
+          description: 标准信封 data.settings（defaultCurrency 为 CNY 或 USD）
+        "401":
+          $ref: "#/components/responses/Error"
+  /admin/payments/settings:
+    get:
+      tags: [admin]
+      summary: 读取支付设置
+      responses:
+        "200":
+          description: 标准信封 data.settings
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [admin]
+      summary: 更新支付设置（默认充值货币）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                defaultCurrency: { type: string, enum: [CNY, USD] }
+      responses:
+        "200":
+          description: 标准信封 data.settings
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /dramas/{id}/canvas:
+    get:
+      tags: [drama]
+      summary: 返回作品最近使用的精修画布；没有时 data 为空，由前端新建
       parameters:
         - in: path
           name: id
@@ -1587,11 +1805,120 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
         "404":
+          $ref: "#/components/responses/Error"
+  /dramas/{id}/canvas-assets:
+    post:
+      tags: [drama]
+      summary: 为投送到精修画布的短剧媒体登记素材记录（只建入口，不复制媒体）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resources]
+              properties:
+                resources:
+                  type: array
+                  items:
+                    type: object
+                    required: [resourceId]
+                    properties:
+                      resourceId: { type: string }
+                      title: { type: string }
+                      category: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /dramas/{id}/takes:
+    get:
+      tags: [drama]
+      summary: 列出设定、剧情段或成片的产物版本
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: ownerId
+          description: 设定、剧情段或集 ID
+          schema: { type: string }
+        - in: query
+          name: kind
+          schema: { type: string, enum: [cast, video, final] }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /dramas/{id}/episodes/{episodeId}/segments/{index}/video:
+    put:
+      tags: [drama]
+      summary: 把精修画布上的视频采用为剧情段当前视频
+      description: 默认只换本段；cascade=true 时后续已生成的段重新排队（并行出片的作品忽略）。expectedRevision 与当前段版本不一致时拒绝。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: episodeId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: index
+          required: true
+          schema: { type: integer, minimum: 0 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resourceId]
+              properties:
+                resourceId: { type: string }
+                taskId: { type: string }
+                cascade: { type: boolean }
+                expectedRevision: { type: integer, format: int64 }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
           $ref: "#/components/responses/Error"
   /admin/agent/workers:
     get:
@@ -2806,9 +3133,10 @@ components:
           description: 本轮推理策略；供应商是否支持由后端校验
         skillIds:
           type: array
-          maxItems: 8
+          maxItems: 16
           items:
             type: string
+          description: 用户为对话固定或在本条消息里点名的技能；其余已安装且 agentMode=auto 的技能由 Agent 按技能目录自动发现
         contextScope:
           type: array
           maxItems: 1

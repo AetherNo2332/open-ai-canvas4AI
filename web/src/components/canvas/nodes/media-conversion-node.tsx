@@ -1,8 +1,9 @@
-import { Check, CheckCircle2, ChevronDown, CircleAlert, Download, Image as ImageIcon, LoaderCircle, RefreshCw, Video, WandSparkles } from "lucide-react";
+import { Check, CheckCircle2, ChevronDown, CircleAlert, Download, Image as ImageIcon, LoaderCircle, RefreshCw, Video, ArrowRightLeft } from "lucide-react";
 import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { getNodeInputKind } from "@/lib/canvas/node-registry";
+import { canvasOverlayRightEdge } from "@/lib/canvas/overlay-viewport";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import {
     createDefaultMediaConversionState,
@@ -286,7 +287,7 @@ export function MediaConversionNodeContent({ node, theme }: MediaConversionNodeC
         >
             <div className="flex min-w-0 items-center gap-2">
                 <span className="grid size-8 shrink-0 place-items-center rounded-[var(--r-md)]" style={{ background: theme.toolbar.itemHover, color: theme.accent.primary }}>
-                    <WandSparkles className="size-4" aria-hidden="true" />
+                    <ArrowRightLeft className="size-4" aria-hidden="true" />
                 </span>
                 <div className="min-w-0 flex-1">
                     <div className="truncate text-[var(--fs-label)] font-semibold">{node.title || "转换"}</div>
@@ -392,7 +393,7 @@ function OperationPicker({ theme, nodeId, value, disabled, onSelect }: { theme: 
         const spaceBelow = window.innerHeight - rect.bottom - OPERATION_MENU_MARGIN;
         const spaceAbove = rect.top - OPERATION_MENU_MARGIN;
         const openAbove = spaceBelow < menuHeight + OPERATION_MENU_GAP || spaceAbove >= spaceBelow;
-        const maxLeft = Math.max(OPERATION_MENU_MARGIN, window.innerWidth - menuWidth - OPERATION_MENU_MARGIN);
+        const maxLeft = Math.max(OPERATION_MENU_MARGIN, canvasOverlayRightEdge() - menuWidth - OPERATION_MENU_MARGIN);
         const maxTop = Math.max(OPERATION_MENU_MARGIN, window.innerHeight - menuHeight - OPERATION_MENU_MARGIN);
         const left = Math.min(Math.max(OPERATION_MENU_MARGIN, rect.left), maxLeft);
         const top = openAbove
@@ -445,7 +446,7 @@ function OperationPicker({ theme, nodeId, value, disabled, onSelect }: { theme: 
         ? createPortal(
               <>
                   <div
-                      className="fixed inset-0 z-[calc(var(--z-toast)-1)]"
+                      className="fixed inset-0 z-[var(--z-agent-overlay)]"
                       aria-hidden="true"
                       onMouseDown={(event) => { event.stopPropagation(); setOpen(false); }}
                       onPointerDown={(event) => event.stopPropagation()}
@@ -456,7 +457,7 @@ function OperationPicker({ theme, nodeId, value, disabled, onSelect }: { theme: 
                       role="listbox"
                       aria-label="转换方式"
                       data-canvas-no-zoom
-                      className="fixed z-[var(--z-toast)] overflow-hidden rounded-[var(--r-lg)] border"
+                      className="fixed z-[var(--z-agent-overlay)] overflow-hidden rounded-[var(--r-lg)] border"
                       style={menuStyle}
                       onMouseDown={(event) => event.stopPropagation()}
                       onPointerDown={(event) => event.stopPropagation()}

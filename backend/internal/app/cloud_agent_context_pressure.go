@@ -223,8 +223,8 @@ func cloudAgentContextBreakdownPayload(state *cloudAgentRuntime, actual ...canon
 	scaled := func(tokens int) int { return int(math.Round(float64(tokens) * scale)) }
 	var systemSegments []cloudAgentContextSegment
 	if segments := state.Policy.SystemSegments; len(segments) > 0 {
-		// 分段必须把 system 桶填满：编译之外拼接的块（个人记忆）由
-		// cloudAgentRecordMemorySegment 登记，剩余零头（标题、分隔与拼接文本）
+		// 分段必须把 system 桶填满：编译之外拼接的块（Harness 工作区文件）由
+		// cloudAgentRecordHarnessSegments 登记，剩余零头（标题、分隔与拼接文本）
 		// 归入"其它"，否则弹窗里的分段合计会小于 system 桶，看起来像少算。
 		systemSegments = append([]cloudAgentContextSegment{}, segments...)
 		accountedBytes, accountedTokens := 0, 0

@@ -592,8 +592,9 @@ func TestCloudAgentWriteReceiptStatesApplied(t *testing.T) {
 	if receipt["summary"] != "修改分镜脚本《示例》" {
 		t.Fatalf("write receipt should keep the item summary: %+v", receipt)
 	}
-	if receipt["snapshotHash"] != "after" || receipt["beforeSnapshotHash"] != "before" {
-		t.Fatalf("write receipt lost the version chain: %+v", receipt)
+	// 模型只回传新的 snapshotHash；写入前版本留在完整结果里给版本链登记，不进模型回执。
+	if receipt["snapshotHash"] != "after" || receipt["beforeSnapshotHash"] != nil || result["beforeSnapshotHash"] != "before" {
+		t.Fatalf("write receipt version fields: %+v", receipt)
 	}
 	// 非画布写入（例如 generate_media 的草稿）不得声称已写入画布
 	media := map[string]any{"nodeId": "n1", "summary": "已创建草稿", "preview": cloudAgentApprovalPreview{Kind: "media"}}
