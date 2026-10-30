@@ -76,6 +76,12 @@ func ClientAssetPayload(asset model.Asset) json.RawMessage {
 			ensurePositiveAssetDimension(data, "width")
 			ensurePositiveAssetDimension(data, "height")
 		}
+		// 早期生成结果把缺失的 hasAudio 写成了 null；素材合同只接受布尔值或不出现。
+		if value, exists := data["hasAudio"]; exists {
+			if _, isBool := value.(bool); !isBool {
+				delete(data, "hasAudio")
+			}
+		}
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

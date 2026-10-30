@@ -126,3 +126,19 @@ func TestClientAssetPayloadMapsLegacyReadyStatus(t *testing.T) {
 		}
 	}
 }
+
+// 早期视频生成结果把缺失的 hasAudio 写成 null，浏览器会拒收整张素材列表（“hasAudio 必须是布尔值”）。
+func TestClientAssetPayloadDropsNullHasAudio(t *testing.T) {
+	for raw, want := range map[string]any{`null`: nil, `true`: true, `false`: false, `"yes"`: nil} {
+		payload := ClientAssetPayload(model.Asset{ID: "task-output-v-0", Kind: "video", Title: "视频", Status: "confirmed", PayloadJSON: `{"id":"task-output-v-0","kind":"video","data":{"url":"/v.mp4","storageKey":"resource:v","width":720,"height":1280,"mimeType":"video/mp4","hasAudio":` + raw + `}}`})
+		var decoded map[string]any
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		data := decoded["data"].(map[string]any)
+		got, present := data["hasAudio"]
+		if (want == nil && present) || (want != nil && got != want) {
+			t.Fatalf("hasAudio %s -> %#v (present=%v), want %#v", raw, got, present, want)
+		}
+	}
+}
