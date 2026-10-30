@@ -1,6 +1,6 @@
 package app
 
-import "infinite-canvas/backend/internal/platform"
+import "yingce/backend/internal/platform"
 
 type cloudAgentReadBudget struct {
 	ReadCallsUsed      int `json:"readCallsUsed"`

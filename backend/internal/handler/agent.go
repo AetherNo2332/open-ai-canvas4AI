@@ -13,7 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/service"
 )
 
 // Agent orchestration is durable; the browser stream never drives execution.
@@ -281,18 +281,13 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
 		var req struct {
-			StepID               string `json:"stepId"`
-			ExpectedSnapshotHash string `json:"expectedSnapshotHash"`
-			Reason               string `json:"reason"`
+			Reason string `json:"reason"`
 		}
 		decoder := json.NewDecoder(c.Request.Body)
 		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&req); err != nil {
+		// 请求体可省略；撤销范围由运行本身决定，不接受客户端指定的步骤或快照。
+		if err := decoder.Decode(&req); err != nil && err != io.EOF {
 			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		if req.StepID != "" && (!utf8.ValidString(req.StepID) || strings.TrimSpace(req.StepID) != req.StepID || utf8.RuneCountInString(req.StepID) > 160) {
-			fail(c, http.StatusBadRequest, errors.New("stepId 无效"))
 			return
 		}
 		if req.Reason != "" && (!utf8.ValidString(req.Reason) || utf8.RuneCountInString(req.Reason) > 2000 || strings.ContainsAny(req.Reason, "\x00\r\n")) {
@@ -303,7 +298,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, errors.New("请求必须只包含一个 JSON 对象"))
 			return
 		}
-		result, err := svc.UndoCloudAgentCanvas(user.ID, c.Param("id"), req.StepID, req.ExpectedSnapshotHash, req.Reason)
+		result, err := svc.UndoCloudAgentRun(user.ID, c.Param("id"), req.Reason)
 		if err != nil {
 			failService(c, err)
 			return
@@ -345,6 +340,39 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		if err := svc.DecideCloudAgentApproval(user.ID, c.Param("id"), c.Param("approvalId"), req.Decision, req.Reason, req.MediaSettings); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"accepted": true})
+	})
+	// 导演台浏览器视口录制完成（或失败）后回传结果，恢复 Agent 挂起的 director preview。
+	r.POST("/agent/runs/:id/director-preview", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+		var req struct {
+			RequestID       string `json:"requestId"`
+			VideoResourceID string `json:"videoResourceId"`
+			Error           string `json:"error"`
+		}
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			fail(c, http.StatusBadRequest, errors.New("请求必须只包含一个 JSON 对象"))
+			return
+		}
+		if !utf8.ValidString(req.RequestID) || !utf8.ValidString(req.VideoResourceID) || !utf8.ValidString(req.Error) {
+			fail(c, http.StatusBadRequest, errors.New("请求包含无效字符"))
+			return
+		}
+		if err := svc.SubmitCloudAgentDirectorPreview(user.ID, c.Param("id"), req.RequestID, req.VideoResourceID, req.Error); err != nil {
 			failService(c, err)
 			return
 		}

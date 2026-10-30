@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // referenceCanvas seeds a board with one row plus the media node the row may reference.

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -25,7 +25,7 @@ func TestAdminStorageListStatsAndPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&model.User{}, &model.Resource{}, &model.UserOSSSetting{}, &model.StorageLocation{}, &model.SystemSetting{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Resource{}, &model.ResourceOffloadJob{}, &model.UserOSSSetting{}, &model.StorageLocation{}, &model.SystemSetting{}); err != nil {
 		t.Fatal(err)
 	}
 	users := []model.User{

@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"infinite-canvas/backend/internal/hostupdate"
+	"yingce/backend/internal/hostupdate"
 )
 
 func main() {
@@ -29,7 +29,7 @@ func run(ctx context.Context) error {
 	socketPath := env("CANVAS_UPDATER_SOCKET", "/run/open-ai-canvas-updater/updater.sock")
 	token := strings.TrimSpace(os.Getenv("CANVAS_UPDATER_TOKEN"))
 	manager, err := hostupdate.NewManager(hostupdate.Config{
-		Repository:   env("CANVAS_UPDATER_REPOSITORY", "AetherNo2332/open-ai-canvas4AI"),
+		Repository:   env("CANVAS_UPDATER_REPOSITORY", "ddcat-ai/open-ai-canvas"),
 		InstallDir:   env("CANVAS_UPDATER_INSTALL_DIR", "/opt/open-ai-canvas"),
 		ComposeFile:  env("CANVAS_UPDATER_COMPOSE_FILE", "docker-compose.deploy.yml"),
 		EnvFile:      env("CANVAS_UPDATER_ENV_FILE", ".env"),

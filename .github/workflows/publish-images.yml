@@ -46,9 +46,12 @@ jobs:
           echo "build_time=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
           echo "owner=${REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
+  # 镜像构建与质量检查并行：构建只推送不可变的 sha-<commit> 标签，不会被部署使用；
+  # 可变标签（latest / 版本号）的推广在 publish 中进行，并且必须等待 checks 通过。
+  # 这样发布总耗时约为 max(检查, 构建) 而不是两者相加。
   build:
     name: Build ${{ matrix.image }} (${{ matrix.arch }})
-    needs: [checks, prepare]
+    needs: [prepare]
     permissions:
       contents: read
       packages: write
@@ -135,7 +138,7 @@ jobs:
 
   publish:
     name: Publish ${{ matrix.image }} manifest
-    needs: [prepare, build]
+    needs: [checks, prepare, build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -216,8 +219,28 @@ jobs:
         shell: bash
         run: |
           prerelease_args=()
-          if [[ "$GITHUB_REF_NAME" == *-* || "$GITHUB_REF_NAME" == *.rc* || "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          latest_args=()
+          # A fourth numeric component is a formal patch release; prerelease tags must use an explicit suffix.
+          if [[ "$GITHUB_REF_NAME" == *-* || "$GITHUB_REF_NAME" == *.rc* ]]; then
             prerelease_args+=(--prerelease)
+          else
+            latest_args+=(--latest)
+          fi
+          assets=(
+            dist/open-ai-canvas-host-updater-linux-amd64
+            dist/open-ai-canvas-host-updater-linux-arm64
+            dist/SHA256SUMS
+            docker-compose.deploy.yml
+          )
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --verify-tag \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file dist/RELEASE_NOTES.md \
+              "${prerelease_args[@]}" \
+              "${latest_args[@]}"
           fi
           assets=(
             dist/open-ai-canvas-host-updater-linux-amd64

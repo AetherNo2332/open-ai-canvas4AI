@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -219,28 +219,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, task)
 	})
-	r.POST("/tasks/:id/recover-previs-writeback", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var input struct {
-			Mode string `json:"mode"`
-		}
-		if err := c.ShouldBindJSON(&input); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		task, err := svc.RecoverPrevisWriteback(user.ID, c.Param("id"), input.Mode)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, task)
-	})
 	r.POST("/tasks/:id/query-provider", func(c *gin.Context) {
-
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)

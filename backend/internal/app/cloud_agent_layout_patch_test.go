@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // 本文件从 dev 的 cloud_agent_layout_patch_test.go 恢复。

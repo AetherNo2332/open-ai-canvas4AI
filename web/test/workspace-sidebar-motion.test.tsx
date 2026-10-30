@@ -55,3 +55,34 @@ describe("workspace sidebar motion accessibility", () => {
         expect(markup).toContain('aria-label="自由画布"');
     });
 });
+
+describe("workspace sidebar motion tokens", () => {
+    test("reduced motion collapses the sidebar transition to zero while normal motion follows the skin duration", async () => {
+        const { workspaceSidebarTransition } = await import("../src/components/layout/workspace-sidebar-motion");
+        expect(workspaceSidebarTransition(true, 180).duration).toBe(0);
+        expect(workspaceSidebarTransition(false, 180).duration).toBeCloseTo(0.18);
+        // 0ms 是有效的皮肤配置，不能被回退成默认时长。
+        expect(workspaceSidebarTransition(false, 0).duration).toBe(0);
+    });
+
+    test("sidebar motion CSS uses skin motion tokens, no transition: all, and honors reduced motion", async () => {
+        const css = await Bun.file(new URL("../src/components/layout/workspace-sidebar-motion.css", import.meta.url)).text();
+        expect(css).not.toMatch(/transition\s*:\s*all\b/);
+        const durations = css.match(/\b\d+(?:\.\d+)?m?s\b/g) ?? [];
+        expect(durations).toEqual([]);
+        expect(css).toMatch(/var\(--(?:motion-[a-z-]+|skin-motion-state)\)/);
+        expect(css).toContain("@media (prefers-reduced-motion: reduce)");
+        expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|oklch\(/);
+        expect(css).toContain("var(--menu-radius)");
+        expect(css).toContain("var(--ring)");
+    });
+
+    test("workspace shell mounts the motion sidebar with stable navigation landmarks", async () => {
+        const source = await Bun.file(new URL("../src/components/layout/app-top-nav.tsx", import.meta.url)).text();
+        expect(source).toContain('import "./workspace-sidebar-motion.css"');
+        expect(source).toContain("<motion.aside");
+        expect(source).toContain("data-motion-sidebar");
+        expect(source).toContain('id="workspace-sidebar"');
+        expect(source).toContain("workspaceSidebarTransition(");
+    });
+});

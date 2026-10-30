@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -150,9 +150,6 @@ func (r *Repository) VoiceProfileBySampleResource(userID string, resourceID stri
 
 func (r *Repository) CreateUserCharacter(asset *model.Asset, version *model.AssetVersion, representations []model.AssetRepresentation, voice *model.CharacterVoiceBinding) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := r.transactionRepository(tx).guardAssetPersistence(asset, true); err != nil {
-			return err
-		}
 		if err := tx.Create(asset).Error; err != nil {
 			return err
 		}
@@ -176,9 +173,6 @@ func (r *Repository) CreateUserCharacter(asset *model.Asset, version *model.Asse
 // CreateProjectCharacter 将角色身份、首版本和项目关联放入同一事务。
 func (r *Repository) CreateProjectCharacter(projectID string, asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := r.transactionRepository(tx).guardAssetPersistence(asset, true); err != nil {
-			return err
-		}
 		if err := tx.Create(asset).Error; err != nil {
 			return err
 		}
@@ -236,9 +230,6 @@ func (r *Repository) ConfirmProjectCharacterCandidate(candidate *model.ProjectAs
 }
 
 func saveCharacterVersion(tx *gorm.DB, asset *model.Asset, version *model.AssetVersion, representations []model.AssetRepresentation, voice *model.CharacterVoiceBinding) error {
-	if err := New(tx).guardAssetPersistence(asset, false); err != nil {
-		return err
-	}
 	if err := tx.Create(version).Error; err != nil {
 		return err
 	}

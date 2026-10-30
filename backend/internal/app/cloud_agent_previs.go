@@ -5,7 +5,7 @@ import (
 	"math"
 	"strings"
 
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/repository"
 )
 
 // Previs Agent tools deliberately expose a projection rather than the raw
@@ -97,7 +97,7 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 		"snapshotHash":       creationHash(scene),
 		"canvasSnapshotHash": cloudAgentCanvasHash(doc),
 		"revision":           canvas.Revision,
-		"guidance":           "安全摘要。修改用 previs_apply_patch；预演用 previs_preview；布局规划用 includeTransforms=true 获取精确坐标。snapshotHash 只代表该场景。",
+		"guidance":           "安全摘要。修改用 director apply_patch；预演用 director preview。snapshotHash 只代表该场景。",
 	}, nil
 }
 
@@ -249,10 +249,17 @@ func cloudAgentPrevisPreview(repo *repository.Repository, userID, canvasID strin
 		"fps":              fps,
 		"output":           "clay_video",
 		"snapshotHash":     creationHash(scene),
-		"execution":        "server_previs_renderer",
-		"taskSubmitted":    false,
-		"text":             "预演参数已校验；后台任务尚未提交，不能视为已生成视频。",
+		"execution":        "browser_previs_viewport",
 	}, nil
+}
+
+func findPrevisSceneCamera(scene map[string]any, id string) (map[string]any, bool) {
+	for _, camera := range creationMaps(scene["cameras"]) {
+		if stringValue(camera["id"]) == id {
+			return camera, true
+		}
+	}
+	return nil, false
 }
 
 func findPrevisScene(scenes []map[string]any, id string) (map[string]any, bool) {

@@ -44,18 +44,10 @@ const (
 	TaskStatusSucceeded TaskStatus = "succeeded"
 	TaskStatusFailed    TaskStatus = "failed"
 	TaskStatusCancelled TaskStatus = "cancelled"
-	// No automatic queue claim or resubmit until the original upstream request
-	// is reconciled. A timeout is not proof that the provider rejected work.
-	TaskStatusSubmissionUncertain TaskStatus = "submission_uncertain"
 	// text_replay 任务是前端自管、不经过 worker 队列的文本生成存档容器：
 	// 前端直连模型流式生成，把增量 POST 到 /tasks/:id/text-deltas 存档，
 	// 完成后调用 /tasks/:id/text-replay-complete 归并为最终正文。
 	TaskStatusTextReplay TaskStatus = "text_replay"
-	// holding 任务是 Agent 建 run 时的**占位任务**：它只承载这一轮的报价预留，
-	// 从来不是可执行任务。worker 的领取条件只匹配 queued/running，因此它永不被领取；
-	// 首个 PiModelStep 会在同一事务里换成真实首步模型任务，或由终态清理退还预留。
-	// 它与 text_replay 同样属于"不进队列"的状态，但不是前端自管的存档容器。
-	TaskStatusHolding TaskStatus = "holding"
 
 	UserRoleAdmin UserRole = "admin"
 	UserRoleUser  UserRole = "user"
@@ -76,6 +68,7 @@ const (
 	ChannelInterfaceVolcengineJiMengImage       ChannelInterfaceType = "volcengine-jimeng-image"
 	ChannelInterfaceGeminiImage                 ChannelInterfaceType = "gemini-image"
 	ChannelInterfaceOpenAIAudio                 ChannelInterfaceType = "openai-audio"
+	ChannelInterfaceDoubaoStreamingTTS          ChannelInterfaceType = "doubao-streaming-tts"
 	ChannelInterfaceAsyncAudio                  ChannelInterfaceType = "async-audio"
 	ChannelInterfaceNewAPIVideo                 ChannelInterfaceType = "newapi"
 	ChannelInterfaceNewAPIChannel1              ChannelInterfaceType = "newapi-channel-1"
@@ -128,6 +121,7 @@ const (
 	CreditLedgerSignupBonus  CreditLedgerType = "signup_bonus"
 	CreditLedgerCheckinBonus CreditLedgerType = "checkin_bonus"
 	CreditLedgerPaymentTopup CreditLedgerType = "payment_topup"
+	CreditLedgerReferral     CreditLedgerType = "referral_commission"
 
 	RedeemCodeUnused   RedeemCodeStatus = "unused"
 	RedeemCodeRedeemed RedeemCodeStatus = "redeemed"

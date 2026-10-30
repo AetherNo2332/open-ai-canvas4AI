@@ -3,9 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/repository"
 )
 
 // HostMutation is an internal composition seam, never a JSON/HTTP operation.

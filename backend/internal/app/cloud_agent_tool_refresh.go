@@ -4,9 +4,9 @@ import (
 	"errors"
 	"slices"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func cloudAgentNextToolLoadout(repo *repository.Repository, userID string, state *cloudAgentRuntime) ([]string, error) {

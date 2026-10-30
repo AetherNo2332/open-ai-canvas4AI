@@ -2,12 +2,12 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"strings"
 	"time"
+	"yingce/backend/internal/canvas/mediaversions"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // cloudAgentTaskFacts is the model-facing projection of durable task state.
@@ -137,14 +137,22 @@ func cloudAgentTaskDiagnostic(repo *repository.Repository, task *model.Task) map
 		return map[string]any{"taskId": task.ID, "taskStatus": task.Status, "taskSubmitted": true, "submissionOutcome": "unknown"}
 	}
 	if repo != nil {
-		if version, err := repo.CanvasMediaVersionForTask(task.UserID, task.ID); err == nil && version != nil {
-			result["versionId"], result["versionStatus"], result["adoption"] = version.ID, version.Status, version.Adoption
-			if canvas, err := repo.CanvasProjectForUser(task.UserID, version.CanvasID); err == nil {
-				if doc, err := creationDocument(canvas.PayloadJSON); err == nil {
-					nodes, _ := creationObjects(doc["nodes"])
-					if node := nodes[version.NodeID]; node != nil {
-						state := mediaversions.ReadState(node)
-						result["currentVersionId"], result["isCurrent"] = state.CurrentVersionID, state.CurrentVersionID == version.ID
+		// 节点版本任务：写回后回执给出新版本 ID 与是否已自动采用（决定 3）。
+		if binding, err := repo.CanvasTaskBinding(task.ID); err == nil && binding.OwnerID == task.UserID {
+			if base, versioned, err := mediaversions.BindingBase(binding); err == nil && versioned {
+				result["targetNodeId"] = base.NodeID
+				if base.Settled {
+					if base.ResultVersionID != "" {
+						result["versionId"] = base.ResultVersionID
+					}
+					result["adopted"] = base.Adopted
+				}
+				if canvas, err := repo.CanvasProjectForUser(task.UserID, binding.CanvasID); err == nil {
+					if doc, err := creationDocument(canvas.PayloadJSON); err == nil {
+						nodes, _ := creationObjects(doc["nodes"])
+						if current := mediaversions.Current(nodes[base.NodeID]); current != nil {
+							result["currentMediaVersionId"] = current["id"]
+						}
 					}
 				}
 			}

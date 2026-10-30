@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
 )
 
 // 历史画布：显式字段与旧连线在同一个分镜作用域上互相矛盾（行素材与输出各一处），

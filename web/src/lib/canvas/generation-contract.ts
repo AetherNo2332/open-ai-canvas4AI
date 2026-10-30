@@ -1,6 +1,5 @@
 import { decodeChannelModel, encodeChannelModel, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
-import { sameCanvasJsonValue } from "./canvas-json-value";
 import { GENERATION_CONTRACT_VERSION, GENERATION_LIMITS, GENERATION_OPTION_FIELDS, type GenerationSpec, type ModelSelection, type Options, type ReferenceBinding } from "./generation-contract.generated";
 
 export type { GenerationSpec, ModelSelection, ReferenceBinding } from "./generation-contract.generated";
@@ -56,11 +55,7 @@ export function validateGenerationSpec(value: unknown): GenerationSpec {
         } else fieldError("modelSelection.kind", "未知模型选择类型");
     }
     const rawOptions = object(raw.options, "options");
-    allowKeys(
-        rawOptions,
-        GENERATION_OPTION_FIELDS.map((field) => field.name),
-        "options",
-    );
+    allowKeys(rawOptions, GENERATION_OPTION_FIELDS.map((field) => field.name), "options");
     const options: Record<string, unknown> = {};
     for (const field of GENERATION_OPTION_FIELDS) {
         const current = rawOptions[field.name];
@@ -87,8 +82,7 @@ export function validateGenerationSpec(value: unknown): GenerationSpec {
         if (ref.role === "source-text" && ref.mediaType !== "text") fieldError("referenceBindings.role", "文本来源必须引用文本");
         if (["first-frame", "last-frame", "mask"].includes(String(ref.role)) && ref.mediaType !== "image") fieldError("referenceBindings.role", "帧和遮罩必须引用图片");
         if (ref.resolution !== "latest" && ref.resolution !== "snapshot") fieldError("referenceBindings.resolution", "未知解析策略");
-        ids.add(ref.id);
-        orders.add(ref.order);
+        ids.add(ref.id); orders.add(ref.order);
         return ref as unknown as ReferenceBinding;
     });
     return { version: GENERATION_CONTRACT_VERSION, mode, prompt: raw.prompt, options, modelSelection, referenceBindings, textInputMode: raw.textInputMode } as GenerationSpec;
@@ -109,31 +103,22 @@ export function readNodeGenerationSpec(node: Pick<CanvasNodeData, "type" | "meta
             if (!(field.modes as readonly string[]).includes(mode)) continue;
             if (!(field.node in metadata)) continue;
             const value = metadata[field.node];
-            if (value === undefined || value === null || value === "") delete options[field.name];
+            if (value === undefined || value === null || (value === "" && field.name !== "audioVoice")) delete options[field.name];
             else options[field.name] = optionValue(value, field.kind, field.node);
         }
     }
-    const modelSelection =
-        stored?.modelSelection ||
-        (typeof metadata.logicalModelId === "string" && metadata.logicalModelId ? ({ kind: "logical", logicalModelId: metadata.logicalModelId } as const) : undefined) ||
-        (typeof metadata.channelId === "string" && typeof metadata.channelModelKey === "string" ? ({ kind: "channel", channelId: metadata.channelId, modelKey: metadata.channelModelKey } as const) : undefined) ||
-        (typeof metadata.model === "string"
-            ? (() => {
-                  const model = decodeChannelModel(metadata.model);
-                  return model ? ({ kind: "channel", channelId: model.channelId, modelKey: model.model } as const) : undefined;
-              })()
-            : undefined);
-    const prompt = stored?.prompt ?? (typeof metadata.composerContent === "string" ? metadata.composerContent : typeof metadata.prompt === "string" ? metadata.prompt : "");
-    return validateGenerationSpec({
-        version: GENERATION_CONTRACT_VERSION,
-        mode,
-        prompt,
-        options,
-        ...(modelSelection ? { modelSelection } : {}),
-        referenceBindings: stored?.referenceBindings || [],
-        textInputMode: stored?.textInputMode || (mode === "video" ? "prompt-only" : "append-sources"),
-    });
+    const modelSelection = stored?.modelSelection
+        || (typeof metadata.logicalModelId === "string" && metadata.logicalModelId ? { kind: "logical", logicalModelId: metadata.logicalModelId } as const : undefined)
+        || (typeof metadata.channelId === "string" && typeof metadata.channelModelKey === "string" ? { kind: "channel", channelId: metadata.channelId, modelKey: metadata.channelModelKey } as const : undefined)
+        || (typeof metadata.model === "string" ? (() => {
+            const model = decodeChannelModel(metadata.model);
+            return model ? { kind: "channel", channelId: model.channelId, modelKey: model.model } as const : undefined;
+        })() : undefined);
+    const prompt = stored?.prompt
+        ?? (typeof metadata.composerContent === "string" ? metadata.composerContent : typeof metadata.prompt === "string" ? metadata.prompt : "");
+    return validateGenerationSpec({ version: GENERATION_CONTRACT_VERSION, mode, prompt, options, ...(modelSelection ? { modelSelection } : {}), referenceBindings: stored?.referenceBindings || [], textInputMode: stored?.textInputMode || (mode === "video" ? "prompt-only" : "append-sources") });
 }
+
 
 export function nodeGenerationPrompt(node: Pick<CanvasNodeData, "type" | "metadata">): string {
     const mode = canvasGenerationMode(node.type);
@@ -142,7 +127,7 @@ export function nodeGenerationPrompt(node: Pick<CanvasNodeData, "type" | "metada
             const spec = readNodeGenerationSpec(node);
             if (spec?.mode === mode) return spec.prompt;
         } catch {
-            // Discovery must still work for malformed legacy drafts.
+            // A malformed legacy contract should not make canvas discovery fail.
         }
     }
     const metadata = node.metadata || {};
@@ -181,7 +166,7 @@ export function specFromConfig(mode: GenerationSpec["mode"], prompt: string, con
     for (const field of GENERATION_OPTION_FIELDS) {
         if (!(field.modes as readonly string[]).includes(mode)) continue;
         const value = config[field.task as keyof AiConfig];
-        if (value !== undefined && value !== null && value !== "") options[field.name] = optionValue(value, field.kind, field.task);
+        if (value !== undefined && value !== null && (value !== "" || field.name === "audioVoice")) options[field.name] = optionValue(value, field.kind, field.task);
     }
     return validateGenerationSpec({ version: GENERATION_CONTRACT_VERSION, mode, prompt, modelSelection: selectionForConfig(config), options, referenceBindings, textInputMode });
 }
@@ -190,8 +175,6 @@ export function generationSpecMetadata(spec: GenerationSpec): CanvasNodeMetadata
     // model is always projected, including undefined. This clears a stale
     // physical-channel mirror when the canonical contract selects a logical model.
     const result: Record<string, unknown> = { generationSpec: spec, composerContent: spec.prompt, model: undefined };
-    result.videoStartFrameNodeId = spec.referenceBindings.find((binding) => binding.role === "first-frame")?.nodeId;
-    result.videoEndFrameNodeId = spec.referenceBindings.find((binding) => binding.role === "last-frame")?.nodeId;
     for (const field of GENERATION_OPTION_FIELDS) {
         if (!(field.modes as readonly string[]).includes(spec.mode)) continue;
         const value = spec.options[field.name as keyof Options];
@@ -201,56 +184,33 @@ export function generationSpecMetadata(spec: GenerationSpec): CanvasNodeMetadata
     return result as CanvasNodeMetadata;
 }
 
-/** Flat fields the host rewrites from every spec it applies (contract NodeMetadata):
- * selection mirrors and all option fields, absent ones as undefined. */
-export function generationSpecMirrors(spec: Pick<GenerationSpec, "modelSelection" | "options">): Record<string, unknown> {
-    const selection = spec.modelSelection;
-    const mirrors: Record<string, unknown> = {
-        logicalModelId: selection?.kind === "logical" ? selection.logicalModelId : undefined,
-        channelId: selection?.kind === "channel" ? selection.channelId : undefined,
-        channelModelKey: selection?.kind === "channel" ? selection.modelKey : undefined,
-        model: selection?.kind === "channel" ? encodeChannelModel(selection.channelId, selection.modelKey) : undefined,
-    };
-    for (const field of GENERATION_OPTION_FIELDS) {
-        const value = spec.options?.[field.name as keyof Options];
-        mirrors[field.node] = value === undefined ? undefined : field.node === "count" ? value : String(value);
-    }
-    return mirrors;
-}
-
 export function synchronizeGenerationSpec(node: CanvasNodeData, patch: Partial<CanvasNodeMetadata> = {}): CanvasNodeData {
     const metadata = { ...node.metadata, ...patch };
     if (!canvasGenerationMode(node.type)) return { ...node, metadata };
-    // Keep legacy nodes unnormalized until a reference edit creates a spec.
-    // Materializing readNodeGenerationSpec() here would persist a synthetic
-    // empty referenceBindings list and hide their existing visual connections.
-    if (!node.metadata?.generationSpec) return { ...node, metadata };
     const current = readNodeGenerationSpec(node);
     if (!current) return { ...node, metadata };
     const next: GenerationSpec = { ...current, options: { ...current.options } };
     for (const field of GENERATION_OPTION_FIELDS) {
         if (!(field.modes as readonly string[]).includes(current.mode) || !Object.prototype.hasOwnProperty.call(patch, field.node)) continue;
         const value = patch[field.node as keyof CanvasNodeMetadata];
-        if (value === undefined || value === null || value === "") delete next.options[field.name as keyof Options];
+        if (value === undefined || value === null || (value === "" && field.name !== "audioVoice")) delete next.options[field.name as keyof Options];
         else next.options[field.name as keyof Options] = optionValue(value, field.kind, field.node) as never;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "composerContent") && typeof patch.composerContent === "string") next.prompt = patch.composerContent;
     else if (Object.prototype.hasOwnProperty.call(patch, "prompt") && typeof patch.prompt === "string") next.prompt = patch.prompt;
     if (Object.prototype.hasOwnProperty.call(patch, "model")) {
+        if (patch.model !== node.metadata?.model && !Object.prototype.hasOwnProperty.call(patch, "imageParameters")) delete next.options.imageParameters;
         const model = patch.model ? decodeChannelModel(patch.model) : null;
         next.modelSelection = model ? { kind: "channel", channelId: model.channelId, modelKey: model.model } : undefined;
-        // The host re-mirrors a changed selection when it applies the spec; erasing the
-        // mirrors here would be an edit the command layer cannot express.
-        if (!sameCanvasJsonValue(current.modelSelection, next.modelSelection)) {
-            const mirrors = generationSpecMirrors(next);
-            for (const key of ["logicalModelId", "channelId", "channelModelKey"]) (metadata as Record<string, unknown>)[key] = mirrors[key];
-        }
+        delete (metadata as Record<string, unknown>).logicalModelId;
+        delete (metadata as Record<string, unknown>).channelId;
+        delete (metadata as Record<string, unknown>).channelModelKey;
     }
     return { ...node, metadata: { ...metadata, ...generationSpecMetadata(validateGenerationSpec(next)) } };
 }
 
 export function bindingForNode(node: CanvasNodeData, order: number, previous?: ReferenceBinding): ReferenceBinding | undefined {
-    const mediaType = node.metadata?.workflowKind === "character" || node.type === "drawing" ? "image" : node.type === "text" || node.type === "markdown" ? "text" : canvasGenerationMode(node.type);
+    const mediaType = node.type === "text" || node.type === "markdown" ? "text" : canvasGenerationMode(node.type);
     if (!mediaType) return undefined;
     return { id: previous?.id || `node:${node.id}`, nodeId: node.id, mediaType, role: previous?.role || (mediaType === "text" ? "source-text" : "reference"), order, resolution: "latest" };
 }

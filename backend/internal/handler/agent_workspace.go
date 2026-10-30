@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/service"
 )
 
 // Agent configuration writes reject missing revision, unknown fields and trailing JSON.

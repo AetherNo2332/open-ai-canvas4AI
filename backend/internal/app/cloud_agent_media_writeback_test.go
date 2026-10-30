@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func queuePiMediaToolForTest(t *testing.T, s *Service, db *gorm.DB, args cloudAgentMediaArgs, permission string) (*model.CloudAgentExecution, cloudAgentRuntime) {
@@ -146,7 +146,6 @@ func TestCloudAgentMediaCompletionKeepsGenerationAndWritebackFailures(t *testing
 					}
 					if test.change == "rebind" {
 						node["metadata"].(map[string]any)["taskId"] = "replacement-task"
-						node["metadata"].(map[string]any)["mediaVersion"].(map[string]any)["activeTaskId"] = "replacement-task"
 					}
 				}
 				updated = append(updated, node)

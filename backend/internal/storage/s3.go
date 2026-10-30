@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/outbound"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/outbound"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -68,7 +68,7 @@ func NewS3Client(setting Settings, timeout time.Duration) (*awss3.S3, error) {
 		WithEndpoint(endpoint.String()).
 		WithCredentials(credentials.NewStaticCredentials(setting.AccessKeyID, setting.AccessKeySecret, setting.SessionToken)).
 		WithHTTPClient(httpClient).
-		WithS3ForcePathStyle(setting.PathStyle).
+		WithS3ForcePathStyle(setting.PathStyle || !StandardAWSS3Endpoint(endpoint.String())).
 		WithDisableSSL(endpoint.Scheme == "http")
 	sess, err := session.NewSession(config)
 	if err != nil {
@@ -78,6 +78,10 @@ func NewS3Client(setting Settings, timeout time.Duration) (*awss3.S3, error) {
 }
 
 func PutS3Object(setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
+	return putS3Object(context.Background(), setting, objectKey, mimeType, size, body)
+}
+
+func putS3Object(ctx context.Context, setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
 	setting = NormalizeSettings(setting)
 	client, err := NewS3Client(setting, transferTimeout(setting))
 	if err != nil {
@@ -107,7 +111,7 @@ func PutS3Object(setting Settings, objectKey string, mimeType string, size int64
 	if size >= 0 {
 		input.ContentLength = aws.Int64(size)
 	}
-	output, err := client.PutObjectWithContext(context.Background(), input)
+	output, err := client.PutObjectWithContext(ctx, input)
 	if err != nil {
 		return "", fmt.Errorf("S3 上传失败：%w", err)
 	}
@@ -142,10 +146,6 @@ func SignedS3ObjectURL(setting Settings, objectKey string, expiresAt time.Time) 
 	return signedS3ObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt})
 }
 
-func SignedS3ObjectDownloadURL(setting Settings, objectKey string, expiresAt time.Time, disposition string) (string, error) {
-	return signedS3ObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt, ContentDisposition: disposition})
-}
-
 func signedS3ObjectURL(setting Settings, objectKey string, signing objectURLSigning) (string, error) {
 	setting = NormalizeSettings(setting)
 	client, err := NewS3Client(setting, transferTimeout(setting))
@@ -156,15 +156,16 @@ func signedS3ObjectURL(setting Settings, objectKey string, signing objectURLSign
 		return "", errors.New("S3 签名有效期必须晚于当前时间")
 	}
 	input := &awss3.GetObjectInput{Bucket: aws.String(setting.Bucket), Key: aws.String(strings.TrimLeft(objectKey, "/"))}
-	if signing.ContentDisposition != "" {
-		input.ResponseContentDisposition = aws.String(signing.ContentDisposition)
-	}
 	if signing.CacheControl != "" {
 		input.ResponseCacheControl = aws.String(signing.CacheControl)
 	}
+	if signing.ContentDisposition != "" {
+		input.ResponseContentDisposition = aws.String(signing.ContentDisposition)
+	}
 	req, _ := client.GetObjectRequest(input)
 	signedAt := signingTime(signing.SignedAt)
-	// Preserve the SDK's S3 path escaping while making X-Amz-Date deterministic.
+	// SDK 默认以 time.Now 作为 X-Amz-Date；替换为对齐后的签名时间，保证同一窗口内地址稳定。
+	// DisableURIPathEscaping 与 SDK 为 S3 注册的默认签名器保持一致。
 	req.Handlers.Sign.Swap(awsv4.SignRequestHandler.Name, request.NamedHandler{Name: awsv4.SignRequestHandler.Name, Fn: func(r *request.Request) {
 		awsv4.SignSDKRequestWithCurrentTime(r, func() time.Time { return signedAt }, func(s *awsv4.Signer) { s.DisableURIPathEscaping = true })
 	}})

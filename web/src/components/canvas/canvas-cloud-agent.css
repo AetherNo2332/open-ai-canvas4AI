@@ -25,6 +25,12 @@
     pointer-events: none;
 }
 
+/* 窄屏面板展开时覆盖画布底部，主工具栏让位；收起后恢复。 */
+.canvas-editor-shell:has(.canvas-agent-panel[data-agent-compact][data-agent-open="true"]) .canvas-main-toolbar {
+    visibility: hidden;
+    pointer-events: none;
+}
+
 .canvas-agent-width-handle {
     position: absolute;
     inset: 0 auto 0 0;

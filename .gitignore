@@ -1,4 +1,4 @@
-﻿.next/
+.next/
 out/
 node_modules/
 open-storyboard-canvas/
@@ -7,17 +7,6 @@ docs/*
 !docs/index.md
 !docs/adr/
 !docs/plans/
-!docs/archive/
-docs/archive/*
-!docs/archive/engineering/
-docs/archive/engineering/*
-!docs/archive/engineering/README.md
-!docs/archive/engineering/PLAN.md
-!docs/archive/engineering/HANDOFF-DirectorDesk-Previs-2026-10-12.md
-!docs/archive/engineering/PREVIS_REFACTOR_PLAN.md
-!docs/archive/engineering/PREVIS_REDESIGN_EXECUTION_PLAN.md
-!docs/archive/engineering/PREVIS_REQUIREMENTS_STATUS.md
-!docs/archive/engineering/final-fix-report.md
 # Keep the new plugin design spec versioned without unignoring generated docs.
 !docs/content/
 docs/content/*
@@ -29,19 +18,17 @@ docs/content/docs/plugins/*
 # Keep the task stability runbook versioned without unignoring generated docs.
 !docs/content/docs/backend/
 docs/content/docs/backend/*
+!docs/content/docs/backend/skill-curation.mdx
 !docs/content/docs/backend/task-runtime-stability.mdx
 !docs/content/docs/backend/agent-prompt-policy.mdx
-!docs/content/docs/backend/agent-context-compaction.mdx
 !docs/content/docs/backend/canvas-agent-appearance.mdx
+!docs/content/docs/backend/update-announcements.mdx
 !docs/content/docs/backend/http-api.mdx
 !docs/content/docs/backend/code-map.mdx
 !docs/content/docs/backend/newapi-channel-2.mdx
+!docs/content/docs/backend/bailian-minimax-video.mdx
 !docs/content/docs/backend/video-token-billing.mdx
 !docs/content/docs/backend/creative-agent-runtime.mdx
-!docs/content/docs/backend/agent-tool-reads.mdx
-!docs/content/docs/backend/agent-tools.mdx
-!docs/content/docs/backend/local-development.mdx
-!docs/content/docs/backend/engineering-governance.mdx
 # Keep the creative Agent design versioned without unignoring generated docs.
 !docs/content/docs/overview/
 docs/content/docs/overview/*
@@ -52,7 +39,6 @@ data/
 .local/
 /.local/docker-compose.postgres.yml
 coverage/
-__pycache__/
 dist/
 *.log
 *.tsbuildinfo
@@ -77,7 +63,6 @@ assets/prototypes/.*.drawio.bkp
 .playwright-mcp/
 .serena/
 .spec-workflow/
-.superpowers/
 .vscode/
 camera_language_guide.md
 .superdesign
@@ -86,7 +71,6 @@ camera_language_guide.md
 /output/
 /project-memory/
 .workbuddy/
-.workbuddy-ai/
 
 # Local backend executable; never commit build output.
 backend/cmd/server/server
@@ -94,15 +78,4 @@ backend/cmd/server/server
 backend/tmp_*
 # Keep the runtime in source control; its optional debug map is not deployed.
 /web/public/live2d/live2dcubismcore.min.js.map
-/web/dist-previs/
-director-desk/node_modules
-director-desk/dist
-/renderer/.local/
-
-
-# Compiled plugin artifacts: keep sources/docs/manifests trackable, never track build output.
-plugin-packages/**/*.yingce-plugin
-plugin-packages/**/provider
-plugin-packages/**/provider-*
-# Local backend executable; never commit build output.
-backend/server
+.zocde/

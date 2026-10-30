@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"infinite-canvas/backend/internal/agentcontext"
+	"yingce/backend/internal/agentcontext"
 )
 
 // cloudAgentContextPressure 是"这次请求还能装多少输入"的读数。

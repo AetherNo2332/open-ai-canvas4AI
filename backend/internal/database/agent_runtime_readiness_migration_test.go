@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"testing"
 
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestAgentRuntimeReadinessUpgradeFromOldTable(t *testing.T) {
-	for _, version := range []int{59, 61} {
+	// 只有本仓库 Agent 迁移（v75）建立该表；旧形状的表升级时必须补就绪列并要求重新上报。
+	for _, version := range []int{74} {
 		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
 			db, err := database.Open(database.Config{Driver: "sqlite", DSN: fmt.Sprintf("file:runtime-readiness-v%d?mode=memory&cache=shared", version)})
 			if err != nil {
@@ -49,7 +50,7 @@ func TestAgentRuntimeReadinessUpgradeFromOldTable(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !db.Migrator().HasColumn(&model.AgentRuntimeInstance{}, "Readiness") || !db.Migrator().HasColumn(&model.AgentRuntimeInstance{}, "ReadinessReason") {
-				t.Fatal("v62 did not add both readiness columns")
+				t.Fatal("fork Agent runtime migration did not add both readiness columns")
 			}
 			var old model.AgentRuntimeInstance
 			if err := db.First(&old, "id = ?", "old-worker").Error; err != nil {

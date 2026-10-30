@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // 结构化纠错与熔断（handoff 工作项 B 第 3 步）：

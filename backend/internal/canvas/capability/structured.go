@@ -9,7 +9,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"infinite-canvas/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/contract"
 )
 
 func referenceBindingField() PatchField {

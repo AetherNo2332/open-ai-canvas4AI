@@ -1,91 +1,47 @@
 package repository
 
 import (
-	"path/filepath"
 	"testing"
 
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
-func TestMediaVersionResourceRootsRetainHistoryWithoutPermanentOrphans(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "roots.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn, _ := db.DB()
-	t.Cleanup(func() { _ = conn.Close() })
-	if err = db.AutoMigrate(&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasMediaVersion{}); err != nil {
-		t.Fatal(err)
-	}
-	payload := `{"nodes":[{"id":"node","metadata":{"mediaVersion":{"epoch":"epoch","generation":1,"currentVersionId":"v2"}}}]}`
-	if err = db.Create(&model.CanvasProject{ID: "canvas", UserID: "owner", PayloadJSON: payload}).Error; err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range []model.CanvasMediaVersion{
-		{ID: "v1", OwnerID: "owner", CanvasID: "canvas", Epoch: "epoch", NodeID: "node", Generation: 1, Sequence: 1, ResourceID: "old", Status: "ready", MediaJSON: `{"storageKey":"resource:old"}`},
-		{ID: "v-other-generation", OwnerID: "owner", CanvasID: "canvas", Epoch: "epoch", NodeID: "node", Generation: 2, Sequence: 1, ResourceID: "unrelated", Status: "ready", MediaJSON: `{"storageKey":"resource:unrelated"}`},
+const versionedCanvas = `{"nodes":[{"id":"hero","type":"image","title":"主角","metadata":{"storageKey":"resource:current","mediaVersions":[{"id":"v1","number":1,"createdAt":"x","source":"generate","media":{"storageKey":"resource:old-version","content":"/api/resources/old-version/file"}},{"id":"v2","number":2,"createdAt":"x","source":"generate","media":{"storageKey":"resource:current"}}],"currentMediaVersionId":"v2"}}]}`
+
+// 版本历史在节点 metadata 中：受保护删除要报告持有资源的画布节点；物理删除检查不扫描画布正文，
+// 彻底删除后对象删除任务可以完成（断链由画布修复处理，与节点当前媒体同一规则）。
+func TestMediaVersionReferencesScanNodeMetadata(t *testing.T) {
+	db, repo := commandResourceTestDB(t)
+	for _, row := range []any{
+		&model.CanvasProject{ID: "canvas-1", UserID: "user", Title: "分镜画布", PayloadJSON: versionedCanvas},
+		&model.CanvasProject{ID: "canvas-2", UserID: "other", Title: "他人画布", PayloadJSON: versionedCanvas},
+		&model.Resource{ID: "old-version", UserID: "user", ObjectKey: "u/old-version.png", Status: model.ResourceStatusReady},
 	} {
-		if err = db.Create(&row).Error; err != nil {
+		if err := db.Create(row).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
-	repo := New(db)
-	read := func(owner string) []ResourceDirectReference {
-		t.Helper()
-		refs, e := repo.MediaVersionResourceReferences(owner, []string{"old", "unrelated"})
-		if e != nil {
-			t.Fatal(e)
-		}
-		return refs
-	}
-	if refs := read("owner"); len(refs) != 1 || refs[0].ResourceID != "old" {
-		t.Fatalf("history version not protected or wrong generation retained: %+v", refs)
-	}
-	if refs := read("other"); len(refs) != 0 {
-		t.Fatalf("foreign version exposed: %+v", refs)
-	}
-	if err = db.Model(&model.CanvasProject{}).Where("id = ?", "canvas").Update("payload_json", `{"nodes":[]}`).Error; err != nil {
-		t.Fatal(err)
-	}
-	if refs := read("owner"); len(refs) != 0 {
-		t.Fatalf("unreachable ledger became a permanent resource root: %+v", refs)
-	}
-	if err = db.Create(&model.CanvasSnapshot{ID: "snapshot", CanvasID: "canvas", UserID: "owner", Revision: 1, PayloadJSON: payload}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if refs := read("owner"); len(refs) != 1 || refs[0].ResourceID != "old" {
-		t.Fatalf("recoverable family history lost: %+v", refs)
-	}
-}
-
-func TestMediaVersionMetadataCountsAgainstTaskStorage(t *testing.T) {
-	db, err := database.Open(database.Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "quota.db")})
+	refs, err := repo.MediaVersionResourceReferences("user", []string{"old-version", "unrelated"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, _ := db.DB()
-	t.Cleanup(func() { _ = conn.Close() })
-	if err = database.MigrateSchema(db); err != nil {
-		t.Fatal(err)
+	if len(refs) != 1 || refs[0].ResourceID != "old-version" || refs[0].ID != "canvas-1:hero" || refs[0].Kind != "画布媒体版本" || refs[0].Title != "分镜画布 / 主角" {
+		t.Fatalf("version references: %#v", refs)
 	}
-	repo := New(db)
-	before, err := repo.UserStorageUsage("owner")
+	snapshot, err := repo.ResourceReferenceSnapshotExcludingAssets("user", nil, []string{"old-version"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := model.CanvasMediaVersion{ID: "counted", OwnerID: "owner", CanvasID: "canvas", Epoch: "epoch", NodeID: "node", Sequence: 1, RequestJSON: `{"prompt":"中文"}`, MediaJSON: `{"storageKey":"resource:old"}`, OutputsJSON: `[]`, Error: "失败"}
-	if err = repo.InsertCanvasMediaVersion(&row); err != nil {
-		t.Fatal(err)
+	found := false
+	for _, ref := range snapshot.Direct {
+		found = found || ref.Kind == "画布媒体版本" && ref.ResourceID == "old-version"
 	}
-	after, err := repo.UserStorageUsage("owner")
-	if err != nil {
-		t.Fatal(err)
+	if !found {
+		t.Fatalf("guarded deletion must see the version reference: %#v", snapshot.Direct)
 	}
-	if after.TaskBytes-before.TaskBytes != mediaVersionBytes(&row) {
-		t.Fatalf("version metadata escaped storage quota: %d => %d", before.TaskBytes, after.TaskBytes)
+	resource := &model.Resource{ID: "old-version", UserID: "user", ObjectKey: "u/old-version.png"}
+	protected, err := repo.CanvasHistoryReferencesObject(resource)
+	if err != nil || protected {
+		t.Fatalf("purged version media must not keep the deletion job retrying: %v %v", protected, err)
 	}
 }

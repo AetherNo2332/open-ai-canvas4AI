@@ -1,12 +1,6 @@
 import { expect, test } from "bun:test";
-import { formatBuildVersion } from "../src/lib/app-version";
 import { agentMemoryRedirect } from "../src/lib/agent-admin-route";
 
-test("version shows the actual build commit in parentheses", () => {
-    expect(formatBuildVersion("v1.5.7.2", "abcdef123456")).toBe("v1.5.7.2 (abcdef1)");
-    expect(formatBuildVersion("v1.5.7.1+0af49f0", "unknown")).toBe("v1.5.7.1 (0af49f0)");
-    expect(formatBuildVersion("v1.5.7.2", "unknown")).toBe("v1.5.7.2");
-});
 test("old memory links preserve queries and target the memory section", () => {
     expect(agentMemoryRedirect("?userId=abc&status=approved")).toBe("/admin/settings/agent?userId=abc&status=approved#memory");
 });

@@ -6,11 +6,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
@@ -67,7 +68,7 @@ func TestCanvasRevision(t *testing.T) {
 
 func testCanvasRevision(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	if err := db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.CanvasUnitLink{}, &model.Project{}); err != nil {
+	if err := db.AutoMigrate(&model.CanvasEditLease{}, &model.CanvasProject{}, &model.CanvasUnitLink{}, &model.Project{}); err != nil {
 		t.Fatal(err)
 	}
 	repo := New(db)
@@ -139,12 +140,12 @@ func testCanvasRevision(t *testing.T, db *gorm.DB) {
 	if err := repo.AssignCanvasToProject("owner", initial.ID, "project"); err != nil {
 		t.Fatal(err)
 	}
-	assigned, err := repo.CanvasProjectForUser("owner", initial.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := repo.UpsertCanvasProject(winner); !errors.Is(err, ErrCanvasRevisionConflict) {
 		t.Fatalf("association did not invalidate old content: %v", err)
+	}
+	assigned, _ := repo.CanvasProjectForUser("owner", initial.ID)
+	if assigned.ProjectID != "project" || !strings.Contains(assigned.PayloadJSON, `"projectId":"project"`) {
+		t.Fatalf("assignment left column and payload inconsistent: %#v", assigned)
 	}
 	if err := repo.UnassignCanvasFromProject("owner", "project", initial.ID, `{"nodes":[]}`, time.Now(), 2); err == nil {
 		t.Fatal("stale unassignment replaced canvas content")

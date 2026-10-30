@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // cloudAgentContinuationEventLimit 是续轮读取上一轮事件的上限：收束要覆盖整轮改动，

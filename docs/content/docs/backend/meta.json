@@ -1,0 +1,25 @@
+{
+  "title": "开发文档",
+  "root": true,
+  "defaultOpen": true,
+  "pages": [
+    "local-development",
+    "production-deployment",
+    "canvas-agent-appearance",
+    "agent-tools",
+    "agent-tool-reads",
+    "agent-prompt-policy",
+    "agent-context-compaction",
+    "http-api",
+    "code-map",
+    "backend-database",
+    "video-token-billing",
+    "task-runtime-stability",
+    "newapi-channel-2",
+    "bailian-minimax-video",
+    "system-update",
+    "protocol-plugins",
+    "canvas-data-structure",
+    "canvas-operations-sync"
+  ]
+}

@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 const agentWorkspaceDocumentMaxBytes = 64 << 10

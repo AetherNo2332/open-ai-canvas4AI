@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // newRootTaskLessPiRun 造一条**真实的**"只有执行记录、没有根任务"的运行 ——

@@ -1,6 +1,7 @@
 import { App, Button, Progress, Skeleton, Switch } from "antd";
-import { Activity, AlertTriangle, Cpu, Database, Gauge, HardDrive, MemoryStick, RefreshCw, Server, ShieldCheck, Trash2, Wifi } from "lucide-react";
+import { Activity, AlertTriangle, Bot, Cpu, Database, Gauge, HardDrive, MemoryStick, RefreshCw, Server, ShieldCheck, Trash2, Wifi } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router";
 
 import { clearRuntimeCache, getSystemPerformance, type SystemPerformance } from "@/services/api/system-performance";
 import { AdminPageFrame } from "../components/admin-shell";
@@ -212,6 +213,8 @@ export default function SystemPerformancePage() {
                         </SettingsSectionCard>
                     </div>
                 </div>
+
+                <p className="admin-performance-cache-note"><Bot className="size-3.5" />云端 Agent Worker 状态与同时运行上限已移至<Link to="/admin/settings/agent">Agent 调度设置</Link></p>
 
                 <SettingsSectionCard layout="stacked" icon={<ShieldCheck className="size-4" />} title="缓存维护" description="只清理可安全重建的运行时状态，保留业务数据与活动并发租约。" status={<AdminStatusBadge label="白名单清理" tone="success" />} footer={<><span className="admin-performance-cache-note"><Gauge className="size-3.5" />清理后频控与线路健康状态会重新计算</span><Button danger icon={<Trash2 className="size-4" />} loading={clearing} onClick={requestClear}>清理运行时缓存</Button></>}>
                     <div className="admin-performance-cache-groups">

@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/contract"
 )
 
 func maps(v any) []map[string]any {

@@ -1,5 +1,5 @@
-import { createCanvasNode, createStoryboardRow } from "@/lib/canvas/canvas-project-domain";
 import { DEFAULT_STORYBOARD_COLUMNS } from "@/lib/canvas/canvas-storyboard-columns";
+import { createCanvasNode, createStoryboardRow } from "@/lib/canvas/canvas-project-domain";
 import type { ProjectShot, ProjectUnit } from "@/services/api/projects";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type StoryboardData, type StoryboardRow } from "@/types/canvas";
 

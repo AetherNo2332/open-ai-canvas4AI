@@ -2,16 +2,15 @@ package commands
 
 import (
 	"fmt"
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/identity"
 	"time"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/identity"
 )
 
 const ProtocolVersion = 1
 
-var OperationTypes = []string{"add_node", "update_node", "delete_node", "duplicate_node", "select_node_version", "use_media_version", "set_parent", "connect_nodes", "delete_connection", "update_connection", "replace_text", "reorder_nodes", "reorder_connections", "reorder_rows", "edit_drawing", "edit_storyboard", "bind_storyboard_output", "edit_batch_table", "edit_image_batch", "create_previs_scene", "edit_previs_scene", "delete_previs_scene", "bind_asset", "bind_resource", "bind_character", "rename_canvas", "delete_canvas", "edit_canvas_settings", "edit_timeline", "migrate_references"}
+var OperationTypes = []string{"add_node", "update_node", "delete_node", "duplicate_node", "select_node_version", "use_media_version", "extract_media_version", "set_parent", "connect_nodes", "delete_connection", "update_connection", "replace_text", "reorder_nodes", "reorder_connections", "reorder_rows", "edit_drawing", "edit_storyboard", "bind_storyboard_output", "edit_batch_table", "edit_image_batch", "create_previs_scene", "edit_previs_scene", "delete_previs_scene", "bind_asset", "bind_resource", "bind_character", "rename_canvas", "delete_canvas", "edit_canvas_settings", "edit_timeline", "migrate_references"}
 
 type Snapshot struct {
 	Protocol          int              `json:"protocolVersion"`
@@ -26,6 +25,11 @@ type Snapshot struct {
 	// 时填充：客户端据此区分“需要一次性迁移”和“已规范化”。nil 表示无需迁移。
 	ReferenceMigration *references.MigrationPreview `json:"referenceMigration,omitempty"`
 }
+
+// ActorKindAgent marks events written by the Agent command layer; projected
+// browser writes leave actorKind empty.
+const ActorKindAgent = "agent"
+
 type Receipt struct {
 	Protocol          int              `json:"protocolVersion"`
 	CanvasID          string           `json:"canvasId"`
@@ -33,6 +37,7 @@ type Receipt struct {
 	OperationID       string           `json:"operationId"`
 	ClientID          string           `json:"clientId"`
 	ActorID           string           `json:"actorId"`
+	ActorKind         string           `json:"actorKind,omitempty"`
 	Revision          int64            `json:"revision"`
 	EventSeq          int64            `json:"eventSeq"`
 	Changes           ChangeSet        `json:"changes"`
@@ -143,10 +148,9 @@ type ValidationContext struct {
 	ModelInputLimits map[string]map[string]int
 	Asset            func(assetID string) (AssetMetadata, error)
 	// Resources contains only ready, owner-authorized resource records hydrated by the host.
-	Resources              map[string]ResourceMetadata
-	CharacterBindings      map[string]map[string]any
-	FolderBindings         map[string]bool
-	MediaVersionSelections map[string]mediaversions.Selection
+	Resources         map[string]ResourceMetadata
+	CharacterBindings map[string]map[string]any
+	FolderBindings    map[string]bool
 }
 type ResourceMetadata struct {
 	ID, Kind, MimeType string

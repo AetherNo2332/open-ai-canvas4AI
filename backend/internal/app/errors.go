@@ -1,6 +1,6 @@
 package app
 
-import "infinite-canvas/backend/internal/kernel"
+import "yingce/backend/internal/kernel"
 
 // AppError 是 service 层对外公开的结构化错误；实现已迁到 kernel。
 type AppError = kernel.AppError
@@ -19,6 +19,10 @@ func RateLimited(message string) *AppError {
 
 func QuotaExceeded(message string) *AppError {
 	return kernel.QuotaExceeded(message)
+}
+
+func StorageCapacityExceeded(message string) *AppError {
+	return kernel.StorageCapacityExceeded(message)
 }
 
 // AuthError 保留为兼容别名。
@@ -65,8 +69,6 @@ type ModelError struct {
 	ErrorCode ModelErrorCode
 	Details   map[string]any
 }
-
-func (e *ModelError) Unwrap() error { return e.AppError }
 
 func (e *ModelError) Error() string {
 	if e.AppError != nil {

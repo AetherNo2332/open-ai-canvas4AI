@@ -2,9 +2,9 @@ package tasks
 
 import (
 	"context"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
 	"time"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
 )
 
 type MaterializationStatus struct {

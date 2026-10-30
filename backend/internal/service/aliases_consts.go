@@ -1,8 +1,9 @@
 package service
 
-import "infinite-canvas/backend/internal/app"
+import "yingce/backend/internal/app"
 
 const (
+	AgentAvatarBundleMaxBytes          = app.AgentAvatarBundleMaxBytes
 	Live2DMaxBytes                     = app.Live2DMaxBytes
 	AnnouncementImageMaxBytes          = app.AnnouncementImageMaxBytes
 	AppearanceAssetDarkLogo            = app.AppearanceAssetDarkLogo
@@ -39,12 +40,14 @@ const (
 	FeatureCredits                     = app.FeatureCredits
 	FeatureCustomChannels              = app.FeatureCustomChannels
 	FeatureFrontendModels              = app.FeatureFrontendModels
+	FeatureImageWorkbench              = app.FeatureImageWorkbench
 	FeaturePluginCenter                = app.FeaturePluginCenter
 	FeatureShortDrama                  = app.FeatureShortDrama
 	FeatureSystemPlugins               = app.FeatureSystemPlugins
+	FeatureInspirationSources          = app.FeatureInspirationSources
 	FeatureTaskCenter                  = app.FeatureTaskCenter
 	FeatureTimelineTranscription       = app.FeatureTimelineTranscription
-	FeatureAgentSubagents              = app.FeatureAgentSubagents
+	FeatureVideoWorkbench              = app.FeatureVideoWorkbench
 	ModelCatalogSourceSystem           = app.ModelCatalogSourceSystem
 	PaymentPluginAlipayPage            = app.PaymentPluginAlipayPage
 	PaymentPluginWeChatNative          = app.PaymentPluginWeChatNative
@@ -69,6 +72,7 @@ const (
 	ReasonBadGateway                   = app.ReasonBadGateway
 	ReasonUpstreamDNSFailed            = app.ReasonUpstreamDNSFailed
 	ReasonConflict                     = app.ReasonConflict
+	ReasonProjectNameConflict          = app.ReasonProjectNameConflict
 	ReasonFailedPrecondition           = app.ReasonFailedPrecondition
 	ReasonForbidden                    = app.ReasonForbidden
 	ReasonInternal                     = app.ReasonInternal
@@ -81,5 +85,6 @@ const (
 	ReasonUnavailable                  = app.ReasonUnavailable
 	SessionCookieName                  = app.SessionCookieName
 	SkillPackageUploadMaxBytes         = app.SkillPackageUploadMaxBytes
+	SkillPackageEditMaxBytes           = app.SkillPackageEditMaxBytes
 	WorkflowPluginRunningHub           = app.WorkflowPluginRunningHub
 )

@@ -3,8 +3,8 @@ package app
 import (
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestCloudAgentPressureContinuationCreationUsesInheritedUsage(t *testing.T) {

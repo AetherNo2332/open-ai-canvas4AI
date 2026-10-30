@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -88,6 +88,60 @@ func (r *Repository) OtherAssetResourceReferences(userID string, excludedAssetID
 	return snapshot, nil
 }
 
+// CanvasCommandResourceReferences 列出 Agent 画布命令持有的资源：kind=current 是画布当前内容
+// （每次保存由投影写入），kind=history 是撤销所需的命令历史。
+// 不按 owner 过滤：物理删除检查同样全局计数，资源归属由调用方先行校验。
+// 传入 viewerID 时，不属于该用户的画布仍计为引用，但不返回其画布 ID 与标题。
+func (r *Repository) CanvasCommandResourceReferences(resourceIDs []string, viewerID ...string) ([]ResourceDirectReference, error) {
+	refs := []ResourceDirectReference{}
+	if len(resourceIDs) == 0 || !r.db.Migrator().HasTable(&model.CanvasCommandResource{}) {
+		return refs, nil
+	}
+	var rows []struct {
+		CanvasID     string
+		Kind         string
+		ResourceID   string
+		Title        string
+		OwnerID      string
+		CanvasExists bool
+	}
+	if err := r.db.Table("canvas_command_resources AS refs").
+		Select("refs.canvas_id, refs.kind, refs.resource_id, canvas_projects.title, refs.owner_id, canvas_projects.id IS NOT NULL AS canvas_exists").
+		Joins("LEFT JOIN canvas_projects ON canvas_projects.id = refs.canvas_id").
+		Where("refs.resource_id IN ?", resourceIDs).Distinct().Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		kind := "Agent 画布历史"
+		if row.Kind == "current" {
+			kind = "画布当前内容"
+		}
+		if len(viewerID) > 0 && row.OwnerID != viewerID[0] {
+			row.CanvasID, row.Title = "", "其他用户的画布"
+		} else if !row.CanvasExists {
+			row.Title = "已删除的画布"
+		}
+		refs = append(refs, ResourceDirectReference{Kind: kind, ID: row.CanvasID, Title: row.Title, ResourceID: row.ResourceID})
+	}
+	return refs, nil
+}
+
+// CanvasTaskResourceReferences 列出已提交画布任务冻结的输入资源。
+func (r *Repository) CanvasTaskResourceReferences(userID string, resourceIDs []string) ([]ResourceDirectReference, error) {
+	refs := []ResourceDirectReference{}
+	if len(resourceIDs) == 0 || !r.db.Migrator().HasTable(&model.CanvasTaskResource{}) {
+		return refs, nil
+	}
+	var guards []model.CanvasTaskResource
+	if err := r.db.Where("owner_id = ? AND resource_id IN ?", userID, resourceIDs).Find(&guards).Error; err != nil {
+		return nil, err
+	}
+	for _, guard := range guards {
+		refs = append(refs, ResourceDirectReference{Kind: "画布任务输入", ID: guard.TaskID, Title: "已提交的任务输入", ResourceID: guard.ResourceID})
+	}
+	return refs, nil
+}
+
 func (r *Repository) ResourcesForUserIDs(userID string, resourceIDs []string) ([]model.Resource, error) {
 	if len(resourceIDs) == 0 {
 		return []model.Resource{}, nil
@@ -132,20 +186,23 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 		return snapshot, err
 	}
 	snapshot.Direct = append(snapshot.Direct, history...)
+	// Agent 画布命令的媒体版本族与已提交任务输入同样持有资源，删除前要列为直接引用。
 	versionRefs, err := r.MediaVersionResourceReferences(userID, resourceIDs)
 	if err != nil {
 		return snapshot, err
 	}
 	snapshot.Direct = append(snapshot.Direct, versionRefs...)
-	if r.db.Migrator().HasTable(&model.CanvasTaskResource{}) {
-		var guards []model.CanvasTaskResource
-		if err := r.db.Where("owner_id = ? AND resource_id IN ?", userID, resourceIDs).Find(&guards).Error; err != nil {
-			return snapshot, err
-		}
-		for _, guard := range guards {
-			snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "画布任务输入", ID: guard.TaskID, Title: "已提交的任务输入", ResourceID: guard.ResourceID})
-		}
+	taskRefs, err := r.CanvasTaskResourceReferences(userID, resourceIDs)
+	if err != nil {
+		return snapshot, err
 	}
+	snapshot.Direct = append(snapshot.Direct, taskRefs...)
+	// Agent 画布命令历史持有撤销所需资源；物理删除检查已认它，这里必须同样列为直接引用。
+	commandRefs, err := r.CanvasCommandResourceReferences(resourceIDs, userID)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.Direct = append(snapshot.Direct, commandRefs...)
 	var leases []model.CloudAgentResourceLease
 	if err := r.db.Where("user_id = ? AND resource_id IN ? AND expires_at > ?", userID, resourceIDs, time.Now()).Find(&leases).Error; err != nil {
 		return snapshot, err
@@ -171,6 +228,19 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 		}
 		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "工具", ID: strconv.FormatInt(tool.ID, 10), Title: tool.Label, PrimaryJSON: string(payload)})
 	}
+	var workbenchTools []model.WorkbenchTool
+	if err := r.db.Where("(icon_resource_id IN ? OR cover_resource_id IN ?) AND enabled = ?", resourceIDs, resourceIDs, true).Find(&workbenchTools).Error; err != nil {
+		return snapshot, err
+	}
+	for _, tool := range workbenchTools {
+		if tool.IconResourceID != "" && slices.Contains(resourceIDs, tool.IconResourceID) {
+			snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "工作台工具图标", ID: tool.ID, Title: tool.Name, ResourceID: tool.IconResourceID})
+		}
+		if tool.CoverResourceID != "" && slices.Contains(resourceIDs, tool.CoverResourceID) {
+			snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "工作台工具封面", ID: tool.ID, Title: tool.Name, ResourceID: tool.CoverResourceID})
+		}
+	}
+
 	var assets []model.Asset
 	assetQuery := r.db.Where("user_id = ?", userID)
 	if len(excludingAssetIDs) > 0 {
@@ -192,7 +262,19 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 	}
 
 	var tasks []model.Task
-	if err := r.db.Select("id", "prompt", "status", "input_json", "result_json").Where("user_id = ?", userID).Find(&tasks).Error; err != nil {
+	taskQuery := r.db.Select("id", "prompt", "status", "input_json", "result_json").Where("user_id = ?", userID)
+	if len(resourceIDs) <= 100 {
+		var conditions []string
+		var args []interface{}
+		for _, rid := range resourceIDs {
+			conditions = append(conditions, "input_json LIKE ? OR result_json LIKE ?")
+			args = append(args, "%"+rid+"%", "%"+rid+"%")
+		}
+		if len(conditions) > 0 {
+			taskQuery = taskQuery.Where(strings.Join(conditions, " OR "), args...)
+		}
+	}
+	if err := taskQuery.Find(&tasks).Error; err != nil {
 		return snapshot, err
 	}
 	taskStatuses := make(map[string]model.TaskStatus, len(tasks))
@@ -217,7 +299,19 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 	}
 
 	var taskLogs []model.TaskLog
-	if err := r.db.Select("id", "task_id", "message", "payload").Where("user_id = ?", userID).Find(&taskLogs).Error; err != nil {
+	taskLogQuery := r.db.Select("id", "task_id", "message", "payload").Where("user_id = ?", userID)
+	if len(resourceIDs) <= 100 {
+		var conditions []string
+		var args []interface{}
+		for _, rid := range resourceIDs {
+			conditions = append(conditions, "payload LIKE ?")
+			args = append(args, "%"+rid+"%")
+		}
+		if len(conditions) > 0 {
+			taskLogQuery = taskLogQuery.Where(strings.Join(conditions, " OR "), args...)
+		}
+	}
+	if err := taskLogQuery.Find(&taskLogs).Error; err != nil {
 		return snapshot, err
 	}
 	for _, taskLog := range taskLogs {
@@ -432,8 +526,33 @@ func (r *Repository) DeleteAssetsAndResources(userID string, assetIDs []string, 
 		if len(assetIDs) == 0 || len(ownedAssets) != len(assetIDs) {
 			return gorm.ErrRecordNotFound
 		}
-		// Explicit deletion and archive expiry must never invalidate a snapshot.
-		if err := New(tx).RequireNoCanvasHistoryReferences(resourceIDs); err != nil {
+		if deleteReferencedResources {
+			// 彻底删除：移除被删资源的画布历史索引，让删除 worker 可以释放物理对象；
+			// 历史快照正文保留，恢复该版本时由画布断链修复处理失效媒体。
+			if len(resourceIDs) > 0 {
+				// 与历史快照写入串行化，避免清除索引后又插入外键引用。
+				if r.Dialect() == "postgres" {
+					var resources []model.Resource
+					if err := tx.Select("id").Where("id IN ?", resourceIDs).Order("id").Clauses(clause.Locking{Strength: "UPDATE"}).Find(&resources).Error; err != nil {
+						return err
+					}
+				}
+				if err := tx.Where("resource_id IN ?", resourceIDs).Delete(&model.CanvasSnapshotResource{}).Error; err != nil {
+					return err
+				}
+				// 彻底删除不受引用拦截（产品约定）。Agent 命令（current / history）与已提交任务输入的
+				// 索引同样被物理删除检查计数，必须在同一事务里一起解除，否则对象删除任务永远重试。
+				for _, guard := range []any{&model.CanvasCommandResource{}, &model.CanvasTaskResource{}} {
+					if !tx.Migrator().HasTable(guard) {
+						continue
+					}
+					if err := tx.Where("resource_id IN ?", resourceIDs).Delete(guard).Error; err != nil {
+						return err
+					}
+				}
+			}
+		} else if err := New(tx).RequireNoCanvasHistoryReferences(resourceIDs); err != nil {
+			// 受保护删除不得让任何画布历史快照失效。
 			return err
 		}
 		versionIDs := tx.Model(&model.AssetVersion{}).Select("id").Where("asset_id IN ?", assetIDs)

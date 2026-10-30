@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // Admission and transactional writeback both recheck the marker: undo may

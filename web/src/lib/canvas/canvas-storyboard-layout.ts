@@ -1,4 +1,4 @@
-import type { CanvasNodeData, StoryboardColumn } from "@/types/canvas";
+import type { StoryboardColumn } from "@/types/canvas";
 
 export const STORYBOARD_ROW_HEIGHT = 48;
 export const STORYBOARD_HEADER_HEIGHT = 124;
@@ -9,6 +9,9 @@ export const STORYBOARD_EDITOR_ACTIONS_WIDTH = 148;
 const STORYBOARD_ADD_ROW_HEIGHT = 36;
 export const STORYBOARD_COMPOSER_MIN_HEIGHT = 104;
 const STORYBOARD_COMPOSER_MAX_HEIGHT = 180;
+/** 全屏编辑器表头与表格内边距占用的高度；表体滚动高度 = 容器高度 - 该值。 */
+const STORYBOARD_EDITOR_TABLE_CHROME_HEIGHT = 64;
+const STORYBOARD_ROW_OVERSCAN = 4;
 
 // 布局计算属于画布领域逻辑，独立于 React 节点组件，避免纯函数测试加载完整 UI 依赖。
 function normalizedComposerHeight(composerHeight: number) {
@@ -24,30 +27,61 @@ export function storyboardMinNodeHeight(composerHeight = STORYBOARD_COMPOSER_MIN
     return STORYBOARD_HEADER_HEIGHT + STORYBOARD_ROW_HEIGHT + STORYBOARD_ADD_ROW_HEIGHT + normalizedComposerHeight(composerHeight);
 }
 
-/** Composer measurements are local UI state. Only a node below its minimum
- * needs a geometry change; measuring must not mark the node as manually sized. */
-export function applyStoryboardComposerMeasurement<T extends Pick<CanvasNodeData, "height" | "metadata">>(node: T, composerHeight: number): T {
-    const measured = normalizedComposerHeight(composerHeight);
-    const height = node.metadata?.locked ? node.height : Math.max(node.height, storyboardMinNodeHeight(measured));
-    if (node.height === height && node.metadata?.storyboardComposerHeight === measured) return node;
-    return { ...node, height, metadata: { ...node.metadata, storyboardComposerHeight: measured } };
-}
-
 export function storyboardTableHeight(nodeHeight: number, composerHeight = STORYBOARD_COMPOSER_MIN_HEIGHT) {
     return Math.max(STORYBOARD_ROW_HEIGHT, nodeHeight - STORYBOARD_HEADER_HEIGHT - STORYBOARD_ADD_ROW_HEIGHT - normalizedComposerHeight(composerHeight));
 }
+
+export type StoryboardRowRange = { start: number; end: number };
 
 /**
  * Rows the in-node card list keeps mounted: the scrolled window plus overscan
  * (`end` is exclusive). Rows have a fixed height, so the rest become spacers;
  * a long storyboard otherwise mounts thousands of controls nobody can see.
  */
-export function storyboardCardRowWindow(rowCount: number, scrollTop: number, viewportHeight: number, overscan = 4) {
+export function storyboardVisibleRowWindow(scrollTop: number, viewportHeight: number, rowHeight: number, rowCount: number, overscan = STORYBOARD_ROW_OVERSCAN): StoryboardRowRange {
+    const count = Math.max(0, Math.floor(rowCount));
+    if (!(rowHeight > 0)) return { start: 0, end: count };
     const top = Math.max(0, scrollTop);
-    const first = Math.floor(top / STORYBOARD_ROW_HEIGHT) - overscan;
-    const last = Math.ceil((top + Math.max(STORYBOARD_ROW_HEIGHT, viewportHeight)) / STORYBOARD_ROW_HEIGHT) + overscan;
-    const start = Math.min(rowCount, Math.max(0, first));
-    return { start, end: Math.min(rowCount, Math.max(start, last)) };
+    const first = Math.floor(top / rowHeight) - overscan;
+    const last = Math.ceil((top + Math.max(rowHeight, viewportHeight)) / rowHeight) + overscan;
+    const start = Math.min(count, Math.max(0, first));
+    return { start, end: Math.min(count, Math.max(start, last)) };
+}
+
+/**
+ * Ranges to mount, in document order: the visible window plus the row being edited.
+ * The edited row stays mounted after it scrolls out so its input keeps focus and
+ * IME state; rows between it and the window stay spacers.
+ */
+export function storyboardMountedRowRanges(window: StoryboardRowRange, rowCount: number, editingIndex: number): StoryboardRowRange[] {
+    if (editingIndex < 0 || editingIndex >= rowCount || (editingIndex >= window.start && editingIndex < window.end)) return [window];
+    if (editingIndex === window.end) return [{ start: window.start, end: window.end + 1 }];
+    if (editingIndex === window.start - 1) return [{ start: editingIndex, end: window.end }];
+    const edited = { start: editingIndex, end: editingIndex + 1 };
+    return editingIndex < window.start ? [edited, window] : [window, edited];
+}
+
+/** 全屏编辑器表体的滚动高度完全跟随容器测量值，不设固定下限，避免全屏下方留白或溢出。 */
+export function storyboardEditorTableScrollY(containerHeight: number) {
+    return Math.max(1, containerHeight - STORYBOARD_EDITOR_TABLE_CHROME_HEIGHT);
+}
+
+type ResizeObserverLike = new (callback: () => void) => { observe: (target: never) => void; disconnect: () => void };
+
+/**
+ * 订阅元素尺寸：立即测量一次，之后每次 resize 再报告。Modal 的 portal 延迟挂载，
+ * 调用方应在元素实际出现（callback ref）后再订阅，重开时重新绑定。
+ */
+export function observeStoryboardElementSize<T extends { clientWidth: number; clientHeight: number }>(
+    element: T,
+    onSize: (size: { width: number; height: number }) => void,
+    Observer: ResizeObserverLike | undefined = typeof ResizeObserver === "undefined" ? undefined : ResizeObserver,
+) {
+    const measure = () => onSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    const observer = Observer ? new Observer(measure) : null;
+    observer?.observe(element as never);
+    return () => observer?.disconnect();
 }
 
 /**
@@ -79,7 +113,7 @@ const STORYBOARD_CARD_COLUMN_WIDTHS: Partial<Record<StoryboardColumn, { min: num
 const DEFAULT_CARD_COLUMN_WIDTH = { min: 120, grow: 1 };
 
 function storyboardCardColumnWidth(column: StoryboardColumn) {
-    return STORYBOARD_CARD_COLUMN_WIDTHS[column] || DEFAULT_CARD_COLUMN_WIDTH;
+    return STORYBOARD_CARD_COLUMN_WIDTHS[column] ?? DEFAULT_CARD_COLUMN_WIDTH;
 }
 
 export function storyboardCardGridTemplate(columns: readonly StoryboardColumn[]) {
@@ -119,7 +153,7 @@ const STORYBOARD_EDITOR_COLUMN_WIDTHS: Partial<Record<StoryboardColumn, number>>
 };
 
 export function storyboardEditorColumnWidth(column: StoryboardColumn) {
-    return STORYBOARD_EDITOR_COLUMN_WIDTHS[column] || 180;
+    return STORYBOARD_EDITOR_COLUMN_WIDTHS[column] ?? 180;
 }
 
 export function storyboardEditorScrollWidth(columns: readonly StoryboardColumn[]) {

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Compass, Eye, EyeOff, Focus, HelpCircle, LayoutTemplate, Minus, Plus } from "lucide-react";
 
 import { FloatingDock, type FloatingDockEntry } from "@/components/ui/aceternity/floating-dock";
@@ -32,6 +32,29 @@ export function CanvasZoomControls({ scale, onScaleChange, onFitContent, onAutoA
     const dockLabelRef = useRef<HTMLSpanElement>(null);
     const panelLabelRef = useRef<HTMLSpanElement>(null);
     const [precisionOpen, setPrecisionOpen] = useState(false);
+
+    useLayoutEffect(() => {
+        const root = rootRef.current;
+        const shell = root?.closest<HTMLElement>(".canvas-workspace-zoom-controls");
+        const main = root?.closest("main");
+        const dock = main?.querySelector<HTMLElement>(".canvas-floating-dock");
+        if (!root || !shell || !main || !dock) return;
+        // Decide from actual occupied width, including user toolbar preferences and side panels.
+        // Only horizontal overlap matters so moving the controls upward cannot oscillate the rule.
+        const measure = () => {
+            const a = root.getBoundingClientRect(), b = dock.getBoundingClientRect();
+            const overlap = a.left < b.right + 8 && a.right + 8 > b.left;
+            const bottom = overlap ? "calc(var(--canvas-inset-y) + var(--space-16))" : "var(--canvas-inset-y)";
+            if (shell.style.bottom !== bottom) shell.style.bottom = bottom;
+        };
+        const resize = new ResizeObserver(measure);
+        for (const element of [root, main, dock, ...main.querySelectorAll(".canvas-workspace-shell,.canvas-project-sidebar")]) resize.observe(element);
+        const state = new MutationObserver(measure);
+        state.observe(main, { attributes: true, attributeFilter: ["class"] });
+        window.addEventListener("resize", measure);
+        measure();
+        return () => { resize.disconnect(); state.disconnect(); window.removeEventListener("resize", measure); shell.style.removeProperty("bottom"); };
+    }, []);
 
     useEffect(() => updateScaleDisplay(scale), [scale]);
 
@@ -101,7 +124,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onFitContent, onAutoA
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 9, scale: 0.96 }}
                         transition={aceternityMotion.spring.panel}
-                        className="aceternity-floating-panel absolute bottom-[var(--canvas-dock-popover-offset)] left-0 w-[220px] overflow-hidden rounded-[var(--panel-radius)] border p-2.5 backdrop-blur-2xl"
+                        className="aceternity-floating-panel absolute bottom-[var(--canvas-dock-popover-offset)] left-0 w-[220px] overflow-hidden rounded-[var(--panel-radius)] border p-2 backdrop-blur-2xl"
                         style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 28px 80px ${theme.spatial.shadow}` }}
                     >
                         <div className="absolute inset-x-10 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${theme.spatial.glowStrong}, transparent)` }} />
@@ -126,7 +149,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onFitContent, onAutoA
                             onChange={(event) => commitScale(Number(event.target.value) / 100)}
                             aria-label="精确缩放画布"
                         />
-                        <div className="mt-2.5 grid grid-cols-4 gap-1">
+                        <div className="mt-2 grid grid-cols-4 gap-1">
                             {QUICK_ZOOM_LEVELS.map((level) => (
                                 <motion.button
                                     key={level}

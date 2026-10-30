@@ -2,9 +2,9 @@ package tasks
 
 import (
 	"context"
-	"infinite-canvas/backend/internal/model"
 	"strings"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func TestMaterializationFailureBacksOffAndRetryNeverRegenerates(t *testing.T) {

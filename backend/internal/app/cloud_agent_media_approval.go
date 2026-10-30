@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // Only user-editable image options cross the approval boundary. Targets,
@@ -51,6 +51,8 @@ func (s *Service) updateCloudAgentMediaApproval(repo *repository.Repository, run
 	// submission, without reserving credits or creating a generation task.
 	preparation := &creationTaskPreparation{}
 	req.creationPrepare = preparation
+	// DecideCloudAgentApproval 已持有 storageMu；干跑 admission 不能再抢同一把锁。
+	req.callerHoldsStorageMu = true
 	task, err := s.CreateTask(run.UserID, req)
 	if err != nil {
 		return err
@@ -110,7 +112,12 @@ func replaceCloudAgentPreparedLeases(repo *repository.Repository, userID, runID,
 
 func validateCloudAgentResolvedMediaOptions(requested, resolved map[string]any) error {
 	for _, key := range []string{"size", "videoSeconds", "vquality", "quality", "count", "videoGenerateAudio"} {
-		if value := stringValue(requested[key]); value != "" && !strings.EqualFold(value, stringValue(resolved[key])) {
+		actual := stringValue(resolved[key])
+		// 带分辨率档位的图片模型在 admission 时把 quality 归一为 imageResolution。
+		if key == "quality" && actual == "" {
+			actual = stringValue(resolved["imageResolution"])
+		}
+		if value := stringValue(requested[key]); value != "" && !strings.EqualFold(value, actual) {
 			return creationConflict("模型解析后的生成规格与审批参数不同，请重新读取目录并审批")
 		}
 	}

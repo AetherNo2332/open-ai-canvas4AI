@@ -4,9 +4,11 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canGenerateMediaInPlace } from "@/lib/canvas/canvas-generation-layout";
 import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { nextCanvasVersionLabel } from "@/lib/canvas/canvas-layout";
-import { buildAudioGenerationMetadata, buildVideoGenerationMetadata, generationReferenceUrls, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
+import { buildAudioGenerationMetadata, buildVideoGenerationMetadata, generationReferenceUrls, resetGenerationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
 import { canvasGenerationPromptMetadata } from "@/lib/canvas/canvas-generation-submission";
+import { mediaVersionFieldsBeforeReplace } from "@/lib/canvas/canvas-media-versions";
 import { producedModelCandidateForGeneration } from "@/lib/canvas/produced-model";
+import { isDoubaoAudioConfig } from "@/lib/audio-generation";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
@@ -51,7 +53,10 @@ export async function executeVideoGeneration({
         width: reuseSourceNode ? sourceNode!.width : spec.width,
         height: reuseSourceNode ? sourceNode!.height : spec.height,
         metadata: {
-            ...(reuseSourceNode ? sourceNode?.metadata || {} : {}),
+            // 就地重生成不能继承旧任务的计时字段；媒体内容与提示词不在清理范围内。
+            ...resetGenerationTaskMetadata(reuseSourceNode ? sourceNode?.metadata : undefined, NODE_STATUS_LOADING),
+            ...(reuseSourceNode ? mediaVersionFieldsBeforeReplace(sourceNode) : {}),
+            taskCreatedAt: new Date().toISOString(),
             ...canvasGenerationPromptMetadata(prompt, effectivePrompt),
             status: NODE_STATUS_LOADING,
             errorDetails: undefined,
@@ -152,24 +157,31 @@ export async function executeAudioGeneration({
     retryContext,
 }: CanvasGenerationExecution) {
     const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
-    const isEmptyAudioNode = sourceNode?.type === CanvasNodeType.Audio && !sourceNode.metadata?.content;
+    // 空音频节点与已有生成结果都原位产出；旧音频进入版本历史，生成期间仍可试听。
+    const reuseSourceNode = canGenerateMediaInPlace(sourceNode, CanvasNodeType.Audio);
     const isExistingAudioNode = sourceNode?.type === CanvasNodeType.Audio && Boolean(sourceNode.metadata?.content);
-    const audioId = isEmptyAudioNode ? nodeId : nanoid();
+    const audioId = reuseSourceNode ? nodeId : nanoid();
     const parent = sourceNode?.position || { x: 0, y: 0 };
     const audioNode: CanvasNodeData = {
         id: audioId,
         type: CanvasNodeType.Audio,
         title: effectivePrompt.slice(0, 32) || "Generated Audio",
-        position: isEmptyAudioNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y + ((sourceNode?.height || spec.height) - spec.height) / 2 },
-        width: isEmptyAudioNode ? sourceNode.width : spec.width,
-        height: isEmptyAudioNode ? sourceNode.height : spec.height,
-        metadata: { ...canvasGenerationPromptMetadata(prompt, effectivePrompt), status: NODE_STATUS_LOADING, ...buildAudioGenerationMetadata(generationConfig), ...skillMetadata },
+        position: reuseSourceNode ? sourceNode!.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y + ((sourceNode?.height || spec.height) - spec.height) / 2 },
+        width: reuseSourceNode ? sourceNode!.width : spec.width,
+        height: reuseSourceNode ? sourceNode!.height : spec.height,
+        metadata: {
+            ...(reuseSourceNode && isExistingAudioNode ? { ...resetGenerationTaskMetadata(sourceNode?.metadata, NODE_STATUS_LOADING), ...mediaVersionFieldsBeforeReplace(sourceNode) } : {}),
+            ...canvasGenerationPromptMetadata(prompt, effectivePrompt),
+            status: NODE_STATUS_LOADING,
+            ...buildAudioGenerationMetadata(generationConfig),
+            ...skillMetadata,
+        },
     };
     registerPendingNodeIds([audioId]);
     setNodes((current) =>
-        isEmptyAudioNode ? current.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node)) : [...current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode],
+        reuseSourceNode ? current.map((node) => (node.id === nodeId ? { ...node, ...audioNode } : node)) : [...current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode],
     );
-    if (!isEmptyAudioNode && !isExistingAudioNode) setConnections((current) => [...current, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
+    if (!reuseSourceNode && !isExistingAudioNode) setConnections((current) => [...current, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
 
     startGenerationRequest(audioId, nodeId, nodeId, controller);
     try {
@@ -179,8 +191,10 @@ export async function executeAudioGeneration({
                 nodeId: audioId,
                 ...retryContext,
                 mode: "audio",
-                prompt: effectivePrompt,
+                prompt: doubaoAudioPrompt(generationConfig, effectivePrompt, generationContext.referenceAudios.length, generationContext.referenceImages.length),
                 config: generationConfig,
+                referenceImages: generationContext.referenceImages,
+                referenceAudios: generationContext.referenceAudios,
                 signal: controller.signal,
                 metadata: { sourceNodeId: nodeId, ...taskContext, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, resolvedCharacterVoiceKey: generationContext.resolvedCharacterVoices[0]?.voiceKey, ...skillMetadata },
             },
@@ -192,4 +206,15 @@ export async function executeAudioGeneration({
     } finally {
         finishGenerationRequest(audioId, controller);
     }
+}
+
+function doubaoAudioPrompt(config: CanvasGenerationExecution["generationConfig"], prompt: string, audioCount: number, imageCount: number) {
+    if (!isDoubaoAudioConfig(config)) return prompt;
+    // 参考图片模式的 text_prompt 只保留要合成的文本，图片走 references。
+    if (imageCount > 0) return prompt.replace(/@(图片|音频|视频|绘图|角色|文本)\d+/g, " ").replace(/[ \t]{2,}/g, " ").trim();
+    if (audioCount <= 0) return prompt;
+    // 官方参考音频用 @Audio1、@Audio2，和 references 的顺序一致。画布里的 @音频N 只是编辑器槽位。
+    const next = prompt.replace(/@音频(\d+)/g, "@Audio$1");
+    const missing = Array.from({ length: audioCount }, (_, index) => `@Audio${index + 1}`).filter((marker) => !next.includes(marker));
+    return missing.length ? `${missing.join(" ")} ${next}` : next;
 }

@@ -1,6 +1,6 @@
 import { useUserStore } from "@/stores/use-user-store";
 import { useEffect, useState } from "react";
-import { Dropdown } from "antd";
+import { CanvasToolPopover } from "./canvas-tool-popover";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { LoaderCircle, Palette, Wrench, X } from "lucide-react";
 
@@ -68,13 +68,13 @@ export function CanvasChooseImageStylePicker({
     };
 
     return (
-        <Dropdown
+        <CanvasToolPopover
+            label="选择风格"
             open={actualOpen}
             onOpenChange={setOpen}
             trigger={["click"]}
             autoAdjustOverflow
-            menu={{ items: [] }}
-            popupRender={() => (
+            content={
                 <div
                     className="canvas-node-toolbar-menu canvas-node-toolbar-menu-style"
                     data-canvas-no-zoom
@@ -85,7 +85,7 @@ export function CanvasChooseImageStylePicker({
                     onKeyDown={(event) => event.stopPropagation()}
                 >
                     <div className="canvas-node-toolbar-menu-stack">
-                        <div className="asset-filters border-b border-border/70 px-2 py-1.5">
+                        <div className="asset-filters border-b border-border/70 px-2 py-2">
                             <div className="asset-filter-row">
                                 <div className="col-feed-tabs shrink-0">
                                     {FEED_TABS.map((tab) => (
@@ -101,7 +101,7 @@ export function CanvasChooseImageStylePicker({
                                     </button>
                                 ) : null}
                             </div>
-                            <div className="col-tag-filter mt-1.5">
+                            <div className="col-tag-filter mt-2">
                                 {[{ id: "", label: "全部" }, ...SUB_TAB_TAGS.style].map((chip) => (
                                     <button key={chip.id || "all"} type="button" className={`col-tag-chip${tagFilter === chip.id ? " on" : ""}`} aria-pressed={tagFilter === chip.id} onClick={() => setTagFilter(chip.id)}>
                                         {chip.label}
@@ -109,7 +109,7 @@ export function CanvasChooseImageStylePicker({
                                 ))}
                             </div>
                         </div>
-                        <div className="thin-scrollbar grid max-h-80 grid-cols-5 gap-1.5 overflow-y-auto p-2" role="listbox" aria-label="风格工具">
+                        <div className="thin-scrollbar grid max-h-80 grid-cols-5 gap-2 overflow-y-auto p-2" role="listbox" aria-label="风格工具">
                             {toolsQuery.isPending ? (
                                 <div className="col-span-3 grid h-24 place-items-center text-foreground/40">
                                     <LoaderCircle className="size-4 animate-spin" />
@@ -129,7 +129,7 @@ export function CanvasChooseImageStylePicker({
                         )}
                     </div>
                 </div>
-            )}
+            }
         >
             <div
                 role="button"
@@ -137,7 +137,7 @@ export function CanvasChooseImageStylePicker({
                 className="canvas-node-composer-header-action canvas-node-fixed-chip relative overflow-hidden cursor-pointer"
                 title={resolvedLabel ? `风格：${resolvedLabel}` : "选择风格"}
                 aria-expanded={actualOpen}
-                aria-haspopup="menu"
+                aria-haspopup="dialog"
                 onClick={() => setOpen(true)}
                 onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
@@ -162,7 +162,7 @@ export function CanvasChooseImageStylePicker({
                     </button>
                 ) : null}
             </div>
-        </Dropdown>
+        </CanvasToolPopover>
     );
 }
 
@@ -174,7 +174,7 @@ function StyleToolCard({ tool, selected, onSelect }: { tool: ToolSummary; select
             role="option"
             aria-selected={selected}
             title={tool.label}
-            className={`group flex flex-col gap-1 rounded-[var(--r-md)] border p-1.5 text-left transition-colors hover:bg-[var(--surface-hover)] focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:outline-none ${selected ? "border-primary/60 ring-1 ring-primary/40" : "border-transparent"}`}
+            className={`group flex flex-col gap-1 rounded-[var(--r-md)] border p-2 text-left transition-colors hover:bg-[var(--surface-hover)] focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:outline-none ${selected ? "border-primary/60 ring-1 ring-primary/40" : "border-transparent"}`}
             onClick={() => onSelect(tool)}
         >
             <div className="relative aspect-[4/3] w-full overflow-hidden rounded-[var(--r-sm)] border border-border/60">
@@ -186,7 +186,7 @@ function StyleToolCard({ tool, selected, onSelect }: { tool: ToolSummary; select
                     </div>
                 )}
             </div>
-            <span className="truncate  text-center text-[11px] font-medium leading-4 text-foreground">{tool.label}</span>
+            <span className="truncate  text-center text-[var(--fs-label)] font-medium leading-4 text-foreground">{tool.label}</span>
         </button>
     );
 }

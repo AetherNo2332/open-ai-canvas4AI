@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // syncMapForTest 让每个用例从"没有拒绝记录"的干净状态开始（进程内缓存是包级变量）。

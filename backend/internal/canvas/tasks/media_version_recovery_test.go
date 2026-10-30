@@ -2,9 +2,9 @@ package tasks
 
 import (
 	"context"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/model"
 	"testing"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/model"
 )
 
 func TestMediaVersionSaveRecoveryReusesOriginalTaskAndReceipt(t *testing.T) {
@@ -18,8 +18,7 @@ func TestMediaVersionSaveRecoveryReusesOriginalTaskAndReceipt(t *testing.T) {
 		t.Fatalf("save failure outcome %s", outcome)
 	}
 	snap := f.snapshot(t)
-	state := mediaversions.ReadState(findNode(snap.Document, "output"))
-	if state.ActiveTaskID != handle.TaskID {
+	if metadata(findNode(snap.Document, "output"))["taskId"] != handle.TaskID {
 		t.Fatal("save failure released original task")
 	}
 	attempt := f.request
@@ -36,7 +35,7 @@ func TestMediaVersionSaveRecoveryReusesOriginalTaskAndReceipt(t *testing.T) {
 	}
 	current := f.snapshot(t)
 	node := findNode(current.Document, "output")
-	if metadata(node)["storageKey"] != "resource:saved-media" || mediaversions.ReadState(node).ActiveTaskID != "" {
+	if metadata(node)["storageKey"] != "resource:saved-media" || metadata(node)["status"] != "success" || len(mediaversions.List(node)) != 1 {
 		t.Fatalf("recovered output: %+v", node)
 	}
 	if tasks, _, outputs, _ := f.counts(t); tasks != 1 || outputs != 1 || f.submitter.calls != 1 {

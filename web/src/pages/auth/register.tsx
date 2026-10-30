@@ -1,27 +1,27 @@
 import { type FormEvent, useEffect, useRef, useState, type ReactNode } from "react";
-import { App, Button, Checkbox, Divider, Input, Modal } from "antd";
-import { FileText, LockKeyhole, TriangleAlert, UserRound } from "lucide-react";
+import { App, Button, Checkbox, Divider, Input, Modal, Segmented } from "antd";
+import { ArrowRight, FileText, Info, LockKeyhole, Mail, TriangleAlert, UserRound } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { getAuthSession, getAuthSettings, linuxDOLoginURL, register } from "@/services/api/auth";
 import { LinuxDOIcon } from "./auth-scene";
 import { ApiError } from "@/services/api/request";
 import { VerificationFields } from "@/components/auth/verification-fields";
-import { emptyVerification, verificationMethods, type VerificationMethod } from "@/services/api/verification";
+import { emptyVerification, methodLabels, verificationMethods, type VerificationMethod } from "@/services/api/verification";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
-import { useAuthValidationFeedback } from "./use-auth-motion";
 
 type AuthSettings = Awaited<ReturnType<typeof getAuthSettings>>;
+
+const REFERRAL_CODE_STORAGE_KEY = "yingce:referral-code";
 
 export default function RegisterPage() {
     const navigate = useNavigate();
     const [params] = useSearchParams();
     const { message } = App.useApp();
-    const onValidationError = useAuthValidationFeedback();
-    const previewEmailVerification = params.get("preview") === "email-verification";
     const brandName = useAppearanceStore((state) => state.appearance.brandName) || "平台";
     const [settings, setSettings] = useState<AuthSettings | null>(null);
     const [username, setUsername] = useState("");
+    const [email, setEmail] = useState("");
     const [verification, setVerification] = useState({ ...emptyVerification });
     const [method, setMethod] = useState<VerificationMethod>("email");
     const [displayName, setDisplayName] = useState("");
@@ -35,6 +35,12 @@ export default function RegisterPage() {
     const [registerCountdown, setRegisterCountdown] = useState(0);
     const registering = useRef(false);
     const next = safeNext(params.get("next"));
+    // 推广码只存会话级缓存：用户从推广链接跳到登录页再回来注册时仍能归属，关闭浏览器后失效。
+    const [referralCode] = useState(() => {
+        const fromUrl = (params.get("ref") || "").trim();
+        if (fromUrl) window.sessionStorage.setItem(REFERRAL_CODE_STORAGE_KEY, fromUrl);
+        return fromUrl || window.sessionStorage.getItem(REFERRAL_CODE_STORAGE_KEY) || "";
+    });
 
     // 协议标题与条款由后台「登录与注册」配置下发。标题未配置时才回退到当前品牌名，
     // 且只在确认拿到设置（settings 非空）后回退；接口失败时不猜标题，避免展示
@@ -48,13 +54,7 @@ export default function RegisterPage() {
         let cancelled = false;
         setSettingsFailed(false);
         void getAuthSettings()
-            .then((value) => {
-                if (!cancelled) {
-                    setSettings(value);
-                    const availableMethods = verificationMethods(value, "register");
-                    setMethod(availableMethods.includes("email") ? "email" : (availableMethods[0] ?? "email"));
-                }
-            })
+            .then((value) => { if (!cancelled) { setSettings(value); setMethod(verificationMethods(value, "register")[0] ?? "email"); } })
             .catch((error) => {
                 if (cancelled) return;
                 // 这里必须留下失败态：协议标题只能来自后台配置，读不到时不能用品牌名
@@ -69,39 +69,27 @@ export default function RegisterPage() {
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        if (disabled) return;
+        if (registering.current || registerCountdown > 0) return;
         if (!agreementAccepted) {
-            onValidationError();
             message.warning(`请先同意${agreementTitle}`);
             return;
         }
         if (password !== confirmPassword) {
-            onValidationError();
             message.error("两次输入的密码不一致");
             return;
         }
-        if (!settings?.firstUser && !verification.ticket) {
-            onValidationError();
-            message.warning("请先获取本次注册验证码");
-            return;
-        }
-        if (Array.from(password).length < 8) {
-            onValidationError();
-            message.warning("密码至少 8 位");
-            return;
-        }
-        if (registering.current || registerCountdown > 0) return;
         registering.current = true;
         setSubmitting(true);
         try {
-            await register({ username: username.trim(), ...(settings?.firstUser ? { email: verification.email.trim().toLowerCase() } : verification), displayName: displayName.trim(), password, acceptedTerms: agreementAccepted });
+            if (!settings?.firstUser && !verification.ticket) throw new Error("请先获取本次注册验证码");
+            await register({ username, ...(settings?.firstUser ? { email } : verification), displayName, password, acceptedTerms: agreementAccepted, ...(referralCode ? { referralCode } : {}) });
+            window.sessionStorage.removeItem(REFERRAL_CODE_STORAGE_KEY);
             const { applyUserSession } = await import("@/lib/user-session");
             await applyUserSession(await getAuthSession());
-            if (!settings?.firstUser) window.sessionStorage.setItem("infinite-canvas:model-setup-guide", "1");
+            if (!settings?.firstUser) window.sessionStorage.setItem("yingce:model-setup-guide", "1");
             message.success(settings?.firstUser ? "管理员账号已创建" : "注册成功");
             navigate(next, { replace: true });
         } catch (error) {
-            onValidationError();
             if (error instanceof ApiError && error.status === 429) setRegisterCountdown(Math.max(1, Math.ceil((error.retryAfterMs ?? 60000) / 1000)));
             message.error(error instanceof Error ? error.message : "注册失败");
         } finally {
@@ -117,12 +105,17 @@ export default function RegisterPage() {
     }, [registerCountdown]);
 
     const registrationClosed = settings?.registrationEnabled === false;
-    const methods = previewEmailVerification ? ["email" as const] : settings ? verificationMethods(settings, "register") : [];
+    const methods = settings ? verificationMethods(settings, "register") : [];
     const verificationUnavailable = Boolean(settings && !settings.firstUser && methods.length === 0);
-    const disabled = !settings || registrationClosed || verificationUnavailable || submitting || previewEmailVerification;
+    const disabled = !settings || registrationClosed || verificationUnavailable;
 
     return (
-        <form onSubmit={submit} className="auth-scene-fields auth-register-form">
+        <form onSubmit={submit} className="space-y-4">
+            {settings?.firstUser ? (
+                <Notice icon={<Info className="size-3.5" />} tone="blue">
+                    首个账号自动成为管理员，邮箱验证码暂不要求。
+                </Notice>
+            ) : null}
             {registrationClosed ? (
                 <Notice icon={<TriangleAlert className="size-3.5" />} tone="amber">
                     当前已关闭普通注册，请联系管理员创建账号。
@@ -133,57 +126,52 @@ export default function RegisterPage() {
                     当前没有可用的注册验证方式，请联系管理员检查短信及邮件配置。
                 </Notice>
             ) : null}
-            <div className="auth-register-row">
+
+            <div className="grid gap-4 sm:grid-cols-2">
                 <AuthField label="用户名">
-                    <Input
-                        name="username"
-                        size="large"
-                        value={username}
-                        onChange={(event) => setUsername(event.target.value)}
-                        prefix={<UserRound className="size-4" aria-hidden />}
-                        placeholder="3-32位字符"
-                        pattern="[a-zA-Z0-9_\-]{3,32}"
-                        title="用户名需为 3-32 位字母、数字、下划线或连字符"
-                        minLength={3}
-                        maxLength={32}
-                        autoComplete="username"
-                        required
-                        disabled={disabled}
-                    />
+                    <Input size="large" prefix={<UserRound className="auth-scene-icon size-4" />} value={username} onChange={(event) => setUsername(event.target.value)} placeholder="3-32 位字符" autoComplete="username" required disabled={disabled} />
                 </AuthField>
                 <AuthField label="显示名称">
-                    <Input name="displayName" size="large" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="不填则使用用户名" maxLength={40} autoComplete="nickname" disabled={disabled} />
+                    <Input size="large" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="不填则使用用户名" disabled={disabled} />
                 </AuthField>
             </div>
-            {settings?.firstUser && !previewEmailVerification ? (
-                <AuthField label="邮箱">
-                    <Input
-                        name="email"
+
+            {settings?.firstUser ? <AuthField label="邮箱（可选）">
+                <Input
+                    size="large"
+                    prefix={<Mail className="auth-scene-icon size-4" />}
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="用于登录与安全验证"
+                    autoComplete="email"
+                    required={!settings?.firstUser}
+                    disabled={disabled}
+                />
+            </AuthField> : <>
+                {methods.length > 1 && <Segmented block aria-label="注册验证方式" options={methods.map((value) => ({ value, label: methodLabels[value] }))} value={method} disabled={submitting} onChange={(value) => { setMethod(value as VerificationMethod); setVerification({ ...emptyVerification }); }} />}
+                {methods.length > 0 && <VerificationFields key={method} purpose="register" method={method} value={verification} onChange={setVerification} disabled={disabled || submitting} />}
+            </>}
+
+            <div className="grid gap-4 sm:grid-cols-2">
+                <AuthField label="密码">
+                    <Input.Password
                         size="large"
-                        type="email"
-                        value={verification.email}
-                        onChange={(event) => setVerification({ ...emptyVerification, email: event.target.value })}
-                        placeholder="请输入邮箱"
-                        autoComplete="email"
+                        prefix={<LockKeyhole className="auth-scene-icon size-4" />}
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        placeholder="至少 8 位"
+                        autoComplete="new-password"
                         required
                         disabled={disabled}
                     />
-                </AuthField>
-            ) : (
-                <VerificationFields key={method} purpose="register" method={method} value={verification} onChange={setVerification} disabled={disabled} />
-            )}
-            <div className="auth-register-row">
-                <AuthField label="密码">
-                    <Input.Password name="password" size="large" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 8 位" minLength={8} autoComplete="new-password" required disabled={disabled} />
                 </AuthField>
                 <AuthField label="确认密码">
                     <Input.Password
-                        name="confirmPassword"
                         size="large"
+                        prefix={<LockKeyhole className="auth-scene-icon size-4" />}
                         value={confirmPassword}
                         onChange={(event) => setConfirmPassword(event.target.value)}
                         placeholder="再次输入密码"
-                        minLength={8}
                         autoComplete="new-password"
                         required
                         disabled={disabled}
@@ -213,8 +201,8 @@ export default function RegisterPage() {
                 </div>
             ) : null}
 
-            <Button type="primary" htmlType="submit" size="large" block loading={submitting} disabled={disabled || registerCountdown > 0 || !agreementAccepted}>
-                {registerCountdown > 0 ? `${registerCountdown} 秒后可重试` : "完成注册"}
+            <Button type="primary" htmlType="submit" size="large" block loading={submitting} disabled={disabled || registerCountdown > 0 || !agreementAccepted} icon={<ArrowRight className="size-4" />} iconPlacement="end">
+                {registerCountdown > 0 ? `${registerCountdown} 秒后可重试` : "创建账号"}
             </Button>
             {settings?.linuxdoEnabled && !settings.smsAndEmailRegistration ? (
                 <>
@@ -226,7 +214,14 @@ export default function RegisterPage() {
                     </Button>
                 </>
             ) : null}
-            <Modal className="workspace-modal workspace-modal-compact auth-agreement-modal" title={agreementTitle} open={agreementOpen} onCancel={() => setAgreementOpen(false)} footer={null} destroyOnHidden>
+            <Modal
+                className="workspace-modal workspace-modal-compact auth-agreement-modal"
+                title={agreementTitle}
+                open={agreementOpen}
+                onCancel={() => setAgreementOpen(false)}
+                footer={null}
+                destroyOnHidden
+            >
                 {agreementParagraphs.length === 0 ? (
                     <div className="auth-agreement-empty">
                         <FileText className="size-3.5 shrink-0" aria-hidden />
@@ -260,7 +255,6 @@ function AuthField({ label, children }: { label: string; children: ReactNode }) 
     return (
         <label className="block space-y-2">
             <span className="auth-scene-label text-xs font-medium">{label}</span>
-            <span className="auth-scene-icon sr-only" aria-hidden="true" />
             {children}
         </label>
     );
@@ -268,7 +262,7 @@ function AuthField({ label, children }: { label: string; children: ReactNode }) 
 
 function Notice({ icon, tone, children }: { icon: ReactNode; tone: "blue" | "amber"; children: ReactNode }) {
     return (
-        <div data-tone={tone} className="auth-scene-notice flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs leading-5">
+        <div data-tone={tone} className="auth-scene-notice flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-5">
             <span className="mt-0.5 shrink-0">{icon}</span>
             {children}
         </div>

@@ -6,9 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type CreationCanvasOp struct {
@@ -234,19 +233,8 @@ func (s *Service) CommitCreationCanvas(userID, id string, req CreationRequest) (
 		if err = validateCreationCanvasDiff(repo, userID, run, before, doc, ops); err != nil {
 			return err
 		}
-		// 智能创作提交的整份文档是导入格式：引用只以旧连线表达。直接把它当声明式文档
-		// 会丢掉全部引用，所以先按“以连线为准”完成一次规范化并写入版本标记，此后它
-		// 就是普通新画布，不再需要迁移。
-		normalized, err := normalizeCreationCanvasReferences(doc)
-		if err != nil {
-			return err
-		}
-		payload, err := json.Marshal(normalized)
-		if err != nil {
-			return err
-		}
 		previous := canvas.PayloadJSON
-		canvas.PayloadJSON = string(payload)
+		canvas.PayloadJSON = string(req.Document)
 		policy, err := s.RuntimePolicy()
 		if err != nil {
 			return err
@@ -255,38 +243,16 @@ func (s *Service) CommitCreationCanvas(userID, id string, req CreationRequest) (
 		if err != nil {
 			return err
 		}
-		if err = validateStructuredStorageQuotaWithPolicy(usage, "canvas", false, int64(len(payload)-len(previous)), policy.Resource); err != nil {
+		if err = validateStructuredStorageQuotaWithPolicy(usage, "canvas", false, int64(len(req.Document)-len(previous)), policy.Resource); err != nil {
 			return err
 		}
 		if err = saveCreationCanvasWithHistory(repo, canvas, previous); err != nil {
 			return err
 		}
-		out = map[string]any{"snapshotHash": creationHash(normalized)}
+		out = map[string]any{"snapshotHash": creationHash(doc)}
 		return nil
 	})
 	return out, creationError(err)
-}
-
-// normalizeCreationCanvasReferences 把智能创作导入的画布一次性翻译成声明式引用文档。
-// 它只在导入时调用一次：返回的文档带版本标记，之后的读写都走字段与托管连线。
-func normalizeCreationCanvasReferences(doc map[string]any) (map[string]any, error) {
-	if references.Enabled(doc) {
-		return doc, nil
-	}
-	preview := references.PreviewLegacy(doc, nil)
-	choices := map[string]string{}
-	for _, conflict := range preview.Conflicts {
-		// 导入文档的真相只有客户端传来的连线，声明侧不会比它更权威。
-		choices[conflict.ScopeKey] = references.MigrationChoiceConnections
-	}
-	result, err := references.NormalizeLegacy(doc, choices, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	if len(result.Conflicts) > 0 {
-		return nil, creationConflict("画布引用无法自动规范化，请在画布中手动完成迁移")
-	}
-	return result.Document, nil
 }
 func creationObjects(value any) (map[string]map[string]any, error) {
 	list, ok := value.([]any)

@@ -3,14 +3,14 @@ package app
 import (
 	"encoding/json"
 	"fmt"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"math"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type cloudAgentDrawingOp struct {

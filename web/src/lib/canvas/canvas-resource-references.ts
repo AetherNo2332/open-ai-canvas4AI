@@ -1,9 +1,8 @@
-import { createCanvasReferenceLabeler } from "./canvas-reference-slots";
-import { detachRemovedBatchCellConnections } from "./canvas-batch-references";
+import { createCanvasReferenceLabeler } from "@/lib/canvas/canvas-reference-slots";
 import { normalizeCharacterImageMentions } from "@/lib/canvas/canvas-character-reference";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
+import { nodeGenerationPrompt } from "@/lib/canvas/generation-contract";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
-import { buildCanvasDeclaredInputResolver, canvasDeclaredInputNodeIds } from "./canvas-reference-inputs";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
 import type { Skill } from "@/services/api/skills";
 import type { Asset, AssetCategory } from "@/stores/use-asset-store";
@@ -81,6 +80,27 @@ export function applyToolMention(prompt: string, tool: { id: number; type: strin
 
 export function canvasNodeMentionToken(nodeId: string) {
     return `@[node:${nodeId}]`;
+}
+
+const ASSET_MENTION_PATTERN = /@\[asset:([^\]]+)\]/g;
+const ASSET_ID_MAX_BYTES = 80;
+
+/**
+ * 提示词里 @[asset:ID] 只存在于字符串中，不会出现在 assetId 字段里。
+ * 打开画布和生成前据此按需拉取素材；超出服务端 ID 约束的令牌直接忽略，交给生成校验报错。
+ */
+export function canvasPromptAssetMentionIds(text: string): string[] {
+    if (!text.includes("@[asset:")) return [];
+    const encoder = new TextEncoder();
+    const ids = [...text.matchAll(ASSET_MENTION_PATTERN)]
+        .map((match) => match[1])
+        .filter((id) => id === id.trim() && encoder.encode(id).length <= ASSET_ID_MAX_BYTES);
+    return [...new Set(ids)];
+}
+
+/** 只有角色卡能作为生成引用；场景、道具设定尚无图片或角色合同。旧记录缺分类时与服务端一致按角色处理。 */
+export function isCharacterEntityAsset(asset: Asset) {
+    return asset.kind === "entity" && (asset.category ?? "character") === "character";
 }
 
 /** 这些工具类型的标签在提示词中唯一，再次选择时直接覆盖旧标签而不是追加。 */
@@ -260,22 +280,17 @@ function rewriteCanvasPromptAfterReferenceChange(prompt: string, previousReferen
     return value === prompt ? prompt : compactRemovedCanvasMentionPrompt(value);
 }
 
-export function applyCanvasConnectionPromptSync(previousNodes: CanvasNodeData[], previousConnections: CanvasConnection[], nextNodes: CanvasNodeData[], nextConnections: CanvasConnection[], options: { replaceNodeIds?: Map<string, string> } = {}) {
-    // 删除格子连线时同步清空该格引用，否则行数据会把连线重新投影出来。
+export function applyCanvasConnectionPromptSync(previousNodes: CanvasNodeData[], previousConnections: CanvasConnection[], nextNodes: CanvasNodeData[], nextConnections: CanvasConnection[], options: { clearPromptTemplate?: boolean } = {}) {
     nextNodes = detachRemovedBatchCellConnections(nextNodes, previousConnections, nextConnections);
     const previousMap = buildCanvasNodeMentionReferenceMap(previousNodes, previousConnections, nextNodes);
     const nextMap = buildCanvasNodeMentionReferenceMap(nextNodes, nextConnections, nextNodes);
     let changed = false;
     const mapped = nextNodes.map((node) => {
-        let previousPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
-        for (const [oldNodeId, newNodeId] of options.replaceNodeIds || []) {
-            const oldReference = previousMap.get(node.id)?.find((reference) => reference.nodeId === oldNodeId);
-            if (oldReference && nextMap.get(node.id)?.some((reference) => reference.nodeId === newNodeId)) previousPrompt = replaceCanvasReferenceMentions(previousPrompt, oldReference, `@[node:${newNodeId}]`);
-        }
+        const previousPrompt = nodeGenerationPrompt(node);
         const nextPrompt = rewriteCanvasPromptAfterReferenceChange(previousPrompt, previousMap.get(node.id) || [], nextMap.get(node.id) || []);
         if (nextPrompt === previousPrompt) return node;
         changed = true;
-        return writeCanvasNodePrompt(node, nextPrompt);
+        return writeCanvasNodePrompt(node, nextPrompt, options);
     });
     return changed ? mapped : nextNodes;
 }
@@ -343,7 +358,8 @@ function compactRemovedCanvasMentionPrompt(value: string) {
 
 export function buildAssetMentionReferences(assets: Asset[]): CanvasResourceReference[] {
     return assets.flatMap((asset): CanvasResourceReference[] => {
-        if (asset.kind === "model") return [];
+        // @ 菜单只列生成阶段能解析的素材，否则选中后必然报“没有对应的资源”。
+        if (asset.kind === "model" || (asset.kind === "entity" && !isCharacterEntityAsset(asset))) return [];
         const kind: CanvasResourceKind = asset.kind === "entity" ? "character" : asset.kind;
         const previewUrl = asset.kind === "image" ? asset.data.dataUrl : asset.kind === "video" ? canvasVideoAssetPreviewUrl(asset.data.url, asset.coverUrl) : asset.coverUrl;
         const text = asset.kind === "text" ? asset.data.content : undefined;
@@ -394,7 +410,7 @@ export function buildCanvasAgentMentionReferences(nodes: CanvasNodeData[]): Canv
             previewStorageKey: node.type === CanvasNodeType.Video ? node.metadata?.videoPreview?.storageKey : undefined,
             drawingId: node.type === CanvasNodeType.Drawing ? node.metadata?.drawingId : undefined,
             drawingRevision: node.type === CanvasNodeType.Drawing ? node.metadata?.drawingRevision : undefined,
-            text: node.metadata?.content || node.metadata?.composerContent || node.metadata?.prompt || node.title,
+            text: node.metadata?.content || nodeGenerationPrompt(node) || node.title,
             active: true,
             sourceType: node.type,
             mentionToken: canvasNodeMentionToken(node.id),
@@ -417,16 +433,7 @@ export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNo
 
 export function buildCanvasNodeMentionReferenceMap(nodes: CanvasNodeData[], connections: CanvasConnection[], targetNodes: CanvasNodeData[] = nodes) {
     const resolve = buildCanvasResourceInputResolver(nodes, connections);
-    const declaredInputs = buildCanvasDeclaredInputResolver(nodes);
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    return new Map(targetNodes.map((node) => {
-        const ids = declaredInputs(node.id);
-        const inputs = ids === undefined ? resolve(node.id) : ids.flatMap((id) => {
-            const input = nodeById.get(id);
-            return input ? [input] : [];
-        });
-        return [node.id, labelResourceNodes(inputs, true)];
-    }));
+    return new Map(targetNodes.map((node) => [node.id, labelResourceNodes(resolve(node.id), true)]));
 }
 
 /** 批次关系属于分组，不是媒体输入；展示与提交共用这一份输入顺序解析。 */
@@ -477,16 +484,12 @@ export function imageGenerationReferenceConnections(sourceNodeId: string, target
 }
 
 export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    const ids=canvasDeclaredInputNodeIds(nodeId,nodes);
-    if(ids!==undefined)return ids.flatMap(id=>{const node=nodes.find(n=>n.id===id);return node?[node]:[]});
     // 没有入边时，资源节点可以把自身当作 @图片1 / @视频1，用于图生图、视频再编辑。
     // 有入边时仍只暴露上游，避免自身把槽位序号挤掉。
     return buildCanvasResourceInputResolver(nodes, connections)(nodeId, true);
 }
 
 export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    const ids=canvasDeclaredInputNodeIds(nodeId,nodes);
-    if(ids!==undefined)return ids.flatMap(id=>{const node=nodes.find(n=>n.id===id);return node?[node]:[]});
     return buildCanvasResourceInputResolver(nodes, connections)(nodeId);
 }
 
@@ -511,8 +514,6 @@ export function collectUpstreamVideoNodes(nodeId: string, nodes: CanvasNodeData[
  * 扩展节点经 CanvasNodeGraphContext 复用它，不要另写一份取上游的逻辑。
  */
 export function getContextResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    const ids=canvasDeclaredInputNodeIds(nodeId,nodes);
-    if(ids!==undefined)return ids.flatMap(id=>{const node=nodes.find(n=>n.id===id);return node&&isResourceNode(node)?[node]:[]});
     return connections
         .filter((connection) => connection.toNodeId === nodeId)
         .map((connection) => nodes.find((node) => node.id === connection.fromNodeId))
@@ -607,3 +608,4 @@ export function buildToolMentionReference(toolId: number, label: string, type: s
         mentionToken: canvasToolMentionToken(toolId, label, type, icon),
     };
 }
+import { detachRemovedBatchCellConnections } from "./canvas-batch-references";

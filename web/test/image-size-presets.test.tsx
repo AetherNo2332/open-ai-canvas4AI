@@ -6,11 +6,17 @@ import { ImageSizePresetsEditor } from "../src/components/image-size-presets-edi
 import { ModelCapabilityEditor } from "../src/components/model-capability-editor";
 import { defaultImageCapabilityConfig, normalizeImageValue, normalizeModelCapabilityConfig } from "../src/lib/model-capabilities";
 import { IMAGE_RATIOS, IMAGE_RESOLUTIONS, imagePresetForRatio, imagePresetValue, imageQualityForSelection, imageQualityForTier, imageSizeConfigWithPresets, imageSizePresets, imageTierAvailable } from "../src/lib/image-size-presets";
+import { imageQualityLabel } from "../src/lib/image-quality";
 import { buildImageResolutionOptions } from "../src/lib/image-resolution-tiers";
 import { resolveImageRequestSize, validateImageSize } from "../src/services/api/image-validation";
 import { buildGeminiImageGenerationConfig } from "../src/lib/gemini-image";
 
 describe("统一图片分辨率与宽高比", () => {
+    test("画质公共映射覆盖创作与画布使用的 xhigh、max", () => {
+        expect(imageQualityLabel("xhigh")).toBe("超高");
+        expect(imageQualityLabel("MAX")).toBe("最高");
+    });
+
     test("Seedream 5.0 shows 1.5K and retains the exact official 2K wide size", () => {
         const profile = defaultImageCapabilityConfig("km-kemei-seedream", "doubao-seedream-5-0-pro-260628");
         const intermediate = renderToStaticMarkup(<ImageSizePicker profile={profile} size="1536x1536" onChange={() => {}} />);
@@ -24,6 +30,24 @@ describe("统一图片分辨率与宽高比", () => {
         expect(reopened.image?.size.presets?.filter((p) => p.tier === "1.5k")).toHaveLength(8);
         expect(resolveImageRequestSize(profile, "auto", "1536x1536")?.value).toBe("1536x1536");
     });
+    test("管理员档位开关按已有比例启用，部分比例不显示为关闭", () => {
+        for (const model of ["midjourney-1k", "midjourney-2k"]) {
+            const profile = defaultImageCapabilityConfig("cangyuan-midjourney-v82", model);
+            const editor = renderToStaticMarkup(<ImageSizePresetsEditor profile={profile} onChange={() => {}} />);
+            const active = model === "midjourney-2k" ? "2k" : "1k";
+            for (const tier of IMAGE_RESOLUTIONS) {
+                const button = [...editor.matchAll(/<button\b[^>]*>/g)].map((match) => match[0]).find((tag) => tag.includes(`aria-label="启用 ${tier.toUpperCase()} 规格"`));
+                expect(button).toBeDefined();
+                expect(button).toContain(`aria-checked="${tier === active}"`);
+            }
+        }
+        const profile = defaultImageCapabilityConfig();
+        profile.size = imageSizeConfigWithPresets(profile, [imagePresetForRatio("2k", "16:9")]);
+        const editor = renderToStaticMarkup(<ImageSizePresetsEditor profile={profile} onChange={() => {}} />);
+        const button = [...editor.matchAll(/<button\b[^>]*>/g)].map((match) => match[0]).find((tag) => tag.includes('aria-label="启用 2K 规格"'));
+        expect(button).toContain('aria-checked="true"');
+    });
+
     test("默认 Gemini 质量枚举不能把未启用的 1K 显示出来", () => {
         const profile = defaultImageCapabilityConfig("gemini-image", "nano-banana-pro-4k");
         profile.size = imageSizeConfigWithPresets(profile, IMAGE_RATIOS.map((ratio) => imagePresetForRatio("4k", ratio)));
@@ -89,6 +113,12 @@ describe("统一图片分辨率与宽高比", () => {
         const changes: Array<[string, string]> = [];
         applyImageSizeSelection((key, value) => changes.push([key, value]), "16:9", "high");
         expect(changes).toEqual([["size", "16:9"], ["quality", "high"]]);
+    });
+
+    test("独立分辨率模型换档时同时提交像素和分辨率", () => {
+        const changes: Array<[string, string]> = [];
+        applyImageSizeSelection((key, value) => changes.push([key, value]), "2048x1152", undefined, "1.5k");
+        expect(changes).toEqual([["size", "2048x1152"], ["imageResolution", "1.5k"]]);
     });
 
     test("像素协议从旧比例配置切换 4K 后发送真实像素，不回退到 1K", () => {
@@ -184,6 +214,8 @@ describe("统一图片分辨率与宽高比", () => {
         expect(picker).not.toMatch(/<button[^>]*>4K/);
         expect(picker).toContain("换算参考");
         profile.size.parameter = "none";
+        expect(renderToStaticMarkup(<ImageSizePicker profile={profile} size="auto" onChange={() => {}} />)).toContain("分辨率");
+        profile.resolution.supported = false;
         expect(renderToStaticMarkup(<ImageSizePicker profile={profile} size="auto" onChange={() => {}} />)).toBe("");
     });
 

@@ -2,10 +2,10 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
 	"os"
 	"path/filepath"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func TestAgentParityDatabaseDrawingReadTemplate(t *testing.T) {

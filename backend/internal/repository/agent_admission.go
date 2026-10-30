@@ -4,9 +4,9 @@ import (
 	"errors"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"infinite-canvas/backend/internal/model"
 	"sort"
 	"time"
+	"yingce/backend/internal/model"
 )
 
 func (r *Repository) AgentSchedulerSetting(fallback model.AgentSchedulerSetting) (model.AgentSchedulerSetting, error) {

@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -70,6 +71,49 @@ class ProductionSmokeTests(unittest.TestCase):
                              ("PATCH", "/admin/channels/channel-1/models/model-1"))
             self.assertEqual(api.call_args_list[1].args[2]["modelKey"], "agent-parity-model")
             self.assertTrue(api.call_args_list[1].args[2]["enabled"])
+
+    def test_media_versions_checks_node_metadata_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            harness.channel = "channel-1"
+            first = {"id": "image_xxxxxxxx", "metadata": {"status": "success", "storageKey": "resource:a"}}
+            second = {"id": "image_xxxxxxxx", "metadata": {"status": "success", "storageKey": "resource:b",
+                "currentMediaVersionId": "v2", "mediaVersions": [
+                    {"id": "v1", "media": {"storageKey": "resource:a"}},
+                    {"id": "v2", "media": {"storageKey": "resource:b"}}]}}
+            nodes = iter([first, second])
+            with patch.object(harness, "stub", return_value={}), \
+                    patch.object(harness, "configure_image_model"), \
+                    patch.object(harness, "canvas", return_value="canvas-1"), \
+                    patch.object(harness, "agent_generate_image") as generate, \
+                    patch.object(harness, "media_node", side_effect=lambda canvas, node_id: next(nodes)), \
+                    patch.object(harness, "api", return_value={"project": {"nodes": [second]}}), \
+                    patch.object(smoke.uuid, "uuid4", return_value=SimpleNamespace(hex="x" * 32)):
+                harness.media_versions()
+            self.assertEqual([call.args[2] for call in generate.call_args_list], ["create", "new_version"])
+            checks = {row["name"]: row["passed"] for row in json.loads(harness.output.read_text())["checks"]}
+            self.assertTrue(checks["Agent new version lands in node mediaVersions and is adopted"])
+            self.assertTrue(checks["in-place version keeps one logical node"])
+
+    def test_media_versions_rejects_unadopted_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            harness.channel = "channel-1"
+            first = {"id": "image_xxxxxxxx", "metadata": {"status": "success", "storageKey": "resource:a"}}
+            # New version appended to history but the node still shows the old media.
+            stale = {"id": "image_xxxxxxxx", "metadata": {"status": "success", "storageKey": "resource:a",
+                "currentMediaVersionId": "v1", "mediaVersions": [
+                    {"id": "v1", "media": {"storageKey": "resource:a"}},
+                    {"id": "v2", "media": {"storageKey": "resource:b"}}]}}
+            nodes = iter([first] + [stale] * 1000)
+            with patch.object(harness, "stub", return_value={}), \
+                    patch.object(harness, "configure_image_model"), \
+                    patch.object(harness, "canvas", return_value="canvas-1"), \
+                    patch.object(harness, "agent_generate_image"), \
+                    patch.object(harness, "media_node", side_effect=lambda canvas, node_id: next(nodes)), \
+                    patch.object(smoke, "wait", side_effect=lambda predicate, seconds=150: predicate() or (_ for _ in ()).throw(AssertionError("smoke stage timed out"))):
+                with self.assertRaisesRegex(AssertionError, "timed out"):
+                    harness.media_versions()
 
     def test_preflight_accepts_persisted_finish_and_canvas_receipts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -211,6 +255,26 @@ class ProductionSmokeTests(unittest.TestCase):
             for secret in (account, model, cookie, harness.env["CANVAS_AGENT_WORKER_TOKEN"], harness.env["POSTGRES_PASSWORD"]):
                 self.assertNotIn(secret, body)
             self.assertIn("[redacted]", body)
+
+    def test_smoke_uses_only_registered_canvas_routes(self):
+        source = MODULE.read_text(encoding="utf-8")
+        calls = re.findall(r'self\.api\(\s*"([A-Z]+)"\s*,\s*f?"([^"]*)"', source)
+        self.assertTrue(calls)
+        for method, path in calls:
+            with self.subTest(method=method, path=path):
+                self.assertNotIn("/desktop/", path)
+                self.assertFalse(method == "PUT" and path.startswith("/canvas-projects/"))
+
+    def test_canvas_is_created_through_operations_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            with patch.object(harness, "api", return_value={}) as api:
+                identity = harness.canvas()
+            method, path, body = api.call_args.args
+            self.assertEqual((method, path), ("PATCH", f"/canvas-projects/{identity}/operations"))
+            self.assertEqual(body["baseRevision"], 0)
+            self.assertTrue(body["mutationId"])
+            self.assertEqual(body["operations"][0], {"type": "create_canvas", "id": identity, "patch": {"title": "CI smoke"}})
 
     def test_override_names_every_built_image_for_project(self):
         with tempfile.TemporaryDirectory() as directory:

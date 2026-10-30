@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 const cloudAgentStuckAfter = 5 * time.Minute
@@ -48,7 +48,7 @@ func (s *Service) cloudAgentHasLiveWork(run *model.CloudAgentExecution, state *c
 		if err != nil {
 			return true
 		}
-		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
+		if model.TaskStatusActive(task.Status) {
 			return true
 		}
 	}

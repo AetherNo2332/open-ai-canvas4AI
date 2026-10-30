@@ -10,11 +10,9 @@ import { useSearchParams } from "react-router";
 
 import { ListToolbar, PaginationBar, AdminDataTable, AdminExportButton, AdminFilterChip, AdminStatusBadge, AdminTableEmpty, type AdminStatusTone } from "./admin-ui";
 import { exportAdminAnalytics, getAdminAnalytics, listAdminUsers, type AdminReferenceData, type AdminAnalytics, type AnalyticsFilters } from "@/services/api/auth";
-import { getAdminObservabilityOverview, normalizeGrafanaUrl, type AdminObservabilityOverview } from "@/services/api/observability";
 import { analyticsFinanceColumns, formatCredits, formatFinanceCost, formatFinanceMargin } from "./analytics-finance";
+import { formatCountDelta, formatNumber, formatRateDelta } from "./analytics-trend-delta";
 import { Select } from "@/components/ui/base/select";
-import { buildObservabilityParams, mergeObservabilityFailures, type ObservabilityFailureRow } from "./observability-view";
-import grafanaIcon from "@/components/grafana-icon.svg";
 
 type Props = {
     users: AdminReferenceData["users"];
@@ -42,10 +40,8 @@ export default function AnalyticsPanel({ users, channels }: Props) {
     const [channelId, setChannelId] = useState(searchParams.get("channelId") || undefined);
     const [capability, setCapability] = useState(searchParams.get("capability") || undefined);
     const [data, setData] = useState<AdminAnalytics | null>(null);
-    const [agentData, setAgentData] = useState<AdminObservabilityOverview | null>(null);
     const [loading, setLoading] = useState(false);
     const [loadError, setLoadError] = useState("");
-    const [agentLoadError, setAgentLoadError] = useState("");
     const requestSequence = useRef(0);
     const [userOptions, setUserOptions] = useState(users);
     const [searchingUsers, setSearchingUsers] = useState(false);
@@ -72,20 +68,11 @@ export default function AnalyticsPanel({ users, channels }: Props) {
         const sequence = ++requestSequence.current;
         setLoading(true);
         setLoadError("");
-        setAgentLoadError("");
         setData(null);
-        setAgentData(null);
         try {
-            const [analyticsResult, agentResult] = await Promise.allSettled([getAdminAnalytics(filters), getAdminObservabilityOverview(buildObservabilityParams(filters))]);
+            const analytics = await getAdminAnalytics(filters);
             if (sequence !== requestSequence.current) return;
-            if (analyticsResult.status === "rejected") throw analyticsResult.reason;
-            setData(analyticsResult.value);
-            if (agentResult.status === "fulfilled") {
-                setAgentData(agentResult.value);
-            } else {
-                setAgentData(null);
-                setAgentLoadError(agentResult.reason instanceof Error ? agentResult.reason.message : "读取 Agent 运行状态失败");
-            }
+            setData(analytics);
         } catch (error) {
             if (sequence !== requestSequence.current) return;
             const text = error instanceof Error ? error.message : "读取统计数据失败";
@@ -185,13 +172,12 @@ export default function AnalyticsPanel({ users, channels }: Props) {
         { title: "常用模型", dataIndex: "commonModel", ellipsis: true, render: (value) => value || "--" },
     ];
 
-    const failureColumns: ColumnsType<ObservabilityFailureRow> = [
+    const failureColumns: ColumnsType<AdminAnalytics["failures"][number]> = [
         { title: "错误类型", dataIndex: "type", width: 120, render: (value) => <AdminStatusBadge label={value} tone={value === "超时" ? "warning" : "error"} /> },
         { title: "模型", dataIndex: "model", width: 220 },
         { title: "次数", dataIndex: "count", width: 90 },
         { title: "最近错误", dataIndex: "lastError", ellipsis: true, render: (value) => <Tooltip title={value}>{value || "--"}</Tooltip> },
         { title: "最近发生", dataIndex: "lastSeenAt", width: 170, render: (value) => dayjs(value).format("YYYY-MM-DD HH:mm") },
-        { title: "Trace", dataIndex: "traceId", width: 180, render: (value) => (value ? <code title={value}>{value.slice(0, 12)}…</code> : "--") },
     ];
 
     const trend = data?.trend || [];
@@ -199,9 +185,9 @@ export default function AnalyticsPanel({ users, channels }: Props) {
     const previousTrend = trend[trend.length - 2];
     const modelRows = data?.models || [];
     const userRows = data?.users || [];
-    const failureRows = mergeObservabilityFailures(data?.failures || [], agentData?.recentFailures || []);
+    const failureRows = data?.failures || [];
     const failureTotal = failureRows.reduce((sum, item) => sum + item.count, 0);
-    const topFailure = failureRows.reduce<ObservabilityFailureRow | undefined>((current, item) => (!current || item.count > current.count ? item : current), undefined);
+    const topFailure = failureRows.reduce<AdminAnalytics["failures"][number] | undefined>((current, item) => (!current || item.count > current.count ? item : current), undefined);
     const finance = data?.kpi.finance;
     const financeUnavailable = data !== null && (!finance || modelRows.some((row) => !row.finance));
     const trendHasData = trendMetric === "volume" ? trend.some((item) => item.tasks > 0 || item.requests > 0) : trendMetric === "quality" ? trend.some((item) => item.requests > 0) : trend.some((item) => item.activeUsers > 0);
@@ -257,11 +243,6 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                         <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void reload()}>
                             刷新
                         </Button>
-                        {normalizeGrafanaUrl(agentData?.grafanaUrl) ? (
-                            <Button icon={<img src={grafanaIcon} alt="" className="admin-grafana-icon" />} onClick={() => window.open(normalizeGrafanaUrl(agentData?.grafanaUrl), "_blank", "noopener,noreferrer")}>
-                                Grafana
-                            </Button>
-                        ) : null}
                         <AdminExportButton exportFile={() => exportAdminAnalytics(filters)} fileName={() => `usage-${filters.from}-${filters.to}.csv`} label="导出 CSV" />
                     </>
                 }
@@ -320,6 +301,8 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                     trend={formatCountDelta(currentTrend?.activeUsers, previousTrend?.activeUsers)}
                     detail={data ? `日 ${formatNumber(data.kpi.dau)} · 周 ${formatNumber(data.kpi.wau)} · 月 ${formatNumber(data.kpi.mau)}` : undefined}
                 />
+                <AnalyticsHealthCard icon={<CircleDollarSign className="size-4" />} label="用户总余额" value={data ? formatCredits(data.kpi.totalBalanceMicrocredits ?? 0) : "--"} detail="当前所有用户可用积分余额" />
+                <AnalyticsHealthCard icon={<CircleDollarSign className="size-4" />} label="范围消耗" value={data ? formatCredits(data.kpi.totalConsumedMicrocredits ?? 0) : "--"} detail="筛选范围内已计费调用" />
                 <AnalyticsHealthCard
                     icon={<Workflow className="size-4" />}
                     label="生成任务"
@@ -331,7 +314,7 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                     icon={<Gauge className="size-4" />}
                     label="服务质量"
                     value={data && data.kpi.upstreamRequests > 0 ? percent(data.kpi.successRate) : "--"}
-                    trend={formatRateDelta(currentTrend?.requestSuccessRate, previousTrend?.requestSuccessRate)}
+                    trend={formatRateDelta(currentTrend?.requestSuccessRate, previousTrend?.requestSuccessRate, currentTrend?.requests, previousTrend?.requests)}
                     detail={data ? (data.kpi.upstreamRequests ? "真实上游请求成功率" : "当前范围暂无请求") : undefined}
                     tone={!data || !data.kpi.upstreamRequests ? "neutral" : data.kpi.successRate < 90 ? "warning" : "success"}
                 />
@@ -364,64 +347,6 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                     tone={finance && (finance.costedOrders < finance.settledOrders || (finance.profitMicrocredits ?? 0) < 0) ? "warning" : "neutral"}
                 />
             </section>
-
-            <section className="admin-analytics-agent-grid" aria-label="Agent 运行状态">
-                <AnalyticsHealthCard
-                    icon={<UsersRound className="size-4" />}
-                    label="Worker 在线"
-                    value={agentData ? formatNumber(agentData.worker.online) : "--"}
-                    detail={agentData ? `忙碌 ${formatNumber(agentData.worker.busy)} · 利用率 ${percent(agentData.worker.busyRatio)}` : undefined}
-                    tone={agentData?.worker.online ? "success" : "neutral"}
-                />
-                <AnalyticsHealthCard
-                    icon={<Workflow className="size-4" />}
-                    label="Agent 队列深度"
-                    value={agentData ? formatNumber(agentData.queue.depth) : "--"}
-                    detail={agentData ? `最老任务 ${formatDuration(agentData.queue.oldestAgeSeconds * 1000)}` : undefined}
-                    tone={agentData?.queue.depth ? "warning" : "neutral"}
-                />
-                <AnalyticsHealthCard
-                    icon={<Gauge className="size-4" />}
-                    label="Agent 成功率"
-                    value={agentData ? percent(agentData.tasks.successRate) : "--"}
-                    detail={agentData ? `${formatNumber(agentData.tasks.completed)} 个任务完成` : undefined}
-                    tone={!agentData ? "neutral" : agentData.tasks.successRate < 90 ? "warning" : "success"}
-                />
-                <AnalyticsHealthCard
-                    icon={<AlertTriangle className="size-4" />}
-                    label="Agent 失败 / 重试"
-                    value={agentData ? `${formatNumber(agentData.tasks.failed)} / ${formatNumber(agentData.tasks.retried)}` : "--"}
-                    detail="失败明细已并入深度分析表"
-                    tone={agentData?.tasks.failed ? "warning" : "neutral"}
-                />
-                <AnalyticsHealthCard
-                    icon={<Clock3 className="size-4" />}
-                    label="Agent P95 延迟"
-                    value={agentData ? formatDuration(agentData.tasks.p95LatencyMs) : "--"}
-                    detail={agentData ? `P50 ${formatDuration(agentData.tasks.p50LatencyMs)}` : undefined}
-                />
-                <AnalyticsHealthCard
-                    icon={<Workflow className="size-4" />}
-                    label="工具成功率"
-                    value={agentData ? percent(agentData.tools.successRate) : "--"}
-                    detail={agentData ? `${formatNumber(agentData.tools.calls)} 次调用` : undefined}
-                    tone={!agentData ? "neutral" : agentData.tools.successRate < 90 ? "warning" : "success"}
-                />
-                <AnalyticsHealthCard
-                    icon={<Gauge className="size-4" />}
-                    label="LLM 调用"
-                    value={agentData ? formatNumber(agentData.llm.calls) : "--"}
-                    detail={agentData ? `输入 ${formatNumber(agentData.llm.inputTokens)} · 输出 ${formatNumber(agentData.llm.outputTokens)}` : undefined}
-                />
-                <AnalyticsHealthCard
-                    icon={<BarChart3 className="size-4" />}
-                    label="输入 / 输出 Token"
-                    value={agentData ? `${formatNumber(agentData.llm.inputTokens)} / ${formatNumber(agentData.llm.outputTokens)}` : "--"}
-                    detail={agentData ? `缓存 ${formatNumber(agentData.llm.cachedTokens)}` : undefined}
-                />
-            </section>
-            {agentLoadError ? <Alert type="warning" showIcon title="Agent 运行状态读取失败" description={agentLoadError} /> : null}
-            {agentData?.alerts.length ? <Alert type="warning" showIcon title="Agent 当前告警" description={agentData.alerts.join("、")} /> : null}
 
             <div className="admin-analytics-overview-grid">
                 <section className="admin-analytics-trend-section" aria-labelledby="admin-analytics-trend-title">
@@ -557,18 +482,10 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                         },
                         {
                             key: "failures",
-                            label: `异常定位${failureTotal ? ` (${failureTotal})` : ""}`,
+                            label: `异常定位${data?.failures.length ? ` (${data.failures.reduce((sum, item) => sum + item.count, 0)})` : ""}`,
                             children: (
                                 <AdminDataTable
-                                    table={{
-                                        rowKey: (row) => (row.source === "agent" ? `agent:${row.taskId || row.runId}:${row.lastSeenAt}` : `api:${row.type}:${row.model}`),
-                                        size: "small",
-                                        loading,
-                                        columns: failureColumns,
-                                        dataSource: pageRows(failureRows, failurePage),
-                                        pagination: false,
-                                        scroll: { x: 1080 },
-                                    }}
+                                    table={{ rowKey: (row) => `${row.type}:${row.model}`, size: "small", loading, columns: failureColumns, dataSource: pageRows(failureRows, failurePage), pagination: false, scroll: { x: 900 } }}
                                     empty={<AdminTableEmpty />}
                                     skeletonColumns={5}
                                     footer={<PaginationBar alwaysShow current={failurePage} pageSize={analyticsPageSize} total={failureRows.length} onChange={(page) => setFailurePage(page)} pageSizeOptions={[analyticsPageSize]} />}
@@ -661,25 +578,6 @@ function percent(value: number) {
 function formatDuration(value: number) {
     if (!value) return "--";
     return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`;
-}
-
-function formatNumber(value: number) {
-    return new Intl.NumberFormat("zh-CN", { notation: value >= 100000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
-}
-
-function formatCountDelta(current?: number, previous?: number) {
-    if (current === undefined || previous === undefined) return undefined;
-    const delta = current - previous;
-    const direction = delta > 0 ? "↑" : delta < 0 ? "↓" : "→";
-    const value = previous === 0 ? formatNumber(Math.abs(delta)) : `${Math.abs((delta / previous) * 100).toFixed(1)}%`;
-    return { value: `较前一日 ${direction} ${value}`, tone: delta >= 0 ? ("success" as const) : ("warning" as const) };
-}
-
-function formatRateDelta(current?: number, previous?: number) {
-    if (current === undefined || previous === undefined) return undefined;
-    const delta = current - previous;
-    const direction = delta > 0 ? "↑" : delta < 0 ? "↓" : "→";
-    return { value: `较前一日 ${direction} ${Math.abs(delta).toFixed(1)}pp`, tone: delta >= 0 ? ("success" as const) : ("warning" as const) };
 }
 
 function filterDate(value: string | null, fallback: Dayjs) {

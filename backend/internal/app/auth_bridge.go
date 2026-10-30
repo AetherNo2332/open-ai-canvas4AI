@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"infinite-canvas/backend/internal/auth"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/auth"
+	"yingce/backend/internal/model"
 )
 
 const SessionCookieName = auth.SessionCookieName
@@ -14,13 +14,13 @@ type (
 	EmailCodeCooldownError     = auth.EmailCodeCooldownError
 	RegisterRequest            = auth.RegisterRequest
 	LoginRequest               = auth.LoginRequest
+	LoginContext               = auth.LoginContext
 	PublicAuthSettings         = auth.PublicAuthSettings
 	AuthSessionResult          = auth.AuthSessionResult
 	AuthUser                   = auth.AuthUser
 	RegistrationSettingRequest = auth.RegistrationSettingRequest
 	PublicRegistrationSetting  = auth.PublicRegistrationSetting
 	PasswordResetRequest       = auth.PasswordResetRequest
-	ChangePasswordRequest      = auth.ChangePasswordRequest
 	EmailSettingRequest        = auth.EmailSettingRequest
 	PublicEmailSetting         = auth.PublicEmailSetting
 	LinuxDOSettingRequest      = auth.LinuxDOSettingRequest
@@ -90,6 +90,12 @@ func (h authHost) EnsureSignupBonus(userID string) error {
 	return h.svc.ensureSignupBonus(userID)
 }
 
+func (h authHost) BindReferral(inviteeID string, code string) {
+	if h.svc == nil {
+		return
+	}
+	h.svc.bindReferral(inviteeID, code)
+}
 func (h authHost) RecordActivity(userID string, event string, count int) {
 	if h.svc == nil {
 		return
@@ -135,8 +141,12 @@ func (s *Service) Login(req LoginRequest) (*AuthSessionResult, error) {
 	return s.authDomain().Login(req)
 }
 
-func (s *Service) Logout(cookieValue string) error {
-	return s.authDomain().Logout(cookieValue)
+func (s *Service) LoginRateLimitSubject(account string) (string, error) {
+	return s.authDomain().LoginRateLimitSubject(account)
+}
+
+func (s *Service) Logout(cookieValue string, contexts ...LoginContext) error {
+	return s.authDomain().Logout(cookieValue, contexts...)
 }
 
 func (s *Service) CurrentUser(cookieValue string) (*model.User, error) {
@@ -165,10 +175,6 @@ func (s *Service) SendPasswordResetEmailCode(rawEmail string) error {
 
 func (s *Service) ResetPassword(req PasswordResetRequest) error {
 	return s.authDomain().ResetPassword(req)
-}
-
-func (s *Service) ChangePassword(user *model.User, req ChangePasswordRequest, keepSessionID string) error {
-	return s.authDomain().ChangePassword(user, req, keepSessionID)
 }
 
 func (s *Service) AdminEmailSetting(actor *model.User) (*PublicEmailSetting, error) {
@@ -207,8 +213,8 @@ func (s *Service) BeginLinuxDOLogin(nextPath string, acceptedTerms bool) (string
 	return s.authDomain().BeginLinuxDOLogin(nextPath, acceptedTerms)
 }
 
-func (s *Service) CompleteLinuxDOLogin(stateValue string, code string) (*LinuxDOCallbackResult, error) {
-	return s.authDomain().CompleteLinuxDOLogin(stateValue, code)
+func (s *Service) CompleteLinuxDOLogin(stateValue string, code string, cookieValue string, contexts ...LoginContext) (*LinuxDOCallbackResult, error) {
+	return s.authDomain().CompleteLinuxDOLogin(stateValue, code, cookieValue, contexts...)
 }
 
 func (s *Service) AdminLibTVSetting(actor *model.User) (*PublicLibTVSetting, error) {

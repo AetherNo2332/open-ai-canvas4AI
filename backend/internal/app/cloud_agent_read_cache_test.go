@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // Shared account and canvas fixture for rules and read-cache tests.
@@ -72,6 +72,9 @@ func TestCloudAgentReadToolCacheReplaysReadResultsAndErrors(t *testing.T) {
 	}
 	if len(first.(map[string]any)) == 0 || second.(map[string]any)["cacheReplay"] != true || second.(map[string]any)["replayCount"] != 1 {
 		t.Fatalf("cached read did not return a replay receipt: first=%#v second=%#v", first, second)
+	}
+	if message, _ := second.(map[string]any)["message"].(string); message != "结果与上次读取相同，可直接使用；若用户刚修改过画布或纠正了你，请重新读取需要的节点" {
+		t.Fatalf("replay receipt wording must allow re-reading after user changes: %q", message)
 	}
 	var cached map[string]any
 	cacheKey := cloudAgentReadCacheKeyForState(s.repo, "user", state, call)
@@ -191,5 +194,16 @@ func TestCloudAgentReadCacheNormalizesObjectKeyOrder(t *testing.T) {
 	}
 	if cloudAgentReadCacheKey(first) != cloudAgentReadCacheKey(second) {
 		t.Fatalf("object key order changed the cache key: %q vs %q", cloudAgentReadCacheKey(first), cloudAgentReadCacheKey(second))
+	}
+}
+
+func TestCloudAgentReadLoopErrorStatesFactsWithoutForbiddingReads(t *testing.T) {
+	budget := (&cloudAgentReadLoopError{Budget: true, Count: 40}).Error()
+	if budget != "Agent 本轮只读工具调用已达到安全上限（40 次），本轮已停止；请基于已读到的内容答复，或请用户确认后开新一轮" {
+		t.Fatalf("unexpected budget guard wording: %q", budget)
+	}
+	repeat := (&cloudAgentReadLoopError{ToolName: "canvas_get_state"}).Error()
+	if repeat != "Agent 连续多次读取同一份canvas_get_state且结果未变，本轮已停止；请基于已读到的内容继续" {
+		t.Fatalf("unexpected repeat guard wording: %q", repeat)
 	}
 }

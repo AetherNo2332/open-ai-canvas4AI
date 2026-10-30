@@ -54,13 +54,15 @@ ARG BUILD_COMMIT=unknown
 ARG BUILD_TIME=unknown
 RUN --mount=type=cache,target=/root/.cache/go-build set -eu; \
     version="${BUILD_VERSION:-$(tr -d '\r\n' </src/VERSION)}"; \
-    ldflags="-s -w -X infinite-canvas/backend/internal/buildinfo.Version=${version} -X infinite-canvas/backend/internal/buildinfo.Commit=${BUILD_COMMIT} -X infinite-canvas/backend/internal/buildinfo.BuildTime=${BUILD_TIME}"; \
-    CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="$ldflags" -o /out/infinite-canvas-backend ./cmd/server; \
+    ldflags="-s -w -X yingce/backend/internal/buildinfo.Version=${version} -X yingce/backend/internal/buildinfo.Commit=${BUILD_COMMIT} -X yingce/backend/internal/buildinfo.BuildTime=${BUILD_TIME}"; \
+    CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="$ldflags" -o /out/yingce-backend ./cmd/server; \
     CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="$ldflags" -o /out/migrate-schema ./cmd/migrate-schema; \
     CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="$ldflags" -o /out/migrate-sqlite-postgres ./cmd/migrate-sqlite-postgres
 
+# 云端 Agent 由独立的 agent 服务（agent/Dockerfile）运行，backend 镜像不再携带 Node 运行时。
 FROM alpine:3.22
 
+# ffmpeg/ffprobe：短剧抽取剧情段视频最后一帧、时间线合成成片与视频播放转码。
 RUN apk add --no-cache ca-certificates tzdata wget ffmpeg \
     && addgroup -S app \
     && adduser -S app -G app
@@ -71,7 +73,7 @@ ENV CANVAS_BACKEND_ADDR=:8080
 ENV CANVAS_BACKEND_DATA_DIR=/data
 
 RUN mkdir -p /data && chown -R app:app /data
-COPY --from=backend-build /out/infinite-canvas-backend /usr/local/bin/infinite-canvas-backend
+COPY --from=backend-build /out/yingce-backend /usr/local/bin/yingce-backend
 COPY --from=backend-build /out/migrate-schema /usr/local/bin/migrate-schema
 COPY --from=backend-build /out/migrate-sqlite-postgres /usr/local/bin/migrate-sqlite-postgres
 COPY --from=payment-package-smoke /app/plugin-packages /app/plugin-packages
@@ -79,4 +81,4 @@ COPY --from=payment-package-smoke /app/plugin-packages /app/plugin-packages
 USER app
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:8080/api/health/ready >/dev/null || exit 1
-CMD ["infinite-canvas-backend"]
+CMD ["yingce-backend"]

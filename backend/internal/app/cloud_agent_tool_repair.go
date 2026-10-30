@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 const (
@@ -15,7 +18,79 @@ const (
 	// cloudAgentToolScopeAttempt 是"收紧可用工具"的档位：同一个错误指纹第二次出现时，
 	// 下一步只开放修复所需的工具，避免模型继续在别的工具上犯错。
 	cloudAgentToolScopeAttempt = 2
+	// cloudAgentEnvironmentConflictLimit 是同一工具连续撞上画布并发冲突的上限：到了就暂停问用户，
+	// 不判失败（冲突来自用户在同时编辑，不是模型出错）。
+	cloudAgentEnvironmentConflictLimit   = 5
+	cloudAgentEnvironmentConflictMessage = "画布一直在变化，我先暂停：要等你编辑完再继续吗？"
 )
+
+// cloudAgentEnvironmentConflict 是某个工具撞上画布并发冲突的连续次数。
+// Reread 记录"上次冲突之后模型是否重新读取过画布"：只有重读过的重试才算环境冲突，
+// 没重读就原样重交仍按模型的错走纠错梯度。
+type cloudAgentEnvironmentConflict struct {
+	Attempt int  `json:"attempt"`
+	Reread  bool `json:"reread,omitempty"`
+}
+
+// cloudAgentIsEnvironmentConflict 判断失败是否来自画布在模型读取之后被别人改动或占用。
+func cloudAgentIsEnvironmentConflict(err error) bool {
+	if cloudAgentSnapshotConflict(err) {
+		return true
+	}
+	var lease *repository.CanvasEditLeaseError
+	if errors.As(err, &lease) {
+		return lease.Reason == "node_locked"
+	}
+	var fieldErr *cloudAgentFieldArgumentError
+	if errors.As(err, &fieldErr) && (fieldErr.Issue == "stale_snapshot" || fieldErr.Issue == "entity_version_conflict") {
+		return true
+	}
+	var commandErr *commands.Error
+	return errors.As(err, &commandErr) && commandErr.Reason == "entity_version_conflict"
+}
+
+// cloudAgentEnvironmentRereadTool 是能让模型看到最新画布的读取工具。
+func cloudAgentEnvironmentRereadTool(call cloudAgentCall) bool {
+	switch call.Function.Name {
+	case "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_read_content":
+		return true
+	case cloudAgentDirectorTool:
+		return !cloudAgentWriteCall(call)
+	}
+	return false
+}
+
+func validateCloudAgentRuntimeEnvironmentConflicts(state *cloudAgentRuntime) error {
+	for toolName, conflict := range state.EnvironmentConflicts {
+		if toolName == "" || utf8.RuneCountInString(toolName) > 80 || conflict.Attempt < 1 {
+			return errors.New("Agent runtime environment conflict state is invalid")
+		}
+	}
+	return nil
+}
+
+// cloudAgentTrackEnvironmentConflict 处理一次重读之后的并发冲突：单独计数、不收紧工具、不判失败；
+// 连续到上限时把回执改成"问用户"，并发一次 canvas_contention 运行事件。
+func cloudAgentTrackEnvironmentConflict(runID string, state *cloudAgentRuntime, call cloudAgentCall, conflict cloudAgentEnvironmentConflict, detail, payload map[string]any) {
+	conflict.Attempt++
+	conflict.Reread = false
+	if state.EnvironmentConflicts == nil {
+		state.EnvironmentConflicts = map[string]cloudAgentEnvironmentConflict{}
+	}
+	state.EnvironmentConflicts[call.Function.Name] = conflict
+	info := map[string]any{"attempt": conflict.Attempt, "maxAttempts": cloudAgentEnvironmentConflictLimit}
+	payload["environmentConflict"], detail["environmentConflict"] = info, info
+	if conflict.Attempt < cloudAgentEnvironmentConflictLimit {
+		return
+	}
+	detail["requiredAction"] = "ask_user"
+	detail["retryable"] = false
+	detail["message"] = cloudAgentEnvironmentConflictMessage
+	detail["guidance"] = "画布在你多次重读之后仍在变化，用户可能正在编辑；不要继续重试写入，用 ask_user 询问用户是否等其编辑完成后再继续"
+	if conflict.Attempt == cloudAgentEnvironmentConflictLimit {
+		state.event(runID, "canvas_contention", map[string]any{"toolName": call.Function.Name, "attempts": conflict.Attempt})
+	}
+}
 
 // cloudAgentToolRepair 是同一个**错误指纹**的自动纠错进度。
 // 只按工具名计数会把"换了字段的另一种错误"也算进同一个额度；带上指纹之后，
@@ -85,6 +160,13 @@ func cloudAgentArgumentValueShape(value any) string {
 func cloudAgentTrackToolRepair(runID string, state *cloudAgentRuntime, call cloudAgentCall, result any, err error, payload map[string]any) bool {
 	previous, exists := state.ToolRepairs[call.Function.Name]
 	if err == nil {
+		delete(state.EnvironmentConflicts, call.Function.Name)
+		if cloudAgentEnvironmentRereadTool(call) {
+			for name, conflict := range state.EnvironmentConflicts {
+				conflict.Reread = true
+				state.EnvironmentConflicts[name] = conflict
+			}
+		}
 		if exists {
 			payload["retry"] = map[string]any{"groupId": previous.GroupID, "attempt": previous.Attempt, "maxAttempts": cloudAgentToolAttemptLimit, "status": "recovered"}
 			delete(state.ToolRepairs, call.Function.Name)
@@ -99,8 +181,22 @@ func cloudAgentTrackToolRepair(runID string, state *cloudAgentRuntime, call clou
 		cloudAgentClearToolScope(state)
 		return false
 	}
+	if detail["taskSubmitted"] == true || detail["phase"] == "completion" {
+		return false
+	}
+	// 环境冲突（用户同时在改画布）不是模型的错：首次冲突或重读之后的冲突单独计数。
+	// 上次冲突之后没有重读就原样重交，才落回下面的纠错梯度，并把上次冲突算作第一次。
+	environment := cloudAgentIsEnvironmentConflict(err)
+	conflict, conflicted := state.EnvironmentConflicts[call.Function.Name]
+	if environment && (!conflicted || conflict.Reread) {
+		if detail == nil {
+			detail = map[string]any{}
+		}
+		cloudAgentTrackEnvironmentConflict(runID, state, call, conflict, detail, payload)
+		return false
+	}
 	var argumentErr *cloudAgentArgumentError
-	if !errors.As(err, &argumentErr) || detail["taskSubmitted"] == true || detail["phase"] == "completion" {
+	if !environment && !errors.As(err, &argumentErr) {
 		return false
 	}
 	if state.ToolRepairs == nil {
@@ -109,6 +205,9 @@ func cloudAgentTrackToolRepair(runID string, state *cloudAgentRuntime, call clou
 	fingerprint := cloudAgentToolErrorFingerprint(call, err)
 	if !exists {
 		previous.GroupID = runID + ":repair:" + call.ID
+		if environment {
+			previous.Attempt = 1
+		}
 	} else if previous.Fingerprint != "" && previous.Fingerprint != fingerprint {
 		// 换了错法：从第一次重新给机会（但仍沿用同一个纠错组，便于界面追踪）。
 		previous.Attempt = 0

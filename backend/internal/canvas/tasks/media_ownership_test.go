@@ -2,9 +2,9 @@ package tasks
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/model"
 	"testing"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/model"
 )
 
 func TestOrdinaryMediaSubmissionFreezesActualStoryboardOwnership(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"infinite-canvas/backend/internal/kernel"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -12,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"unicode/utf8"
+	"yingce/backend/internal/kernel"
 )
 
 const maxAPICallPayloadBytes = 128 << 10
@@ -149,15 +149,17 @@ func sanitizeAPICallURL(value string) (string, bool) {
 }
 
 func truncateAPICallPayload(value string) string {
-	originalBytes := len(value)
-	// PostgreSQL text rejects invalid UTF-8 and NUL, including raw SSE payloads.
-	value = strings.ReplaceAll(strings.ToValidUTF8(value, "\uFFFD"), "\x00", "\\u0000")
 	if len(value) <= maxAPICallPayloadBytes {
 		return value
 	}
-	end := maxAPICallPayloadBytes
-	for end > 0 && !utf8.RuneStart(value[end]) {
-		end--
+	cut := maxAPICallPayloadBytes
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
 	}
-	return value[:end] + fmt.Sprintf("\n[报文已截断，原始长度 %d 字节]", originalBytes)
+	// 上游报文不保证是合法 UTF-8，直接入库会被 PostgreSQL 以 invalid byte sequence 拒收。
+	truncated := value[:cut]
+	if !utf8.ValidString(truncated) {
+		truncated = strings.ToValidUTF8(truncated, string(utf8.RuneError))
+	}
+	return truncated + fmt.Sprintf("\n[报文已截断，原始长度 %d 字节]", len(value))
 }

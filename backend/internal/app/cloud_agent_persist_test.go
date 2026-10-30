@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // saveAgentStateForTest 用真实保存路径持久化运行状态（消息、事件与检查点同事务），

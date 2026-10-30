@@ -277,6 +277,13 @@ async function connectCdp(cdpPort) {
             const rect = el.getBoundingClientRect();
             const style = getComputedStyle(el);
             if (rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none" || Number(style.opacity) <= 0 || el.matches(":disabled") || el.getAttribute("aria-disabled") === "true") return null;
+            // 入场缩放作用在弹窗祖先上，按钮本身的 opacity 和动画可能都是正常值。
+            // 软件渲染可延迟首帧，让初始缩放坐标看似稳定；必须检查整条祖先链。
+            for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+                const ancestorStyle = getComputedStyle(ancestor);
+                if (ancestorStyle.display === "none" || ancestorStyle.visibility === "hidden" || Number(ancestorStyle.opacity) <= 0) return null;
+                if (ancestor.getAnimations().some((animation) => animation.pending || animation.playState === "running")) return null;
+            }
             const x = rect.left + rect.width / 2;
             const y = rect.top + rect.height / 2;
             if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
@@ -289,6 +296,7 @@ async function connectCdp(cdpPort) {
         // 点击落到遮罩上（mask.closable=false）就完全无效（"留在预演台" 曾这样偶发失败）。
         const deadline = Date.now() + 8000;
         let previous = null;
+        let hovered = null;
         let stableSince = 0;
         let box = null;
         while (Date.now() < deadline) {
@@ -296,8 +304,13 @@ async function connectCdp(cdpPort) {
             if (next && previous && next.x === previous.x && next.y === previous.y) {
                 if (!stableSince) stableSince = Date.now();
                 if (Date.now() - stableSince >= 300) {
-                    box = next;
-                    break;
+                    if (hovered && hovered.x === next.x && hovered.y === next.y) {
+                        box = next;
+                        break;
+                    }
+                    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: next.x, y: next.y, button: "left", buttons: 0 });
+                    hovered = next;
+                    stableSince = 0;
                 }
             } else {
                 stableSince = 0;
@@ -309,9 +322,10 @@ async function connectCdp(cdpPort) {
             console.log(`      (click target not interactable: ${label})`);
             return false;
         }
-        const point = { x: box.x, y: box.y, button: "left" };
-        await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...point, buttons: 0 });
+        const point = { x: box.x, y: box.y, button: "left", pointerType: "mouse" };
+        // 移入鼠标后已重新等待动画和坐标稳定，避免 hover 引起的位移造成误点。
         await send("Input.dispatchMouseEvent", { type: "mousePressed", ...point, buttons: 1, clickCount: 1 });
+        await sleep(50);
         await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, buttons: 0, clickCount: 1 });
         return true;
     };
@@ -331,7 +345,7 @@ async function connectCdp(cdpPort) {
         return true;
     };
 
-    return { send, evaluate, poll, click, clickText, navigateFresh, problems, close: () => ws.close() };
+    return { send, evaluate, poll, click, clickText, clickPoint, navigateFresh, problems, close: () => ws.close() };
 }
 
 /**
@@ -378,6 +392,21 @@ async function openUnifiedWorkbench(cdp, label) {
     if (!ready) throw new Error(`${label}: unified previs workbench did not enter layout context`);
 }
 
+/** 使用当前产品流程从预设库加入一个真实道具，不依赖旧版快捷菜单。 */
+async function addProp(cdp, name, label) {
+    if (!(await cdp.click('[aria-label="添加到场景"]'))) throw new Error(`${label}: 添加到场景 button not clickable`);
+    if (!(await cdp.poll(`!!document.querySelector('.previs-add-dialog [role="tab"]')`, `${label} add dialog`, 10000))) throw new Error(`${label}: add dialog did not open`);
+    if (!(await cdp.clickText("道具", '[role="tab"]'))) throw new Error(`${label}: 道具 tab not clickable`);
+
+    const card = `[...document.querySelectorAll('.previs-add-dialog__card')].find((button) => (button.textContent || '').includes(${JSON.stringify(name)}) && button.getClientRects().length > 0)`;
+    if (!(await cdp.poll(`!!(${card})`, `${label} prop card`, 10000))) throw new Error(`${label}: ${name} prop card not visible`);
+    if (!(await cdp.clickPoint(card, `${label}: prop ${name}`))) throw new Error(`${label}: ${name} prop card not clickable`);
+
+    const confirmLabel = `加入「${name}」`;
+    if (!(await cdp.clickText(confirmLabel, ".previs-add-dialog__footer button"))) throw new Error(`${label}: ${confirmLabel} button not clickable`);
+    if (!(await cdp.poll(`!!document.querySelector(${JSON.stringify(`[aria-label="删除 ${name}"]`)})`, `${label} prop row`, 20000))) throw new Error(`${label}: ${name} row did not appear`);
+}
+
 async function smokeWorkbench(cdp, baseUrl) {
     console.log("\n=== A. workbench smoke ===");
     await cdp.navigateFresh(`${baseUrl}/dev/previs-repro`);
@@ -408,22 +437,41 @@ async function smokeWorkbench(cdp, baseUrl) {
     // 使用真实产品 dock（FloatingDock）验证提示的 hover 与键盘触发，不能只验证按钮存在。
     const dockSelector = '[role="toolbar"][aria-label="预演台视口工具"]';
     assert(await cdp.poll(`!!document.querySelector(${JSON.stringify(dockSelector)})`, "previs dock", 10000), "A5b 预演台视口工具条已渲染");
-    assert(await cdp.evaluate(`!!document.querySelector('${dockSelector} [role="radiogroup"][aria-label="变换模式"] [role="radio"][aria-label="移动对象 (W)"]')`), "A5b 变换模式切换包含移动对象 (W)");
-    const tooltipButton = `${dockSelector} button[aria-label="适配全部对象"]`;
-    const hoverPoint = await cdp.evaluate(`(() => { const b = document.querySelector(${JSON.stringify(tooltipButton)}); if (!b) return null; const r = b.getBoundingClientRect(); return {x:r.x+r.width/2, y:r.y+r.height/2}; })()`);
-    if (!hoverPoint) throw new Error("A: 适配全部对象 dock button not found");
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...hoverPoint });
-    const describedTooltip = `(() => { const b = document.querySelector(${JSON.stringify(tooltipButton)}); const t = b?.parentElement?.querySelector(':scope > .aceternity-dock-tooltip'); return !!t && (t.textContent || '').includes('适配全部对象'); })()`;
-    assert(await cdp.poll(describedTooltip, "tooltip on hover", 5000), "A5b Tooltip hover describes the actual control");
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
-    assert(await cdp.poll(`!(${describedTooltip})`, "tooltip dismiss", 5000), "A5b Tooltip dismisses when pointer leaves");
-    await cdp.evaluate(`document.querySelector(${JSON.stringify(tooltipButton)}).focus()`);
-    for (const modifiers of [8, 0]) {
-        await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
-        await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
+    assert(await cdp.evaluate(`!!document.querySelector('${dockSelector} [role="radiogroup"][aria-label="变换模式"] [role="radio"][aria-label="移动 (W)"]')`), "A5b 变换模式切换包含移动 (W)");
+    const tooltipButton = `${dockSelector} button[aria-label="适配全部对象 (A)"]`;
+    const tooltipMode = await cdp.evaluate(`(() => {
+        const button = document.querySelector(${JSON.stringify(tooltipButton)});
+        return button ? {
+            nativeTitle: Boolean(button.title),
+            coarsePointer: matchMedia('(pointer: coarse)').matches,
+            narrow: innerWidth < 768,
+            title: button.title,
+            label: button.getAttribute('aria-label'),
+        } : null;
+    })()`);
+    if (!tooltipMode) throw new Error("A: 适配全部对象 dock button disappeared");
+    if (tooltipMode.nativeTitle) {
+        // 窄屏/触控模式下产品有意使用原生 title，避免自定义浮层被可滚动 dock 裁切。
+        assert(tooltipMode.title.includes("适配全部对象") && tooltipMode.label.includes("适配全部对象"), "A5b native Tooltip fallback names the actual control", JSON.stringify(tooltipMode));
+        await cdp.evaluate(`document.querySelector(${JSON.stringify(tooltipButton)}).focus()`);
+        assert(await cdp.poll(`document.activeElement === document.querySelector(${JSON.stringify(tooltipButton)})`, "native tooltip control focus", 5000), "A5c native Tooltip fallback keeps the control keyboard focusable");
+        await cdp.evaluate("document.activeElement?.blur()");
+    } else {
+        const hoverPoint = await cdp.evaluate(`(() => { const b = document.querySelector(${JSON.stringify(tooltipButton)}); if (!b) return null; const r = b.getBoundingClientRect(); return {x:r.x+r.width/2, y:r.y+r.height/2}; })()`);
+        if (!hoverPoint) throw new Error("A: 适配全部对象 dock button not visible");
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...hoverPoint });
+        const describedTooltip = `(() => { const b = document.querySelector(${JSON.stringify(tooltipButton)}); return !!b && [...(b.parentElement?.querySelectorAll('.aceternity-dock-tooltip') || [])].some((t) => (t.textContent || '').includes('适配全部对象')); })()`;
+        assert(await cdp.poll(describedTooltip, "tooltip on hover", 5000), "A5b Tooltip hover describes the actual control");
+        await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
+        assert(await cdp.poll(`!(${describedTooltip})`, "tooltip dismiss", 5000), "A5b Tooltip dismisses when pointer leaves");
+        await cdp.evaluate(`document.querySelector(${JSON.stringify(tooltipButton)}).focus()`);
+        for (const modifiers of [8, 0]) {
+            await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
+            await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
+        }
+        assert(await cdp.poll(`document.activeElement === document.querySelector(${JSON.stringify(tooltipButton)}) && (${describedTooltip})`, "tooltip on keyboard focus", 5000), "A5c Tab focus opens Tooltip without an extra wrapper stop");
+        await cdp.evaluate("document.activeElement?.blur()");
     }
-    assert(await cdp.poll(`document.activeElement === document.querySelector(${JSON.stringify(tooltipButton)}) && (${describedTooltip})`, "tooltip on keyboard focus", 5000), "A5c Tab focus opens Tooltip without an extra wrapper stop");
-    await cdp.evaluate("document.activeElement?.blur()");
 
     // 摆场模式不显示时间轴；切到动画模式才出现时间轴，且自动关键帧初始关闭。
     const readGating = `(() => ({
@@ -442,19 +490,14 @@ async function smokeWorkbench(cdp, baseUrl) {
     if (!(await cdp.click('button[data-mode="layout"]'))) throw new Error("A: 摆场模式按钮不可点击");
     assert(await cdp.poll(`document.querySelectorAll('.previs-sequencer').length === 0`, "layout hides sequencer", 10000), "A7b 回到摆场模式隐藏时间轴");
 
-    const propMenuOpened = await cdp.click('[aria-label="添加道具"]');
-    if (!propMenuOpened) throw new Error("A: 添加道具 button not clickable");
-    const cubeMenuReady = await cdp.poll(`!![...document.querySelectorAll('[role="menuitem"]')].find((item) => (item.textContent || '').trim() === '立方体' && item.getClientRects().length > 0)`, "cube menu item", 10000);
-    if (!cubeMenuReady) throw new Error("A: 立方体 menu item not visible");
-    const addedCube = await cdp.clickText("立方体", '[role="menuitem"]');
-    if (!addedCube) throw new Error("A: 立方体 menu item not clickable");
-    const cubeAppeared = await cdp.poll(`!!document.querySelector('[aria-label="删除 立方体"]')`, "cube row", 20000);
-    assert(cubeAppeared, "A10 added cube appears in object list");
+    await addProp(cdp, "单人沙发", "A");
+    const propAppeared = await cdp.poll(`!!document.querySelector('[aria-label="删除 单人沙发"]')`, "prop row", 20000);
+    assert(propAppeared, "A10 added prop appears in object list");
 
     const undone = await cdp.click('[aria-label="撤销"]');
     if (!undone) throw new Error("A: 撤销 button not clickable");
-    const cubeGone = await cdp.poll(`!document.querySelector('[aria-label="删除 立方体"]')`, "cube removed by undo", 20000);
-    assert(cubeGone, "A11 Undo removes the added cube");
+    const propGone = await cdp.poll(`!document.querySelector('[aria-label="删除 单人沙发"]')`, "prop removed by undo", 20000);
+    assert(propGone, "A11 Undo removes the added prop");
 
     // 场景结束前必须真实关闭：下一个场景要重新导航，不能靠忽略 beforeunload 绕过未保存态。
     const closed = await cdp.click('[aria-label="关闭预演台"]');
@@ -708,13 +751,7 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
     const hasCanvas = await cdp.poll(`(() => { const c = document.querySelector('.previs-viewport-shell canvas'); return !!c && c.clientWidth > 0; })()`, "canvas", 40000);
     assert(hasCanvas, "F2 workbench open with real canvas");
 
-    // canonical 改动：dock 新增立方体会走 commit → coordinator.edit → flush（被强制失败）。
-    const propMenuOpened = await cdp.click('[aria-label="添加道具"]');
-    if (!propMenuOpened) throw new Error("F: 添加道具 button not clickable");
-    const cubeMenuReady = await cdp.poll(`!![...document.querySelectorAll('[role="menuitem"]')].find((item) => (item.textContent || '').trim() === '立方体' && item.getClientRects().length > 0)`, "cube menu item", 10000);
-    if (!cubeMenuReady) throw new Error("F: 立方体 menu item not visible");
-    const addedCube = await cdp.clickText("立方体", '[role="menuitem"]');
-    if (!addedCube) throw new Error("F: 立方体 menu item not clickable");
+    await addProp(cdp, "单人沙发", "F");
 
     const errorState = await cdp.poll(`(document.body.innerText || "").includes('保存失败')`, "save failure header", 40000);
     assert(errorState, "F3 header surfaces 保存失败 after forced flush failure");
@@ -727,22 +764,40 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
     const modalShown = await cdp.poll(`!!document.querySelector('.ant-modal-confirm') && (document.body.innerText || "").includes('留在预演台')`, "close confirm modal", 40000);
     assert(modalShown, "F5 close is guarded by a confirm dialog, not silent exit");
 
-    // 确认框有入场/离场动画，且遮罩 mask.closable=false：首击若落在动画中的遮罩上会完全无效。
-    // 这里允许"点一次不生效再审一次"，两次都没让对话框消失才算失败（判据不放宽）。
-    const confirmGoneExpression = `![...document.querySelectorAll('.ant-modal-confirm')].some((modal) => {
+    // 坐标点击成功派发不代表按钮收到了点击：CI 的动画/渲染调度可能让坐标落到遮罩。
+    // 只对未送达的点击有限重试；一旦按钮收到真实点击，就保留原关闭断言，不重试业务操作。
+    await cdp.evaluate(`(() => {
+        const probe = { count: 0 };
+        probe.listener = (event) => {
+            const button = event.target instanceof Element ? event.target.closest('button') : null;
+            if (event.isTrusted && button?.closest('.ant-modal-confirm') && (button.textContent || '').trim() === '留在预演台') probe.count++;
+        };
+        window.__previsStayClickProbe = probe;
+        document.addEventListener('click', probe.listener, true);
+    })()`);
+    let stayClicked = false;
+    try {
+        for (let attempt = 0; attempt < 3 && !stayClicked; attempt++) {
+            const dispatched = await cdp.clickText("留在预演台", ".ant-modal-confirm button");
+            if (!dispatched) throw new Error("F: 留在预演台 button not clickable");
+            stayClicked = await cdp.poll(`window.__previsStayClickProbe.count > 0`, "stay button received trusted click", 1500);
+        }
+        if (!stayClicked) throw new Error("F: 留在预演台 button did not receive a trusted click");
+    } finally {
+        await cdp.evaluate(`(() => {
+            document.removeEventListener('click', window.__previsStayClickProbe.listener, true);
+            delete window.__previsStayClickProbe;
+        })()`);
+    }
+    const modalGone = await cdp.poll(
+        `![...document.querySelectorAll('.ant-modal-confirm')].some((modal) => {
             const rect = modal.getBoundingClientRect();
             const style = getComputedStyle(modal);
             return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0;
-        })`;
-    let modalGone = false;
-    for (let attempt = 1; attempt <= 2 && !modalGone; attempt++) {
-        const stayClicked = await cdp.clickText("留在预演台");
-        if (!stayClicked) {
-            if (attempt === 1) throw new Error("F: 留在预演台 button not clickable");
-            break;
-        }
-        modalGone = await cdp.poll(confirmGoneExpression, `modal dismissed (attempt ${attempt})`, attempt === 1 ? 10000 : 20000);
-    }
+        })`,
+        "modal dismissed",
+        20000,
+    );
     assert(modalGone, "F6 confirm dialog dismissed after choosing 留在预演台");
 
     await sleep(1000);
@@ -750,6 +805,107 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
     assert(stillOpen === 1, "F7 unified workbench remains open after choosing 留在预演台", `shellCount=${stillOpen}`);
 
     assert(cdp.problems.length === 0, "F8 no browser problems in scenario F", JSON.stringify(cdp.problems));
+}
+
+/** 从真实 React 组件取公开 viewport handle，不挂生产调试 API、不另建仿制页面。 */
+async function shotOutputs(cdp, baseUrl) {
+    console.log("\n=== G. shot capture, depth, recording and monitor ===");
+    await cdp.navigateFresh(`${baseUrl}/dev/previs-repro`);
+    await cdp.click('[data-testid="toggle-workbench"]');
+    if (!(await cdp.poll(`document.querySelector('.previs-viewport-shell')?.dataset.rendererReady === 'true'`, "capture ready", 40000))) throw new Error("capture renderer unavailable");
+    const setup = await cdp.evaluate(`(async () => {
+        const el = document.querySelector('.previs-viewport-shell');
+        let fiber = el[Object.keys(el).find(key => key.startsWith('__reactFiber'))];
+        while (fiber && !fiber.ref?.current?.capture) fiber = fiber.return;
+        const resources = performance.getEntriesByType('resource').map(item => item.name);
+        const r3f = await import(resources.find(url => url.includes('/@react-three_fiber.js')));
+        const root = [...r3f._roots.values()].find(item => item.store.getState().gl.domElement === el.querySelector('canvas')).store.getState();
+        const three = await import(resources.find(url => url.includes('/three.js')));
+        window.__previsCaptureTest = { handle: fiber.ref.current, data: fiber.memoizedProps.scene, root, three };
+        return !!fiber.ref.current;
+    })()`);
+    assert(setup, "G1 actual viewport capture handle available");
+    const result = await cdp.evaluate(`(async () => {
+        const { handle, data, root, three } = window.__previsCaptureTest;
+        const surface = handle.createShotSurface({ longEdge: 320, depthNear: 0, depthFar: 30 });
+        const read = () => new Uint8ClampedArray(surface.canvas.getContext('2d').getImageData(0, 0, surface.canvas.width, surface.canvas.height).data);
+        try {
+            surface.render('depth', 0); const firstDepth = read();
+            surface.render('beauty', 0); const beauty = read();
+            surface.render('depth', 0); const secondDepth = read();
+            const stableDepth = firstDepth.every((value, i) => value === secondDepth[i]);
+            const { resolvePrevisViewFraming } = await import('/src/lib/canvas/previs/previs-view-modes.ts');
+            const framing = resolvePrevisViewFraming({ scene: data, mode: 'camera', playhead: 0 });
+            const camera = new three.PerspectiveCamera(framing.fov, surface.canvas.width / surface.canvas.height, framing.near, framing.far);
+            camera.position.set(...framing.position); camera.up.set(...framing.up); camera.lookAt(...framing.target); camera.updateMatrixWorld(true);
+            const meshes = [];
+            root.scene.traverse(o => {
+                let helper = false; for(let p=o;p;p=p.parent) if(p.userData.previsCaptureExclude || p.isTransformControlsGizmo || p.isTransformControlsPlane) helper=true;
+                if(o.isMesh && o.visible && !helper) meshes.push(o);
+            });
+            const errors = [];
+            for (const [u,v] of [[0.5,0.54],[0.5,0.78],[0.5,0.94]]) {
+                const x=Math.floor(u*surface.canvas.width), y=Math.floor(v*surface.canvas.height);
+                const ray = new three.Raycaster(); ray.setFromCamera(new three.Vector2((x+.5)/surface.canvas.width*2-1,1-(y+.5)/surface.canvas.height*2), camera);
+                const hit=ray.intersectObjects(meshes,false)[0]; if(!hit) throw new Error('depth probe missed scene');
+                const z=-hit.point.clone().applyMatrix4(camera.matrixWorldInverse).z;
+                const expected=Math.round((1-Math.min(1,Math.max(0,z/30)))*255);
+                errors.push(Math.abs(firstDepth[(y*surface.canvas.width+x)*4]-expected));
+            }
+            // 同一相机直接渲染到当前真实 renderer 默认帧缓冲，对比中心物体与地面色彩。
+            const size=root.gl.getSize(new three.Vector2()), dpr=root.gl.getPixelRatio(), target=root.gl.getRenderTarget();
+            const helpers=[];
+            root.scene.traverse(o => { if(o.visible && (o.userData.previsCaptureExclude || o.isTransformControlsGizmo || o.isTransformControlsPlane)) { helpers.push(o);o.visible=false; } });
+            let maxColorError=0;
+            try {
+                root.gl.setPixelRatio(1); root.gl.setSize(surface.canvas.width,surface.canvas.height,false); root.gl.setRenderTarget(null); root.gl.render(root.scene,camera);
+                const copy=document.createElement('canvas'); copy.width=surface.canvas.width;copy.height=surface.canvas.height;
+                copy.getContext('2d').drawImage(root.gl.domElement,0,0);
+                const direct=copy.getContext('2d').getImageData(0,0,copy.width,copy.height).data;
+                for(const [u,v] of [[.47,.54],[.5,.78],[.5,.2]]) {
+                    const i=(Math.floor(v*copy.height)*copy.width+Math.floor(u*copy.width))*4;
+                    for(let c=0;c<3;c++) maxColorError=Math.max(maxColorError,Math.abs(direct[i+c]-beauty[i+c]));
+                }
+            } finally { helpers.forEach(o=>o.visible=true);root.gl.setPixelRatio(dpr); root.gl.setSize(size.x,size.y,false);root.gl.setRenderTarget(target);root.invalidate(); }
+            return { width:surface.canvas.width,height:surface.canvas.height,stableDepth,depthErrors:errors,maxColorError };
+        } finally { surface.dispose(); }
+    })()`);
+    assert(result.width === 180 && result.height === 320, "G2 capture respects portrait shot ratio", JSON.stringify(result));
+    assert(result.stableDepth, "G3 beauty/depth switching preserves exact depth bytes");
+    assert(
+        result.depthErrors.every((error) => error <= 1),
+        "G4 linear metric depth matches raycast distance",
+        JSON.stringify(result.depthErrors),
+    );
+    assert(result.maxColorError <= 2, "G5 beauty matches default framebuffer tone mapping", `max error=${result.maxColorError}`);
+    const recording = await cdp.evaluate(`(async () => {
+        const handle=window.__previsCaptureTest.handle;
+        const blob=await handle.recordVideo(.6,12,'depth',{longEdge:320});
+        const video=document.createElement('video'),url=URL.createObjectURL(blob);video.muted=true;
+        try { await new Promise((resolve,reject)=>{video.onloadeddata=resolve;video.onerror=()=>reject(new Error('recording cannot decode'));video.src=url;});
+            const abort=new AbortController();const pending=handle.recordVideo(2,12,'beauty',{longEdge:320,signal:abort.signal});abort.abort();
+            let cancelled=false;try{await pending;}catch{cancelled=true;}
+            return {bytes:blob.size,width:video.videoWidth,height:video.videoHeight,cancelled};
+        } finally {video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
+    })()`);
+    assert(recording.bytes > 0 && recording.width === 180 && recording.height === 320, "G6 recording is decodable at shot dimensions", JSON.stringify(recording));
+    assert(recording.cancelled, "G7 recording cancellation rejects and releases session");
+    const monitorButton = 'button[title^="投放到第二屏幕"]';
+    await cdp.evaluate(`(() => { const open=window.open.bind(window);window.open=(...args)=>{const popup=open(...args);window.__previsPopup=popup;return popup;}; })()`);
+    if (!(await cdp.click(monitorButton))) throw new Error("G: 第二屏监看 button not clickable");
+    assert(await cdp.poll(`window.__previsPopup?.document.querySelector('canvas')?.width === 1080`, "monitor frame", 20000), "G8 monitor displays full portrait shot");
+    const reused = await cdp.evaluate(`(async () => {
+        const {openPrevisMonitorWindow}=await import('/src/components/canvas/previs/previs-monitor-window.ts');
+        let firstClosed=0,secondClosed=0;
+        const first=openPrevisMonitorWindow({renderFrame:()=>null,onClosed:()=>firstClosed++});
+        const second=openPrevisMonitorWindow({renderFrame:()=>null,onClosed:()=>secondClosed++});
+        const count=window.__previsPopup.document.querySelectorAll('canvas').length;
+        first.close();const live=!second.closed();second.close();
+        return {count,live,firstClosed,secondClosed};
+    })()`);
+    assert(reused.count === 1 && reused.live && reused.firstClosed === 1 && reused.secondClosed === 1, "G9 named monitor reuse cleans old session without closing new window", JSON.stringify(reused));
+    assert(await cdp.poll(`document.querySelector(${JSON.stringify(monitorButton)})?.getAttribute('aria-pressed') === 'false'`, "monitor closed"), "G10 monitor UI resets on close");
+    assert(cdp.problems.length === 0, "G11 no browser problems in output scenario", JSON.stringify(cdp.problems));
 }
 
 async function main() {
@@ -777,7 +933,11 @@ async function main() {
         cdp = await connectCdp(cdpPort);
         console.log("      CDP connected (Runtime, Page, Log, Network enabled)");
 
-        for (const scenario of [smokeWorkbench, localModel, missingRetry, deleteWhileLoading, webglLossRestore, saveFailureCloseGuard]) {
+        // 故意保存失败的场景最后运行：它保留 beforeunload 保护，后续导航会被浏览器拦住。
+        const scenarios = [smokeWorkbench, localModel, missingRetry, deleteWhileLoading, webglLossRestore, shotOutputs, saveFailureCloseGuard];
+        const selected = process.env.PREVIS_E2E_SCENARIO;
+        if (selected && !scenarios.some((scenario) => scenario.name === selected)) throw new Error(`Unknown scenario: ${selected}`);
+        for (const scenario of scenarios.filter((scenario) => !selected || scenario.name === selected)) {
             try {
                 await scenario(cdp, baseUrl);
             } catch (error) {

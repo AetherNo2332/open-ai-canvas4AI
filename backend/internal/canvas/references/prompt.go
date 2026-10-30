@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/contract"
 )
 
 var promptHandlePattern = regexp.MustCompile(`\{\{ref:([^{}\r\n]+)\}\}`)

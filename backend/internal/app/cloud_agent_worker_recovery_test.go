@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"strings"
 	"testing"
 	"time"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestWorkerRecoveryReplayedUserCheckpointsCannotResetBudget(t *testing.T) {

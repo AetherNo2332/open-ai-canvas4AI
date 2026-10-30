@@ -6,8 +6,8 @@ import (
 	"slices"
 	"time"
 
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -15,6 +15,9 @@ import (
 
 var ErrCanvasHistoryResourceMissing = errors.New("画布历史引用的资源不存在")
 var ErrCanvasHistoryResourceReferenced = errors.New("资源仍被画布历史引用，无法删除")
+
+// ErrAgentResourceReferenced 包装 ErrCanvasHistoryResourceReferenced，已有调用方的 errors.Is 判断继续生效。
+var ErrAgentResourceReferenced = fmt.Errorf("%w：Agent 画布命令仍持有资源", ErrCanvasHistoryResourceReferenced)
 
 type CanvasHistoryResourceMissingError struct {
 	ResourceIDs []string
@@ -54,31 +57,12 @@ func (r *Repository) CanvasSnapshot(userID, canvasID, id string) (*model.CanvasS
 // Snapshot creation, reference protection and retention commit with the content.
 func (r *Repository) SaveCanvasWithSnapshot(project *model.CanvasProject, snapshot *model.CanvasSnapshot, resourceIDs, currentResourceIDs []string, cutoff time.Time, limit int, force bool) error {
 	next := *project
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		writer := r.transactionRepository(tx)
-		if err := writer.LockCanvasWrite(next.UserID, next.ID); err != nil {
+	err := r.Transaction(func(repo *Repository) error {
+		// 历史恢复整体替换文档，Agent 命令流以新纪元重置，不能和旧纪元的实体版本混用。
+		if err := repo.upsertCanvasProjectProjected(&next, snapshot != nil && snapshot.Reason == "before_restore"); err != nil {
 			return err
 		}
-		before, err := writer.CanvasProjectForUser(next.UserID, next.ID)
-		if err != nil && !writer.IsMissing(err) {
-			return err
-		}
-		if err := checkCanvasRevision(before, &next); err != nil {
-			return err
-		}
-		if err := writer.checkCanvasWriteQuota(before, &next); err != nil {
-			return err
-		}
-		if err := writer.upsertCanvasProject(&next); err != nil {
-			return err
-		}
-		if err := writer.syncLegacyCanvasWrite(before, &next, snapshot != nil && snapshot.Reason == "before_restore"); err != nil {
-			return err
-		}
-		if err = writer.CaptureCanvasSnapshot(&next, snapshot, resourceIDs, currentResourceIDs, cutoff, limit, force); err != nil {
-			return err
-		}
-		return writer.PruneCanvasMediaVersions(next.UserID, next.ID)
+		return repo.CaptureCanvasSnapshot(project, snapshot, resourceIDs, currentResourceIDs, cutoff, limit, force)
 	})
 	if err == nil {
 		*project = next
@@ -86,8 +70,8 @@ func (r *Repository) SaveCanvasWithSnapshot(project *model.CanvasProject, snapsh
 	return err
 }
 
-// CaptureCanvasSnapshot composes with an existing document transaction after
-// its account/canvas locks. It never writes the canvas, epoch or command identity.
+// CaptureCanvasSnapshot 在调用方事务里按保留策略记录一份画布历史快照，不写画布本身。
+// Agent 画布命令先以 revision CAS 落库，再在同一事务里调用它。
 func (r *Repository) CaptureCanvasSnapshot(project *model.CanvasProject, snapshot *model.CanvasSnapshot, resourceIDs, currentResourceIDs []string, cutoff time.Time, limit int, force bool) error {
 	tx := r.db
 	capture := false
@@ -192,20 +176,14 @@ func (r *Repository) CanvasHistoryReferencesObject(resource *model.Resource) (bo
 	err := r.db.Model(&model.CanvasSnapshotResource{}).
 		Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).
 		Count(&count).Error
+	// Agent 画布命令历史与已提交任务输入也持有物理对象，别名资源同样受保护。节点 metadata.mediaVersions
+	// 与节点当前媒体一样属于画布正文：受保护删除在引用快照里扫描画布正文拦截；彻底删除不改写画布，
+	// 断链由画布修复处理（与上游一致），因此物理删除检查不扫描画布正文，彻底删除的对象删除任务可以完成。
 	if err == nil && count == 0 && r.db.Migrator().HasTable(&model.CanvasCommandResource{}) {
 		err = r.db.Model(&model.CanvasCommandResource{}).Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).Count(&count).Error
 	}
 	if err == nil && count == 0 && r.db.Migrator().HasTable(&model.CanvasTaskResource{}) {
 		err = r.db.Model(&model.CanvasTaskResource{}).Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).Count(&count).Error
-	}
-	if err == nil && count == 0 && r.mediaVersionsEnabled {
-		ids := []string{resource.ID}
-		var other []string
-		if err = aliases.Pluck("id", &other).Error; err == nil {
-			refs, e := r.MediaVersionResourceReferences(resource.UserID, append(ids, other...))
-			err = e
-			count = int64(len(refs))
-		}
 	}
 	return count > 0, err
 }
@@ -259,6 +237,13 @@ func (r *Repository) RequireNoCanvasHistoryReferences(resourceIDs []string) erro
 	}
 	if len(refs) > 0 {
 		return ErrCanvasHistoryResourceReferenced
+	}
+	commandRefs, err := r.CanvasCommandResourceReferences(resourceIDs)
+	if err != nil {
+		return err
+	}
+	if len(commandRefs) > 0 {
+		return ErrAgentResourceReferenced
 	}
 	return nil
 }

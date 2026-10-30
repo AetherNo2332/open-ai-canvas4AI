@@ -6,6 +6,8 @@ export type ModelSelection = { kind: "logical"; logicalModelId: string; channelI
 
 export type Options = {
     size?: string;
+    imageResolution?: string;
+    imageParameters?: string;
     quality?: string;
     count?: number;
     transparentBackground?: boolean;
@@ -16,6 +18,8 @@ export type Options = {
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;
+    audioLanguage?: string;
+    audioDialect?: string;
     audioInstructions?: string;
 };
 
@@ -42,87 +46,148 @@ export type GenerationSpec = {
 
 export const GENERATION_OPTION_FIELDS = [
     {
-        kind: "string",
-        modes: ["image", "video"],
-        name: "size",
-        node: "size",
-        task: "size",
+        "kind": "string",
+        "modes": [
+            "image",
+            "video"
+        ],
+        "name": "size",
+        "node": "size",
+        "task": "size"
     },
     {
-        kind: "string",
-        modes: ["image"],
-        name: "quality",
-        node: "quality",
-        task: "quality",
+        "kind": "string",
+        "modes": [
+            "image"
+        ],
+        "name": "imageResolution",
+        "node": "imageResolution",
+        "task": "imageResolution"
     },
     {
-        kind: "number",
-        modes: ["image"],
-        name: "count",
-        node: "count",
-        task: "count",
+        "kind": "string",
+        "modes": [
+            "image"
+        ],
+        "name": "imageParameters",
+        "node": "imageParameters",
+        "task": "imageParameters"
     },
     {
-        kind: "boolean",
-        modes: ["image"],
-        name: "transparentBackground",
-        node: "transparentBackground",
-        task: "transparentBackground",
+        "kind": "string",
+        "modes": [
+            "image"
+        ],
+        "name": "quality",
+        "node": "quality",
+        "task": "quality"
     },
     {
-        kind: "number",
-        modes: ["video"],
-        name: "durationSeconds",
-        node: "seconds",
-        task: "videoSeconds",
+        "kind": "number",
+        "modes": [
+            "image"
+        ],
+        "name": "count",
+        "node": "count",
+        "task": "count"
     },
     {
-        kind: "string",
-        modes: ["video"],
-        name: "resolution",
-        node: "vquality",
-        task: "vquality",
+        "kind": "boolean",
+        "modes": [
+            "image"
+        ],
+        "name": "transparentBackground",
+        "node": "transparentBackground",
+        "task": "transparentBackground"
     },
     {
-        kind: "boolean",
-        modes: ["video"],
-        name: "generateAudio",
-        node: "generateAudio",
-        task: "videoGenerateAudio",
+        "kind": "number",
+        "modes": [
+            "video"
+        ],
+        "name": "durationSeconds",
+        "node": "seconds",
+        "task": "videoSeconds"
     },
     {
-        kind: "boolean",
-        modes: ["video"],
-        name: "watermark",
-        node: "watermark",
-        task: "videoWatermark",
+        "kind": "string",
+        "modes": [
+            "video"
+        ],
+        "name": "resolution",
+        "node": "vquality",
+        "task": "vquality"
     },
     {
-        kind: "string",
-        modes: ["audio"],
-        name: "audioVoice",
-        node: "audioVoice",
-        task: "audioVoice",
+        "kind": "boolean",
+        "modes": [
+            "video"
+        ],
+        "name": "generateAudio",
+        "node": "generateAudio",
+        "task": "videoGenerateAudio"
     },
     {
-        kind: "string",
-        modes: ["audio"],
-        name: "audioFormat",
-        node: "audioFormat",
-        task: "audioFormat",
+        "kind": "boolean",
+        "modes": [
+            "video"
+        ],
+        "name": "watermark",
+        "node": "watermark",
+        "task": "videoWatermark"
     },
     {
-        kind: "string",
-        modes: ["audio"],
-        name: "audioSpeed",
-        node: "audioSpeed",
-        task: "audioSpeed",
+        "kind": "string",
+        "modes": [
+            "audio"
+        ],
+        "name": "audioVoice",
+        "node": "audioVoice",
+        "task": "audioVoice"
     },
     {
-        kind: "string",
-        modes: ["audio"],
-        name: "audioInstructions",
-        node: "audioInstructions",
-        task: "audioInstructions",
+        "kind": "string",
+        "modes": [
+            "audio"
+        ],
+        "name": "audioFormat",
+        "node": "audioFormat",
+        "task": "audioFormat"
     },
+    {
+        "kind": "string",
+        "modes": [
+            "audio"
+        ],
+        "name": "audioSpeed",
+        "node": "audioSpeed",
+        "task": "audioSpeed"
+    },
+    {
+        "kind": "string",
+        "modes": [
+            "audio"
+        ],
+        "name": "audioLanguage",
+        "node": "audioLanguage",
+        "task": "audioLanguage"
+    },
+    {
+        "kind": "string",
+        "modes": [
+            "audio"
+        ],
+        "name": "audioDialect",
+        "node": "audioDialect",
+        "task": "audioDialect"
+    },
+    {
+        "kind": "string",
+        "modes": [
+            "audio"
+        ],
+        "name": "audioInstructions",
+        "node": "audioInstructions",
+        "task": "audioInstructions"
+    }
 ] as const;

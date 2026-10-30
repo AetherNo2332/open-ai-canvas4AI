@@ -7,7 +7,7 @@ import { TaskDetailItem } from "./canvas-project-feedback";
 import { canCancelGenerationTask, generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
 import { formatTaskLog, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
-import { LazyVideoPlayer } from "@/components/lazy-video-player";
+import { VideoPlayer } from "@/components/video-player";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { modelDisplayName, useEffectiveConfig } from "@/stores/use-config-store";
 import { resolveMediaUrl } from "@/services/file-storage";
@@ -146,7 +146,7 @@ function ResolvedCanvasVideoPreview({ node }: { node: CanvasNodeData }) {
 
     if (failed) return <div className="grid min-h-72 w-full place-items-center text-sm text-white/55">视频地址获取失败，请关闭后重试</div>;
     if (!src) return <div className="grid min-h-72 w-full place-items-center text-sm text-white/55">正在加载视频…</div>;
-    return <LazyVideoPlayer src={src} mimeType={node.metadata?.mimeType} title={node.title || "视频预览"} hasAudio={typeof node.metadata?.hasAudio === "boolean" ? node.metadata.hasAudio : undefined} className="max-h-[84vh] max-w-full bg-black" />;
+    return <VideoPlayer src={src} mimeType={node.metadata?.mimeType} title={node.title || "视频预览"} hasAudio={typeof node.metadata?.hasAudio === "boolean" ? node.metadata.hasAudio : undefined} className="max-h-[84vh] max-w-full bg-black" />;
 }
 
 function TaskGenerationParameters({ inputJson, theme }: { inputJson?: string; theme: CanvasProjectStatusDialogsProps["theme"] }) {

@@ -10,8 +10,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 const (
@@ -103,20 +103,6 @@ type cloudAgentPrevisMutationPlan struct {
 	SceneID            string
 }
 
-func cloudAgentPrevisSceneCreateSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"canvasSnapshotHash": map[string]any{"type": "string", "description": "previs_scene_read 场景目录返回的 canvasSnapshotHash；创建前画布必须未变化"},
-			"sceneId":            map[string]any{"type": "string", "maxLength": 80, "description": "新的稳定场景 ID"},
-			"title":              map[string]any{"type": "string", "maxLength": cloudAgentPrevisTextLimit, "description": "场景标题"},
-			"templateId":         map[string]any{"type": "string", "enum": []string{"empty", "monologue", "dialogue", "blocking", "product", "action_chase", "interior", "crowd"}, "description": "模板：empty/monologue/dialogue/blocking/product/action_chase/interior/crowd"},
-		},
-		"required":             []string{"canvasSnapshotHash", "sceneId", "title", "templateId"},
-		"additionalProperties": false,
-	}
-}
-
 func cloudAgentPrevisPatchOperationSchema() map[string]any {
 	vec3 := map[string]any{"type": "array", "minItems": 3, "maxItems": 3, "items": map[string]any{"type": "number"}}
 	properties := map[string]any{
@@ -127,9 +113,9 @@ func cloudAgentPrevisPatchOperationSchema() map[string]any {
 		"kind":               map[string]any{"type": "string", "enum": []string{"primitive", "actor"}},
 		"primitive":          map[string]any{"type": "string", "enum": []string{"box", "sphere", "cylinder", "plane", "character"}},
 		"archetype":          map[string]any{"type": "string", "enum": []string{"adult", "child", "elderly", "man", "woman", "monster"}, "description": "演员体型原型"},
-		"characterAssetId":   map[string]any{"type": "string", "maxLength": 120},
-		"characterVersionId": map[string]any{"type": "string", "maxLength": 120},
-		"referenceNodeId":    map[string]any{"type": "string", "maxLength": 120},
+		"characterAssetId":   map[string]any{"type": "string", "maxLength": 120, "description": "角色绑定：canvas_get_state 角色卡的 character.assetId；与 characterVersionId、referenceNodeId 三者必须同时提供"},
+		"characterVersionId": map[string]any{"type": "string", "maxLength": 120, "description": "角色绑定：同一角色卡的 character.versionId；三者必须同时提供"},
+		"referenceNodeId":    map[string]any{"type": "string", "maxLength": 120, "description": "角色绑定：该角色卡节点 id；三者必须同时提供"},
 		"characterName":      map[string]any{"type": "string", "maxLength": cloudAgentPrevisTextLimit},
 		"pose":               map[string]any{"type": "string", "enum": []string{"stand", "sit", "walk", "run", "wave", "think", "fight", "kick", "throw", "push", "reach", "arms_crossed", "phone", "bow", "kneel_single", "kneel_double", "lean", "squat", "hands_hips", "neutral", "t_pose"}, "description": "演员姿态"},
 		"color":              map[string]any{"type": "string", "maxLength": 9, "pattern": `^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`, "description": "十六进制颜色"},
@@ -165,19 +151,6 @@ func cloudAgentPrevisPatchOperationSchema() map[string]any {
 		"activeShotId":         map[string]any{"type": "string", "maxLength": 80},
 	}
 	return map[string]any{"type": "object", "properties": properties, "required": []string{"type", "id"}, "additionalProperties": false}
-}
-
-func cloudAgentPrevisApplyPatchSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"snapshotHash": map[string]any{"type": "string", "description": "previs_scene_read 聚焦读取返回的场景 snapshotHash；只代表该场景"},
-			"sceneId":      map[string]any{"type": "string", "maxLength": 80, "description": "要修改的场景 ID"},
-			"operations":   map[string]any{"type": "array", "minItems": 1, "maxItems": cloudAgentPrevisMaxOperations, "items": cloudAgentPrevisPatchOperationSchema(), "description": "受限语义操作；不能替换整个场景或写任意 JSON"},
-		},
-		"required":             []string{"snapshotHash", "sceneId", "operations"},
-		"additionalProperties": false,
-	}
 }
 
 func cloudAgentPrevisValidateText(value, label string, maxRunes int, required bool) error {
@@ -812,7 +785,7 @@ func prepareCloudAgentPrevisApplyPatch(repo *repository.Repository, userID, canv
 	}
 	items := make([]cloudAgentApprovalPreviewItem, 0, len(args.Operations))
 	for index, operation := range args.Operations {
-		if err := cloudAgentPrevisValidateCharacterBindingInCanvas(doc, operation); err != nil {
+		if err := cloudAgentPrevisValidateCharacterBindingInCanvas(repo, userID, doc, operation); err != nil {
 			return nil, err
 		}
 		item, err := cloudAgentPrevisApplyPatchOperation(scene, operation, index)
@@ -892,25 +865,43 @@ func cloudAgentPrevisApplyName(item map[string]any, value *string, label string)
 	return nil
 }
 
+// cloudAgentPrevisCharacterBindingHint 告诉模型三个绑定字段从哪里取值；所有绑定错误都带上它。
+const cloudAgentPrevisCharacterBindingHint = "角色绑定的三个字段必须同时提供：先用 canvas_get_state 读取角色卡节点，characterAssetId 取 character.assetId，characterVersionId 取 character.versionId，referenceNodeId 取该角色卡节点 id"
+
+func cloudAgentPrevisCharacterBindingError(field, issue, problem string) error {
+	return cloudAgentFieldError(field, issue, problem+"。"+cloudAgentPrevisCharacterBindingHint)
+}
+
+func cloudAgentPrevisCharacterBindingProvided(operation cloudAgentPrevisPatchOperation) bool {
+	return operation.CharacterAssetID != nil || operation.CharacterVersionID != nil || operation.ReferenceNodeID != nil || operation.CharacterName != nil
+}
+
+// cloudAgentPrevisCharacterBindingFieldsError 按固定顺序检查三个绑定字段，报告第一个缺失或格式错误的字段。
+func cloudAgentPrevisCharacterBindingFieldsError(operation cloudAgentPrevisPatchOperation) error {
+	for _, field := range []struct {
+		value *string
+		label string
+	}{
+		{operation.CharacterAssetID, "characterAssetId"},
+		{operation.CharacterVersionID, "characterVersionId"},
+		{operation.ReferenceNodeID, "referenceNodeId"},
+	} {
+		if field.value == nil || strings.TrimSpace(*field.value) == "" {
+			return cloudAgentPrevisCharacterBindingError(field.label, "required", "角色绑定缺少 "+field.label)
+		}
+		if err := validateCloudAgentID(*field.value, field.label, 120); err != nil {
+			return cloudAgentPrevisCharacterBindingError(field.label, "invalid", cloudAgentSafeToolError(err))
+		}
+	}
+	return nil
+}
+
 func cloudAgentPrevisApplyCharacterBinding(item map[string]any, operation cloudAgentPrevisPatchOperation) error {
-	provided := operation.CharacterAssetID != nil || operation.CharacterVersionID != nil || operation.ReferenceNodeID != nil || operation.CharacterName != nil
-	if !provided {
+	if !cloudAgentPrevisCharacterBindingProvided(operation) {
 		return nil
 	}
-	if operation.CharacterAssetID == nil || operation.CharacterVersionID == nil || operation.ReferenceNodeID == nil {
-		return BadAuthRequest("角色绑定需要 characterAssetId、characterVersionId 和 referenceNodeId")
-	}
-	for value, label := range map[*string]string{
-		operation.CharacterAssetID:   "characterAssetId",
-		operation.CharacterVersionID: "characterVersionId",
-		operation.ReferenceNodeID:    "referenceNodeId",
-	} {
-		if value == nil || strings.TrimSpace(*value) == "" {
-			return BadAuthRequest(label + " 不能为空")
-		}
-		if err := validateCloudAgentID(*value, label, 120); err != nil {
-			return err
-		}
+	if err := cloudAgentPrevisCharacterBindingFieldsError(operation); err != nil {
+		return err
 	}
 	binding := map[string]any{
 		"characterAssetId":   *operation.CharacterAssetID,
@@ -928,24 +919,38 @@ func cloudAgentPrevisApplyCharacterBinding(item map[string]any, operation cloudA
 	return nil
 }
 
-func cloudAgentPrevisValidateCharacterBindingInCanvas(doc map[string]any, operation cloudAgentPrevisPatchOperation) error {
-	if operation.CharacterAssetID == nil && operation.CharacterVersionID == nil && operation.ReferenceNodeID == nil && operation.CharacterName == nil {
+// cloudAgentPrevisValidateCharacterBindingInCanvas 要求 referenceNodeId 是匹配的角色卡。版本接受
+// 节点记录的 characterVersionId，或 canvas_get_state 对该角色卡返回的 character.versionId
+// （current 策略下是资产当前主版本），与读取口径一致，不接受其他版本。
+func cloudAgentPrevisValidateCharacterBindingInCanvas(repo *repository.Repository, userID string, doc map[string]any, operation cloudAgentPrevisPatchOperation) error {
+	if !cloudAgentPrevisCharacterBindingProvided(operation) {
 		return nil
 	}
-	if operation.CharacterAssetID == nil || operation.CharacterVersionID == nil || operation.ReferenceNodeID == nil {
-		return BadAuthRequest("角色绑定需要 characterAssetId、characterVersionId 和 referenceNodeId")
+	if err := cloudAgentPrevisCharacterBindingFieldsError(operation); err != nil {
+		return err
 	}
 	for _, node := range creationMaps(doc["nodes"]) {
 		if stringValue(node["id"]) != *operation.ReferenceNodeID {
 			continue
 		}
 		metadata, _ := node["metadata"].(map[string]any)
-		if stringValue(metadata["workflowKind"]) != "character" || stringValue(metadata["characterAssetId"]) != *operation.CharacterAssetID || stringValue(metadata["characterVersionId"]) != *operation.CharacterVersionID {
-			return BadAuthRequest("referenceNodeId 必须是匹配 characterAssetId 和 characterVersionId 的角色卡节点")
+		if stringValue(metadata["workflowKind"]) != "character" {
+			return cloudAgentPrevisCharacterBindingError("referenceNodeId", "mismatch", "referenceNodeId 不是角色卡节点")
 		}
-		return nil
+		if stringValue(metadata["characterAssetId"]) != *operation.CharacterAssetID {
+			return cloudAgentPrevisCharacterBindingError("characterAssetId", "mismatch", "characterAssetId 与该角色卡关联的角色资产不一致")
+		}
+		if stringValue(metadata["characterVersionId"]) == *operation.CharacterVersionID {
+			return nil
+		}
+		if repo != nil {
+			if character, err := cloudAgentResolveCharacter(repo, userID, "", node); err == nil && character.Card.VersionID == *operation.CharacterVersionID {
+				return nil
+			}
+		}
+		return cloudAgentPrevisCharacterBindingError("characterVersionId", "mismatch", "characterVersionId 与该角色卡当前读取到的版本不一致")
 	}
-	return BadAuthRequest("referenceNodeId 不属于当前画布")
+	return cloudAgentPrevisCharacterBindingError("referenceNodeId", "mismatch", "referenceNodeId 不属于当前画布")
 }
 
 func cloudAgentPrevisShotDuration(scene map[string]any) float64 {
@@ -1733,34 +1738,4 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 	default:
 		return cloudAgentApprovalPreviewItem{}, BadAuthRequest("不支持的预演台语义操作")
 	}
-}
-
-func applyCloudAgentPrevisMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {
-	var plan *cloudAgentPrevisMutationPlan
-	var err error
-	switch call.Function.Name {
-	case "previs_scene_create":
-		plan, err = prepareCloudAgentPrevisSceneCreate(repo, userID, canvasID, call)
-	case "previs_apply_patch":
-		plan, err = prepareCloudAgentPrevisApplyPatch(repo, userID, canvasID, call)
-	default:
-		return nil, BadAuthRequest("不支持的预演台写工具")
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err = saveCloudAgentDocument(repo, plan.Canvas, plan.Document, policy); err != nil {
-		return nil, err
-	}
-	if len(recorder) > 0 && recorder[0] != nil {
-		preview := plan.Preview
-		if err := recorder[0](repo, cloudAgentMutationInput{UserID: userID, CanvasID: canvasID, StepID: call.ID, Operation: plan.Operation, BeforeSnapshotHash: plan.BeforeSnapshotHash, AfterSnapshotHash: plan.AfterSnapshotHash, BeforeJSON: plan.BeforeJSON, Preview: &preview}); err != nil {
-			return nil, err
-		}
-	}
-	resultSnapshotHash := plan.ResultSnapshotHash
-	if resultSnapshotHash == "" {
-		resultSnapshotHash = plan.AfterSnapshotHash
-	}
-	return map[string]any{"canvasId": canvasID, "sceneId": plan.SceneID, "snapshotHash": resultSnapshotHash, "canvasSnapshotHash": plan.AfterSnapshotHash, "beforeCanvasSnapshotHash": plan.BeforeSnapshotHash, "committed": true, "summary": plan.Preview.Description}, nil
 }

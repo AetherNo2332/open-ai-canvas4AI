@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func isPublicMediaURL(value string) bool {
@@ -58,6 +58,21 @@ func imageParameterSupported(profile *ImageCapabilityConfig, parameter string) b
 	return profile.OutputFormat.Supported
 }
 
+// configuredImageResponseFormat returns the model-level response format choice.
+// "auto" deliberately means that response_format is omitted from the request.
+// The provider, rather than a protocol name heuristic, then decides its default.
+func configuredImageResponseFormat(profile *ImageCapabilityConfig) string {
+	if !imageParameterSupported(profile, "response_format") || profile == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(profile.ResponseFormat.Default)) {
+	case "b64_json", "url":
+		return strings.ToLower(strings.TrimSpace(profile.ResponseFormat.Default))
+	default:
+		return ""
+	}
+}
+
 func imageQualitySupported(profile *ImageCapabilityConfig) bool {
 	return profile == nil || profile.Quality.Supported
 }
@@ -85,23 +100,6 @@ func imageSizeParameter(profile *ImageCapabilityConfig, value string) (string, s
 	default:
 		return "", ""
 	}
-}
-
-// protocolRequestSize 折算声明式协议统一字段 aspectRatio 的值：能力配置声明 size 的上游要像素
-// （画布默认档 1:1 → 1024x1024）。内置图片实现一直在请求边界做这件事（imageSizeParameter →
-// normalizePixelSize），声明式插件路径漏了它 —— 实测只认 WIDTHxHEIGHT 的上游会直接 400。
-//
-// 声明 aspect_ratio 的协议（grok / gemini / jimeng 等）保持原样：它们在自己的请求模板里带着
-// 容差做比例归一（实测把 1824x1024 交给 GCD 会得到 57:32 这种上游不认的比例），host 不抢这件事。
-// 视频的 ratio 也由自己那条链处理。
-func protocolRequestSize(input canvasGenerationInput) string {
-	if input.Mode != "image" {
-		return input.Config.Size
-	}
-	if key, value := imageSizeParameter(input.ImageCapability, input.Config.Size); key == "size" && value != "" {
-		return value
-	}
-	return input.Config.Size
 }
 
 func normalizeImageAspectRatio(value string) string {

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/tasks"
-	"infinite-canvas/backend/internal/identity"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/tasks"
+	"yingce/backend/internal/identity"
 )
 
 func TestStoryboardStableHandlesFollowIdentityAcrossInputOrder(t *testing.T) {

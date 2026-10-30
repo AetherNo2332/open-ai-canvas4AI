@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as prettier from "prettier";
 
-export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = process.env.BASE_SHA, headSha = process.env.GITHUB_SHA || "HEAD", log = console.log } = {}) {
+export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = process.env.BASE_SHA, headSha = process.env.GITHUB_SHA || "HEAD", pullRequest = process.env.GITHUB_EVENT_NAME === "pull_request", log = console.log } = {}) {
     const git = (args) => {
         const result = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
         if (result.error) throw result.error;
@@ -12,7 +12,8 @@ export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = pr
         return result.stdout;
     };
     const head = git(["rev-parse", "--verify", `${headSha}^{commit}`]).trim();
-    const parent = git(["rev-list", "--parents", "-n", "1", head]).trim().split(" ")[1] || null;
+    const headParents = git(["rev-list", "--parents", "-n", "1", head]).trim().split(" ").slice(1);
+    const parent = headParents[0] || null;
     let base = parent;
     if (baseSha && !/^0+$/.test(baseSha)) {
         // 强制改写提交历史后，push 事件里的 before 可能已不在 checkout 中；
@@ -29,7 +30,21 @@ export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = pr
         .split("\0")
         .filter((file) => /\.(css|html|json|js|jsx|md|mdx|mjs|cjs|ts|tsx|yaml|yml)$/.test(file));
     const prefix = git(["rev-parse", "--show-prefix"]).trim();
-    const previousFiles = new Set(base ? git(["ls-tree", "-r", "--name-only", "-z", base, "--", "."]).split("\0") : []);
+    // 分支内部合并进来的外部历史（如上游同步）带入的格式问题按旧文件处理：
+    // 只取分支首父链上合并提交的其余父提交，避免展开被合并分支内部的全部历史。
+    // 直接落在 base 上的合并（GitHub 的 PR 合成合并或单次推送的合并）本身就是
+    // 被检查的改动：其第二父提交即改动内容，不能当作旧文件，只沿它的首父链继续找。
+    const legacyRefs = base ? [base] : [];
+    if (base) {
+        // 基线分支在事件之后又前进时，PR 合成合并的首父提交会晚于 base，按祖先关系判断；
+        // push 事件里的合并没有这种漂移，仍要求首父提交就是 before。
+        const landsOnBase = headParents.length > 1 && (headParents[0] === base || (pullRequest && spawnSync("git", ["merge-base", "--is-ancestor", base, headParents[0]], { cwd }).status === 0));
+        const tip = landsOnBase ? headParents[1] : head;
+        for (const line of git(["rev-list", "--merges", "--first-parent", "--parents", tip, `^${base}`]).split("\n")) {
+            legacyRefs.push(...line.trim().split(" ").slice(2).filter(Boolean));
+        }
+    }
+    const refFiles = new Map(legacyRefs.map((ref) => [ref, new Set(git(["ls-tree", "-r", "--name-only", "-z", ref, "--", "."]).split("\0"))]));
     const failures = [];
     for (const file of files) {
         const filepath = path.join(cwd, file);
@@ -37,8 +52,15 @@ export async function checkChangedFormatting({ cwd = process.cwd(), baseSha = pr
         if (info.ignored) continue;
         const options = { ...(await prettier.resolveConfig(filepath)), filepath };
         // 只允许明确的历史格式问题跳过；语法、Git、文件读取错误全部向上抛出。
-        const previous = previousFiles.has(file) ? git(["show", `${base}:${prefix}${file}`]) : null;
-        if (previous !== null && !(await prettier.check(previous, options))) {
+        let legacy = false;
+        for (const ref of legacyRefs) {
+            if (!refFiles.get(ref).has(file)) continue;
+            if (!(await prettier.check(git(["show", `${ref}:${prefix}${file}`]), options))) {
+                legacy = true;
+                break;
+            }
+        }
+        if (legacy) {
             log(`Skipping legacy unformatted file: ${file}`);
             continue;
         }

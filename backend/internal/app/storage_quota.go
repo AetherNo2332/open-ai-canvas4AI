@@ -1,32 +1,14 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
-
-type AccountFileStorageUsage struct {
-	UsedBytes  int64 `json:"usedBytes"`
-	TotalBytes int64 `json:"totalBytes"`
-}
-
-func (s *Service) AccountFileStorageUsage(userID string) (*AccountFileStorageUsage, error) {
-	policy, err := s.RuntimePolicy()
-	if err != nil {
-		return nil, err
-	}
-	usedBytes, err := s.repo.UserStoredFileBytes(userID)
-	if err != nil {
-		return nil, err
-	}
-	return &AccountFileStorageUsage{
-		UsedBytes:  usedBytes,
-		TotalBytes: gigabytes(policy.Resource.StoredFileGB),
-	}, nil
-}
 
 func structuredBytes(usage repository.UserStorageUsage) int64 {
 	return usage.AssetBytes + usage.CanvasBytes
@@ -102,24 +84,6 @@ func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *m
 	return err
 }
 
-// createCloudAgentRunWithinStorageQuota 是"建 run"的存储配额边界。
-//
-// 占位任务、报价预留与执行记录必须在同一事务里提交，所以配额校验与写入共用同一个
-// storageMu 临界区：先按配额拒绝，再原子落库，任何一半都不会单独存在。
-func (s *Service) createCloudAgentRunWithinStorageQuota(run *model.CloudAgentExecution, task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting, skillRows ...[]model.AgentConversationSkill) error {
-	s.storageMu.Lock()
-	defer s.storageMu.Unlock()
-	usage, err := s.repo.UserStorageUsage(task.UserID)
-	if err != nil {
-		return err
-	}
-	incomingBytes := int64(len([]byte(task.Prompt)) + len([]byte(task.InputJSON)) + len([]byte(task.Error)))
-	if err := validateTaskStorageQuotaWithPolicy(usage, incomingBytes, policy.Resource); err != nil {
-		return err
-	}
-	return s.repo.CreateCloudAgentHoldingTask(task, billingOrder, run, policy.Task.ActiveTaskLimit, skillRows...)
-}
-
 func createTaskWithStorageQuotaRepository(repo *repository.Repository, task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting) error {
 	usage, err := repo.UserStorageUsage(task.UserID)
 	if err != nil {
@@ -175,10 +139,31 @@ func (s *Service) saveTaskCompletionWithinStorageQuota(task *model.Task, resultJ
 	completed.InputJSON = publicInputJSON
 	completed.CompletedAt = ptr(time.Now())
 	var register func(*repository.Repository) error
-	if task.MediaRecoveryJSON != "" {
+	visualImage := strings.Contains(task.InputJSON, "project_asset_image")
+	if task.MediaRecoveryJSON != "" || visualImage {
 		completed.MediaStage = "completed"
 		register = func(repo *repository.Repository) error {
 			writer := &Service{repo: repo, dataDir: s.dataDir}
+			if visualImage {
+				var result map[string]interface{}
+				if err := json.Unmarshal(resultJSON, &result); err != nil {
+					return err
+				}
+				if _, err := writer.finalizeProjectAssetImageTask(*task, result); err != nil {
+					return err
+				}
+				encoded, err := json.Marshal(result)
+				if err != nil {
+					return err
+				}
+				if err := validateTaskDataGrowthQuotaWithPolicy(usage, taskDelta+int64(len(encoded)-len(resultJSON)), policy.Resource); err != nil {
+					return err
+				}
+				completed.ResultJSON = string(encoded)
+			}
+			if task.MediaRecoveryJSON == "" {
+				return nil
+			}
 			if err := writer.RegisterTaskOutputFromTask(completed); err != nil {
 				return err
 			}

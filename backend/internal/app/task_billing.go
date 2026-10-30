@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // taskBillingCoordinator 只负责任务生命周期中的计费状态迁移和核对策略。
@@ -50,6 +50,25 @@ func (c *taskBillingCoordinator) SettleBilling(orderID string, providerRequestID
 	return c.repo.SettleBillingOrder(orderID, providerRequestID)
 }
 
+func (c *taskBillingCoordinator) BillingOrder(orderID string) (*model.BillingOrder, error) {
+	if orderID == "" {
+		return nil, nil
+	}
+	return c.repo.BillingOrder(orderID)
+}
+
+func (c *taskBillingCoordinator) SettleBillingWithAudioDuration(orderID string, providerRequestID string, durationMs int64) error {
+	if orderID == "" {
+		return nil
+	}
+	if repo, ok := c.repo.(interface {
+		SettleBillingOrderWithAudioDuration(string, string, int64) error
+	}); ok {
+		return repo.SettleBillingOrderWithAudioDuration(orderID, providerRequestID, durationMs)
+	}
+	return c.repo.SettleBillingOrder(orderID, providerRequestID)
+}
+
 func (c *taskBillingCoordinator) RestoreRefundedBilling(orderID string, providerRequestID string) error {
 	if orderID == "" {
 		return nil
@@ -61,14 +80,14 @@ func (c *taskBillingCoordinator) RefundBilling(orderID string, errorText string)
 	if orderID == "" {
 		return nil
 	}
-	return c.repo.RefundBillingOrder(orderID, truncateRunes(errorText, 1000))
+	return c.repo.RefundBillingOrder(orderID, truncateRunes(redactUpstreamAddress(errorText), 1000))
 }
 
 func (c *taskBillingCoordinator) MarkBillingUncertain(orderID string, errorText string) error {
 	if orderID == "" {
 		return nil
 	}
-	return c.repo.MarkBillingUncertain(orderID, truncateRunes(errorText, 1000))
+	return c.repo.MarkBillingUncertain(orderID, truncateRunes(redactUpstreamAddress(errorText), 1000))
 }
 
 // CheckRetryEligibility 收敛失败/取消任务重试前的计费状态校验。

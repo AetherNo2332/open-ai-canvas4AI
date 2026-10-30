@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func cloudAgentMediaResultKey(repo *repository.Repository, userID, canvasID, taskID string) (model.CanvasCommandReceipt, bool, error) {

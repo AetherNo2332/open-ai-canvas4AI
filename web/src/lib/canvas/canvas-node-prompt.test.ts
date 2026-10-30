@@ -35,7 +35,7 @@ test("媒体节点已有结果时只更新下一版提示词草稿", () => {
         assert.equal(metadata?.prompt, "已提交提示词");
         assert.equal(metadata?.composerContent, "下一版提示词");
         assert.equal(metadata?.status, "success");
-        assert.equal(metadata?.generationSpec, undefined);
+        assert.equal(metadata?.generationSpec?.prompt, "下一版提示词");
     }
 });
 
@@ -47,7 +47,7 @@ test("空媒体草稿同时初始化提交提示词和编辑提示词", () => {
     assert.equal(metadata?.status, "idle");
     assert.equal(metadata?.prompt, "第一版提示词");
     assert.equal(metadata?.composerContent, "第一版提示词");
-    assert.equal(metadata?.generationSpec, undefined);
+    assert.equal(metadata?.generationSpec?.prompt, "第一版提示词");
 });
 
 test("模板提示词清空后重新读取和保存重载均保持为空", () => {
@@ -57,7 +57,7 @@ test("模板提示词清空后重新读取和保存重载均保持为空", () =>
             const applied = writeCanvasNodePrompt(current, "模板预设文字");
             const cleared = writeCanvasNodePrompt(applied, "");
             assert.equal(cleared.metadata?.composerContent, "");
-            assert.equal(cleared.metadata?.generationSpec, undefined);
+            assert.equal(cleared.metadata?.generationSpec?.prompt, "");
             assert.equal(cleared.metadata?.prompt, content ? "已提交提示词" : "");
             const reloaded = JSON.parse(JSON.stringify(cleared)) as CanvasNodeData;
             assert.equal(canonicalGenerationMetadata(reloaded, type).composerContent, "");
@@ -66,10 +66,7 @@ test("模板提示词清空后重新读取和保存重载均保持为空", () =>
 });
 
 test("已有生成合同的提示词支持连续编辑而不回填旧模板", () => {
-    const current = node(CanvasNodeType.Image, {
-        generationSpec: { version: 1, mode: "image", prompt: "", options: {}, referenceBindings: [], textInputMode: "append-sources" },
-    });
-    const applied = writeCanvasNodePrompt(current, "模板预设文字");
+    const applied = writeCanvasNodePrompt(node(CanvasNodeType.Image), "模板预设文字");
     const edited = writeCanvasNodePrompt(applied, "修改后的文字");
     assert.equal(edited.metadata?.generationSpec?.prompt, "修改后的文字");
     assert.equal(canonicalGenerationMetadata(edited, "image").composerContent, "修改后的文字");

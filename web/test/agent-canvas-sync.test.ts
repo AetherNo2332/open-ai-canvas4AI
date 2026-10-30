@@ -97,3 +97,18 @@ test("a full invalidation and undo still refresh after delta support was detecte
     expect(refresh).toHaveBeenCalledTimes(2);
     sync.dispose();
 });
+
+test("director writes and director_open refresh the canvas; director reads do not", async () => {
+    const refresh = mock(async () => {});
+    const sync = createAgentCanvasSync({ canvasId: "canvas", applyPatches: async () => {}, refresh, onError: () => {}, batchMs: 0, refreshIntervalMs: 0 });
+    sync.receive(event("tool_completed", { toolName: "director", arguments: JSON.stringify({ action: "read" }) }));
+    await sleep();
+    expect(refresh).not.toHaveBeenCalled();
+    sync.receive(event("tool_completed", { toolName: "director", arguments: JSON.stringify({ action: "create_scene" }) }));
+    await sleep();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    sync.receive(event("director_open", { canvasId: "canvas", nodeId: "n", sceneId: "s", action: "apply_patch" }));
+    await sleep();
+    sync.dispose();
+    expect(refresh).toHaveBeenCalledTimes(2);
+});

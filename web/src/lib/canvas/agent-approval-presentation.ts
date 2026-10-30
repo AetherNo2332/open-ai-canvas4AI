@@ -46,7 +46,31 @@ function operation(value: unknown): AgentApprovalPreviewOperation | null {
 
 export const AGENT_APPROVAL_OPERATION_LABELS: Record<AgentApprovalPreviewOperation, string> = {
     add_node: "新增", update_node: "修改", delete_node: "删除", duplicate_node: "复制", connect_nodes: "连线", delete_connection: "断开连线", update_connection: "重连", set_parent: "分组", replace_text: "编辑正文", reorder_nodes: "调整顺序", reorder_rows: "调整行序", arrange_nodes: "整理", generate_media: "生成", create_storyboard: "创建分镜", edit_storyboard: "修改分镜", edit_drawing: "修改绘图", bind_asset: "绑定素材", canvas_undo: "撤销", canvas_redo: "重做", create_character: "创建角色卡", plan_step: "计划",
+    // director 工具：后端审批卡沿用预演场景的 operation 名；读取只出现在兜底卡里。
+    director_read: "读取场景", previs_scene_create: "创建场景", previs_apply_patch: "修改场景", director_preview: "预览",
 };
+
+function directorFallback(args: RecordValue | null): AgentApprovalPresentation {
+    const action = text(args?.action, 32);
+    const nodeId = text(args?.nodeId, 120) || undefined;
+    const sceneId = text(args?.sceneId, 120);
+    const target = sceneId ? `场景（引用 ${shortReference(sceneId)}）` : nodeId ? `导演台（引用 ${shortReference(nodeId)}）` : "";
+    if (action === "read") return { source: "fallback", kind: "director", title: "确认读取导演台", description: "Agent 准备读取导演台场景，不会修改画布。", items: [{ operation: "director_read", nodeId, nodeTitle: target || "场景目录", summary: target ? `读取${target}` : "读取导演台场景目录" }] };
+    if (action === "create_scene") {
+        const title = text(args?.title, 120) || "导演场景";
+        return { source: "fallback", kind: "director", title: "确认导演台修改", description: "Agent 准备创建导演台场景；批准后会打开导演台并写入当前画布。", items: [{ operation: "previs_scene_create", nodeId, nodeTitle: title, details: text(args?.template, 32) ? [`模板：${text(args?.template, 32)}`] : undefined, summary: `创建导演场景《${title}》` }] };
+    }
+    if (action === "apply_patch") {
+        const operations = record(args?.patch)?.operations;
+        const count = Array.isArray(operations) ? operations.length : 0;
+        return { source: "fallback", kind: "director", title: "确认导演台修改", description: "Agent 准备修改导演台场景；批准后会打开导演台并写入当前画布。", items: [{ operation: "previs_apply_patch", nodeId, nodeTitle: target || "目标场景", summary: `修改${target || "目标场景"}的 ${count} 项设置` }] };
+    }
+    if (action === "preview") {
+        const shot = text(args?.shotId, 120);
+        return { source: "fallback", kind: "director", title: "确认导演台预演", description: "批准后会打开导演台，在浏览器视口录制白模预演视频；页面未打开时会超时返回。", items: [{ operation: "director_preview", nodeId, nodeTitle: target || "当前场景", summary: `预演${target || "当前场景"}${shot ? `的镜头（引用 ${shortReference(shot)}）` : "的活动镜头"}` }] };
+    }
+    return { source: "fallback", kind: "director", title: "确认导演台操作", description: "Agent 请求操作导演台，但审批参数无法识别；请重新读取场景后再申请审批。", items: [] };
+}
 
 function normalizeServerPreview(value: unknown): AgentApprovalPresentation | null {
     const source = record(value);
@@ -141,5 +165,6 @@ export function agentApprovalPresentation(detail: unknown): AgentApprovalPresent
     if (name === "canvas_undo" || name === "canvas_redo") return { source: "fallback", kind: "canvas_history", title: `${name === "canvas_undo" ? "撤销" : "重做"}画布操作`, description: "批准后恢复当前运行的画布历史快照。", items: [{ operation: name, summary: `${name === "canvas_undo" ? "撤销" : "重做"}本次运行的最新画布操作` }] };
     if (name === "canvas_create_character") return { source: "fallback", kind: "canvas_mutation", title: "确认创建角色卡", description: "批准后创建角色库记录并放置画布节点。", items: [{ operation: "create_character", nodeTitle: text(args?.name, 120) || "角色卡", summary: `创建角色卡《${text(args?.name, 120) || "角色卡"}》` }] };
     if (name === "generate_media") return mediaFallback(args, payload);
+    if (name === "director") return directorFallback(args);
     return { source: "fallback", kind: "agent_approval", title: "确认执行操作", description: "Agent 请求执行一项操作，但审批参数无法识别；请重新读取画布后再申请审批。", items: [] };
 }

@@ -1,6 +1,6 @@
 package repository
 
-import "infinite-canvas/backend/internal/model"
+import "yingce/backend/internal/model"
 
 func (r *Repository) CanvasMediaTaskMaterializationPending(owner, task string) (bool, error) {
 	if !r.db.Migrator().HasTable(&model.CanvasTaskBinding{}) {

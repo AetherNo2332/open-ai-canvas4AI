@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/canvas/tasks"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/canvas/tasks"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func validateCloudAgentStoryboardInput(arguments string, a cloudAgentMediaArgs) error {
@@ -225,8 +225,16 @@ func registerCloudAgentStoryboardTask(repo *repository.Repository, run *model.Cl
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, err = mediaversions.Begin(tx, scope, node, *task, plan.Args.Intent, creationMaps(doc["nodes"])); err != nil {
+		if err = mediaversions.CheckAdmission(tx, scope, node, plan.Args.Intent, task.ID); err != nil {
 			return nil, nil, BadAuthRequest(err.Error())
+		}
+		base, err := mediaversions.Begin(node, *task, creationMaps(doc["nodes"]))
+		if err != nil {
+			return nil, nil, BadAuthRequest(err.Error())
+		}
+		// 提交时冻结当前版本：写回时若用户期间手动换过版本，新结果只进入历史（决定 3）。
+		if err = tx.UpdateCanvasTaskBindingMediaVersion(task.ID, run.UserID, base.Encode()); err != nil {
+			return nil, nil, err
 		}
 		if plan.Args.StoryboardNodeID != "" {
 			_, _, rows, err := storyboardNodeFromDocument(doc, plan.Args.StoryboardNodeID)

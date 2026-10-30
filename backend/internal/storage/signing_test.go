@@ -10,79 +10,103 @@ import (
 	"time"
 )
 
-func TestDisplaySigningUsesStablePrivateCacheWindowForAllProviders(t *testing.T) {
+// 展示地址的签名时间由调用方对齐；同一时间窗内重复签发必须得到逐字节相同的 URL，
+// 否则浏览器 HTTP 缓存（以完整 URL 为键）在每次刷新画布时都会失效并重新下载对象。
+func TestDisplayURLIsDeterministicForAlignedSigningTime(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
 	signedAt := time.Now().UTC().Truncate(time.Hour)
-	expires := signedAt.Add(2 * time.Hour)
+	expiresAt := signedAt.Add(24 * time.Hour)
 	cases := map[string]Settings{
-		"s3":      {Provider: "s3", Region: "us-east-1", Endpoint: server.URL, PathStyle: true, Bucket: "bucket", AccessKeyID: "id", AccessKeySecret: "secret", SessionToken: "session"},
-		"qiniu":   {Provider: "qiniu", Region: "z0", Bucket: "bucket", AccessKeyID: "id", AccessKeySecret: "secret"},
-		"tencent": {Provider: "tencent", Endpoint: "https://cos.ap-guangzhou.myqcloud.com", Bucket: "bucket-1250000000", AccessKeyID: "id", AccessKeySecret: "secret"},
-		"aliyun":  {Provider: "aliyun", Endpoint: "https://oss-cn-hangzhou.aliyuncs.com", Bucket: "bucket", AccessKeyID: "id", AccessKeySecret: "secret"},
+		"s3":      {Provider: s3Provider, Region: "cn-nb1", Endpoint: server.URL, Bucket: "bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value"},
+		"qiniu":   {Provider: qiniuKodoProvider, Endpoint: "https://up-z0.qiniup.com", Bucket: "bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value"},
+		"tencent": {Provider: tencentCOSProvider, Endpoint: "https://cos.ap-guangzhou.myqcloud.com", Bucket: "bucket-1250000000", AccessKeyID: "access-id", AccessKeySecret: "secret-value"},
+		"aliyun":  {Provider: aliyunOSSProvider, Endpoint: "https://oss-cn-test.aliyuncs.com", Bucket: "bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value"},
 	}
 	for name, setting := range cases {
 		t.Run(name, func(t *testing.T) {
-			first, err := SignedOriginObjectDisplayURL(setting, "users/u/a b.png", signedAt, expires, 90*time.Minute)
+			first, err := SignedOriginObjectDisplayURL(setting, "users/u-1/image/a b.png", signedAt, expiresAt)
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Cross the SDK second boundary to catch a hidden time.Now in any signer.
-			time.Sleep(1100 * time.Millisecond)
-			second, err := SignedOriginObjectDisplayURL(setting, "users/u/a b.png", signedAt, expires, 90*time.Minute)
+			time.Sleep(1100 * time.Millisecond) // 跨过秒级时间戳，证明结果不依赖 time.Now。
+			second, err := SignedOriginObjectDisplayURL(setting, "users/u-1/image/a b.png", signedAt, expiresAt)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if first != second {
-				t.Fatalf("URL changes within signing window: %s / %s", first, second)
+				t.Fatalf("display URL is not stable:\n%s\n%s", first, second)
 			}
-			parsed, _ := url.Parse(first)
-			query := parsed.Query()
-			if query.Get("response-cache-control") != "private, max-age=5400, immutable" {
-				t.Fatalf("cache policy = %q", query.Get("response-cache-control"))
+			query := mustParseQuery(t, first)
+			if got := query.Get("response-cache-control"); got != "private, max-age=86400, immutable" {
+				t.Fatalf("response-cache-control = %q in %s", got, first)
+			}
+			if strings.Contains(first, "secret-value") {
+				t.Fatal("signed URL leaked secret key")
 			}
 			switch name {
 			case "s3", "qiniu":
-				if query.Get("X-Amz-Date") != signedAt.Format("20060102T150405Z") || query.Get("X-Amz-Expires") != "7200" {
-					t.Fatalf("wrong SigV4 window: %s", first)
+				if query.Get("X-Amz-Date") != signedAt.Format("20060102T150405Z") || query.Get("X-Amz-Expires") != "86400" {
+					t.Fatalf("SigV4 window = %s/%s", query.Get("X-Amz-Date"), query.Get("X-Amz-Expires"))
 				}
 			case "tencent":
-				if query.Get("q-sign-time") != strconv.FormatInt(signedAt.Unix(), 10)+";"+strconv.FormatInt(expires.Unix(), 10) {
-					t.Fatalf("wrong COS window: %s", first)
+				window := strings.Join([]string{itoa(signedAt.Unix()), itoa(expiresAt.Unix())}, ";")
+				if query.Get("q-sign-time") != window || query.Get("q-key-time") != window {
+					t.Fatalf("COS window = %s", first)
 				}
-			}
-			if name == "s3" && (query.Get("X-Amz-Security-Token") != "session" || parsed.Path != "/bucket/users/u/a b.png") {
-				t.Fatalf("explicit path style/session lost: %s", first)
-			}
-			download, err := SignedOriginObjectDownloadURL(setting, "users/u/a b.png", time.Now().Add(time.Hour), "镜头.png")
-			if err != nil {
-				t.Fatal(err)
-			}
-			oneShot, _ := url.Parse(download)
-			if oneShot.Query().Get("response-cache-control") != "" || !strings.HasPrefix(oneShot.Query().Get("response-content-disposition"), "attachment") {
-				t.Fatalf("download contract changed: %s", download)
 			}
 		})
 	}
 }
 
-func TestPublicCDNDownloadBuilderRejectsMissingForwardingContract(t *testing.T) {
-	setting := Settings{CDNBaseURL: "https://cdn.example.com", Delivery: DeliverySettings{CDNAuthMode: "public"}}
-	if _, err := PublicCDNObjectDownloadURL(setting, "users/u/file.png", "file.png"); err == nil {
-		t.Fatal("missing contract accepted")
-	}
-	setting.Delivery.CDNAttachmentQueryForwarding = true
-	value, err := PublicCDNObjectDownloadURL(setting, "users/u/a b.png", "镜头.png")
+func TestOneShotURLsKeepCurrentTimeSigningWithoutCacheOverride(t *testing.T) {
+	setting := Settings{Provider: qiniuKodoProvider, Endpoint: "https://up-z0.qiniup.com", Bucket: "bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value"}
+	value, err := SignedOriginObjectDownloadURL(setting, "users/u-1/video/clip.mp4", time.Now().Add(time.Hour), "镜头.mp4")
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, _ := url.Parse(value)
-	if parsed.Path != "/users/u/a b.png" || !strings.HasPrefix(parsed.Query().Get("response-content-disposition"), "attachment") {
-		t.Fatalf("bad CDN download: %s", value)
+	query := mustParseQuery(t, value)
+	if query.Get("response-cache-control") != "" || !strings.HasPrefix(query.Get("response-content-disposition"), "attachment") {
+		t.Fatalf("download URL = %s", value)
 	}
-	setting.Delivery.CDNAuthMode = "qiniu"
-	if _, err := PublicCDNObjectDownloadURL(setting, "a.png", ""); err == nil {
-		t.Fatal("private CDN must not use public download builder")
+	signedAt, err := time.Parse("20060102T150405Z", query.Get("X-Amz-Date"))
+	if err != nil || time.Since(signedAt) > time.Minute {
+		t.Fatalf("download URL must be signed at the current time, got %q", query.Get("X-Amz-Date"))
 	}
+}
+
+func TestPublicCDNObjectDownloadURLForcesAttachmentOnlyOnDownloadURL(t *testing.T) {
+	setting := Settings{CDNBaseURL: "https://media.example.com"}
+	value, err := PublicCDNObjectDownloadURL(setting, "users/u-1/image/test image.png", "下载图片.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Host != "media.example.com" || parsed.Path != "/users/u-1/image/test image.png" || !strings.HasPrefix(parsed.Query().Get("response-content-disposition"), "attachment") {
+		t.Fatalf("download URL = %q", value)
+	}
+	inline, err := OssCDNObjectURL(setting.CDNBaseURL, "users/u-1/image/test image.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsedInline, err := url.Parse(inline); err != nil || parsedInline.RawQuery != "" {
+		t.Fatalf("inline CDN URL = %q, %v", inline, err)
+	}
+}
+
+func mustParseQuery(t *testing.T, raw string) url.Values {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed.Query()
+}
+
+func itoa(value int64) string {
+	return strconv.FormatInt(value, 10)
 }

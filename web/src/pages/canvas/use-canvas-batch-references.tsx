@@ -5,10 +5,8 @@ import { CachedResourceImage } from "@/components/cached-resource-image";
 import { applyBatchReferenceEdits, reconcileBatchCellConnections, type BatchReferenceEdit } from "@/lib/canvas/canvas-batch-references";
 import { batchInputColumns, batchReferenceColumns, createBatchRow } from "@/lib/canvas/canvas-batch-table";
 import { findAvailableGenerationGroupPosition } from "@/lib/canvas/canvas-generation-layout";
-import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { CanvasNodeType, type CanvasNodeData, type CanvasConnection, type Position } from "@/types/canvas";
-
-const IMAGE_NODE_MAX_SIZE = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+import { IMAGE_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size";
+import type { CanvasNodeData, CanvasConnection, Position } from "@/types/canvas";
 
 type Options = {
     nodesRef: { current: CanvasNodeData[] };

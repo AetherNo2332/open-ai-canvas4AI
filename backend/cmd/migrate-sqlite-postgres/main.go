@@ -13,8 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -49,6 +49,9 @@ func main() {
 	}
 	if err := verifyMigrationCoverage(source); err != nil {
 		log.Fatalf("迁移表清单检查失败：%v", err)
+	}
+	if err := verifySourceSchema(source); err != nil {
+		log.Fatalf("SQLite 结构版本检查失败：%v", err)
 	}
 	source = source.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
 	target = target.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
@@ -98,6 +101,20 @@ func verifySQLite(db *gorm.DB) error {
 	}
 	if result != "ok" {
 		return fmt.Errorf("quick_check 返回 %q", result)
+	}
+	return nil
+}
+
+// verifySourceSchema 要求源库已在当前版本的后端上完成全部迁移。数据迁移（如 v77
+// 把旧媒体版本表并入节点元数据）只在源库执行；目标库建表时这些表还是空的，
+// 复制旧结构的行会让迁移被标记为已完成却从未转换数据。
+func verifySourceSchema(db *gorm.DB) error {
+	status, err := database.ReadSchemaStatus(db)
+	if err != nil {
+		return err
+	}
+	if !status.Ready {
+		return fmt.Errorf("源库结构版本为 %d，当前版本需要 %d；请先用当前版本的后端启动一次（或运行 migrate-schema）完成 SQLite 迁移，再复制到 PostgreSQL", status.Current, status.Expected)
 	}
 	return nil
 }
@@ -370,8 +387,17 @@ func migrations() []tableMigration {
 		migrateTable[model.Tool]("tools"),
 		migrateTable[model.ToolFavorite]("tool_favorites"),
 		migrateTable[model.User]("users"),
-		migrateTable[model.CanvasNodeEditLease]("canvas_node_edit_leases"),
+		migrateTable[model.UserAvatar]("user_avatars"),
+		migrateTable[model.UserFeedback]("user_feedbacks"),
+		migrateTable[model.DramaProduction]("drama_productions"),
+		migrateTable[model.DramaCast]("drama_casts"),
+		migrateTable[model.DramaEpisode]("drama_episodes"),
+		migrateTable[model.DramaShot]("drama_shots"),
+		migrateTable[model.DramaTake]("drama_takes"),
+		migrateTable[model.DramaSegment]("drama_segments"),
+		migrateTable[model.DramaJob]("drama_jobs"),
 		migrateTable[model.AuthSession]("auth_sessions"),
+		migrateTable[model.LoginLog]("login_logs"),
 		migrateTable[model.UserIdentity]("user_identities"),
 		migrateTable[model.OAuthState]("o_auth_states"),
 		migrateTable[model.EmailVerificationCode]("email_verification_codes"),
@@ -391,6 +417,9 @@ func migrations() []tableMigration {
 		migrateTable[model.ModelPricing]("model_pricings"),
 		migrateTable[model.CreditAccount]("credit_accounts"),
 		migrateTable[model.CreditLedgerEntry]("credit_ledger_entries"),
+		migrateTable[model.ReferralProfile]("referral_profiles"),
+		migrateTable[model.ReferralBinding]("referral_bindings"),
+		migrateTable[model.ReferralCommission]("referral_commissions"),
 		migrateTable[model.BillingOrder]("billing_orders"),
 		migrateTable[model.TopupProduct]("topup_products"),
 		migrateTable[model.PaymentProviderConfig]("payment_provider_configs"),
@@ -398,6 +427,8 @@ func migrations() []tableMigration {
 		migrateTable[model.PaymentNotification]("payment_notifications"),
 		migrateTable[model.PaymentReconciliationRun]("payment_reconciliation_runs"),
 		migrateTable[model.PaymentReconciliationItem]("payment_reconciliation_items"),
+		migrateTable[model.UserStorageGrant]("user_storage_grants"),
+		migrateTable[model.UserStorageState]("user_storage_states"),
 		migrateTable[model.RedeemBatch]("redeem_batches"),
 		migrateTable[model.RedeemCode]("redeem_codes"),
 		migrateTable[model.AdminAuditEvent]("admin_audit_events"),
@@ -409,6 +440,7 @@ func migrations() []tableMigration {
 		migrateTable[model.UserOSSSetting]("user_oss_settings"),
 		migrateTable[model.StorageLocation]("storage_locations"),
 		migrateTable[model.UserDailyUploadUsage]("user_daily_upload_usages"),
+		migrateTable[model.UploadReservation]("upload_reservations"),
 		migrateTable[model.Skill]("skills"),
 		migrateTable[model.SkillLibraryCategory]("skill_library_categories"),
 		migrateTable[model.SkillVersion]("skill_versions"),
@@ -417,6 +449,7 @@ func migrations() []tableMigration {
 		migrateTable[model.BuiltinSkillTombstone]("builtin_skill_tombstones"),
 		migrateTable[model.Resource]("resources"),
 		migrateTable[model.ResourceDeletionJob]("resource_deletion_jobs"),
+		migrateTable[model.ResourceOffloadJob]("resource_offload_jobs"),
 		migrateTable[model.AnnouncementImageDraft]("announcement_image_drafts"),
 		migrateTable[model.Asset]("assets"),
 		migrateTable[model.AssetFolder]("asset_folders"),
@@ -441,6 +474,8 @@ func migrations() []tableMigration {
 		migrateTable[model.WorkflowStepTask]("workflow_step_tasks"),
 		migrateTable[model.ProductionTaskLink]("production_task_links"),
 		migrateTable[model.CanvasProject]("canvas_projects"),
+		migrateTable[model.CanvasMutationReceipt]("canvas_mutation_receipts"),
+		migrateTable[model.CanvasEditLease]("canvas_edit_leases"),
 		migrateTable[model.CanvasSnapshot]("canvas_snapshots"),
 		migrateTable[model.CanvasSnapshotResource]("canvas_snapshot_resources"),
 		migrateTable[model.CanvasShare]("canvas_shares"),
@@ -452,37 +487,53 @@ func migrations() []tableMigration {
 		migrateTable[model.CreationRun]("creation_runs"),
 		migrateTable[model.CreationSubmission]("creation_submissions"),
 		migrateTable[model.Task]("tasks"),
-		migrateTable[model.CanvasMediaVersion]("canvas_media_versions"),
-		migrateTable[model.AgentQueuedMessage]("agent_queued_messages"),
-		migrateTable[model.AgentConversationQueue]("agent_conversation_queues"),
-		migrateTable[model.AgentUISetting]("agent_ui_settings"),
+		migrateTable[model.WorkbenchTool]("workbench_tools"),
+		migrateTable[model.WorkbenchPreset]("workbench_presets"),
 		migrateTable[model.CloudAgentExecution]("cloud_agent_executions"),
 		migrateTable[model.CloudAgentEventRecord]("cloud_agent_event_records"),
 		migrateTable[model.CloudAgentMessageRecord]("cloud_agent_message_records"),
 		migrateTable[model.CloudAgentCanvasMutation]("cloud_agent_canvas_mutations"),
 		migrateTable[model.CloudAgentResourceLease]("cloud_agent_resource_leases"),
-		migrateTable[model.CloudAgentGeminiCache]("cloud_agent_gemini_caches"),
 		migrateTable[model.CloudAgentPiSession]("cloud_agent_pi_sessions"),
+		migrateTable[model.CloudAgentGeminiCache]("cloud_agent_gemini_caches"),
+		migrateTable[model.AgentProfile]("agent_profiles"),
+		migrateTable[model.AgentLesson]("agent_lessons"),
+		migrateTable[model.AgentMemorySetting]("agent_memory_settings"),
+		migrateTable[model.AgentMemoryProposal]("agent_memory_proposals"),
+		migrateTable[model.AgentMemoryRevision]("agent_memory_revisions"),
+		// 云端 Agent 子系统（schema v75，见 database.AgentRuntimeModels）。
+		migrateTable[model.CloudAgentPiEntry]("cloud_agent_pi_entries"),
 		migrateTable[model.AgentSchedulerSetting]("agent_scheduler_settings"),
 		migrateTable[model.AgentAdmissionCounter]("agent_admission_counters"),
 		migrateTable[model.AgentCanvasAdmission]("agent_canvas_admissions"),
 		migrateTable[model.AgentUserAdmission]("agent_user_admissions"),
 		migrateTable[model.AgentRuntimeInstance]("agent_runtime_instances"),
-		migrateTable[model.AgentWorker]("agent_workers"),
-		migrateTable[model.AgentToolOperation]("agent_tool_operations"),
 		migrateTable[model.AgentEventCounter]("agent_event_counters"),
 		migrateTable[model.AgentWakeEvent]("agent_wake_events"),
-		migrateTable[model.CloudAgentPiEntry]("cloud_agent_pi_entries"),
-		migrateTable[model.AgentProfile]("agent_profiles"),
-		migrateTable[model.AgentLesson]("agent_lessons"),
-		migrateTable[model.AgentMemorySetting]("agent_memory_settings"),
+		migrateTable[model.AgentToolOperation]("agent_tool_operations"),
+		migrateTable[model.AgentWorker]("agent_workers"),
+		migrateTable[model.AgentQueuedMessage]("agent_queued_messages"),
+		migrateTable[model.AgentConversationQueue]("agent_conversation_queues"),
+		migrateTable[model.AgentUISetting]("agent_ui_settings"),
 		migrateTable[model.AgentSkillDefault]("agent_skill_defaults"),
 		migrateTable[model.AgentConversationSkill]("agent_conversation_skills"),
-		migrateTable[model.AgentWorkspace]("agent_workspaces"),
-		migrateTable[model.AgentWorkspaceSkill]("agent_workspace_skills"),
 		migrateTable[model.AgentSubagentPolicy]("agent_subagent_policies"),
 		migrateTable[model.AgentSubagentLink]("agent_subagent_links"),
 		migrateTable[model.AgentSubagentMessage]("agent_subagent_messages"),
+		migrateTable[model.AgentWorkspace]("agent_workspaces"),
+		migrateTable[model.AgentWorkspaceSkill]("agent_workspace_skills"),
+		migrateTable[model.CanvasDocumentEpoch]("canvas_document_epoches"),
+		migrateTable[model.CanvasEntityVersion]("canvas_entity_versions"),
+		migrateTable[model.CanvasCommandReceipt]("canvas_command_receipts"),
+		migrateTable[model.CanvasCommandEvent]("canvas_command_events"),
+		migrateTable[model.CanvasActorHistory]("canvas_actor_histories"),
+		migrateTable[model.CanvasCommandResource]("canvas_command_resources"),
+		migrateTable[model.CanvasCreateReceipt]("canvas_create_receipts"),
+		migrateTable[model.CanvasTaskBinding]("canvas_task_bindings"),
+		migrateTable[model.CanvasMaterializationJob]("canvas_materialization_jobs"),
+		migrateTable[model.CanvasTaskOutput]("canvas_task_outputs"),
+		migrateTable[model.CanvasTaskResource]("canvas_task_resources"),
+		migrateTable[model.CanvasMediaVersion]("canvas_media_versions"),
 		migrateTable[model.TaskTextDelta]("task_text_delta"),
 		migrateTable[model.TaskLog]("task_logs"),
 		migrateTable[model.Result]("results"),

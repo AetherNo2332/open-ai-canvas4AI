@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -51,16 +51,31 @@ func (r *Repository) CreateTopupProduct(product *model.TopupProduct) error {
 	return r.db.Create(product).Error
 }
 
-func (r *Repository) UpdateTopupProduct(product *model.TopupProduct) error {
-	return r.db.Model(&model.TopupProduct{}).Where("id = ?", product.ID).Updates(map[string]any{
-		"name": product.Name, "description": product.Description, "amount_fen": product.AmountFen,
-		"credits_microcredits": product.CreditsMicrocredits, "enabled": product.Enabled,
-		"sort_order": product.SortOrder, "sale_strategy": product.SaleStrategy,
-		"period_days": product.PeriodDays, "period_purchase_limit": product.PeriodPurchaseLimit,
-		"stock_total": product.StockTotal, "stock_remaining": product.StockRemaining,
-		"sale_start_at": product.SaleStartAt, "sale_end_at": product.SaleEndAt,
-		"updated_by": product.UpdatedBy, "updated_at": time.Now(),
-	}).Error
+// UpdateTopupProduct locks the product row and derives the new values from the
+// locked state. Orders reserve and release stock with stock_remaining ± 1 on the
+// same row, so computing the remaining stock outside the lock would overwrite a
+// concurrent reservation or release.
+func (r *Repository) UpdateTopupProduct(id string, build func(existing *model.TopupProduct) (*model.TopupProduct, error)) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var existing model.TopupProduct
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&existing, "id = ?", strings.TrimSpace(id)).Error; err != nil {
+			return err
+		}
+		product, err := build(&existing)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&model.TopupProduct{}).Where("id = ?", existing.ID).Updates(map[string]any{
+			"name": product.Name, "description": product.Description, "amount_fen": product.AmountFen,
+			"kind": product.Kind, "storage_bytes": product.StorageBytes, "storage_duration_days": product.StorageDurationDays,
+			"credits_microcredits": product.CreditsMicrocredits, "enabled": product.Enabled,
+			"sort_order": product.SortOrder, "sale_strategy": product.SaleStrategy,
+			"period_days": product.PeriodDays, "period_purchase_limit": product.PeriodPurchaseLimit,
+			"stock_total": product.StockTotal, "stock_remaining": product.StockRemaining,
+			"sale_start_at": product.SaleStartAt, "sale_end_at": product.SaleEndAt,
+			"updated_by": product.UpdatedBy, "updated_at": time.Now(),
+		}).Error
+	})
 }
 
 func (r *Repository) CreatePaymentProviderConfig(config *model.PaymentProviderConfig) error {
@@ -99,6 +114,13 @@ func (r *Repository) CreatePaymentOrderWithProductReservation(order *model.Payme
 		if strategy == "" {
 			strategy = model.TopupSaleStrategyUnlimited
 		}
+		// 同一幂等键的重试直接返回原订单：不能被下面的限购/库存检查拦下，
+		// 尤其是周期限购已把这笔待付款订单计入名额。
+		if err := tx.First(&existing, "user_id = ? AND idempotency_key = ?", order.UserID, order.IdempotencyKey).Error; err == nil {
+			return nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
 		now := time.Now()
 		if !product.Enabled {
 			return ErrTopupUnavailable
@@ -107,8 +129,13 @@ func (r *Repository) CreatePaymentOrderWithProductReservation(order *model.Payme
 			return ErrTopupUnavailable
 		}
 		if strategy == model.TopupSaleStrategyPeriodic && product.PeriodDays > 0 && product.PeriodPurchaseLimit > 0 {
+			// 未关闭的订单都占用周期名额：只数已入账订单的话，用户可以先建多笔
+			// 待付款订单再逐笔付款，全部入账。订单关闭（含超时关单）后名额释放。
+			// 商品行已加锁，同一商品的下单在这里串行。
 			var count int64
-			if err := tx.Model(&model.PaymentOrder{}).Where("user_id = ? AND product_id = ? AND status = ? AND created_at >= ?", order.UserID, order.ProductID, model.PaymentOrderCredited, now.Add(-time.Duration(product.PeriodDays)*24*time.Hour)).Count(&count).Error; err != nil {
+			if err := tx.Model(&model.PaymentOrder{}).Where("user_id = ? AND product_id = ? AND status IN ? AND created_at >= ?", order.UserID, order.ProductID, []model.PaymentOrderStatus{
+				model.PaymentOrderCreated, model.PaymentOrderPending, model.PaymentOrderClosing, model.PaymentOrderCreateFailed, model.PaymentOrderCredited,
+			}, now.Add(-time.Duration(product.PeriodDays)*24*time.Hour)).Count(&count).Error; err != nil {
 				return err
 			}
 			if count >= int64(product.PeriodPurchaseLimit) {
@@ -271,7 +298,8 @@ func (r *Repository) CompletePaymentOrder(providerID, merchantOrderNo string, ev
 		if order.AmountFen != evidence.AmountFen || order.Currency != evidence.Currency || strings.TrimSpace(evidence.ProviderTradeNo) == "" {
 			return ErrPaymentEvidenceMismatch
 		}
-		if order.AmountFen <= 0 || order.CreditsMicrocredits <= 0 {
+		storageOrder := order.ProductKind == model.TopupProductKindStorage
+		if order.AmountFen <= 0 || (storageOrder && order.StorageBytes <= 0) || (!storageOrder && order.CreditsMicrocredits <= 0) {
 			return ErrPaymentOrderStateConflict
 		}
 		if order.Status == model.PaymentOrderCredited {
@@ -288,46 +316,12 @@ func (r *Repository) CompletePaymentOrder(providerID, merchantOrderNo string, ev
 			return ErrPaymentTradeNoConflict
 		}
 		referenceKey := "payment:" + providerID + ":" + merchantOrderNo
-		entry := model.CreditLedgerEntry{
-			ID: newRepositoryID(), UserID: order.UserID, Type: model.CreditLedgerPaymentTopup,
-			AmountMicrocredits: order.CreditsMicrocredits, PaymentOrderID: order.ID,
-			ReferenceKey: &referenceKey, Note: order.ProductName + " · 在线支付充值",
-		}
-		created := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "reference_key"}}, DoNothing: true}).Create(&entry)
-		if created.Error != nil {
-			return created.Error
-		}
-		if created.RowsAffected == 0 {
-			// A credited order is handled above. Reaching this branch means a
-			// ledger row exists while the order is still non-terminal, so treating
-			// the operation as successful would hide an inconsistent credit state.
-			return ErrPaymentOrderStateConflict
-		}
-		account := model.CreditAccount{UserID: order.UserID}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
-			return err
-		}
 		now := time.Now()
-		accountUpdate := tx.Model(&model.CreditAccount{}).
-			Where("user_id = ? AND available_microcredits <= ?", order.UserID, maxPaymentCreditBalance-order.CreditsMicrocredits).
-			Updates(map[string]any{
-				"available_microcredits": gorm.Expr("available_microcredits + ?", order.CreditsMicrocredits),
-				"version":                gorm.Expr("version + 1"), "updated_at": now,
-			})
-		if accountUpdate.Error != nil {
-			return accountUpdate.Error
-		}
-		if accountUpdate.RowsAffected != 1 {
-			return ErrPaymentCreditOverflow
-		}
-		if err := tx.First(&account, "user_id = ?", order.UserID).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&entry).Updates(map[string]any{
-			"available_delta_microcredits": order.CreditsMicrocredits,
-			"available_after_microcredits": account.AvailableMicrocredits,
-			"reserved_after_microcredits":  account.ReservedMicrocredits,
-		}).Error; err != nil {
+		if storageOrder {
+			if err := grantPaymentStorage(tx, &order, referenceKey, now); err != nil {
+				return err
+			}
+		} else if err := creditPaymentTopup(tx, &order, referenceKey, now); err != nil {
 			return err
 		}
 		paidAt := evidence.PaidAt
@@ -355,6 +349,72 @@ func (r *Repository) CompletePaymentOrder(providerID, merchantOrderNo string, ev
 		}
 	}
 	return &order, granted, err
+}
+
+// grantPaymentStorage 按订单快照写一笔扩容记录；有效期从发放时刻起算。
+func grantPaymentStorage(tx *gorm.DB, order *model.PaymentOrder, referenceKey string, now time.Time) error {
+	grant := model.UserStorageGrant{
+		ID: newRepositoryID(), UserID: order.UserID, Source: model.UserStorageGrantSourcePayment,
+		PaymentOrderID: order.ID, ProductID: order.ProductID, ProductName: order.ProductName,
+		Bytes: order.StorageBytes, DurationDays: order.StorageDurationDays, StartsAt: now,
+		ReferenceKey: &referenceKey, Note: order.ProductName + " · 在线购买存储空间", CreatedAt: now,
+	}
+	if order.StorageDurationDays > 0 {
+		expires := now.Add(time.Duration(order.StorageDurationDays) * 24 * time.Hour)
+		grant.ExpiresAt = &expires
+	}
+	created := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "reference_key"}}, DoNothing: true}).Create(&grant)
+	if created.Error != nil {
+		return created.Error
+	}
+	if created.RowsAffected == 0 {
+		// 与积分分支一致：订单未到终态却已有发放记录，说明状态不一致，不能当作成功。
+		return ErrPaymentOrderStateConflict
+	}
+	return nil
+}
+
+// creditPaymentTopup 写积分流水并入账；唯一 reference_key 是回调与查单并发时的最终防线。
+func creditPaymentTopup(tx *gorm.DB, order *model.PaymentOrder, referenceKey string, now time.Time) error {
+	entry := model.CreditLedgerEntry{
+		ID: newRepositoryID(), UserID: order.UserID, Type: model.CreditLedgerPaymentTopup,
+		AmountMicrocredits: order.CreditsMicrocredits, PaymentOrderID: order.ID,
+		ReferenceKey: &referenceKey, Note: order.ProductName + " · 在线支付充值",
+	}
+	created := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "reference_key"}}, DoNothing: true}).Create(&entry)
+	if created.Error != nil {
+		return created.Error
+	}
+	if created.RowsAffected == 0 {
+		// A credited order is handled above. Reaching this branch means a
+		// ledger row exists while the order is still non-terminal, so treating
+		// the operation as successful would hide an inconsistent credit state.
+		return ErrPaymentOrderStateConflict
+	}
+	account := model.CreditAccount{UserID: order.UserID}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
+		return err
+	}
+	accountUpdate := tx.Model(&model.CreditAccount{}).
+		Where("user_id = ? AND available_microcredits <= ?", order.UserID, maxPaymentCreditBalance-order.CreditsMicrocredits).
+		Updates(map[string]any{
+			"available_microcredits": gorm.Expr("available_microcredits + ?", order.CreditsMicrocredits),
+			"version":                gorm.Expr("version + 1"), "updated_at": now,
+		})
+	if accountUpdate.Error != nil {
+		return accountUpdate.Error
+	}
+	if accountUpdate.RowsAffected != 1 {
+		return ErrPaymentCreditOverflow
+	}
+	if err := tx.First(&account, "user_id = ?", order.UserID).Error; err != nil {
+		return err
+	}
+	return tx.Model(&entry).Updates(map[string]any{
+		"available_delta_microcredits": order.CreditsMicrocredits,
+		"available_after_microcredits": account.AvailableMicrocredits,
+		"reserved_after_microcredits":  account.ReservedMicrocredits,
+	}).Error
 }
 
 func (r *Repository) RecordPaymentQuery(id, providerStatus string) error {

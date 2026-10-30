@@ -1,37 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Hand, MousePointer2 } from "lucide-react";
 
 import { FloatingDock } from "@/components/ui/aceternity/floating-dock";
 import { CANVAS_MODE_TOOL_ID, defaultToolbarPrefs, migrateToolbarPrefs, resolveToolbarEntries, type ToolContext, type ToolbarHandlers } from "@/lib/canvas/tool-registry";
-
-// bun 的测试环境没有 DOM，而 motion 的 <motion.div> 只按"window 是否存在"判断是否走浏览器分支：
-// 一旦拿到别的用例临时装上的**部分** window（bun 在同一进程里并发跑各测试文件），它就会去调
-// window.addEventListener 直接抛错。渲染断言因此依赖外部用例的时序，这里显式装一个够用的桩，
-// 让这条断言自我闭环：跑单文件与跑全量结果一致。
-const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-
-function installRenderingWindowStub() {
-    const media = { matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} };
-    Object.defineProperty(globalThis, "window", {
-        configurable: true,
-        value: {
-            innerWidth: 1024,
-            addEventListener() {},
-            removeEventListener() {},
-            matchMedia: () => media,
-            location: { pathname: "/", origin: "http://localhost" },
-            localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-        },
-    });
-}
-
-function restoreRenderingWindowStub() {
-    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
-    else Object.defineProperty(globalThis, "window", { configurable: true, value: undefined });
-}
-
-afterEach(restoreRenderingWindowStub);
 
 function createMainContext(canvasTool: "move" | "box-select" = "box-select"): ToolContext {
     return {
@@ -55,20 +27,17 @@ function createMainContext(canvasTool: "move" | "box-select" = "box-select"): To
 }
 
 describe("canvas toolbar mode switch", () => {
-    test.each(["default", "compact"] as const)("renders %s canvas modes as an icon-only skin-sized switch", (size) => {
+    test.each(["default", "compact"] as const)("renders %s canvas modes as an icon-only segmented switch", (size) => {
         const entries = resolveToolbarEntries("main", createMainContext(), null);
         const modeSwitch = entries.find((entry) => entry.kind === "switch");
         if (!modeSwitch) throw new Error("Missing canvas mode switch");
         const html = renderToStaticMarkup(<FloatingDock size={size} items={[modeSwitch]} />);
-        const itemSize = size === "compact" ? 28 : 32;
 
-        expect(html).toContain(`--dock-item-size:${itemSize}px`);
-        expect(html.match(/h-\[calc\(var\(--dock-item-size\)-4px\)\]/g)).toHaveLength(2);
-        expect(html.match(/w-\[calc\(var\(--dock-item-size\)-4px\)\]/g)).toHaveLength(2);
+        expect(html).toContain(`data-dock-size="${size}"`);
+        expect(html).toContain(size === "compact" ? "--dock-item-size:28px" : "--dock-item-size:32px");
         expect(html.match(/aceternity-dock-switch-thumb/g)).toHaveLength(1);
-        expect(html).toContain("rounded-[var(--button-radius)]");
-        expect(html).toContain("rounded-[var(--dock-item-radius)]");
-        expect(html).toContain(size === "compact" ? "place-items-center size-[15px]" : "place-items-center size-4");
+        expect(html).toContain("absolute inset-0 rounded-[var(--dock-item-radius)]");
+        expect(html).toContain("grid shrink-0 place-items-center");
         expect(html).not.toContain("is-labeled");
         expect(html).not.toContain("选择</span>");
         expect(html).not.toContain("移动</span>");
@@ -141,8 +110,7 @@ describe("canvas toolbar mode switch", () => {
         expect(entries.some((entry) => entry.id === "selection-create-reference-group")).toBe(false);
     });
 
-    test.each(["box-select", "move"] as const)("marks %s as the selected and focusable radio", (value) => {
-        installRenderingWindowStub();
+    test("renders the pill switch with an active circular thumb", () => {
         const html = renderToStaticMarkup(
             <FloatingDock
                 items={[
@@ -150,7 +118,7 @@ describe("canvas toolbar mode switch", () => {
                         kind: "switch",
                         id: CANVAS_MODE_TOOL_ID,
                         label: "抓手 / 框选",
-                        value,
+                        value: "box-select",
                         options: [
                             { id: "box-select", label: "区域选择", icon: <MousePointer2 />, value: "box-select" },
                             { id: "move", label: "抓手工具", icon: <Hand />, value: "move" },
@@ -162,19 +130,11 @@ describe("canvas toolbar mode switch", () => {
         );
 
         expect(html).toContain('role="radiogroup"');
-        expect(html).toContain('aria-label="抓手 / 框选"');
-        const radios = html.match(/<button\b[^>]*role="radio"[^>]*>[\s\S]*?<\/button>/g);
-        expect(radios).toHaveLength(2);
-        const [boxSelect, move] = radios ?? [];
-        expect(boxSelect).toContain('aria-label="区域选择"');
-        expect(move).toContain('aria-label="抓手工具"');
-        for (const [radio, selected] of [
-            [boxSelect, value === "box-select"],
-            [move, value === "move"],
-        ] as const) {
-            expect(radio).toContain(`aria-checked="${selected}"`);
-            expect(radio).toContain(`tabindex="${selected ? 0 : -1}"`);
-            expect(radio?.includes("aceternity-dock-switch-thumb")).toBe(selected);
-        }
+        expect(html).toContain("aceternity-dock-switch");
+        expect(html).toContain("aceternity-dock-switch-thumb");
+        expect(html).toContain('aria-label="区域选择"');
+        expect(html).toContain('aria-label="抓手工具"');
+        expect(html).toContain('aria-checked="true"');
+        expect(html).toContain('aria-checked="false"');
     });
 });

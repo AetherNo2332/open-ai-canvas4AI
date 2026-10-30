@@ -3,8 +3,8 @@ package app
 import (
 	"testing"
 
-	"infinite-canvas/backend/internal/agentcontext"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/agentcontext"
+	"yingce/backend/internal/model"
 )
 
 // interruptedCompactionFixture 造一个"本轮暂停在压缩上、随后被取消"的现场：

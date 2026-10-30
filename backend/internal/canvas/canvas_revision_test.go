@@ -5,13 +5,13 @@ import (
 	"errors"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/repository"
 	"net/http"
 	"path/filepath"
 	"testing"
+	"yingce/backend/internal/repository"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
 )
 
 func TestCanvasSaveRevisionContract(t *testing.T) {
@@ -68,7 +68,7 @@ func newCanvasHistoryTestService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.Resource{}, &model.Asset{}); err != nil {
+	if err := db.AutoMigrate(&model.CanvasEditLease{}, &model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.Resource{}, &model.Asset{}); err != nil {
 		t.Fatal(err)
 	}
 	sqlDB, _ := db.DB()

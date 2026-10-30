@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 type taskBillingRepositoryStub struct {
@@ -128,6 +128,27 @@ func TestTaskBillingCoordinatorTruncatesFailureText(t *testing.T) {
 	}
 	if got := repo.uncertainCalls[0]; !strings.HasSuffix(got, strings.Repeat("中", 1000)+"...") {
 		t.Fatalf("uncertain reason was not truncated with compatibility suffix: %q", got)
+	}
+}
+
+func TestTaskBillingCoordinatorHidesUpstreamAddressInReason(t *testing.T) {
+	repo := &taskBillingRepositoryStub{}
+	billing := newTaskBillingCoordinator(repo)
+	reason := `Post "https://www.kccai.ai/v1/images/generations": http2: server sent GOAWAY and closed the connection`
+
+	if err := billing.RefundBilling("order-1", reason); err != nil {
+		t.Fatalf("RefundBilling() error = %v", err)
+	}
+	if err := billing.MarkBillingUncertain("order-1", reason); err != nil {
+		t.Fatalf("MarkBillingUncertain() error = %v", err)
+	}
+	for name, got := range map[string]string{"refund": repo.refundCalls[0], "uncertain": repo.uncertainCalls[0]} {
+		if strings.Contains(got, "kccai.ai") {
+			t.Fatalf("%s reason leaked upstream host: %q", name, got)
+		}
+		if !strings.Contains(got, upstreamAddressLinkPlaceholder) {
+			t.Fatalf("%s reason should mark the hidden link: %q", name, got)
+		}
 	}
 }
 

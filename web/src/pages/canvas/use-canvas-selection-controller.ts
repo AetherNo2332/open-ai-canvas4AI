@@ -19,7 +19,6 @@ type UseCanvasSelectionControllerOptions = {
     setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
     cancelPendingConnectionCreate: () => void;
     onCanvasSelectionStart: () => void;
-    onCanvasBackgroundClick?: () => void;
     onNodeInteractionStart: (selectionModifier: boolean) => void;
     onNodeBringToFront?: (nodeId: string) => void;
     onNodeClick: (node: CanvasNodeData) => void;
@@ -69,7 +68,6 @@ export function useCanvasSelectionController({
     setSelectedConnectionId,
     cancelPendingConnectionCreate,
     onCanvasSelectionStart,
-    onCanvasBackgroundClick,
     onNodeInteractionStart,
     onNodeBringToFront,
     onNodeClick,
@@ -152,6 +150,9 @@ export function useCanvasSelectionController({
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent | ReactPointerEvent, nodeId: string) => {
         event.stopPropagation();
         if (event.button !== 0) return;
+        // 子组件的 pointerdown 停止冒泡不会阻止随后独立派发的 mousedown。
+        // 编辑、控件操作和表内滚动均不能启动节点选择/拖动，也不能暂停历史记录。
+        if (event.target instanceof Element && event.target.closest('input, textarea, select, button, a[href], [contenteditable]:not([contenteditable="false"]), [role="textbox"], [data-canvas-no-drag]')) return;
         if (onBatchConnectionTarget?.(event, nodeId)) return;
         // Paint order is session-local UI state. Update it once at the start
         // of a real node interaction so dragging also survives deselection.
@@ -265,6 +266,9 @@ export function useCanvasSelectionController({
         const currentViewport = viewportRef.current;
         pendingNodeDragRef.current = { x: (event.clientX - dragRef.current.startX) / currentViewport.k, y: (event.clientY - dragRef.current.startY) / currentViewport.k };
         if (Math.abs(event.clientX - dragRef.current.startX) > 3 || Math.abs(event.clientY - dragRef.current.startY) > 3) dragRef.current.hasMoved = true;
+        // 点击时指针常有 1~3px 抖动；未越过拖动阈值前不预览位移，否则对齐吸附会把节点
+        // 临时拉偏最多 7px，松手判定为点击后又弹回原位，表现为“点一下左右抖动”。
+        if (!dragRef.current.hasMoved) return;
         if (dragFrameRef.current) return;
         dragFrameRef.current = requestAnimationFrame(() => {
             const aligned = calculateNodeAlignment(alignmentContextRef.current, pendingNodeDragRef.current, 7 / viewportRef.current.k);
@@ -345,11 +349,8 @@ export function useCanvasSelectionController({
         selectionFrameRef.current = null;
         const wasSelection = hadPendingSelection && updateSelectionPreview(screenToCanvas(clientX, clientY), true);
         resetSelectionBox();
-        if (hadPendingSelection && !wasSelection && strategy === "replace") {
-            deselectCanvas();
-            onCanvasBackgroundClick?.();
-        }
-    }, [deselectCanvas, onCanvasBackgroundClick, resetSelectionBox, screenToCanvas, updateSelectionPreview]);
+        if (hadPendingSelection && !wasSelection && strategy === "replace") deselectCanvas();
+    }, [deselectCanvas, resetSelectionBox, screenToCanvas, updateSelectionPreview]);
 
     // 重渲染只更新回调，不能拆掉进行中的手势监听并清除 iframe 保护层 / 待执行帧。
     const gestureHandlersRef = useRef({ finishNodeDrag, finishSelection, cancelSelectionBox, handleNodeDragMove, handlePointerMove });

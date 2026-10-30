@@ -1,6 +1,6 @@
+import { DEFAULT_STORYBOARD_COLUMNS } from "@/lib/canvas/canvas-storyboard-columns";
 import type { CanvasOperation, CanvasSnapshot } from "./canvas-operation-contract";
 import { createStoryboardRow } from "./canvas-project-domain";
-import { DEFAULT_STORYBOARD_COLUMNS } from "./canvas-storyboard-columns";
 import type { StoryboardRow } from "@/types/canvas";
 import { inspectStoryboardReadiness } from "./canvas-storyboard-context";
 import { createShortDramaPipeline } from "./canvas-short-drama";

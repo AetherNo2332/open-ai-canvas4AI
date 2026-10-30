@@ -1,9 +1,12 @@
-import { memo, useEffect, useMemo, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { Link2 } from "lucide-react";
+import { CANVAS_CONNECTION_STROKE_WIDTH, canvasThemes } from "@/lib/canvas-theme";
+import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
-import { activeConnectionPath, canvasConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
+import { canvasConnectionPath, CanvasConnectionBeam, ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasFrameNode } from "@/components/canvas/canvas-frame-node";
 import { CanvasNode } from "@/components/canvas/canvas-node";
+import { useCanvasVisualNode } from "@/components/canvas/canvas-node-resize-motion";
 import type { CanvasConnectionApproach } from "@/lib/canvas/canvas-connection-tilt";
 import type { CanvasBatchConnectionPreview } from "@/lib/canvas/canvas-batch-connection";
 import { batchCellAnchor, BATCH_COLUMN_HEADER_HEIGHT, BATCH_TABLE_HEADER_HEIGHT, parseBatchCellHandle, type BatchScroll } from "@/lib/canvas/canvas-batch-references";
@@ -11,7 +14,9 @@ import { sortCanvasNodesByStackOrder, type CanvasNodeStackOrder } from "@/lib/ca
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import type { CanvasNodeRenderLOD } from "@/lib/canvas/canvas-node-lod";
-import type { CanvasDisplayConnection, CanvasFolderStyle, CanvasFolderTheme, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "@/types/canvas";
+import type { CanvasSpatialBounds } from "@/lib/canvas/canvas-spatial-index";
+import { useCanvasProgressiveNodeMount } from "./use-canvas-progressive-node-mount";
+import type { CanvasDisplayConnection, CanvasFolderStyle, CanvasFolderTheme, CanvasNodeData, Position, SelectionBox } from "@/types/canvas";
 
 type DragPreview = { x: number; y: number; nodeIds: Set<string> } | null;
 type NodeBounds = { left: number; top: number; width: number; height: number; count: number } | null;
@@ -25,13 +30,14 @@ type CanvasProjectWorldLayersProps = {
     relatedConnectionIds: Set<string>;
     scriptScrollTopById: Record<string, number>;
     batchScrollById?: Record<string, BatchScroll>;
-    connectingParams: ConnectionHandle | null;
-    mouseWorld: Position;
     connectionTargetNodeId: string | null;
-    connectionTargetHandleId?: string;
+    isConnecting: boolean;
     connectionApproach: CanvasConnectionApproach;
     nodeById: Map<string, CanvasNodeData>;
-    visibleNodes: CanvasNodeData[];
+    /** 视口内与缓冲区候选节点；屏外部分由本层分帧挂载。 */
+    candidateNodes: CanvasNodeData[];
+    immediateRenderNodeIds: Set<string>;
+    renderViewBounds: CanvasSpatialBounds;
     nodeRenderLODById: Map<string, CanvasNodeRenderLOD>;
     nodeStackOrder: CanvasNodeStackOrder;
     frameChildrenById: Map<string, CanvasNodeData[]>;
@@ -47,7 +53,6 @@ type CanvasProjectWorldLayersProps = {
     openingBatchIds: Set<string>;
     batchMotionById: Map<string, { x: number; y: number; index: number }>;
     showImageInfo: boolean;
-    reduceMediaEffects: boolean;
     resourceReferenceByNodeId: Map<string, CanvasResourceReference>;
     mentionReferencesByNodeId: Map<string, CanvasResourceReference[]>;
     mediaEffectsDisabledNodeId?: string | null;
@@ -75,10 +80,10 @@ type CanvasProjectWorldLayersProps = {
     onRetry: (node: CanvasNodeData) => void;
     onReloadResource: (node: CanvasNodeData) => void;
     onOpenTaskDetails: (node: CanvasNodeData) => void;
-    onOpenVersions: (node: CanvasNodeData) => void;
     onViewImage: (node: CanvasNodeData) => void;
     onReplaceMedia: (node: CanvasNodeData) => void;
     onOpenTextEditor: (node: CanvasNodeData) => void;
+    onOpenPrevis: (node: CanvasNodeData) => void;
     onOpenDrawing: (node: CanvasNodeData) => void;
     onStartBatchConnection: (event: ReactPointerEvent, sourceNodeIds: string[]) => void;
 };
@@ -92,32 +97,26 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
     useEffect(() => {
         if (activeMediaNodeId && !props.nodeById.has(activeMediaNodeId)) setActiveMediaNodeId(null);
     }, [activeMediaNodeId, props.nodeById]);
-    const orderedVisibleNodes = useMemo(
-        () => [
-            ...props.visibleNodes.filter(isFrameNode),
-            ...sortCanvasNodesByStackOrder(
-                props.visibleNodes.filter((node) => !isFrameNode(node)),
-                props.nodeStackOrder,
-            ),
-        ],
-        [props.nodeStackOrder, props.visibleNodes],
-    );
-    const batchPreviews = useMemo(
-        () =>
-            new Map(
-                props.visibleNodes
-                    .filter((node) => node.metadata?.isBatchRoot)
-                    .map((node) => [
-                        node.id,
-                        (node.metadata?.batchChildIds || [])
-                            .filter((id) => id !== node.metadata?.primaryImageId)
-                            .map((id) => props.nodeById.get(id))
-                            .filter((child): child is CanvasNodeData => Boolean(child && child.metadata?.batchRootId === node.id))
-                            .slice(0, 5),
-                    ]),
-            ),
-        [props.visibleNodes, props.nodeById],
-    );
+    const visibleNodes = useCanvasProgressiveNodeMount(props.candidateNodes, props.immediateRenderNodeIds, props.renderViewBounds);
+    const orderedVisibleNodes = useMemo(() => [
+        ...visibleNodes.filter(isFrameNode),
+        ...sortCanvasNodesByStackOrder(visibleNodes.filter((node) => !isFrameNode(node)), props.nodeStackOrder),
+    ], [props.nodeStackOrder, visibleNodes]);
+    const batchPreviewsRef = useRef(new Map<string, CanvasNodeData[]>());
+    const batchPreviews = useMemo(() => {
+        const previous = batchPreviewsRef.current;
+        const next = new Map(visibleNodes.filter((node) => node.metadata?.isBatchRoot).map((node): [string, CanvasNodeData[]] => {
+            const children = (node.metadata?.batchChildIds || []).filter((id) => id !== node.metadata?.primaryImageId)
+                .map((id) => props.nodeById.get(id))
+                .filter((child): child is CanvasNodeData => Boolean(child && child.metadata?.batchRootId === node.id))
+                .slice(0, 5);
+            // 子图对象未变时沿用旧数组，避免挂载/视口变化让所有批次封面重渲染。
+            const current = previous.get(node.id);
+            return [node.id, current && current.length === children.length && children.every((child, index) => child === current[index]) ? current : children];
+        }));
+        batchPreviewsRef.current = next;
+        return next;
+    }, [visibleNodes, props.nodeById]);
     const framePreviewNodes = (node: CanvasNodeData) => {
         const assetFolderId = node.metadata?.folder?.assetFolderId;
         if (assetFolderId) return props.linkedFolderPreviewNodesById.get(assetFolderId) || EMPTY_CANVAS_NODES;
@@ -155,7 +154,6 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
             {orderedVisibleNodes.map((node) =>
                 isFrameNode(node) ? (
                     <CanvasFrameNode
-                        canvasId={props.projectId}
                         key={node.id}
                         data={node}
                         renderLOD={props.nodeRenderLODById.get(node.id) || "full"}
@@ -185,8 +183,9 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                         isRelated={props.relatedNodeIds.has(node.id)}
                         isFocusRelated={props.activeNodeId === node.id}
                         isConnectionTarget={props.connectionTargetNodeId === node.id || props.batchConnectionPreview?.targetNodeId === node.id}
+                        isConnecting={props.isConnecting}
                         connectionApproach={props.connectionApproach?.nodeId === node.id ? props.connectionApproach.point : undefined}
-                        forceInputVisible={Boolean(props.batchConnectionPreview)}
+                        forceInputMounted={Boolean(props.batchConnectionPreview)}
                         batchCount={props.batchChildCountById.get(node.id) || 0}
                         batchExpanded={Boolean(node.metadata?.imageBatchExpanded)}
                         batchPreviewNodes={batchPreviews.get(node.id)}
@@ -196,7 +195,7 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                         batchPrimary={Boolean(node.metadata?.batchRootId && props.nodeById.get(node.metadata.batchRootId)?.metadata?.primaryImageId === node.id)}
                         batchMotion={props.batchMotionById.get(node.id)}
                         showImageInfo={props.showImageInfo}
-                        reduceMediaEffects={props.reduceMediaEffects || props.mediaEffectsDisabledNodeId === node.id}
+                        disableMediaEffects={props.mediaEffectsDisabledNodeId === node.id}
                         resourceLabel={props.resourceReferenceByNodeId.get(node.id)}
                         mentionReferences={props.mentionReferencesByNodeId.get(node.id) || EMPTY_RESOURCE_REFERENCES}
                         renderNodeContent={props.renderCanvasNodeContent}
@@ -213,10 +212,10 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                         onRetry={props.onRetry}
                         onReloadResource={props.onReloadResource}
                         onOpenTaskDetails={props.onOpenTaskDetails}
-                        onOpenVersions={props.onOpenVersions}
                         onViewImage={props.onViewImage}
                         onReplaceMedia={props.onReplaceMedia}
                         onOpenTextEditor={props.onOpenTextEditor}
+                        onOpenPrevis={props.onOpenPrevis}
                         onOpenDrawing={props.onOpenDrawing}
                         onContextMenu={props.onNodeContextMenu}
                     />
@@ -238,7 +237,12 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                     }}
                 >
                     {props.batchSourceNodeIds.length > 0 ? (
-                        <BatchConnectionHandle scale={viewportScale} count={props.batchSourceNodeIds.length} active={Boolean(props.batchConnectionPreview)} onPointerDown={(event) => props.onStartBatchConnection(event, props.batchSourceNodeIds)} />
+                        <BatchConnectionHandle
+                            scale={viewportScale}
+                            count={props.batchSourceNodeIds.length}
+                            active={Boolean(props.batchConnectionPreview)}
+                            onPointerDown={(event) => props.onStartBatchConnection(event, props.batchSourceNodeIds)}
+                        />
                     ) : null}
                 </div>
             ) : null}
@@ -255,61 +259,32 @@ const BatchConnectionTails = memo(function BatchConnectionTails(props: CanvasPro
         items.push(item);
         groups.set(item.to.id, items);
     }
-    if (props.connectionTargetNodeId && parseBatchCellHandle(props.connectionTargetHandleId) && !groups.has(props.connectionTargetNodeId)) groups.set(props.connectionTargetNodeId, []);
-    return (
-        <>
-            {Array.from(groups, ([tableId, items]) => {
-                const node = props.nodeById.get(tableId);
-                if (!node) return null;
-                const top = node.position.y + BATCH_TABLE_HEADER_HEIGHT + BATCH_COLUMN_HEADER_HEIGHT;
-                const height = Math.max(0, node.height - BATCH_TABLE_HEADER_HEIGHT - BATCH_COLUMN_HEADER_HEIGHT);
-                const scroll = props.batchScrollById?.[tableId];
-                const connecting = props.connectingParams;
-                const draft =
-                    connecting?.handleType === "source" && props.connectionTargetNodeId === tableId && parseBatchCellHandle(props.connectionTargetHandleId)
-                        ? activeConnectionPath(
-                              props.nodeById.get(connecting.nodeId),
-                              connecting,
-                              props.mouseWorld,
-                              node,
-                              props.scriptScrollTopById[connecting.nodeId] || 0,
-                              props.connectionTargetHandleId,
-                              props.batchScrollById?.[connecting.nodeId],
-                              scroll,
-                          )
-                        : "";
-                return (
-                    <svg
-                        key={tableId}
-                        data-batch-cell-connections={tableId}
-                        className="pointer-events-none absolute overflow-hidden"
-                        viewBox={`${node.position.x} ${top} ${node.width} ${height}`}
-                        style={{ left: node.position.x, top, width: node.width, height, zIndex: "var(--z-node-active)" }}
-                    >
-                        {items.map(({ connection, from, to }) => {
-                            const cell = batchCellAnchor(to, connection.toHandleId, scroll);
-                            if (!cell) return null;
-                            const active = props.selectedConnectionId === connection.id;
-                            const path = canvasConnectionPath(connection, from, to, props.scriptScrollTopById[from.id] || 0, 0, props.batchScrollById?.[from.id], scroll);
-                            return (
-                                <g key={connection.id}>
-                                    <path d={path.pathD} fill="none" stroke={active ? "var(--workspace-accent)" : "var(--muted-foreground)"} strokeWidth={active ? 1.5 : 1} strokeOpacity={active ? 0.9 : 0.5} vectorEffect="non-scaling-stroke" />
-                                    <circle cx={cell.x} cy={cell.y} r={3} fill="var(--workspace-accent)" fillOpacity={active ? 1 : 0.65} />
-                                    {active && cell.clipped ? (
-                                        <text x={cell.x + 8} y={cell.y <= top + 8 ? cell.y + 15 : cell.y - 8} fill="var(--foreground)" fontSize={12}>
-                                            {cell.label} · 滚动查看
-                                        </text>
-                                    ) : null}
-                                </g>
-                            );
-                        })}
-                        {draft ? <path d={draft} fill="none" stroke="var(--workspace-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" /> : null}
-                    </svg>
-                );
-            })}
-        </>
-    );
+    return <>{Array.from(groups, ([tableId, items]) => {
+        const node = props.nodeById.get(tableId);
+        if (!node) return null;
+        const top = node.position.y + BATCH_TABLE_HEADER_HEIGHT + BATCH_COLUMN_HEADER_HEIGHT;
+        const height = Math.max(0, node.height - BATCH_TABLE_HEADER_HEIGHT - BATCH_COLUMN_HEADER_HEIGHT);
+        const scroll = props.batchScrollById?.[tableId];
+        return <svg key={tableId} data-batch-cell-connections={tableId} className="pointer-events-none absolute overflow-hidden" viewBox={`${node.position.x} ${top} ${node.width} ${height}`} style={{ left: node.position.x, top, width: node.width, height, zIndex: "var(--z-node-active)" }}>
+            {items.map((item) => <BatchConnectionTail key={item.connection.id} item={item} top={top} scroll={scroll} fromScrollTop={props.scriptScrollTopById[item.from.id] || 0} fromBatchScroll={props.batchScrollById?.[item.from.id]} active={props.selectedConnectionId === item.connection.id || props.relatedConnectionIds.has(item.connection.id)} />)}
+        </svg>;
+    })}</>;
 });
+
+function BatchConnectionTail({ item, top, scroll, fromScrollTop, fromBatchScroll, active }: { item: CanvasDisplayConnection; top: number; scroll?: BatchScroll; fromScrollTop: number; fromBatchScroll?: BatchScroll; active: boolean }) {
+    const theme = canvasThemes[useActiveTheme()];
+    const from = useCanvasVisualNode(item.from);
+    const to = useCanvasVisualNode(item.to);
+    const cell = batchCellAnchor(to, item.connection.toHandleId, scroll);
+    if (!cell) return null;
+    const path = canvasConnectionPath(item.connection, from, to, fromScrollTop, 0, fromBatchScroll, scroll);
+    return <g>
+        <path d={path.pathD} fill="none" stroke={theme.connection.stroke} strokeWidth={CANVAS_CONNECTION_STROKE_WIDTH} strokeOpacity={0.8} vectorEffect="non-scaling-stroke" />
+        {active ? <CanvasConnectionBeam pathD={path.pathD} color={theme.connection.beam} /> : null}
+        <circle cx={cell.x} cy={cell.y} r={3} fill={theme.connection.beam} fillOpacity={active ? 1 : 0.65} />
+        {active && cell.clipped ? <text x={cell.x + 8} y={cell.y <= top + 8 ? cell.y + 15 : cell.y - 8} fill="var(--foreground)" fontSize={12}>{cell.label} · 滚动查看</text> : null}
+    </g>;
+}
 
 function BatchConnectionHandle({ scale, count, active, onPointerDown }: { scale: number; count: number; active: boolean; onPointerDown: (event: ReactPointerEvent) => void }) {
     const inverseScale = 1 / Math.max(scale, 0.05);
@@ -327,7 +302,7 @@ function BatchConnectionHandle({ scale, count, active, onPointerDown }: { scale:
             type="button"
             data-canvas-no-zoom
             data-icon-only
-            className="pointer-events-auto absolute grid -translate-y-1/2 translate-x-1/2 place-items-center rounded-full border shadow-md transition hover:scale-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="pointer-events-auto absolute grid -translate-y-1/2 translate-x-1/2 place-items-center rounded-full border shadow-md transition-opacity duration-150 hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
             style={buttonStyle}
             title={`批量连接 ${count} 个节点`}
             aria-label={`批量连接 ${count} 个节点`}

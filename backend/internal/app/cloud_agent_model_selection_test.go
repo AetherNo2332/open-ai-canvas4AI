@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func cloudAgentProjectForDefaultModel(t *testing.T, db *gorm.DB, modelRef string) {

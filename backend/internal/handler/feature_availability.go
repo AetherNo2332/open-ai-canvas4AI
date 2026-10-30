@@ -3,7 +3,7 @@ package handler
 import (
 	"net/http"
 
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,13 +20,11 @@ func RegisterFeatureAvailabilityRoutes(r *gin.RouterGroup, svc *service.Service)
 	})
 
 	r.GET("/features", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
+		if _, err := currentUser(c, svc); err != nil {
 			failService(c, err)
 			return
 		}
-		// 用户视角:导演预演台 canary 按白名单/比例分群,其余开关保持全局值。
-		setting, err := svc.UserFeatureAvailability(user)
+		setting, err := svc.FeatureAvailability()
 		if err != nil {
 			failService(c, err)
 			return

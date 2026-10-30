@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { applyCanvasOperations, verifyCanvasOperations, type CanvasOperation, type CanvasSnapshot } from "@/lib/canvas/canvas-operation-contract";
@@ -144,5 +146,80 @@ describe("Agent update_node 的分镜 metadata 合并", () => {
         const result = verifyCanvasOperations(before, after, [op]);
         expect(result.ok).toBe(true);
         expect(result.warnings).toEqual([]);
+    });
+});
+
+// 后端 capability/storyboard_columns.go 是 Agent 与 editable 枚举的 Go 来源；前端列定义必须与之逐项一致。
+function backendStringLists(name: string): string[][] {
+    const source = readFileSync(resolve(import.meta.dir, "../../backend/internal/canvas/capability/storyboard_columns.go"), "utf8");
+    const start = source.indexOf(`var ${name} = `);
+    if (start < 0) throw new Error(`missing ${name} in storyboard_columns.go`);
+    const open = source.indexOf("{", start);
+    let depth = 0;
+    let end = open;
+    for (; end < source.length; end += 1) {
+        if (source[end] === "{") depth += 1;
+        if (source[end] === "}") depth -= 1;
+        if (depth === 0) break;
+    }
+    const body = source.slice(open + 1, end);
+    const groups = body.includes("{") ? [...body.matchAll(/\{([^{}]*)\}/g)].map((match) => match[1]) : [body];
+    return groups.map((group) => [...group.matchAll(/"([^"]+)"/g)].map((match) => match[1]));
+}
+
+describe("分镜列与后端合同一致", () => {
+    test("全部列 key 与顺序等于后端 storyboardColumnNames", () => {
+        const [backendColumns] = backendStringLists("storyboardColumnNames");
+        expect(backendColumns).toHaveLength(19);
+        expect(STORYBOARD_COLUMN_OPTIONS.map((option) => option.value)).toEqual(backendColumns as StoryboardColumn[]);
+    });
+
+    test("默认列与历史默认集合等于后端定义", () => {
+        const [backendDefault] = backendStringLists("storyboardDefaultColumnNames");
+        expect([...DEFAULT_STORYBOARD_COLUMNS]).toEqual(backendDefault as StoryboardColumn[]);
+        const legacySets = backendStringLists("storyboardLegacyDefaultColumnSets");
+        expect(legacySets).toHaveLength(4);
+        for (const legacy of legacySets) {
+            expect(resolveStoryboardVisibleColumns(legacy as StoryboardColumn[])).toEqual(EXPECTED_DEFAULT_COLUMNS);
+        }
+    });
+
+    test("上游关联资产列（#799）保留在列选择器与默认列中", () => {
+        expect(STORYBOARD_COLUMN_OPTIONS.find((option) => option.value === "assets")?.label).toBe("关联资产");
+        expect(DEFAULT_STORYBOARD_COLUMNS).toContain("assets");
+    });
+});
+
+describe("分镜卡片接入共享列定义", () => {
+    const scriptSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-script-node.tsx"), "utf8");
+
+    test("画布卡片与全屏编辑器都按共享列定义渲染，不再写死五列", () => {
+        expect(scriptSource).toContain('from "@/lib/canvas/canvas-storyboard-columns"');
+        expect(scriptSource).not.toContain("SCRIPT_GRID_TEMPLATE");
+        expect(scriptSource).not.toMatch(/const columnOptions\b/);
+        expect(scriptSource).toContain("storyboardCardGridTemplate(visibleColumns)");
+    });
+
+    test("新建与回写路径使用共享默认列，不再散落旧五列默认", () => {
+        for (const file of [
+            "constant/canvas.ts",
+            "lib/canvas/canvas-project-domain.ts",
+            "lib/canvas/canvas-short-drama.ts",
+            "lib/canvas/canvas-storyboard-operations.ts",
+            "lib/canvas/project-chapter-storyboard.ts",
+            "pages/canvas/use-canvas-storyboard.ts",
+        ]) {
+            const source = readFileSync(resolve(import.meta.dir, `../src/${file}`), "utf8");
+            expect({ file, legacy: source.includes('"videoMotionPrompt", "dialogue", "assets"]') }).toEqual({ file, legacy: false });
+        }
+    });
+});
+
+describe("生成结果回写保留用户列选择", () => {
+    test("分镜生成完成后按 resolveStoryboardVisibleColumns 归一，不再强制补出十五列", () => {
+        for (const file of ["pages/canvas/use-canvas-storyboard.ts", "pages/canvas/use-canvas-generation.ts", "pages/canvas/project.tsx"]) {
+            const source = readFileSync(resolve(import.meta.dir, `../src/${file}`), "utf8");
+            expect({ file, cinematic: /visibleColumns:\s*cinematicStoryboardColumns\(/.test(source) }).toEqual({ file, cinematic: false });
+        }
     });
 });

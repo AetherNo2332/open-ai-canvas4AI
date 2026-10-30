@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { appearanceLogoURL, normalizePublicAppearance } from "../src/stores/use-appearance-store";
+import { moduleGroupSource } from "./helpers/module-group-source";
 
 test("initial HTML stays brand neutral until the public appearance is resolved", async () => {
     const [html, mainSource] = await Promise.all([Bun.file(new URL("../index.html", import.meta.url)).text(), Bun.file(new URL("../src/main.tsx", import.meta.url)).text()]);
@@ -70,21 +71,22 @@ test("appearance selects theme logos and falls back to the single configured log
 test("auth scene consumes resolved appearance instead of hardcoded media constants", async () => {
     const source = await Bun.file(new URL("../src/pages/auth/auth-scene.tsx", import.meta.url)).text();
 
-    // 认证场景必须消费外观 store 的解析值，而不是写死文案/媒体。
-    // （authVideo* 字段随 19c2eb72 的认证区改版淡出场景文件；保留品牌与文案契约。）
+    expect(source).toContain("appearance.authVideoUrl");
+    expect(source).toContain("appearance.authVideoAutoplay");
+    expect(source).toContain("appearance.authVideoPosterUrl || undefined");
     expect(source).toContain("appearance.brandName");
+    expect(source).toContain("appearance.authHeroTitle");
     expect(source).toContain("appearance.authHeroDescription");
     expect(source).toContain("useThemeStore((state) => state.theme)");
     expect(source).toContain("theme={theme}");
     expect(source).not.toContain("让一个故事，");
     expect(source).not.toContain("AUTH_VIDEO_URL");
     expect(source).not.toContain("AUTH_VIDEO_POSTER");
-    expect(source).not.toContain("AUTH_HERO_TITLE");
 });
 
 test("appearance management exposes light and dark logo uploads plus the frame switch", async () => {
     const [pageSource, brandSource, adminStyles, globalStyles] = await Promise.all([
-        Bun.file(new URL("../src/pages/admin/settings/appearance-settings-page.tsx", import.meta.url)).text(),
+        Promise.resolve(moduleGroupSource("pages/admin/settings/appearance-settings-page.tsx")),
         Bun.file(new URL("../src/components/brand/brand-logo.tsx", import.meta.url)).text(),
         Bun.file(new URL("../src/styles/admin-ui.css", import.meta.url)).text(),
         Bun.file(new URL("../src/styles/globals.css", import.meta.url)).text(),
@@ -101,9 +103,7 @@ test("appearance management exposes light and dark logo uploads plus the frame s
     expect(pageSource).toContain("深浅模式 Logo 预览");
     expect(pageSource).toContain("登录页视频自动播放");
     expect(pageSource).toContain("authVideoAutoplay");
-    // 标记跟随"当前生效主题"：画布有独立主题时用画布主题，否则用工作区主题（useActiveTheme 内部读 useThemeStore）。
     expect(brandSource).toContain("useActiveTheme");
-    expect(brandSource).toContain('theme === "auto" ? currentTheme : theme');
     expect(brandSource).toContain("data-logo-frame-enabled");
     expect(brandSource).toContain("failedSource === source");
     expect(brandSource).toContain('aria-hidden="true"');
@@ -113,22 +113,8 @@ test("appearance management exposes light and dark logo uploads plus the frame s
     expect(globalStyles).toContain('.brand-logo-frame[data-logo-frame-enabled="false"] > :is(img, svg)');
 });
 
-test("workspace sidebar brand logo renders without the square frame mark", async () => {
-    const [sidebarSource, globalStyles, homeSkinStyles] = await Promise.all([
-        Bun.file(new URL("../src/components/layout/workspace-sidebar-nav.tsx", import.meta.url)).text(),
-        Bun.file(new URL("../src/styles/globals.css", import.meta.url)).text(),
-        Bun.file(new URL("../src/styles/home-skin.css", import.meta.url)).text(),
-    ]);
-
-    // 侧栏品牌标识直接渲染 Logo；旧的外框类、全局框线规则和皮肤 !important 覆盖都不应回归。
-    expect(sidebarSource).toContain("app-workspace-brand-logo");
-    expect(sidebarSource).not.toContain("BrandLogoFrame");
-    expect(globalStyles).not.toContain(".app-workspace-brand-mark");
-    expect(homeSkinStyles).not.toContain(".app-workspace-brand-mark");
-});
-
 test("object storage can adopt the configured English brand identifier without replacing saved prefixes automatically", async () => {
-    const source = await Bun.file(new URL("../src/pages/admin/settings/storage-settings-page.tsx", import.meta.url)).text();
+    const source = await Promise.resolve(moduleGroupSource("pages/admin/settings/storage-settings-page.tsx"));
 
     expect(source).toContain("state.appearance.brandSlug");
     expect(source).toContain("使用品牌标识");
@@ -136,10 +122,10 @@ test("object storage can adopt the configured English brand identifier without r
     expect(source).toContain("setting.pathPrefix || DEFAULT_OSS_PATH_PREFIX");
 });
 
-test("appearance management exposes a server-side reset to the built-in ArrowFX brand", async () => {
-    const [pageSource, apiSource] = await Promise.all([Bun.file(new URL("../src/pages/admin/settings/appearance-settings-page.tsx", import.meta.url)).text(), Bun.file(new URL("../src/services/api/appearance.ts", import.meta.url)).text()]);
+test("appearance management exposes a server-side reset to the built-in Yingce brand", async () => {
+    const [pageSource, apiSource] = await Promise.all([Promise.resolve(moduleGroupSource("pages/admin/settings/appearance-settings-page.tsx")), Bun.file(new URL("../src/services/api/appearance.ts", import.meta.url)).text()]);
 
-    expect(pageSource).toContain("恢复 ArrowFX 默认");
+    expect(pageSource).toContain("恢复影策默认");
     expect(pageSource).toContain("resetAdminAppearance()");
     expect(pageSource).toContain("已上传文件仍保留在存储资源中");
     expect(apiSource).toContain('http.delete<{ setting: AdminAppearance }>("/admin/settings/appearance")');

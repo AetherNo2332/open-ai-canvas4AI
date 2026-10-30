@@ -96,6 +96,56 @@ describe("changed-file formatting gate", () => {
         await expect(repo.check({ baseSha: "0".repeat(40) })).rejects.toThrow("new.ts");
     });
 
+    test("files already unformatted on a merged branch are legacy", async () => {
+        const repo = fixture({ "own.ts": "const value = 1;\n" });
+        const main = repo.git("rev-parse", "--abbrev-ref", "HEAD");
+        repo.git("checkout", "-qb", "side");
+        repo.write("merged.ts", "const value=1;\n");
+        repo.commit();
+        repo.git("checkout", "-q", main);
+        repo.git("-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", "merge side", "side");
+        repo.write("merged.ts", "const value=2;\n");
+        repo.commit();
+        await repo.check();
+        expect(repo.messages).toContain("Skipping legacy unformatted file: merged.ts");
+        repo.write("own.ts", "const value=2;\n");
+        repo.commit();
+        await expect(repo.check()).rejects.toThrow("own.ts");
+    });
+
+    test("a pull request merge commit does not exempt the pull request's own files", async () => {
+        const repo = fixture({ "own.ts": "const value = 1;\n" });
+        const main = repo.git("rev-parse", "--abbrev-ref", "HEAD");
+        repo.git("checkout", "-qb", "upstream");
+        repo.write("merged.ts", "const value=1;\n");
+        repo.commit();
+        repo.git("checkout", "-q", main);
+        repo.git("checkout", "-qb", "pr");
+        repo.git("-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", "sync upstream", "upstream");
+        repo.write("merged.ts", "const value=2;\n");
+        repo.write("added.ts", "const value=1;\n");
+        repo.commit();
+        repo.git("checkout", "-q", main);
+        repo.git("-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", "synthetic pr merge", "pr");
+        const error = await repo.check().catch((failure) => failure);
+        expect(error.message).toContain("added.ts");
+        expect(error.message).not.toContain("merged.ts");
+        expect(repo.messages).toContain("Skipping legacy unformatted file: merged.ts");
+    });
+
+    test("a pull request merge onto an advanced base still checks the pull request's files", async () => {
+        const repo = fixture({ "own.ts": "const value = 1;\n" });
+        const main = repo.git("rev-parse", "--abbrev-ref", "HEAD");
+        repo.git("checkout", "-qb", "pr");
+        repo.write("added.ts", "const value=1;\n");
+        repo.commit();
+        repo.git("checkout", "-q", main);
+        repo.write("later.ts", "const value = 1;\n");
+        repo.commit();
+        repo.git("-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "-m", "synthetic pr merge", "pr");
+        await expect(repo.check({ pullRequest: true })).rejects.toThrow("added.ts");
+    });
+
     test("deletions do not attempt to read missing files", async () => {
         const repo = fixture({ "deleted.ts": "const value = 1;\n" });
         repo.git("rm", "web/deleted.ts");

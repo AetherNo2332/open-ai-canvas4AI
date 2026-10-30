@@ -1,7 +1,7 @@
+import { DEFAULT_STORYBOARD_COLUMNS } from "@/lib/canvas/canvas-storyboard-columns";
 import { nanoid } from "nanoid";
 
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
-import { DEFAULT_STORYBOARD_COLUMNS } from "@/lib/canvas/canvas-storyboard-columns";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 

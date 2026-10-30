@@ -4,15 +4,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
+	"time"
 
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
-var errMediaVersionTargetChanged = errors.New("media version target changed")
+// errMediaVersionUnchanged 表示写回不改动画布（目标已删除、绑定已变化等）：画布写入回滚，
+// 只在单独的事务里记录绑定结果并结束写回任务，不产生空的画布修订。
+var errMediaVersionUnchanged = errors.New("media version writeback leaves canvas unchanged")
 
 func mediaVersionError(err error) error {
 	var version *mediaversions.Error
@@ -22,12 +24,10 @@ func mediaVersionError(err error) error {
 	return err
 }
 
-func settleMediaVersion(tx *repository.Repository, doc commands.Document, binding model.CanvasTaskBinding, task model.Task, version model.CanvasMediaVersion, outputs []model.CanvasTaskOutput) (commands.Document, string, error) {
-	var consumer Consumer
-	if err := json.Unmarshal([]byte(binding.ConsumerJSON), &consumer); err != nil {
-		return nil, "", err
-	}
-	node := findNode(doc, version.NodeID)
+// settleMediaVersion 把媒体版本任务的结果写进节点 metadata.mediaVersions：成功时登记并采用新版本
+// （等价于浏览器 recordReplacedMediaVersion）；生成期间用户换过当前版本时只进入历史。
+func settleMediaVersion(tx *repository.Repository, doc commands.Document, binding model.CanvasTaskBinding, base mediaversions.Base, task model.Task, outputs []model.CanvasTaskOutput, consumer Consumer) (commands.Document, string, error) {
+	node := findNode(doc, base.NodeID)
 	blocked := ""
 	var row map[string]any
 	if consumer.Kind == "storyboard" || consumer.Kind == "batch" {
@@ -43,63 +43,55 @@ func settleMediaVersion(tx *repository.Repository, doc commands.Document, bindin
 			blocked = "row_deleted"
 		case str(row["taskId"]) != task.ID:
 			blocked = "binding_changed"
-		case str(row[field]) != version.NodeID || consumer.OutputNodeID != version.NodeID:
+		case str(row[field]) != base.NodeID || consumer.OutputNodeID != base.NodeID:
 			blocked = "output_binding_changed"
 		}
 	}
-	scope := mediaversions.Scope{OwnerID: version.OwnerID, CanvasID: version.CanvasID, Epoch: version.Epoch, NodeID: version.NodeID, Generation: version.Generation}
-	if node != nil {
-		actual, err := mediaversions.ScopeForNode(tx, scope.OwnerID, scope.CanvasID, scope.NodeID)
-		if err != nil {
-			node = nil
-		} else {
-			scope = actual
-		}
+	// 投影记录的单调标记在行级原因之后：具体的行删除/改绑原因优先报告。
+	if blocked == "" {
+		blocked = base.Blocked
 	}
-	resultNode := map[string]any{"id": version.NodeID, "type": version.Mode, "metadata": map[string]any{}}
-	if node != nil {
-		raw, _ := json.Marshal(node)
-		if err := json.Unmarshal(raw, &resultNode); err != nil {
-			return nil, "", err
-		}
+	if blocked == "" && node != nil && base.OutputOwners != nil && fmt.Sprint(mediaversions.OutputOwners(objectList(doc["nodes"]), base.NodeID)) != fmt.Sprint(base.OutputOwners) {
+		blocked = "output_binding_changed"
 	}
-	if task.Status == model.TaskStatusSucceeded {
+	if node == nil {
+		return nil, "target_deleted", errMediaVersionUnchanged
+	}
+	if _, err := mediaversions.ScopeForNode(tx, binding.OwnerID, binding.CanvasID, base.NodeID); err != nil {
+		return nil, "target_deleted", errMediaVersionUnchanged
+	}
+	before, err := json.Marshal(doc)
+	if err != nil {
+		return nil, "", err
+	}
+	result := map[string]any{"id": node["id"], "type": node["type"]}
+	if task.Status == model.TaskStatusSucceeded && blocked == "" {
 		if len(outputs) == 0 {
 			return nil, "", fmt.Errorf("media version output missing")
 		}
-		if err := applyOutput(resultNode, task, outputs[0]); err != nil {
+		result = cloneNode(node)
+		if err := applyOutput(result, task, outputs[0]); err != nil {
 			return nil, "", err
 		}
 	}
-	firstMedia := node != nil && mediaversions.ReadState(node).CurrentVersionID == ""
-	var frozen struct {
-		Geometry     map[string]any              `json:"geometry"`
-		OutputOwners []mediaversions.OutputOwner `json:"outputOwners"`
+	if task.Status == model.TaskStatusFailed && task.MediaRecoveryJSON != "" {
+		// 媒体已生成但保存未完成：保持生成标记，恢复原任务后再写回，不允许重新付费生成。
+		return doc, "media_save_pending", nil
 	}
-	_ = json.Unmarshal([]byte(version.RequestJSON), &frozen)
-	if blocked == "" && frozen.OutputOwners != nil && !reflect.DeepEqual(frozen.OutputOwners, mediaversions.OutputOwners(objectList(doc["nodes"]), version.NodeID)) {
-		blocked = "output_binding_changed"
-	}
-	geometryUnchanged := node != nil && reflect.DeepEqual(frozen.Geometry, map[string]any{"position": node["position"], "width": node["width"], "height": node["height"]})
-	adopted, reason, err := mediaversions.Finish(tx, scope, node, task, metadata(resultNode), outputs, blocked)
-	if err != nil {
-		return nil, "", mediaVersionError(err)
-	}
-	if adopted && firstMedia && geometryUnchanged {
-		node["position"], node["width"], node["height"] = resultNode["position"], resultNode["width"], resultNode["height"]
-	}
+	settled, outcome := mediaversions.Finish(node, result, base, task, blocked, time.Now())
+	replaceNode(doc, settled)
 	claimField := consumer.Field
 	if consumer.Kind == "batch" {
 		claimField = "outputNodeId"
 	}
-	if row != nil && str(row["taskId"]) == task.ID && str(row[claimField]) == version.NodeID && (blocked != "" || reason == "output_binding_changed") {
+	if row != nil && str(row["taskId"]) == task.ID && str(row[claimField]) == base.NodeID && blocked != "" {
 		// A restored row may still carry the original pending marker. Release
 		// only that marker; never apply the result into its changed ownership.
 		delete(row, "taskId")
 		delete(row, "taskStatus")
 		delete(row, "errorDetails")
 		row["status"] = "idle"
-		if node != nil && mediaversions.ReadState(node).CurrentVersionID != "" {
+		if mediaversions.HasMedia(settled) {
 			row["status"] = "success"
 		}
 	} else if row != nil && str(row["taskId"]) == task.ID && blocked == "" {
@@ -111,11 +103,53 @@ func settleMediaVersion(tx *repository.Repository, doc commands.Document, bindin
 			delete(row, "errorDetails")
 		}
 	}
-	if reason == "adopted" {
-		reason = "applied"
+	base.ResultVersionID, base.Adopted, base.Settled = outcome.VersionID, outcome.Adopted, true
+	if after, err := json.Marshal(doc); err != nil {
+		return nil, "", err
+	} else if string(after) == string(before) {
+		return nil, outcome.Reason, errMediaVersionUnchanged
 	}
-	if reason == "not_adopted" && blocked == "" {
-		reason = "applied"
+	if err := tx.UpdateCanvasTaskBindingMediaVersion(task.ID, binding.OwnerID, base.Encode()); err != nil {
+		return nil, "", err
 	}
-	return doc, reason, nil
+	return doc, outcome.Reason, nil
+}
+
+func cloneNode(node map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range node {
+		out[key] = value
+	}
+	m := map[string]any{}
+	for key, value := range metadata(node) {
+		m[key] = value
+	}
+	out["metadata"] = m
+	if position, ok := node["position"].(map[string]any); ok {
+		copied := map[string]any{}
+		for key, value := range position {
+			copied[key] = value
+		}
+		out["position"] = copied
+	}
+	return out
+}
+
+func replaceNode(doc commands.Document, next map[string]any) {
+	switch nodes := doc["nodes"].(type) {
+	case []any:
+		for i, value := range nodes {
+			if node, ok := value.(map[string]any); ok && str(node["id"]) == str(next["id"]) {
+				nodes[i] = next
+				return
+			}
+		}
+	case []map[string]any:
+		for i, node := range nodes {
+			if str(node["id"]) == str(next["id"]) {
+				nodes[i] = next
+				return
+			}
+		}
+	}
 }

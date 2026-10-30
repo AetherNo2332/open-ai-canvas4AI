@@ -3,12 +3,11 @@ package platform
 import (
 	"encoding/json"
 	"errors"
-	"hash/fnv"
-	"infinite-canvas/backend/internal/kernel"
 	"strings"
 	"time"
+	"yingce/backend/internal/kernel"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 )
@@ -23,31 +22,28 @@ const (
 	FeatureFrontendModels        = "frontendModels"
 	FeaturePluginCenter          = "pluginCenter"
 	FeatureSystemPlugins         = "systemPluginsVisibleToUsers"
+	FeatureInspirationSources    = "inspirationSourcesVisible"
 	FeatureTimelineTranscription = "timelineTranscription"
+	FeatureImageWorkbench        = "imageWorkbench"
+	FeatureVideoWorkbench        = "videoWorkbench"
 	FeatureAgentSubagents        = "agentSubagents"
 )
 
-const (
-	DirectorDeskPrevisOff    = "off"
-	DirectorDeskPrevisCanary = "canary"
-	DirectorDeskPrevisOn     = "on"
-)
-
 type FeatureAvailability struct {
-	WelcomeEnabled               bool   `json:"welcomeEnabled"`
-	ShortDramaEnabled            bool   `json:"shortDramaEnabled"`
-	TaskCenterEnabled            bool   `json:"taskCenterEnabled"`
-	CreditsEnabled               bool   `json:"creditsEnabled"`
-	CustomChannelsEnabled        bool   `json:"customChannelsEnabled"`
-	FrontendModelsEnabled        bool   `json:"frontendModelsEnabled"`
-	PluginCenterEnabled          bool   `json:"pluginCenterEnabled"`
-	SystemPluginsVisibleToUsers  bool   `json:"systemPluginsVisibleToUsers"`
-	TimelineTranscriptionEnabled bool   `json:"timelineTranscriptionEnabled"`
-	AgentSubagentsEnabled        bool   `json:"agentSubagentsEnabled"`
-	DirectorDeskPrevisMode       string `json:"directorDeskPrevisMode"`
-	// canary 分组:mode=canary 时生效。内部账号白名单 + 稳定哈希比例(万分比,0-10000)。
-	DirectorDeskPrevisCanaryUsers       []string `json:"directorDeskPrevisCanaryUsers"`
-	DirectorDeskPrevisCanaryBasisPoints int      `json:"directorDeskPrevisCanaryBasisPoints"`
+	WelcomeEnabled               bool `json:"welcomeEnabled"`
+	ShortDramaEnabled            bool `json:"shortDramaEnabled"`
+	TaskCenterEnabled            bool `json:"taskCenterEnabled"`
+	CreditsEnabled               bool `json:"creditsEnabled"`
+	CustomChannelsEnabled        bool `json:"customChannelsEnabled"`
+	FrontendModelsEnabled        bool `json:"frontendModelsEnabled"`
+	PluginCenterEnabled          bool `json:"pluginCenterEnabled"`
+	SystemPluginsVisibleToUsers  bool `json:"systemPluginsVisibleToUsers"`
+	InspirationSourcesVisible    bool `json:"inspirationSourcesVisible"`
+	TimelineTranscriptionEnabled bool `json:"timelineTranscriptionEnabled"`
+	ImageWorkbenchEnabled        bool `json:"imageWorkbenchEnabled"`
+	VideoWorkbenchEnabled        bool `json:"videoWorkbenchEnabled"`
+	// 云端 Agent 动态子代理（crew/subagent）开关，默认关闭。
+	AgentSubagentsEnabled bool `json:"agentSubagentsEnabled"`
 }
 
 type PublicFeatureAvailability struct {
@@ -68,9 +64,10 @@ func DefaultFeatureAvailability() FeatureAvailability {
 		FrontendModelsEnabled:        false,
 		PluginCenterEnabled:          true,
 		SystemPluginsVisibleToUsers:  true,
+		InspirationSourcesVisible:    true,
 		TimelineTranscriptionEnabled: true,
-		AgentSubagentsEnabled:        false,
-		DirectorDeskPrevisMode:       DirectorDeskPrevisOff,
+		ImageWorkbenchEnabled:        false,
+		VideoWorkbenchEnabled:        false,
 	}
 }
 
@@ -79,22 +76,6 @@ func (s *Service) FeatureAvailability() (*PublicFeatureAvailability, error) {
 	if err != nil {
 		return nil, err
 	}
-	return publicFeatureAvailability(setting, value), nil
-}
-
-// UserFeatureAvailability 是登录用户视角的可用性:导演预演台模式按用户灰度
-// 分群(白名单/比例桶)解析,其余开关保持全局值。管理端接口仍读全局原始值。
-func (s *Service) UserFeatureAvailability(user *model.User) (*PublicFeatureAvailability, error) {
-	setting, value, err := s.readFeatureAvailability()
-	if err != nil {
-		return nil, err
-	}
-	value.DirectorDeskPrevisMode = ResolveDirectorDeskPrevisMode(
-		value.DirectorDeskPrevisMode,
-		value.DirectorDeskPrevisCanaryUsers,
-		value.DirectorDeskPrevisCanaryBasisPoints,
-		user.ID,
-	)
 	return publicFeatureAvailability(setting, value), nil
 }
 
@@ -150,8 +131,14 @@ func (s *Service) FeatureEnabled(feature string) (bool, error) {
 		return value.PluginCenterEnabled, nil
 	case FeatureSystemPlugins:
 		return value.SystemPluginsVisibleToUsers, nil
+	case FeatureInspirationSources:
+		return value.InspirationSourcesVisible, nil
 	case FeatureTimelineTranscription:
 		return value.TimelineTranscriptionEnabled, nil
+	case FeatureImageWorkbench:
+		return value.ImageWorkbenchEnabled, nil
+	case FeatureVideoWorkbench:
+		return value.VideoWorkbenchEnabled, nil
 	case FeatureAgentSubagents:
 		return value.AgentSubagentsEnabled, nil
 	default:
@@ -182,8 +169,14 @@ func (s *Service) RequireFeature(feature string) error {
 		return kernel.Forbidden("插件中心暂未开放")
 	case FeatureSystemPlugins:
 		return kernel.Forbidden("系统插件暂未向普通用户展示")
+	case FeatureInspirationSources:
+		return kernel.Forbidden("素材来源说明暂未开放")
 	case FeatureTimelineTranscription:
 		return kernel.Forbidden("字幕转写暂未开放")
+	case FeatureImageWorkbench:
+		return kernel.Forbidden("生图暂未开放")
+	case FeatureVideoWorkbench:
+		return kernel.Forbidden("视频暂未开放")
 	case FeatureAgentSubagents:
 		return kernel.Forbidden("动态子代理暂未开放")
 	default:
@@ -204,65 +197,7 @@ func (s *Service) readFeatureAvailability() (*model.SystemSetting, FeatureAvaila
 	if strings.TrimSpace(setting.ValueJSON) == "" || json.Unmarshal([]byte(setting.ValueJSON), &value) != nil {
 		return nil, FeatureAvailability{}, errors.New("功能开放配置格式无效")
 	}
-	if !validDirectorDeskPrevisMode(value.DirectorDeskPrevisMode) {
-		value.DirectorDeskPrevisMode = DirectorDeskPrevisOff
-	}
-	value.normalizeDirectorDeskPrevisCanary()
 	return setting, value, nil
-}
-
-func validDirectorDeskPrevisMode(mode string) bool {
-	return mode == DirectorDeskPrevisOff || mode == DirectorDeskPrevisCanary || mode == DirectorDeskPrevisOn
-}
-
-// ResolveDirectorDeskPrevisMode 按用户解析导演预演台模式(灰度分群的唯一真源):
-// on → 全量;off/非法 → 全量关;canary → 白名单用户 + 稳定哈希万分比桶。
-// 空用户(未登录)不进入比例桶,匿名体验永远保守。
-func ResolveDirectorDeskPrevisMode(mode string, canaryUsers []string, canaryBasisPoints int, userID string) string {
-	if mode == DirectorDeskPrevisOn {
-		return DirectorDeskPrevisOn
-	}
-	if mode != DirectorDeskPrevisCanary {
-		return DirectorDeskPrevisOff
-	}
-	id := strings.TrimSpace(userID)
-	if id == "" {
-		return DirectorDeskPrevisOff
-	}
-	for _, entry := range canaryUsers {
-		if strings.TrimSpace(entry) == id {
-			return DirectorDeskPrevisCanary
-		}
-	}
-	if canaryBasisPoints <= 0 {
-		return DirectorDeskPrevisOff
-	}
-	if canaryBasisPoints > 10000 {
-		canaryBasisPoints = 10000
-	}
-	h := fnv.New32a()
-	_, _ = h.Write([]byte("director-desk-previs:" + id))
-	if h.Sum32()%10000 < uint32(canaryBasisPoints) {
-		return DirectorDeskPrevisCanary
-	}
-	return DirectorDeskPrevisOff
-}
-
-// 归一化 canary 分组参数:trim 白名单、剔除空项、限制比例到 [0,10000]。
-func (v *FeatureAvailability) normalizeDirectorDeskPrevisCanary() {
-	users := make([]string, 0, len(v.DirectorDeskPrevisCanaryUsers))
-	for _, entry := range v.DirectorDeskPrevisCanaryUsers {
-		if trimmed := strings.TrimSpace(entry); trimmed != "" {
-			users = append(users, trimmed)
-		}
-	}
-	v.DirectorDeskPrevisCanaryUsers = users
-	if v.DirectorDeskPrevisCanaryBasisPoints < 0 {
-		v.DirectorDeskPrevisCanaryBasisPoints = 0
-	}
-	if v.DirectorDeskPrevisCanaryBasisPoints > 10000 {
-		v.DirectorDeskPrevisCanaryBasisPoints = 10000
-	}
 }
 
 func publicFeatureAvailability(setting *model.SystemSetting, value FeatureAvailability) *PublicFeatureAvailability {

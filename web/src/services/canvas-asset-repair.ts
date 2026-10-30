@@ -21,6 +21,15 @@ export function repairMissingCanvasAssets(projectIds?: Set<string>, partialAsset
     for (const asset of assetStore.assets) {
         knownAssetIds.add(asset.id);
         const storageKey = assetStorageKey(asset);
+        // 场景、道具图片保留版本化引用；服务器仍以版本表校验历史资源归属。
+        if (asset.category === "environment" || asset.category === "prop") {
+            const history = asset.metadata?.projectAssetImageHistory;
+            if (Array.isArray(history)) {
+                for (const key of history) {
+                    if (typeof key === "string" && key.startsWith("resource:") && !assetIdByStorageKey.has(key)) assetIdByStorageKey.set(key, asset.id);
+                }
+            }
+        }
         if (storageKey) {
             storageKeyByAssetId.set(asset.id, storageKey);
             if (!assetIdByStorageKey.has(storageKey)) assetIdByStorageKey.set(storageKey, asset.id);
@@ -48,6 +57,8 @@ export function repairMissingCanvasAssets(projectIds?: Set<string>, partialAsset
             }
         }
         const repaired = repairProject(project, knownAssetIds, assetIdByStorageKey, storageKeyByAssetId, (node) => {
+            // 受管生成结果由完成流程绑定身份，后台修复不能另建随机素材。
+            if (node.metadata?.taskId && node.metadata.storageKey?.startsWith("resource:")) return undefined;
             const input = canvasNodeToAsset(node, { canvasId: project.id, source: "canvas-upload" });
             if (!input) return undefined;
             const assetId = useAssetStore.getState().addAsset(input);
@@ -154,17 +165,15 @@ export async function repairMissingCanvasVideoPreviews(projectIds?: Set<string>,
     const invalidIds = new Set<string>();
     const ids = [...previewResourceIds];
     for (let offset = 0; offset < ids.length; offset += 8) {
-        await Promise.all(
-            ids.slice(offset, offset + 8).map(async (id) => {
-                try {
-                    const resource = await lookup(id);
-                    if (resource.status !== "ready") invalidIds.add(id);
-                } catch (error) {
-                    if (error instanceof ApiError && error.status === 404) invalidIds.add(id);
-                    else throw error;
-                }
-            }),
-        );
+        await Promise.all(ids.slice(offset, offset + 8).map(async (id) => {
+            try {
+                const resource = await lookup(id);
+                if (resource.status !== "ready") invalidIds.add(id);
+            } catch (error) {
+                if (error instanceof ApiError && error.status === 404) invalidIds.add(id);
+                else throw error;
+            }
+        }));
     }
     if (getActiveUserScope() !== scope) throw new Error("账号已切换，已停止修复视频封面");
     if (!invalidIds.size) return { clearedPreviews: 0, updatedProjects: 0 };
@@ -328,6 +337,7 @@ function assetIdentities(asset: Asset) {
     const identities = new Set<string>();
     const data = asset.kind === "text" || asset.kind === "entity" ? undefined : asset.data;
     const values = [
+        ...((asset.category === "environment" || asset.category === "prop") && Array.isArray(asset.metadata?.projectAssetImageHistory) ? asset.metadata.projectAssetImageHistory.filter((value): value is string => typeof value === "string") : []),
         typeof asset.metadata?.resourceKey === "string" ? asset.metadata.resourceKey : "",
         assetStorageKey(asset) || "",
         ...(data && "url" in data && typeof data.url === "string" ? [data.url] : []),

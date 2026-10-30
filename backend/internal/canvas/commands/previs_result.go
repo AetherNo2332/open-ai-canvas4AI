@@ -2,9 +2,9 @@ package commands
 
 import (
 	"fmt"
-	"infinite-canvas/backend/internal/assets"
 	"math"
 	"strings"
+	"yingce/backend/internal/assets"
 )
 
 type PrevisRenderInput = previsRenderInput

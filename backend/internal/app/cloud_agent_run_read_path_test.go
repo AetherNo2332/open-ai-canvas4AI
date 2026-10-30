@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // TestCloudAgentRunReadsRunWithoutRootTask 覆盖阶段 2 第 1 步：读取路径不再要求根任务。

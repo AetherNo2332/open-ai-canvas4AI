@@ -4,7 +4,6 @@ import { ArrowLeft, ArrowRight, LockKeyhole, Mail, ShieldCheck, TriangleAlert } 
 import { Link, useNavigate, useSearchParams } from "react-router";
 
 import { getAuthSettings, resetPassword, sendPasswordResetEmailCode } from "@/services/api/auth";
-import { useAuthValidationFeedback } from "./use-auth-motion";
 
 type RecoveryStage = "request" | "reset";
 
@@ -12,7 +11,6 @@ export default function ForgotPasswordPage() {
     const navigate = useNavigate();
     const [params] = useSearchParams();
     const { message } = App.useApp();
-    const onValidationError = useAuthValidationFeedback();
     const [stage, setStage] = useState<RecoveryStage>("request");
     const [email, setEmail] = useState("");
     const [emailCode, setEmailCode] = useState("");
@@ -44,7 +42,6 @@ export default function ForgotPasswordPage() {
     const sendCode = async (advance: boolean) => {
         const normalizedEmail = email.trim();
         if (!normalizedEmail) {
-            onValidationError();
             message.warning("请先输入邮箱");
             return;
         }
@@ -56,7 +53,6 @@ export default function ForgotPasswordPage() {
             if (advance) setStage("reset");
             message.success("如果该邮箱已绑定可找回的账号，验证码将发送到邮箱");
         } catch (error) {
-            onValidationError();
             message.error(error instanceof Error ? error.message : "发送验证码失败");
         } finally {
             setSendingCode(false);
@@ -71,7 +67,6 @@ export default function ForgotPasswordPage() {
     const submitReset = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (password !== confirmPassword) {
-            onValidationError();
             message.error("两次输入的密码不一致");
             return;
         }
@@ -81,7 +76,6 @@ export default function ForgotPasswordPage() {
             message.success("密码已重置，请使用新密码登录");
             navigate(loginURL, { replace: true });
         } catch (error) {
-            onValidationError();
             message.error(error instanceof Error ? error.message : "密码重置失败");
         } finally {
             setSubmitting(false);
@@ -150,7 +144,7 @@ export default function ForgotPasswordPage() {
                     </Button>
                 </div>
             </AuthField>
-            <div className="grid gap-6">
+            <div className="grid gap-4 sm:grid-cols-2">
                 <AuthField label="新密码" htmlFor="recovery-password">
                     <Input.Password
                         id="recovery-password"
@@ -200,7 +194,7 @@ function AuthField({ label, htmlFor, children }: { label: string; htmlFor: strin
 function BackToLogin({ to }: { to: string }) {
     return (
         <div className="text-center">
-            <Link to={to} className="auth-scene-link inline-flex min-h-8 items-center gap-1.5 rounded-sm text-xs transition-colors">
+            <Link to={to} className="auth-scene-link inline-flex min-h-8 items-center gap-2 rounded-sm text-xs transition-colors">
                 <ArrowLeft className="size-3.5" />
                 返回登录
             </Link>
@@ -210,7 +204,7 @@ function BackToLogin({ to }: { to: string }) {
 
 function Notice({ icon, children }: { icon: ReactNode; children: ReactNode }) {
     return (
-        <div className="auth-scene-notice flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs leading-5">
+        <div className="auth-scene-notice flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-5">
             <span className="mt-0.5 shrink-0">{icon}</span>
             {children}
         </div>

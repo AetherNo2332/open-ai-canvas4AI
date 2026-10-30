@@ -12,12 +12,25 @@
 | --- | --- | --- | --- |
 | `web/` | Vite、React 19、TypeScript、React Router、Ant Design、Tailwind、Zustand、TanStack Query | `web/src/application.tsx`、`web/src/router.tsx` | 工作区 UI、画布交互、浏览器缓存、API 调用和模型协议适配 |
 | `backend/` | Go 1.25、Gin、GORM、SQLite/PostgreSQL、Redis 协调 | `backend/cmd/server/main.go` | 登录、权限、业务 API、任务队列、资源、模型中转和后台管理 |
+| `agent/` | Node 22、TypeScript、Pi Agent SDK | `agent/src/server.ts` | 云端 Agent Worker：经 `/internal-agent` 领取运行、调用模型与工具；不连数据库、不对外监听 |
 | `docs/` | Next.js、Fumadocs、MDX | `docs/content/docs/` | 面向用户和开发者的专题文档；构建配置见 `docs/source.config.ts` |
 | `scripts/` | Bash、Python、Go、Node | `scripts/changelog.mjs` | 发布、验收和运维辅助脚本；不参与运行时，改动需保证在 CI 的 Ubuntu 环境可执行 |
 
-根目录的 `Dockerfile` 构建前端静态镜像；`nginx.conf` 托管 SPA 并代理后端。`docker-compose.dev.yml` 是源码热更新开发编排，`docker-compose.local.yml` 是本地构建运行，`docker-compose.deploy.yml` 是 PostgreSQL + Redis 部署编排。
+根目录的 `Dockerfile` 构建前端静态镜像；`nginx.conf` 托管 SPA 并代理后端。`docker-compose.dev.yml` 是源码热更新开发编排，根 `docker-compose.yml` 和 `docker-compose.local.yml` 是本地构建运行。服务器默认使用官方 Release 镜像、`docker-compose.deploy.yml`（PostgreSQL、Redis、独立 Agent、迁移服务）和宿主机 Host Updater，详细说明见 [Docker 部署](docs/content/docs/overview/docker.mdx)。
 
 ## 2. 开始工作前
+
+### Agent 本地开发
+
+云端 Agent 是独立进程：`agent/` 的 Node Pi Worker 只通过后端 `/internal-agent` 领取 `engine=pi` 的运行，模型调用、工具执行、审批、计费与画布写入都回到 Go 后端校验。后端只在 `CANVAS_AGENT_INTERNAL_TOKEN`（至少 32 字符）存在时挂载 `/internal-agent`，并用 `CANVAS_AGENT_WORKER_ID` / `CANVAS_AGENT_WORKER_TOKEN` 首次引导 Worker 身份；缺 token 时新运行一直停在 queued。
+
+- 完整联调使用 `docker compose -f docker-compose.local.yml up -d --build`（含 web、backend、agent）；根 `docker-compose.yml` 的 agent 在 `pi` profile 下，需显式 `--profile pi`。
+- 宿主机单独运行 Worker：`cd agent && npm ci --ignore-scripts && npm run build && npm start`，配置项（`CANVAS_BACKEND_INTERNAL_URL`、Worker 身份与 harness 目录）以 `.env.example` 和对应 Compose 为准；不要复制生产凭据到开发目录。
+- 工具 Schema 由后端 `go run ./cmd/export-agent-tool-schema` 生成到 `agent/harness`，改工具合同后同步制品，CI 会比对。
+
+---
+
+### 其他本地开发说明
 
 1. 先读取任务涉及的入口、调用方、配置、锁文件和相邻测试；先理解现状，再决定是否抽象或重构。
 2. 使用 `rg` / `rg --files` 搜索，优先并行读取相关文件。不要为了“统一风格”改动无关模块、依赖、格式或用户已有修改。
@@ -42,7 +55,8 @@
 
 - `backend/internal/handler/`：HTTP 入参、鉴权上下文、调用 service、返回统一响应；不放业务判断和数据库查询。
 - `backend/internal/service/`：稳定导入面。只再导出 `internal/app` 的类型、常量和包级函数（`aliases_*.go`）。handler/cmd 继续 import 本包。
-- `backend/internal/app/`：HTTP 组合根和尚未拆出的业务实现。校验、权限、跨域编排从这里进入。画布生成调度仍主要在 `provider.go`；文本 / 图片 / 视频遗留 / 音频 / HTTP / 声明式协议分别在 `provider_text.go`、`provider_image.go`、`provider_video.go`、`provider_audio.go`、`provider_http_client.go`、`provider_protocol.go`。技能库在 `internal/skills`，提示词与风格在 `internal/prompts`，登录注册与密码（注册、登录、邮箱找回、登录态自助改密）在 `internal/auth`，画布分享在 `internal/canvas`，资源引用解析在 `internal/assets`，运行时策略/限流/worker 在 `internal/platform`，错误码与通用工具在 `internal/kernel`，出站 SSRF 在 `internal/outbound`，Agent 上下文检查点契约在 `internal/agentcontext`。域包不得 import `internal/service` 或 `internal/app`。
+- `backend/internal/app/`：HTTP 组合根和尚未拆出的业务实现。校验、权限、跨域编排从这里进入。画布生成调度仍主要在 `provider.go`；文本 / 图片 / 视频遗留 / 音频 / HTTP / 声明式协议分别在 `provider_text.go`、`provider_image.go`、`provider_video.go`、`provider_audio.go`、`provider_http_client.go`、`provider_protocol.go`。技能库在 `internal/skills`，提示词与风格在 `internal/prompts`，登录注册在 `internal/auth`，画布分享在 `internal/canvas`，资源引用解析在 `internal/assets`，运行时策略/限流/worker 在 `internal/platform`，错误码与通用工具在 `internal/kernel`，出站 SSRF 在 `internal/outbound`，Agent 上下文检查点契约在 `internal/agentcontext`。域包不得 import `internal/service` 或 `internal/app`。
+- 云端 Agent（fork 维护）：运行、调度、工具与 Pi 桥接在 `internal/app/cloud_agent_*.go`、`agent_*.go`；Agent 写画布经 `internal/canvas/commands`（命令、版本、回执）与 `internal/canvas/tasks`（生成任务绑定与回写），媒体版本在 `internal/canvas/mediaversions`，引用字段在 `internal/canvas/references`；Worker 身份在 `internal/identity`，观测事件在 `internal/observability`。这些表统一在 schema v75（`internal/database/migrations_agent.go`），上游迁移号不得挪用 v75 及之后。上游的画布写入（整份保存、operations、历史恢复、删除）在同一事务里由 `repository/canvas_command_projection.go` 投影为 Agent 命令事件与实体版本；除 Agent 命令服务自身（它直接维护版本与事件）外，新增画布写路径必须走 `UpsertCanvasProject` / `DeleteCanvasProject`，不能绕开投影直接改 `canvas_projects`。
 - `backend/internal/repository/`：GORM 查询和持久化；不承载业务策略。
 - `backend/internal/model/`：结构、枚举和简单模型方法；不调用外部服务。
 - `backend/internal/provider/`：模型供应商能力和协议实现。
@@ -54,7 +68,7 @@
 ### Agent、插件、CI 和文档
 
 - 修改 `docs/` 前确认内容属于专题文档，而不是把长篇说明重新复制到根 README。目录索引见 `docs/index.md`。
-- `.github/workflows/quality.yml` 是 PR 与推送门禁（`agent`、`backend`、`payment-plugins`、`web`、`canvas-node-acceptance`、`changelog`、`production-agent-smoke`）。节点验收从真实前端工厂/编辑 hook 产生操作，再由 CGO SQLite 命令服务持久化、重开读回并核对重试回执；覆盖每类内置节点的创建、编辑、粘贴和删除，生成回调受控，不发收费任务。backend 显式运行 vet、依赖 AST baseline、公共 Agent 路由/OpenAPI 合同，并用锁定版本的 staticcheck/ineffassign 从受控包逐步扩大检查。生产 smoke 以临时覆盖运行 deploy+build 和确定性模型；保留四服务 parity 的隔离边界。`publish-images.yml` 在 main/tag 构建镜像，从根 VERSION 派生内部版本、正式版本和镜像 tag。新增门禁或脚本时同步更新本节和第 8 节。
+- `.github/workflows/quality.yml` 是 PR 与推送门禁（`agent`、`backend`、`payment-plugins`、`web`、`changelog`、`production-agent-smoke`）。backend 显式运行 gofmt、vet 与 Agent 工具合同检查，全量测试里的 `handler/openapi_contract_test.go` 要求规范中没有未注册路由、未写入规范的公共路由按 `openapi-route-baseline.txt` 精确登记（新增路由应写进规范，不往基线里加）；生产 smoke 以 deploy+build 编排和确定性模型跑真实跨进程链路。`publish-images.yml` 在 main/tag 构建 web、backend、agent 三份镜像。新增门禁或脚本时同步更新本节和第 8 节。
 
 ## 4. 前端 API 和状态合同
 
@@ -93,7 +107,6 @@
 
 - Gin 接口统一返回 `{ code, data, msg, reason }`；失败时 HTTP status 和业务 `code` 都应表达真实失败，不把所有错误包装成 200。机器可读原因放在 `reason`，见 `docs/content/docs/backend/http-api.mdx`。
 - 所有对象读取、更新、删除都在 service 校验当前用户和资源归属；管理员权限在 service 校验，不依赖前端隐藏按钮。
-- 密码写路径必须在同一事务内更新 `password_hash` 并处理 `auth_sessions`：登录态自助改密（`POST /api/auth/password`）校验当前密码后保留当前会话、清理其他会话；管理员重置和邮箱验证码找回清空该用户全部会话。只改密码不清理会话视为权限缺陷；第三方登录创建的账号没有本地密码，应引导走邮箱找回而不是允许空密码改密。
 - 默认拒绝本机、私网和链路本地上游。可信开发主机只能通过 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 精确放行；不要设置“允许全部私网”来绕过 SSRF 防护。
 - 用户 API Key 保存在浏览器本地，任务创建时可能提交给自部署后端；只在可信部署和 HTTPS 下使用真实密钥。日志、错误上报、URL、localStorage 和持久任务正文不得写入敏感 URL、Cookie 或 API Key。
 - 生产必须配置明确的 `CANVAS_CORS_ORIGINS`，保持 HTTPS，限制数据库、备份、数据目录和 `.settings-key` 权限；默认关闭公开注册。
@@ -105,50 +118,19 @@
 - 画布拖拽、连接、缩放和快捷键要考虑 pointer capture、滚轮冒泡、焦点以及 `data-canvas-no-zoom` / `data-canvas-wheel-scroll` 边界。
 - 节点和对象名称要有可发现的铅笔入口并支持单击编辑；双击或右键不能是唯一入口。图片节点保持原始比例，面板不能长期遮挡主要画布空间。
 - Ant Design 共性主题和控件状态集中在 `web/src/lib/app-theme.ts` / `AppProviders`。自带外壳的产品弹窗用 `AppModal flush`，侧栏用 `AppDrawer`；不要再复制 `padding: 0` 的 Modal styles。内容外壳仍是 `.ant-modal-container`。
-- 第三方组件优先通过统一主题适配，不在页面新增全局 `.ant-modal-*`、`.dark .ant-switch-*`、`.ant-checkbox-*` 或 Segmented 状态补丁。跨路由的皮肤与几何约束集中在 `web/src/styles/site-skin.css`；工作台兼容规则集中在 `web/src/styles/home-skin.css`；后台适配集中在 `web/src/pages/admin/theme/`。这些已有共享入口可以维护必要的统一覆盖，页面不得再复制一套。新增 CSS 前先搜索同名选择器，修改唯一源规则。
-- 项目采用三层 token：Primitive → Semantic → Component。设计背景资料见 `docs/plans/ui-design-system.mdx`、`docs/design/site-appearance-and-skins.mdx`；资料与本节冲突时，以本节的前端约定为准。inline style 和 CSS 引用项目已有颜色、圆角、阴影、层级及动效 token。
-- 主操作、普通选中、Checkbox/Radio、Switch 是不同颜色角色；切换按钮使用 `aria-pressed`，Switch/Checkbox/Radio 使用 `aria-checked` 或原生 checked 语义，不能混用。`type="primary"` 只表示当前主要命令。尊重 `prefers-reduced-motion`，键盘导航保留 `:focus-visible`。
+- 第三方覆盖限定在具体组件，不新增全局 `.ant-modal-*`、`.dark .ant-switch-*`、`.ant-checkbox-*` 或 Segmented 状态补丁。新增 CSS 前先搜索同名选择器，回到唯一源规则修改。
+- 遵循 `docs/ui-design-system.md` 及项目三层 token：Primitive → Semantic → Component。inline style 优先引用 `var(--token-name)`，不要散落颜色、圆角、阴影和层级字面值。
+- 主操作、普通选中、Checkbox/Radio、Switch 是不同颜色角色；持久切换使用 `aria-pressed`，`type="primary"` 只表示当前主要命令。尊重 `prefers-reduced-motion`，键盘导航保留 `:focus-visible`。
 - 修改既有页面时直接修改真实组件、样式和路由。不得创建独立 HTML 来代替真实页面验证；只有用户明确要求原型或隔离设计稿时才可生成，并放在临时目录或用户指定位置，不得放入 `web/public/` 或产品构建目录。
-
-### 前端约定的优先级与适用范围
-
-- 用户当前明确要求优先。配色、圆角、阴影和动效参数以管理员后台「站点外观」的当前生效皮肤为唯一配置来源；版式以工作区 skill `swiss-design`（`.agents/skills/swiss-design`，来源 zeke/swiss-design-skill）为准。skin 配置覆盖 skill 自带的 stone / 瑞士红色板、固定圆角和固定动效参数；旧文档、组件默认样式及第三方库默认主题不得反向覆盖。不得把「瑞士设计」解释为无条件写死红色、黑白、0px 圆角或 150ms。
-- 皮肤约定覆盖全部前端路由：工作台、首页、侧栏、顶栏、画布列表与编辑器、后台、认证与欢迎页、错误与降级页，以及挂在 body 的菜单、弹窗、提示和其他 portal。后台可以使用皮肤的后台专用层级色，页面也可以有不同密度，但都必须来自同一份管理员配置。
-- 默认皮肤 `classic` 和自定义皮肤都走完整的 token 应用链路，不得以「默认皮肤」为由跳过配置。皮肤由挂载前的 `appearance-bootstrap.ts` 和 `skin-themes.ts` 的 `applySkinTheme` 写入 `:root`，后续保存、切换皮肤或切换明暗模式也须同步更新 CSS 与 React/Ant Design 主题消费者。
-
-### 配色、圆角与共享主题
-
-- 页面消费 `:root` 语义 token；稳定站点角色使用 `--site-canvas`、`--site-surface`、`--site-text`、`--site-border` 等，后台层级使用 `--site-admin-*` 或对应共享别名。通用角色使用 `--background`、`--foreground`、`--border`、`--primary`、`--ring`；主按钮使用 `--button-primary-bg`、`--button-primary-hover-bg`、`--button-primary-active-bg`、`--button-primary-fg`。页面局部别名不得把这些值替换成固定调色板。
-- 标题与正文层级用前景色透明度，如 `color-mix(in oklab, var(--foreground) 70%, transparent)`；专门的控件、图标、禁用与提示角色使用皮肤对应的语义 token。主按钮、选中、勾选、Switch、危险操作分别消费自己的角色，不把所有状态都涂成主色。状态色只用于相应状态，不作装饰强调色。
-- 新增或修改界面颜色时，不在页面 CSS、JSX inline style、SVG UI 图标中硬编码 `#RRGGBB`、`rgb()`、`oklch()` 色值；在共享皮肤定义中维护配置值。允许由语义 token 派生透明度或渐变。明暗模式由当前皮肤的 light/dark token 处理，禁止在页面另设固定深色配色。
-- 内容颜色属于例外：用户上传图片、视频、作品封面、首页人物原图、色样预览以及用户显式设置的画布背景或绘图颜色应保留内容本色；此例外不适用于它们周围的按钮、边框、面板与浮层。不要为统一皮肤对图片整体染色或强制替换作品自定义颜色。
-- 所有可见 UI 构件及其伪元素的圆角跟随当前皮肤的组件配置：按钮 `--button-radius`、输入 `--input-radius`、卡片 `--card-radius`、浮层 `--overlay-radius`、菜单项 `--menu-radius`、Checkbox `--checkbox-radius`。新组件不得写死 `rounded-full`、像素圆角或强制 `border-radius: 0`；圆角为 0 是有效配置，回退只用 `??` 或显式缺失判断，禁止用 `||` 把 0 替换成默认值。媒体内容中的轮廓与 SVG 图形不作为 UI 构件圆角修改。
-- Ant Design 主题由 `app-theme.ts` 与 `admin-ant-theme.ts` 统一适配，画布界面主题由 `canvas-theme.ts` 适配。修复局部残留色或圆角时先检查 token、主题消费者与 CSS cascade；不得在单个页面重新定义一套站点主题。伪元素、旧的 `!important`、portal 与异步页面都要覆盖到。
-- 首页、工作台顶栏及页面外缘底色使用 `--site-canvas`。全站滚动条轨道、边角和按钮区域也使用 `--site-canvas`，滑块使用皮肤边框等语义色，滚到最顶部不能出现固定黑色或白色带。保留已有隐藏滚动条规则，不能为了改色改变其宽度、可见性或表格 gutter 对齐。
-
-### 版式、交互与动效
-
-- 瑞士版式使用 12 列栅格、8px 基准、移动优先、非对称构图和结构化留白；在 320px 与 1440px 等视口检查布局。窄屏收敛为单列或适当的简化布局，不出现非预期横向溢出；宽表在自己的容器内滚动。
-- 使用自托管 `IBM Plex Sans Variable`（`@fontsource-variable/ibm-plex-sans`），不引 Google Fonts CDN；展示标题用 300 / 400 字重，正文行宽不超过 `60ch`，标题 `text-wrap: balance`，正文 `text-wrap: pretty`，数字列用 `tabular-nums`。面向用户的省略号用 `…`、排版引号用弯引号；代码、API 值、命令和原样输入不作排版替换。
-- 用已有 spacing token 组织布局，64 / 96 / 128px 是展示区建议值，不是所有页面的最低内边距。首页上移、去除空列与多余留白、后台密度及窄屏布局遵循当前任务和可用空间，不能为满足 skill 的固定留白重新拉高页面。交互目标在移动端至少 44×44px；全屏工作区使用 `100dvh`。
-- 普通装饰过渡优先动画 `transform` / `opacity`，禁止 `transition: all`；时长引用对应的 `--motion-*` 或 `--skin-motion-state`。尊重 `prefers-reduced-motion`，关闭非必要动画。悬停与聚焦不改变控件布局或命中区域；颜色反馈可使用伪元素淡入。持续装饰动画必须有用户明确要求，不能自行恢复已删除的滚动图片区。
-- Switch 使用当前皮肤的按钮/输入圆角；当前直角皮肤下轨道与滑块呈长方形。关闭时允许滑块拉长形成拖尾再回缩，滑块状态切换可沿轨道移动；这是 Switch 明确的交互例外，不受普通悬停禁止几何变化的限制。仅由实际切换触发关闭动效，首屏及配置恢复不播放；减少动态效果偏好禁用该动效，颜色和时长仍来自皮肤。
-- 保留键盘 `:focus-visible` 和 `--ring`，不允许移除 outline 而无替代。UI 图标使用 `currentColor` 和皮肤图标角色；与文本同行按字号和实际渲染做光学校正，不机械复制其他图标的位移数值。纯装饰图片使用空 alt、`aria-hidden`，不接收点击或键盘焦点。
-- 页面私有样式放在组件相邻 `.css`；共享主题与路由壳规则放在对应共享入口。新增前先搜索，避免同名规则叠加；不通过不断追加 `globals.css` 或局部 `!important` 来掩盖共享主题问题。
-
-### 首页与平台功能入口
-
-- 当前首页是 `/` 与 `/create` 的 `CreatePage`：正文只保留文案及一个前往 `/canvas` 的「进入画布」入口。不恢复对话输入、创作模式切换、灵感广场/精选灵感、滚动项目封面、标语栏、「01 / 从一个想法开始」或「影策加油站」。修改时保持已去除的空列与留白结果，不重新挂载旧首页的任务恢复或生成副作用。
-- 首页人物使用项目内的透明原图，仅挂载在首页组件。按用户参考比例固定于窗口右下角，随视口缩放，可裁切右侧与底部；滚动不改变锚点，窄屏缩小，不挡主要文案与入口，不引入横向滚动。不能挂入公共布局或 body 让人物出现在画布、资产、设置或后台；导航离开首页时随组件卸载。
-- 功能入口依赖平台实际生效的 `FeatureAvailability`，不是当前用户是否管理员。`shortDramaEnabled === false` 时普通用户和管理员的工作台侧栏、快捷搜索及其他用户侧页面入口都隐藏短剧创作；直达相关路由由 `RequireFeature` 展示暂未开放，不能只藏侧栏。管理员后台管理该功能开关的入口保留。
-- 其他受功能开关控制的入口按其对应 key 执行同样的可用性规则，不把一个开关推断为关闭全部模块。所有入口消费同一配置来源；前端隐藏不替代后端权限与业务校验。
 
 ## 7. 本地开发、部署和数据目录
 
 - 先阅读 `.env.example` 和对应 Compose 文件。宿主机后端开发必须使用 Git 忽略的 `.local/project-workbench-debug`，通过 `CANVAS_BACKEND_DATA_DIR` 显式指定；不要把 `backend/data` 当作开发账号数据库。
 - 本地缓存放 `.local/cache`；不要提交数据库、上传文件、`.env`、真实密钥、构建产物或编辑器配置。
 - 宿主机开发：`backend/` 运行 `CANVAS_BACKEND_DATA_DIR=../.local/project-workbench-debug go run ./cmd/server`，`web/` 使用 Bun 和 Vite；不要用 pnpm/npm 覆盖同一套 `node_modules`，也不要提交 `pnpm-lock.yaml` 或 `package-lock.json`。Docker 热更新使用 `docker-compose.dev.yml`；本地构建运行使用 `docker-compose.local.yml`。
-- 生产 Compose 使用 `docker-compose.deploy.yml`（PostgreSQL、Redis、migrate、backend、agent、web），源码构建可叠加 `docker-compose.build.yml`。公网只暴露 web 的 `3000`，backend `8080` 留在 Compose 网络内。
+- 用户要求“部署到服务器/云服务器/生产环境”且未指定方式时，默认采用 `scripts/install-server-image.sh` + 官方已发布 Release + `docker-compose.deploy.yml` + Host Updater；先确认该 Release 的镜像、更新器二进制和 `SHA256SUMS` 可用，按同一 Release 固定 `CANVAS_IMAGE_TAG` 和 `REPOSITORY_REF`。不要自行简化成 `web/backend` 两容器 SQLite 编排或生成替代 `compose.yml`；用户明确要求源码构建或轻量试运行时才选择对应方案，并说明在线更新边界。GHCR 拉取失败应排查网络、包可见性和认证，不静默切换为不受管源码部署。
+- 生产 Compose 使用 `docker-compose.deploy.yml`（PostgreSQL、Redis、migrate、backend、agent、web）。源码构建可叠加 `docker-compose.build.yml`，但本地镜像不由 Host Updater 管理；`scripts/install-server.sh` 不安装更新器，不能当作在线更新安装入口。公网只暴露 web 的 `CANVAS_HTTP_PORT`（默认 `3000`），backend `8080` 留在 Compose 网络内。
+- 诊断已有部署时，依据实际 Compose 文件、容器镜像、数据库驱动、数据挂载和 Host Updater 状态分别报告。源码构建不等于 local，SQLite 不证明使用了 `docker-compose.local.yml`，自定义文件名也不证明采用了任何仓库编排。已有 SQLite/自定义部署须先备份、迁移和验证，再转为受管部署；不要直接覆盖原 Compose 或数据卷。
 - 默认不启动 dev server；只有用户明确要求浏览器预览或联调时才启动，并先确认端口、数据目录和现有进程。
 - 健康检查只能证明入口可用，不能替代登录、SSE、任务生成和资源访问验证。
 
@@ -157,17 +139,13 @@
 项目当前默认不自动运行语法检查、类型检查、测试或构建。用户明确要求验证，或改动风险需要验证时，按范围选择最小充分命令，并在交付中如实记录：
 
 - 前端：`cd web && bun run build`；专项测试用 `bun test ...`。UI 退场规则用 `bun run lint`（只禁 antd Empty 和静态 `Modal.confirm`，不是风格检查）。
-- 节点验收：在 `web/` 执行 `bun scripts/audit-canvas-node-save.tsx test/fixtures/canvas-editor-capabilities.json /tmp/node-functions.json`；随后在 `backend/` 设置 `CANVAS_NODE_ACCEPTANCE_FILE=/tmp/node-functions.json`、`CGO_ENABLED=1`，运行 `go test ./internal/canvas/commands ./internal/canvas/tasks -run '^(TestNodeFunctionAcceptance|TestImageToolTaskAcceptance)$' -count=1`。能力目录先通过 `TestEditorCapabilitiesFixture`；不得放宽失败操作、遗漏类型或身份伪造的断言。图片编辑验收另核对多视角/打光草稿与原图在重开后的保存结果、实际任务输入和幂等准入，供应商执行保持受控。
 - 后端：`cd backend && go test ./...`；涉及 PostgreSQL、资源、任务或权限时补对应集成/冒烟路径。
-- 增量治理：`go test ./internal/architecture` 与 handler 的 OpenAPI 合同测试；baseline 必须对应精确规则和位置，不能自动接纳新违规。CI 分别验证锁版本分析器拒绝负例，保留已有工具 AST/制品与 Pi 合同检查。
+- Agent Worker：`cd agent && npm ci --ignore-scripts && npm test`；改工具合同时补 `go test ./internal/app -run 'TestAgentToolSchemaArtifactMatchesRuntime' -count=1`。
 - 部署脚本：`python -B -m unittest scripts.test_production_deployment scripts.test_agent_parity_container_commands scripts.test_production_agent_smoke scripts.test_install_agent_worker_id` 只检查隔离命令、配置和身份边界；真实跨进程入口是 `scripts/verify-production-agent-smoke.py`。运行容器前检查项目、挂载、端口和数据范围，不能把静态检查当成生产验收。
-- 云端 Agent：前端事件流和审批路径依赖后端 `/api/agent` 接口；在该接口实现后补充后端冒烟、Worker 运行和 SSE 断线重连验证。
+- 云端 Agent：前端事件流和审批路径依赖后端 `/api/agent` 与 `/internal-agent`；改动后补充后端冒烟、Worker 运行和 SSE 断线重连验证。
+- 版本与更新日志：`node scripts/changelog.mjs --check`（与 CI 的 `Changelog entry` 任务同款）；打 tag 前确认根 `VERSION` 与 `CHANGELOG.md` 里的 `## <VERSION>` 行完全一致。
 - 文档站：`cd docs && bun run types:check` 或 `bun run build`。
-- 版本与更新日志：`node scripts/changelog.mjs --check`（与 CI 的 `Changelog entry` 任务同款）；打 tag 前确认根 `VERSION` 与 `CHANGELOG.md` 里的 `## <VERSION>` 行完全一致（`publish-images.yml` 直接用它做发布门禁和 Release 说明）。
 - UI 变更能浏览器验证时，检查关键路由、明暗主题、滚动、弹窗、空态和核心交互；不能验证时说明替代依据，不把静态阅读或 `git diff` 写成运行验证。
-- 涉及皮肤时，覆盖默认/自定义皮肤、明暗模式、0px/非零圆角、伪元素、body 浮层、后台与画布界面；皮肤保存后检查颜色和圆角是否同步。功能入口验证同时覆盖普通用户和管理员，以及关闭后的快捷搜索与直达路由。首页验证覆盖窄屏、窗口缩放、滚动与人物只在首页出现。
-- 用户指定本机 Compose 端口验收时，使用相应隔离项目、镜像和数据卷，构建真实前端并更新指定服务；检查映射端口、镜像、容器状态和健康接口，最后做真实页面验收。不能用未重建的容器代表最新源码，也不能把该操作推断为允许修改其他端口、SSH 或生产部署。
-- 浏览器权限拒绝时不通过其他浏览器、CDP 或间接执行绕过。可继续完成不依赖浏览器的源码、测试、构建和健康检查，但交付中明确视觉验收未完成及阻断原因。旧版截图或旧的通过记录不能证明本轮 UI 结果。
 - 验证必须针对真实实现：优先专项测试、类型检查、项目 build 或真实路由浏览器验收。独立 HTML、静态仿制页面和脱离应用状态的截图不能作为真实页面通过的证据。
 
 同类失败连续三次时停止盲试，记录现象、已排除项和新假设，再切换路径或请求用户决策。
@@ -179,7 +157,7 @@
 - API、数据表、SSE、资源存储、部署或安全边界变化时同步对应专题文档；不要只改代码和根 README。
 - 文档默认中文，不写过期日期，不公开密码、Token、Cookie、真实账号或机器敏感路径。命令、端口、环境变量必须以当前脚本和 Compose 为准。
 - Git 提交说明使用 `<type>(<scope>): <业务模块> - <变更摘要>`，`type` 为 `feat|fix|refactor|perf|docs|test|build|ci|chore|revert`。
-- **每次 dev PR 必须更新内部版本号**：改仓库根 `VERSION`，格式 `<大版本>(<PR 分支最新提交短 SHA>)`（7 位），例如 `v1.5.7.1(0bdc019)`，括号内一律 7 位，和 `git log --oneline`、`git rev-parse --short=7` 的输出一致。大版本取 `VERSION` 里现有的正式版本号，只在发布 / 上游同步换版本时才变；其中的 commit 取 **bump 之前**该 PR 分支的 HEAD，bump 后若 PR 又有新提交，push 前必须重新 bump。版本解析必须先剥离括号中的构建 commit，再按正式版本号比较；不得使用 `_` 或 `+` 作为 commit 分隔符。根 `VERSION` 是内部版本号的唯一来源（后端 ldflags `buildinfo.Version`、前端 `VITE_APP_VERSION`），不要再往别处另立版本号。
-- **更新日志先跑脚本再改写**：`node scripts/changelog.mjs` 预览草稿、`--write` 写入 `CHANGELOG.md` 顶部并同步 bump `VERSION`、`--write --force` 覆盖同版本条目、`--check` 校验当前版本有对应条目（CI `Changelog entry` 任务执行）。起点默认取 `CHANGELOG.md` 顶部条目的 commit；本仓库存在多线合并历史，该 commit 不可达时用 `--since <sha>` 指定。脚本只按提交类型归并标题，条目仍须改写成用户可见的影响与升级说明。
+- **每次 dev PR 必须更新内部版本号**：改仓库根 `VERSION`，格式 `<大版本>(<PR 分支最新提交短 SHA>)`（7 位），例如 `v1.7.2(0bdc019)`。大版本取 `VERSION` 里现有的正式版本号，只在发布 / 上游同步换版本时才变；其中的 commit 取 bump 之前该 PR 分支的 HEAD，bump 后若 PR 又有新提交，push 前必须重新 bump。版本解析必须先剥离括号中的构建 commit，再按正式版本号比较。根 `VERSION` 是内部版本号的唯一来源（后端 ldflags `buildinfo.Version`、前端 `VITE_APP_VERSION`）。
+- **更新日志先跑脚本再改写**：`node scripts/changelog.mjs` 预览草稿、`--write` 写入 `CHANGELOG.md` 顶部并同步 bump `VERSION`、`--check` 校验当前版本有对应条目。起点默认取 `CHANGELOG.md` 顶部条目的 commit；多线合并历史下该 commit 不可达时用 `--since <sha>` 指定。脚本只按提交类型归并标题，条目仍须改写成用户可见的影响与升级说明。
 
 交付前至少检查：改动是否聚焦、调用方和类型是否同步、错误/权限/数据归属是否完整、必要文档是否同步、验证是否如实说明、是否留下密钥或本地数据。

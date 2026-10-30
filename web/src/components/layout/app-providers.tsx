@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
-import { lazy, Suspense, useLayoutEffect } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { App, ConfigProvider } from "antd";
+import { ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 
 import { AuthSessionHydrator } from "@/components/auth/auth-session-hydrator";
+import { AppFeedbackProvider } from "@/components/layout/app-feedback";
 import { FullScreenLoader } from "@/components/ui/aceternity/full-screen-loader";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { applySkinTheme } from "@/lib/skin-themes";
@@ -13,18 +14,21 @@ import { isIsolatedPrevisRepro } from "@/lib/dev-repro";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { applyAppearanceMetadata, useAppearanceStore } from "@/stores/use-appearance-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { useSkinSwitchMotion } from "@/hooks/use-skin-switch-motion";
+import { refreshPublicAppearance } from "@/services/appearance-bootstrap";
 
 const ClientRootInit = lazy(() => import("@/components/layout/client-root-init").then((module) => ({ default: module.ClientRootInit })));
 
 function ClientRootBoundary({ children }: { children: ReactNode }) {
     const authenticated = useUserStore((state) => Boolean(state.user));
     if (!authenticated) return children;
-    return <Suspense fallback={<FullScreenLoader label="正在准备创作环境" detail="连接本地能力与模型配置" />}><ClientRootInit>{children}</ClientRootInit></Suspense>;
+    return (
+        <Suspense fallback={<FullScreenLoader label="正在准备创作环境" detail="连接本地能力与模型配置" />}>
+            <ClientRootInit>{children}</ClientRootInit>
+        </Suspense>
+    );
 }
 
 export function AppProviders({ children }: { children: ReactNode }) {
-    useSkinSwitchMotion();
     const theme = useActiveTheme();
     const dark = theme === "dark";
     const appearance = useAppearanceStore((state) => state.appearance);
@@ -41,9 +45,22 @@ export function AppProviders({ children }: { children: ReactNode }) {
     // 与启动入口共用精确路径边界；生产构建中 import.meta.env.DEV 为 false，始终不启用隔离。
     const isolateDevRepro = typeof window !== "undefined" && isIsolatedPrevisRepro(import.meta.env.DEV, window.location.pathname);
 
+    useEffect(() => {
+        if (isolateDevRepro) return;
+        const refresh = () => {
+            if (document.visibilityState === "visible") void refreshPublicAppearance();
+        };
+        window.addEventListener("focus", refresh);
+        document.addEventListener("visibilitychange", refresh);
+        return () => {
+            window.removeEventListener("focus", refresh);
+            document.removeEventListener("visibilitychange", refresh);
+        };
+    }, [isolateDevRepro]);
+
     return (
         <ConfigProvider locale={zhCN} theme={getAntThemeConfig(dark, appearance.activeSkin)} wave={{ disabled: true }}>
-            <App message={{ duration: 3, maxCount: 3 }} notification={{ duration: 4.5, maxCount: 3, placement: "topRight" }}>
+            <AppFeedbackProvider>
                 <QueryClientProvider client={appQueryClient}>
                     {isolateDevRepro ? (
                         children
@@ -53,7 +70,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
                         </AuthSessionHydrator>
                     )}
                 </QueryClientProvider>
-            </App>
+            </AppFeedbackProvider>
         </ConfigProvider>
     );
 }

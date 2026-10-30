@@ -8,14 +8,14 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type stubSubmitter struct{ calls, wakes int }
@@ -41,7 +41,7 @@ func taskFixture(t *testing.T) (*Service, *gorm.DB, *repository.Repository, *com
 func seedTaskFixture(t *testing.T, db *gorm.DB) (*Service, *gorm.DB, *repository.Repository, *commands.Service, identity.Principal, SubmitRequest, *stubSubmitter) {
 	t.Helper()
 	var err error
-	if err = db.AutoMigrate(&model.User{}, &model.Task{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.Resource{}, &model.Asset{}); err != nil {
+	if err = db.AutoMigrate(&model.User{}, &model.Task{}, &model.CanvasProject{}, &model.CanvasEditLease{}, &model.Resource{}, &model.Asset{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.MigrateCanvasCommands(db); err != nil {

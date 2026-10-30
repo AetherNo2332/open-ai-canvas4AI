@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // 计量用的估算尺子：ASCII 每 4 字节 1 token 向上取整，非 ASCII 每字符 1 token。

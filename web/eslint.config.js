@@ -20,7 +20,7 @@ const commentCompatPlugin = {
 
 export default [
     {
-        ignores: ["dist/**", "node_modules/**", "coverage/**", "src/integrations/director-desk/vendor/**"],
+        ignores: ["dist/**", "node_modules/**", "coverage/**"],
     },
     {
         files: ["src/**/*.{ts,tsx}", "test/**/*.{ts,tsx,mjs}"],

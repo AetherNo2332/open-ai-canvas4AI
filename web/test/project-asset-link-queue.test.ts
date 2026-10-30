@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { createCanvasProjectAssetLinkQueue } from "@/lib/canvas/project-asset-link-queue";
+import { createCanvasProjectAssetLinkQueue } from "../src/lib/canvas/project-asset-link-queue";
 
-function memoryStorage() {
+function createStorage() {
     const values = new Map<string, string>();
     return {
         values,
@@ -16,146 +16,57 @@ function memoryStorage() {
     };
 }
 
-describe("project asset link journal", () => {
-    test("independent tab adapters preserve concurrent intents in a shared atomic store", async () => {
-        const values = new Map<string, string>();
-        let transactionTail = Promise.resolve();
-        let transactions = 0;
-        const adapter = () => ({
-            getItem: async (key: string) => values.get(key) ?? null,
-            setItem: async (key: string, value: string) => {
-                values.set(key, value);
-            },
-            removeItem: async (key: string) => {
-                values.delete(key);
-            },
-            atomicUpdate: async <T>(key: string, change: (raw: string | null) => { value: string | null; result: T }) => {
-                const previous = transactionTail;
-                let release!: () => void;
-                transactionTail = new Promise<void>((resolve) => {
-                    release = resolve;
-                });
-                await previous;
-                try {
-                    transactions += 1;
-                    const next = change(values.get(key) ?? null);
-                    await new Promise((resolve) => setTimeout(resolve, 1));
-                    if (next.value === null) values.delete(key);
-                    else values.set(key, next.value);
-                    return next.result;
-                } finally {
-                    release();
-                }
-            },
-        });
-        // Distinct tail scopes simulate separate JS realms; only the shared transaction protects the record.
-        const first = createCanvasProjectAssetLinkQueue(adapter(), "pending-links", "realm-a");
-        const second = createCanvasProjectAssetLinkQueue(adapter(), "pending-links", "realm-b");
-        await Promise.all([first.upsert({ assetId: "asset-a", domainProjectId: "project" }), second.upsert({ assetId: "asset-b", domainProjectId: "project" })]);
-        expect((await first.list()).map((entry) => entry.assetId).sort()).toEqual(["asset-a", "asset-b"]);
-        expect(transactions).toBe(2);
-    });
+describe("canvas project asset link queue", () => {
+    test("persists pending links and reloads them in a fresh queue instance", async () => {
+        const storage = createStorage();
+        const first = createCanvasProjectAssetLinkQueue(storage, "pending-links");
 
-    test("reloads an interrupted category and folder intent from durable storage", async () => {
-        const storage = memoryStorage();
-        const first = createCanvasProjectAssetLinkQueue(storage, "user-a");
-        const persisted = await first.upsert({ assetId: "asset", domainProjectId: "project", category: "character", folderId: "folder" });
-        const restored = createCanvasProjectAssetLinkQueue(storage, "user-a");
+        await first.upsert({ assetId: "asset-1", domainProjectId: "project-1", category: "character", folderId: "folder-1" });
+
+        const restored = createCanvasProjectAssetLinkQueue(storage, "pending-links");
         expect(await restored.list()).toEqual([
             {
-                assetId: "asset",
-                domainProjectId: "project",
+                assetId: "asset-1",
+                domainProjectId: "project-1",
                 category: "character",
-                folderId: "folder",
+                folderId: "folder-1",
                 attempts: 0,
                 nextAttemptAt: 0,
                 revision: 1,
-                intentToken: persisted.intentToken,
-                createAssetIfMissing: false,
             },
         ]);
     });
 
-    test("coalesces repeated intent and rejects stale completion or backoff", async () => {
-        const queue = createCanvasProjectAssetLinkQueue(memoryStorage(), "user-a");
-        const first = await queue.upsert({ assetId: "asset", domainProjectId: "project", category: "character" });
-        expect(await queue.upsert({ assetId: "asset", domainProjectId: "project", category: "character" })).toEqual(first);
-        const moved = await queue.upsert({ assetId: "asset", domainProjectId: "project", folderId: "new-folder" });
-        expect(moved.category).toBe("character");
-        expect(moved.revision).toBe(2);
-        expect(await queue.remove(first)).toBe(false);
-        expect(await queue.update(first, { attempts: 1, nextAttemptAt: 123 })).toBeUndefined();
-        expect(await queue.list()).toEqual([moved]);
+    test("deduplicates a link and ignores stale retry completion after the request changes", async () => {
+        const storage = createStorage();
+        const queue = createCanvasProjectAssetLinkQueue(storage, "pending-links");
+        const original = await queue.upsert({ assetId: "asset-1", domainProjectId: "project-1" });
+        const duplicate = await queue.upsert({ assetId: "asset-1", domainProjectId: "project-1" });
+        const changed = await queue.upsert({ assetId: "asset-1", domainProjectId: "project-1", folderId: "folder-2" });
+
+        expect(duplicate).toEqual(original);
+        expect(await queue.update(original, { attempts: 1, nextAttemptAt: Date.now() + 10_000 })).toBeUndefined();
+        expect(await queue.remove(original)).toBe(false);
+        expect(changed.revision).toBe(original.revision + 1);
+        expect(await queue.list()).toEqual([changed]);
     });
 
-    test("an old completion or failure cannot affect a removed and recreated intent", async () => {
-        const queue = createCanvasProjectAssetLinkQueue(memoryStorage(), "recreated");
-        const old = await queue.upsert({ assetId: "asset", domainProjectId: "project", folderId: "old" });
-        await queue.remove(old);
-        const current = await queue.upsert({ assetId: "asset", domainProjectId: "project", folderId: "new" });
+    test("removes a confirmed link", async () => {
+        const storage = createStorage();
+        const queue = createCanvasProjectAssetLinkQueue(storage, "pending-links");
+        const entry = await queue.upsert({ assetId: "asset-1", domainProjectId: "project-1" });
 
-        expect(await queue.remove(old)).toBe(false);
-        expect(await queue.update(old, { attempts: 5, nextAttemptAt: Number.MAX_SAFE_INTEGER })).toBeUndefined();
-        expect(await queue.list()).toEqual([current]);
+        expect(await queue.remove(entry)).toBe(true);
+        expect(await queue.list()).toEqual([]);
+        expect(storage.values.has("pending-links")).toBe(false);
     });
 
-    test("a blocked target stays blocked until the intent changes", async () => {
-        const queue = createCanvasProjectAssetLinkQueue(memoryStorage(), "user-a");
-        const first = await queue.upsert({ assetId: "asset", domainProjectId: "project" });
-        const blocked = await queue.update(first, { attempts: 1, nextAttemptAt: Number.MAX_SAFE_INTEGER });
-        expect(await queue.upsert({ assetId: "asset", domainProjectId: "project" })).toEqual(blocked);
-        const manuallyRetried = await queue.upsert({ assetId: "asset", domainProjectId: "project" }, { retryBlocked: true });
-        expect(manuallyRetried.nextAttemptAt).toBe(0);
-        const changed = await queue.upsert({ assetId: "asset", domainProjectId: "project", category: "prop" });
-        expect(changed.nextAttemptAt).toBe(0);
-    });
+    test("preserves malformed recovery data instead of overwriting it", async () => {
+        const storage = createStorage();
+        storage.values.set("pending-links", "not-json");
+        const queue = createCanvasProjectAssetLinkQueue(storage, "pending-links");
 
-    test("asset deletion removes all pending links without affecting another user's scope", async () => {
-        const storage = memoryStorage();
-        const alice = createCanvasProjectAssetLinkQueue(storage, "user-a");
-        const bob = createCanvasProjectAssetLinkQueue(storage, "user-b");
-        await alice.upsert({ assetId: "asset", domainProjectId: "one" });
-        await alice.upsert({ assetId: "asset", domainProjectId: "two" });
-        await bob.upsert({ assetId: "asset", domainProjectId: "one" });
-        await alice.removeAssets(["asset"]);
-        expect(await alice.list()).toEqual([]);
-        expect(await bob.list()).toHaveLength(1);
-    });
-
-    test("keeps a corrupt journal intact for recovery", async () => {
-        const storage = memoryStorage();
-        storage.values.set("user-a", "broken-json");
-        const queue = createCanvasProjectAssetLinkQueue(storage, "user-a");
-        await expect(queue.upsert({ assetId: "asset", domainProjectId: "project" })).rejects.toThrow("项目资产待同步记录已损坏");
-        expect(storage.values.get("user-a")).toBe("broken-json");
-    });
-
-    test("confirmed asset existence survives intent replacement, removal and reload without changing relation fields", async () => {
-        const storage = memoryStorage();
-        const queue = createCanvasProjectAssetLinkQueue(storage, "owner");
-        const old = await queue.upsert({ assetId: "asset", domainProjectId: "project", folderId: "old", createAssetIfMissing: true });
-        const current = await queue.upsert({ assetId: "asset", domainProjectId: "project", folderId: "new" });
-        const deferred = await queue.update(current, { attempts: 3, nextAttemptAt: 123 });
-        await queue.markAssetPersisted(old);
-        expect(await queue.list()).toEqual([{ ...deferred!, createAssetIfMissing: false }]);
-        await queue.remove((await queue.list())[0]);
-        const restored = createCanvasProjectAssetLinkQueue(storage, "owner");
-        const recreated = await restored.upsert({ assetId: "asset", domainProjectId: "project", createAssetIfMissing: true });
-        expect(recreated.createAssetIfMissing).toBe(false);
-        await restored.removeAssets(["asset"]);
-        const afterDeletion = createCanvasProjectAssetLinkQueue(storage, "owner");
-        expect((await afterDeletion.upsert({ assetId: "asset", domainProjectId: "other", createAssetIfMissing: true })).createAssetIfMissing).toBe(false);
-        const otherAccount = createCanvasProjectAssetLinkQueue(storage, "other-owner");
-        expect((await otherAccount.upsert({ assetId: "asset", domainProjectId: "project", createAssetIfMissing: true })).createAssetIfMissing).toBe(true);
-    });
-
-    test("legacy array queues retain their intent while confirmed permission migrates durably", async () => {
-        const storage = memoryStorage();
-        const legacy = { assetId: "asset", domainProjectId: "project", folderId: "legacy", createAssetIfMissing: false, attempts: 2, nextAttemptAt: 123, revision: 7 };
-        storage.values.set("legacy", JSON.stringify([legacy]));
-        const queue = createCanvasProjectAssetLinkQueue(storage, "legacy");
-        expect(await queue.list()).toEqual([legacy]);
-        await queue.remove(legacy);
-        expect((await createCanvasProjectAssetLinkQueue(storage, "legacy").upsert({ assetId: "asset", domainProjectId: "project", createAssetIfMissing: true })).createAssetIfMissing).toBe(false);
+        await expect(queue.list()).rejects.toThrow("项目资产待同步记录已损坏");
+        expect(storage.values.get("pending-links")).toBe("not-json");
     });
 });

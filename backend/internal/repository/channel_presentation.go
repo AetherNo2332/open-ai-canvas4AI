@@ -3,7 +3,7 @@ package repository
 import (
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 )
@@ -21,6 +21,12 @@ func (r *Repository) UpdateSystemChannelPresentation(channelID string, sortOrder
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// UpdateSystemChannelCatalogProvider 只回填渠道来源标记，用于导入时保留目录服务商来源展示。
+func (r *Repository) UpdateSystemChannelCatalogProvider(channelID string, providerID string, now time.Time) error {
+	return r.db.Model(&model.ModelChannel{}).Where("id = ? AND scope = ?", channelID, model.ChannelScopeSystem).
+		Updates(map[string]any{"catalog_provider_id": providerID, "updated_at": now}).Error
 }
 
 // 排序是展示配置，不重写价格、能力版本或模型标识。

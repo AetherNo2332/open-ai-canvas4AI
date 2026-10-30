@@ -17,7 +17,6 @@ function walkSourceFiles(dir: string): string[] {
 
 const webRoot = resolve(import.meta.dir, "..");
 const srcRoot = resolve(webRoot, "src");
-const sourcePath = (file: string) => relative(srcRoot, file).replace(/\\/g, "/");
 
 const axiosAllowed = new Set([
     "services/api/request.ts",
@@ -30,22 +29,22 @@ const axiosAllowed = new Set([
 test("business API modules call http instead of axios or request(apiClient)", () => {
     const offenders = walkSourceFiles(resolve(srcRoot, "services"))
         .filter((file) => {
-            const rel = sourcePath(file);
+            const rel = relative(srcRoot, file);
             if (axiosAllowed.has(rel)) return false;
             const source = readFileSync(file, "utf8");
             return /from ["']axios["']/.test(source) || /request\s*(?:<[^>]+>)?\s*\(\s*apiClient\./.test(source) || /const api = apiClient/.test(source);
         })
-        .map(sourcePath);
+        .map((file) => relative(srcRoot, file));
     expect(offenders).toEqual([]);
 });
 
 test("axios.create stays in the shared request client", () => {
     const offenders = walkSourceFiles(srcRoot)
         .filter((file) => {
-            if (sourcePath(file) === "services/api/request.ts") return false;
+            if (relative(srcRoot, file) === "services/api/request.ts") return false;
             return readFileSync(file, "utf8").includes("axios.create(");
         })
-        .map(sourcePath);
+        .map((file) => relative(srcRoot, file));
     expect(offenders).toEqual([]);
 });
 
@@ -56,10 +55,10 @@ test("copied flush Modal padding lives only in AppModal", () => {
     ];
     const offenders = walkSourceFiles(srcRoot)
         .filter((file) => {
-            if (sourcePath(file) === "components/ui/product/app-modal/app-modal.tsx") return false;
+            if (relative(srcRoot, file) === "components/ui/product/app-modal/app-modal.tsx") return false;
             const source = readFileSync(file, "utf8");
             return banned.some((snippet) => source.includes(snippet));
         })
-        .map(sourcePath);
+        .map((file) => relative(srcRoot, file));
     expect(offenders).toEqual([]);
 });

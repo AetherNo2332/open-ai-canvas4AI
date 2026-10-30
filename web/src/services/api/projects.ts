@@ -1,4 +1,4 @@
-import { http, compactApiParams } from "@/services/api/request";
+import { compactApiParams, http } from "@/services/api/request";
 import { normalizeAssetCategory, type AssetCategory } from "@/lib/asset-category";
 import type { GenerationTask } from "@/services/api/task-center";
 
@@ -68,6 +68,7 @@ export type ProjectAsset = {
     previewText?: string;
     updatedAt: string;
     character?: CharacterCardSummary;
+    visual?: { definition: Record<string, unknown>; status: "missing" | "ready" };
     source?: string;
 };
 
@@ -87,9 +88,6 @@ export type CharacterRepresentation = {
     id: string;
     resourceId: string;
     mediaType: string;
-    sourceNodeId?: string;
-    sourceCanvasId?: string;
-    reusedFromRole?: string;
     role: "primary" | "front" | "side" | "back" | "turnaround_sheet" | "expression_sheet" | string;
 };
 
@@ -498,16 +496,6 @@ export function moveProjectAsset(projectId: string, assetId: string, folderId: s
     return http.patch<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`, { folderId }, { signal });
 }
 
-export type ProjectAssetSyncBaseline = { projectRevision: number; asset: ProjectAsset | null };
-
-export function getProjectAssetSyncBaseline(projectId: string, assetId: string, signal?: AbortSignal) {
-    return http.get<ProjectAssetSyncBaseline>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/sync`, { signal });
-}
-
-export function syncProjectAssetRelation(projectId: string, assetId: string, input: { expectedProjectRevision: number; category?: AssetCategory; folderId?: string }, signal?: AbortSignal) {
-    return http.put<{ projectRevision: number; asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/sync`, input, { signal });
-}
-
 export function listProjectAssetFolders(projectId: string, signal?: AbortSignal) {
     return http.get<{ folders: ProjectAssetFolder[] }>(`/projects/${encodeURIComponent(projectId)}/asset-folders`, { signal });
 }
@@ -555,7 +543,7 @@ export function getCharacter(assetId: string) {
     return http.get<ProjectCharacterDetail>(`/characters/${encodeURIComponent(assetId)}`);
 }
 
-export function createCharacter(input: { name: string; definition?: Record<string, unknown>; imageResourceId?: string; representations?: Array<{ role: string; resourceId: string; metadata?: Record<string, unknown> }>; audioResourceId?: string; voiceName?: string; instructions?: string }) {
+export function createCharacter(input: { name: string; definition?: Record<string, unknown>; imageResourceId?: string; audioResourceId?: string; voiceName?: string; instructions?: string }) {
     return http.post<ProjectCharacterDetail>("/characters", input);
 }
 
@@ -574,7 +562,6 @@ export function bindCharacterVoice(assetId: string, input: { sampleResourceId?: 
 export function unbindCharacterVoice(assetId: string) {
     return http.delete<ProjectCharacterDetail>(`/characters/${encodeURIComponent(assetId)}/voice`);
 }
-
 
 export function createProjectCharacter(projectId: string, input: { name: string; definition?: Record<string, unknown> }) {
     return http.post<ProjectCharacterDetail>(`/projects/${encodeURIComponent(projectId)}/characters`, input);
@@ -634,6 +621,10 @@ export function createProjectAssetCandidates(projectId: string, candidates: Arra
 
 export function confirmProjectAssetCandidate(projectId: string, candidateId: string, assetId?: string) {
     return http.post<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/asset-candidates/${encodeURIComponent(candidateId)}/confirm`, { assetId: assetId || "" });
+}
+
+export function bindProjectAssetImage(projectId: string, assetId: string, input: { resourceId: string; expectedVersionId: string }) {
+    return http.put<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/image`, input);
 }
 
 export function updateWorkflowStep(projectId: string, stepId: string, input: { status: string; outputJson?: string; error?: string }) {

@@ -1,7 +1,7 @@
 package service
 
 import (
-	"infinite-canvas/backend/internal/app"
+	"yingce/backend/internal/app"
 )
 
 type (

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	"infinite-canvas/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/capability"
 )
 
 type BatchDocumentContext struct {

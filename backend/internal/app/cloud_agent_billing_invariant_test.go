@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // openOrderStatuses 是"钱还锁着"的订单状态：reserved / running / uncertain。

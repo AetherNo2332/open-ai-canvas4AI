@@ -8,39 +8,35 @@ import (
 	"strconv"
 	"strings"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 )
 
 // Models 是应用持久化表的唯一清单，服务启动和跨数据库迁移必须共用它。
 func Models() []any {
+	return append(appModels(), AgentRuntimeModels()...)
+}
+
+func appModels() []any {
 	return []any{
-		&model.CanvasMediaVersion{},
-		&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.AgentUserAdmission{},
-		&model.AgentRuntimeInstance{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{},
-		&model.AgentWorker{},
-		&model.AgentQueuedMessage{}, &model.AgentConversationQueue{}, &model.AgentUISetting{},
 		&model.CloudAgentExecution{},
+		&model.UploadReservation{},
+		&model.CloudAgentPiSession{},
 		&model.CloudAgentEventRecord{},
 		&model.CloudAgentMessageRecord{},
-		&model.CloudAgentPiSession{},
-		&model.CloudAgentPiEntry{},
 		&model.CloudAgentCanvasMutation{},
 		&model.CloudAgentResourceLease{},
 		&model.CloudAgentGeminiCache{},
 		&model.AgentProfile{},
 		&model.AgentLesson{},
 		&model.AgentMemorySetting{},
-		&model.AgentSkillDefault{},
-		&model.AgentConversationSkill{},
-		&model.AgentSubagentPolicy{},
-		&model.AgentSubagentLink{},
-		&model.AgentSubagentMessage{},
-		&model.AgentWorkspace{},
-		&model.AgentWorkspaceSkill{},
+		&model.AgentMemoryProposal{},
+		&model.AgentMemoryRevision{},
 		&model.User{},
+		&model.UserAvatar{},
 		&model.AuthSession{},
+		&model.LoginLog{},
 		&model.UserIdentity{},
 		&model.OAuthState{},
 		&model.EmailVerificationCode{},
@@ -60,6 +56,9 @@ func Models() []any {
 		&model.ModelPricing{},
 		&model.CreditAccount{},
 		&model.CreditLedgerEntry{},
+		&model.ReferralProfile{},
+		&model.ReferralBinding{},
+		&model.ReferralCommission{},
 		&model.BillingOrder{},
 		&model.TopupProduct{},
 		&model.PaymentProviderConfig{},
@@ -67,6 +66,8 @@ func Models() []any {
 		&model.PaymentNotification{},
 		&model.PaymentReconciliationRun{},
 		&model.PaymentReconciliationItem{},
+		&model.UserStorageGrant{},
+		&model.UserStorageState{},
 		&model.RedeemBatch{},
 		&model.RedeemCode{},
 		&model.AdminAuditEvent{},
@@ -88,6 +89,7 @@ func Models() []any {
 		&model.ToolFavorite{},
 		&model.Resource{},
 		&model.ResourceDeletionJob{},
+		&model.ResourceOffloadJob{},
 		&model.AnnouncementImageDraft{},
 		&model.Asset{},
 		&model.AssetFolder{},
@@ -112,9 +114,12 @@ func Models() []any {
 		&model.WorkflowStepTask{},
 		&model.ProductionTaskLink{},
 		&model.CanvasProject{},
-		&model.CanvasNodeEditLease{},
 		&model.CanvasSnapshot{},
 		&model.CanvasSnapshotResource{},
+		&model.CanvasMutationReceipt{},
+		&model.CanvasEditLease{},
+		&model.WorkbenchTool{},
+		&model.WorkbenchPreset{},
 		&model.CanvasShare{},
 		&model.PromptTemplate{},
 		&model.UserPromptCustomization{},
@@ -127,6 +132,14 @@ func Models() []any {
 		&model.TaskTextDelta{},
 		&model.TaskLog{},
 		&model.Result{},
+		&model.UserFeedback{},
+		&model.DramaProduction{},
+		&model.DramaCast{},
+		&model.DramaEpisode{},
+		&model.DramaShot{},
+		&model.DramaTake{},
+		&model.DramaSegment{},
+		&model.DramaJob{},
 	}
 }
 

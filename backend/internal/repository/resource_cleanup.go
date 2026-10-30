@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -75,6 +75,20 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 		} {
 			var count int64
 			if err := tx.Model(check.model).Where(check.query, resourceIDs).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return ErrResourceCleanupStillReferenced
+			}
+		}
+		// Agent 命令历史与已提交任务输入不在上面的固定表里，但物理删除检查认它们；
+		// 漏查会删掉记录而对象永远无法删除，删除任务无限重试。
+		for _, guard := range []any{&model.CanvasCommandResource{}, &model.CanvasTaskResource{}} {
+			if !tx.Migrator().HasTable(guard) {
+				continue
+			}
+			var count int64
+			if err := tx.Model(guard).Where("resource_id IN ?", resourceIDs).Count(&count).Error; err != nil {
 				return err
 			}
 			if count > 0 {

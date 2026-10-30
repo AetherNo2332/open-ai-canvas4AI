@@ -4,6 +4,7 @@ import { reduceAgentRun } from "@/lib/canvas/agent-run-state";
 import { agentRunErrorMessage } from "@/lib/canvas/agent-error-presentation";
 import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-retry";
 import { nativeSkillEventPresentation } from "@/lib/canvas/agent-tool-presentation";
+import { agentRunUndoneMessageId } from "@/lib/canvas/agent-run-undo";
 import { agentAssistantFinality, agentControlMessage, type CloudAgentChatMessage, type CloudAgentPlanItem } from "@/components/canvas/canvas-cloud-agent-chat-ui";
 
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
@@ -53,6 +54,15 @@ export function applyAgentEvent(
     }
     if (event.type === "progress_summary") {
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: text || "Agent 正在整理执行计划" }));
+        return;
+    }
+    if (event.type === "canvas_contention") {
+        // 用户与 Agent 同时编辑：画布持续变化，Agent 暂停询问用户。这是状态提示，不是错误。
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: "画布一直在变化，Agent 已暂停等你", detail: { ...payload, eventType: event.type } }));
+        return;
+    }
+    if (event.type === "canvas_undone" && payload.scope === "run") {
+        setMessages((current) => appendUniqueMessage(current, { id: agentRunUndoneMessageId(event.runId), role: "system", text: "已撤销本次修改", detail: { ...payload, eventType: event.type } }));
         return;
     }
     if (event.type === "context_compaction_requested") {
@@ -185,8 +195,9 @@ export function applyAgentEvent(
         setMessages((current) => mergeAgentToolRetry(current, message));
         if (event.type === "tool_failed") return;
     }
-    if (event.type === "previs_task_created") {
-        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", title: "previs_preview", text: text || "后台预演已排队，等待视频与画布节点", detail: { ...payload, eventType: event.type } }));
+    if (event.type === "director_preview_requested") {
+        // director preview 挂起等待浏览器录制；回执 tool_completed/tool_failed 稍后另起一条。
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", title: "director", text: "等待导演台录制预演", detail: { ...payload, eventType: event.type } }));
         return;
     }
     if (event.type === "tool_completed" && payload.toolName === "canvas_apply_ops" && payload.callId) {

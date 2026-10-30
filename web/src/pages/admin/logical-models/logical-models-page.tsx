@@ -174,7 +174,8 @@ export default function LogicalModelsPage() {
             message.error("请至少添加一条供应线路");
             return;
         }
-        const sourceError = capabilitySourceError(values.capability, modelSourceSpecs, values.capabilitySpec);
+        const currentSpec = normalizeCapabilitySpecForSources(values.capabilitySpec, modelSourceSpecs) || values.capabilitySpec;
+        const sourceError = capabilitySourceError(values.capability, modelSourceSpecs, currentSpec);
         if (values.enabled && sourceError) {
             setEditorTab("capabilities");
             message.error(sourceError);
@@ -550,7 +551,7 @@ export default function LogicalModelsPage() {
 function EditorSection({ icon, title, description, children }: { icon?: ReactNode; title: string; description?: string; children: ReactNode }) {
     return (
         <section className="model-editor-section">
-            <div className="mb-4 flex items-center gap-2.5">
+            <div className="mb-4 flex items-center gap-2">
                 {icon ? <span className="grid size-7 shrink-0 place-items-center rounded-md bg-muted/50 text-foreground/55">{icon}</span> : null}
                 <div>
                     <h2 className="text-[var(--fs-body)] font-semibold">{title}</h2>
@@ -639,7 +640,9 @@ function RouteFields({
                                                             .map((item) => (item ? capabilitySpecFromChannelModel(item) : undefined))
                                                             .filter((item): item is CapabilitySpec => Boolean(item));
                                                         form.setFieldValue("routes", nextRoutes);
-                                                        if (!hasCapabilityRules(form.getFieldValue("capabilitySpec"))) form.setFieldValue("capabilitySpec", mergeCapabilitySpecs(capability, specs));
+                                                        const current = form.getFieldValue("capabilitySpec");
+                                                        if (capability === "image" || !hasCapabilityRules(current))
+                                                            form.setFieldValue("capabilitySpec", capability === "image" && hasCapabilityRules(current) ? normalizeCapabilitySpecForSources(current, specs) : mergeCapabilitySpecs(capability, specs));
                                                     }}
                                                 />
                                             </Form.Item>

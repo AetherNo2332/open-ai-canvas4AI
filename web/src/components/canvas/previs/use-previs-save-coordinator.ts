@@ -1,45 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { createPrevisSaveCoordinator, type PrevisCloseDecision, type PrevisDraftEnvelope, type PrevisSaveCoordinator } from "@/lib/canvas/previs/previs-save";
-import { previsSaveProgress, idlePrevisSaveProgress, resolvePrevisDraftStorage, type PrevisSaveProgress } from "@/lib/canvas/previs/previs-save-wiring";
+import { createPrevisSaveCoordinator, type PrevisCloseDecision, type PrevisSaveCoordinator } from "@/lib/canvas/previs/previs-save";
+import { idlePrevisSaveProgress, previsSaveProgress, type PrevisSaveProgress } from "@/lib/canvas/previs/previs-save-wiring";
 import { recordPrevisDiagnostic } from "@/lib/canvas/previs/previs-diagnostics-recorder";
-import { useUserStore } from "@/stores/use-user-store";
 import type { PrevisScene } from "@/types/previs";
 
 export type PrevisSaveController = {
     progress: PrevisSaveProgress;
-    /** 同步读取当前保存快照；无 coordinator 时返回 idle 态（供非响应式代码取最新状态）。 */
-    currentSnapshot: () => PrevisSaveProgress;
-    /** 订阅 coordinator 状态变化（返回退订函数）；每次回调携带完整快照，不只是 status。 */
-    onSaveStatus: (handler: (progress: PrevisSaveProgress) => void) => () => void;
-    /** canonical 提交入口：预览态与「仅镜像」路径都不得调用。返回 false 表示 coordinator 不存在或拒绝了该场景。 */
-    commitScene: (scene: PrevisScene) => boolean;
-    retry: () => Promise<boolean>;
-    restoreCandidate: () => PrevisDraftEnvelope | null;
-    restoreDraft: (candidate: PrevisDraftEnvelope) => boolean;
-    discardDraft: () => boolean;
+    commitScene: (scene: PrevisScene) => void;
+    retrySave: () => Promise<boolean>;
     prepareClose: () => Promise<PrevisCloseDecision>;
     handlePageHide: () => Promise<boolean>;
 };
 
-/**
- * 按 scene.id 持有唯一 coordinator：切换场景或卸载时 dispose。
- * persistScene 必须把 request.scene 落到项目状态，flushPersistence 负责真正落盘。
- */
 export function usePrevisSaveCoordinator(input: { sceneId: string | null; initialScene: PrevisScene | null; persistScene: (scene: PrevisScene) => void; flushPersistence: () => void | Promise<void> }): PrevisSaveController {
     const { sceneId, initialScene, persistScene, flushPersistence } = input;
-
     const coordinatorRef = useRef<PrevisSaveCoordinator | null>(null);
     const persistSceneRef = useRef(persistScene);
     const flushPersistenceRef = useRef(flushPersistence);
     const initialSceneRef = useRef(initialScene);
     const [progress, setProgress] = useState<PrevisSaveProgress>(idlePrevisSaveProgress);
 
-    // scope 取响应式 user id：user-session 先切 active scope 再 setUser，
-    // 因此这里能在用户变化时重建 coordinator，且不会在播放时每帧读 localStorage。
-    const scope = useUserStore((state) => state.user?.id) ?? "guest";
-
-    // 依赖为空的 effect 每次 render 后都跑，保证 coordinator effect 读到的是最新回调。
     useEffect(() => {
         persistSceneRef.current = persistScene;
         flushPersistenceRef.current = flushPersistence;
@@ -56,15 +37,11 @@ export function usePrevisSaveCoordinator(input: { sceneId: string | null; initia
         let active = true;
         const coordinator = createPrevisSaveCoordinator({
             initialScene: base,
-            scope,
-            storage: resolvePrevisDraftStorage(() => globalThis.localStorage),
             flush: async (request) => {
                 try {
-                    // 先把这次 flush 对应的场景写进项目状态，再等持久化真正完成。
                     persistSceneRef.current(request.scene);
                     await flushPersistenceRef.current();
                 } catch (error) {
-                    // 只记录稳定码与安全字段；原始 error 继续上抛给 coordinator 走 error/draft 语义。
                     recordPrevisDiagnostic("PREVIS_SAVE_FLUSH_FAILED", { sceneId: request.scene.id, revision: request.revision });
                     throw error;
                 }
@@ -73,20 +50,14 @@ export function usePrevisSaveCoordinator(input: { sceneId: string | null; initia
 
         coordinatorRef.current = coordinator;
         setProgress(previsSaveProgress(coordinator.getSnapshot()));
-
-        // 通知里必须读完整快照：只搬 status 会让 confirmedRevision/draftStored 停在旧值，
-        // UI 继续显示未保存、beforeunload 也会误拦。
         const unsubscribe = coordinator.onStatusChange(() => {
-            if (!active) return;
-            setProgress(previsSaveProgress(coordinator.getSnapshot()));
+            if (active) setProgress(previsSaveProgress(coordinator.getSnapshot()));
         });
 
         return () => {
             active = false;
             unsubscribe();
             coordinatorRef.current = null;
-
-            // 卸载前把未确认改动推完再 dispose，否则 debounce 里的最后一次编辑只剩本地草稿。
             const pending = coordinator.getSnapshot();
             if (pending.confirmedRevision < pending.revision) {
                 void coordinator
@@ -97,69 +68,27 @@ export function usePrevisSaveCoordinator(input: { sceneId: string | null; initia
             }
             coordinator.dispose();
         };
-    }, [sceneId, scope]);
+    }, [sceneId]);
 
-    /** dispose 后 coordinatorRef 为 null，因此卸载期的调用不会再 setState。 */
     const syncProgress = useCallback(() => {
         const coordinator = coordinatorRef.current;
         if (coordinator) setProgress(previsSaveProgress(coordinator.getSnapshot()));
     }, []);
 
-    const currentSnapshot = useCallback((): PrevisSaveProgress => {
-        const coordinator = coordinatorRef.current;
-        if (!coordinator) return idlePrevisSaveProgress;
-        return previsSaveProgress(coordinator.getSnapshot());
-    }, []);
-
-    const onSaveStatus = useCallback((handler: (progress: PrevisSaveProgress) => void): (() => void) => {
-        // coordinator 随 sceneId 变化重建：绑定当前实例，重建后旧实例不再派发。
-        // 订阅方（编辑桥）在场景切换时同步 dispose，不会跨 session 串事件。
-        const coordinator = coordinatorRef.current;
-        if (!coordinator) return () => undefined;
-        return coordinator.onStatusChange(() => {
-            if (coordinatorRef.current !== coordinator) return;
-            handler(previsSaveProgress(coordinator.getSnapshot()));
-        });
-    }, []);
-
-    /** canonical 提交唯一入口：预览态和「仅镜像当前 draft」都不得调用。 */
     const commitScene = useCallback(
-        (scene: PrevisScene): boolean => {
-            if (!coordinatorRef.current) return false;
-            const committed = coordinatorRef.current.edit(scene);
-            if (committed) syncProgress();
-            return committed;
+        (scene: PrevisScene) => {
+            if (!coordinatorRef.current?.edit(scene)) return;
+            syncProgress();
         },
         [syncProgress],
     );
 
-    const retry = useCallback(async () => {
+    const retrySave = useCallback(async () => {
         const coordinator = coordinatorRef.current;
         if (!coordinator) return false;
-        const result = await coordinator.retry();
+        const success = await coordinator.flushLatest();
         syncProgress();
-        return result;
-    }, [syncProgress]);
-
-    const restoreCandidate = useCallback(() => coordinatorRef.current?.restoreCandidate() ?? null, []);
-
-    const restoreDraft = useCallback(
-        (candidate: PrevisDraftEnvelope) => {
-            const coordinator = coordinatorRef.current;
-            if (!coordinator?.explicitRestore(candidate)) return false;
-            // 恢复后必须回到项目状态并触发可靠保存，否则草稿只活在本地。
-            persistSceneRef.current(candidate.scene);
-            void coordinator.flushLatest().finally(syncProgress);
-            syncProgress();
-            return true;
-        },
-        [syncProgress],
-    );
-
-    const discardDraft = useCallback(() => {
-        const discarded = coordinatorRef.current?.discardDraft() ?? false;
-        syncProgress();
-        return discarded;
+        return success;
     }, [syncProgress]);
 
     const prepareClose = useCallback(async () => {
@@ -170,11 +99,6 @@ export function usePrevisSaveCoordinator(input: { sceneId: string | null; initia
         return decision;
     }, [syncProgress]);
 
-    /**
-     * pagehide：dirty 时只能走 coordinator.handlePageHide —— 它的 flush 已经
-     * persist(request.scene) + await flushPersistence，组件再叠一次就是重复落盘。
-     * clean 时 coordinator 不会 flush，因此这里显式落盘，保留原有「离开页面必落盘」语义。
-     */
     const handlePageHide = useCallback(async () => {
         const coordinator = coordinatorRef.current;
         try {
@@ -195,16 +119,5 @@ export function usePrevisSaveCoordinator(input: { sceneId: string | null; initia
         }
     }, [syncProgress]);
 
-    return {
-        progress,
-        currentSnapshot,
-        onSaveStatus,
-        commitScene,
-        retry,
-        restoreCandidate,
-        restoreDraft,
-        discardDraft,
-        prepareClose,
-        handlePageHide,
-    };
+    return { progress, commitScene, retrySave, prepareClose, handlePageHide };
 }

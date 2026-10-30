@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // referenceLifecycleFixture extends the real-SQLite task fixture with a
@@ -291,8 +291,10 @@ func TestReferenceLateResultDoesNotRebind(t *testing.T) {
 		t.Fatal("late result recreated the deleted row")
 	}
 	// The detached output releases only its pending version; the row stays deleted.
-	delete(outputBefore, "mediaVersion")
-	delete(nodeMeta(t, after.Document, "output"), "mediaVersion")
+	for _, key := range []string{"mediaVersions", "currentMediaVersionId", "taskId"} {
+		delete(outputBefore, key)
+		delete(nodeMeta(t, after.Document, "output"), key)
+	}
 	delete(outputBefore, "errorDetails")
 	delete(nodeMeta(t, after.Document, "output"), "errorDetails")
 	delete(outputBefore, "taskStatus")
@@ -477,7 +479,7 @@ func TestReferenceFailedResultDoesNotWriteReplacedOutput(t *testing.T) {
 			// Clearing the original version's pending projection does not rebind or
 			// replace media, even after a legacy writer detached the output.
 			for _, m := range []map[string]any{outputBefore, nodeMeta(t, after.Document, "output")} {
-				for _, key := range []string{"mediaVersion", "status", "taskStatus", "errorDetails"} {
+				for _, key := range []string{"mediaVersions", "currentMediaVersionId", "status", "taskId", "taskStatus", "errorDetails"} {
 					delete(m, key)
 				}
 			}

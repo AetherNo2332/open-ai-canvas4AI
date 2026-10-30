@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func workspaceService(t *testing.T) (*Service, *gorm.DB) {

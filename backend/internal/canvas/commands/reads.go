@@ -1,6 +1,6 @@
 package commands
 
-import "infinite-canvas/backend/internal/canvas/capability"
+import "yingce/backend/internal/canvas/capability"
 
 func Capabilities() map[string]any {
 	registry := capability.BuiltinRegistry()

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"sort"
 
-	"infinite-canvas/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/capability"
 )
 
 func Enabled(doc map[string]any) bool { return number(doc["referenceFieldsVersion"]) == Version }

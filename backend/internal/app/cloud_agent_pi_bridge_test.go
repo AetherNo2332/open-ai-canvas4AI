@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/platform"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/platform"
+	"yingce/backend/internal/repository"
 )
 
 // Pi 协议是 cloud_agent_executions 上唯一的 engine=pi 读路径，此前没有任何测试。
@@ -160,18 +160,6 @@ func TestPiAgentOutputReserveIsAutomaticAndPolicyBounded(t *testing.T) {
 	}
 	if input.TextOptions.MaxOutputTokens != snapshot.ModelLimits.MaxOutputTokens {
 		t.Fatalf("request limit differs from Pi: %d", input.TextOptions.MaxOutputTokens)
-	}
-}
-
-func TestPiAgentUndeclaredOutputUsesBoundedWindowReserve(t *testing.T) {
-	s, db, run := piAgentTestLeasedFixture(t)
-	declareTestChannelWindow(t, db, 32_000, 0)
-	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.ModelLimits.MaxOutputTokens != 4_000 || snapshot.ModelLimits.ReservedOutputTokens != 4_000 {
-		t.Fatalf("window-derived output budget mismatch: %+v", snapshot.ModelLimits)
 	}
 }
 

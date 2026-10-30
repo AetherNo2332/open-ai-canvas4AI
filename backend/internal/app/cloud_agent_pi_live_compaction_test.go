@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // Real inference is opt-in. The credential exists only in this process; the

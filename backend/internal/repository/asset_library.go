@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
 )
@@ -28,9 +28,8 @@ type UserAssetFacetRow struct {
 func (r *Repository) UserAssetsPage(userID string, page int, pageSize int, filter UserAssetPageFilter) ([]model.Asset, int64, error) {
 	var assets []model.Asset
 	var total int64
-	// 素材库页面只展示媒体与文本素材；entity 角色卡由项目资产页管理。列表与 facets 必须同口径排除，
-	// 否则 facets 会计入 entity，前端出现“全部计数 30 但列表为空”的矛盾。
-	query := userAssetFilteredQuery(r.db.Model(&model.Asset{}).Where("user_id = ? AND kind <> ?", userID, "entity"), filter, true)
+	// 角色卡是用户素材的一种，和图片、音频一起出现在素材库；列表与 facets 使用同一查询口径。
+	query := userAssetFilteredQuery(r.db.Model(&model.Asset{}).Where("user_id = ?", userID), filter, true)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -40,7 +39,7 @@ func (r *Repository) UserAssetsPage(userID string, page int, pageSize int, filte
 
 func (r *Repository) UserAssetFacets(userID string, status string) ([]UserAssetFacetRow, []UserAssetFacetRow, []UserAssetFacetRow, error) {
 	base := func() *gorm.DB {
-		return userAssetFilteredQuery(r.db.Model(&model.Asset{}).Where("user_id = ? AND kind <> ?", userID, "entity"), UserAssetPageFilter{Status: status}, false)
+		return userAssetFilteredQuery(r.db.Model(&model.Asset{}).Where("user_id = ?", userID), UserAssetPageFilter{Status: status}, false)
 	}
 	var kindRows []UserAssetFacetRow
 	if err := base().Select("kind AS key, COUNT(*) AS count").Group("kind").Scan(&kindRows).Error; err != nil {
@@ -142,9 +141,6 @@ func (r *Repository) MoveUserAssetsToFolder(userID string, assetIDs []string, fo
 
 func (r *Repository) DeleteAssetFolder(userID string, folderID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := r.transactionRepository(tx).LockCanvasWrite(userID, ""); err != nil {
-			return err
-		}
 		var folder model.AssetFolder
 		if err := tx.First(&folder, "id = ? AND user_id = ?", folderID, userID).Error; err != nil {
 			return err
@@ -175,10 +171,6 @@ func moveUserAssetsToFolder(tx *gorm.DB, userID string, assetIDs []string, folde
 	if len(assetIDs) == 0 {
 		return nil
 	}
-	writer := New(tx)
-	if err := writer.LockCanvasWrite(userID, ""); err != nil {
-		return err
-	}
 	var assets []model.Asset
 	if err := tx.Where("user_id = ? AND id IN ?", userID, assetIDs).Find(&assets).Error; err != nil {
 		return err
@@ -190,11 +182,6 @@ func moveUserAssetsToFolder(tx *gorm.DB, userID string, assetIDs []string, folde
 	for index := range assets {
 		payloadJSON, err := assetPayloadWithFolder(assets[index].PayloadJSON, folderID, now)
 		if err != nil {
-			return err
-		}
-		after := assets[index]
-		after.PayloadJSON = payloadJSON
-		if err := writer.checkAssetWriteQuota(&assets[index], &after); err != nil {
 			return err
 		}
 		if err := tx.Model(&model.Asset{}).Where("id = ? AND user_id = ?", assets[index].ID, userID).Updates(map[string]any{

@@ -1,41 +1,27 @@
-import { maxModelInputCapacity, type ModelInputSummary } from "@/lib/model-selection";
+import { audioModelForConnection, audioReferenceCapacity, doubaoAudioInputError, isDoubaoAudioModel, maxModelInputCapacity, resolveCompatibleModel, type ModelInputSummary } from "@/lib/model-selection";
 import { getNodeAcceptedInputKinds, getNodeGenerationMode, getNodeInputKind, getNodeMaxInputCount } from "@/lib/canvas/node-registry";
+import { readNodeGenerationSpec, resolveGenerationSelection } from "@/lib/canvas/generation-contract";
 import type { AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
-import { connectionTraits } from "./connection-traits";
-import { batchReferenceColumns } from "./canvas-batch-table";
 
-type ConnectionCandidate = Pick<CanvasConnection, "fromNodeId" | "toNodeId" | "fromHandleId" | "toHandleId">;
+type ConnectionCandidate = Pick<CanvasConnection, "fromNodeId" | "toNodeId">;
 type CanvasConnectionPolicyOptions = {
     // 仅跳过参考素材数量上限，媒体类型不兼容仍然拒绝。
     ignoreCapacity?: boolean;
 };
 
 export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[], connections: CanvasConnection[], candidate: ConnectionCandidate, options: CanvasConnectionPolicyOptions = {}) {
-    const source = nodes.find((node) => node.id === candidate.fromNodeId);
     const target = nodes.find((node) => node.id === candidate.toNodeId);
     if (!target) return "找不到连线目标节点";
     if (target.type === CanvasNodeType.BatchTable && target.metadata?.locked) return "批量创作表已锁定";
-    if (!source || source.id === target.id) return "连线端点不存在或指向自身";
-    if (connectionTraits[source.type]?.blocked || connectionTraits[target.type]?.blocked || (source.type === CanvasNodeType.Config && target.type === CanvasNodeType.Config)) return "这两个节点不允许连线";
-    for (const [node, handle] of [
-        [source, candidate.fromHandleId],
-        [target, candidate.toHandleId],
-    ] as const) {
-        if (!handle) continue;
-        if (node.type === CanvasNodeType.BatchTable && handle.startsWith("batch-reference:")) {
-            if (!batchReferenceColumns(node.metadata?.batchTable).some((column) => `batch-reference:${column.id}` === handle)) return "批量表参考列不存在";
-            continue;
-        }
-        if (node.type !== CanvasNodeType.Script || (handle !== "storyboard:context" && !handle.startsWith("row:"))) return "节点 handle 无效";
-        if (handle.startsWith("row:") && !node.metadata?.storyboard?.rows.some((row) => `row:${row.id}` === handle)) return "分镜行不存在";
-    }
     const acceptedInputKinds = getNodeAcceptedInputKinds(target.type);
     if (acceptedInputKinds.length) {
+        const source = nodes.find((node) => node.id === candidate.fromNodeId);
         const sourceKind = source ? getNodeInputKind(source.type) : undefined;
         const isMediaConversion = target.type === CanvasNodeType.MediaConversion;
-        const acceptedSourceTypes = connectionTraits[target.type]?.acceptedSourceTypes;
-        const hasAcceptedSource = acceptedSourceTypes?.length ? acceptedSourceTypes.includes(source.type) : Boolean(sourceKind && acceptedInputKinds.includes(sourceKind));
+        const hasAcceptedSource = isMediaConversion
+            ? source?.type === CanvasNodeType.Image || source?.type === CanvasNodeType.Video
+            : Boolean(sourceKind && acceptedInputKinds.includes(sourceKind));
         if (!sourceKind || !hasAcceptedSource) {
             const labels = acceptedInputKinds.map(acceptedInputKindLabel).join("或");
             const targetLabel = isMediaConversion ? "转换" : target.type === CanvasNodeType.BatchTable ? "批量创作表" : labels;
@@ -43,7 +29,11 @@ export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[],
         }
         const maxInputCount = getNodeMaxInputCount(target.type);
         if (maxInputCount) {
-            const inputCount = new Set([...connections, { id: "candidate", ...candidate }].filter((connection) => connection.toNodeId === target.id).map((connection) => connection.fromNodeId)).size;
+            const inputCount = new Set(
+                [...connections, { id: "candidate", ...candidate }]
+                    .filter((connection) => connection.toNodeId === target.id)
+                    .map((connection) => connection.fromNodeId),
+            ).size;
             if (inputCount > maxInputCount) return `${isMediaConversion ? "转换" : "当前"}节点最多连接 ${maxInputCount} 个输入`;
         }
     }
@@ -61,9 +51,26 @@ export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[],
         return options.ignoreCapacity ? "" : capacityError(config, mode, "image", visualInputCount, "参考图") || capacityError(config, mode, "video", input.videoCount, "参考视频") || capacityError(config, mode, "audio", input.audioCount, "参考音频");
     }
     if (mode === "text" && input.audioCount > 0) return "文本生成节点不能连接参考音频";
-    if (mode === "audio" && input.characterCount > 1) return "角色配音一次只能连接一个角色卡";
-    if (mode === "audio" && (input.imageCount > 0 || input.videoCount > 0 || input.audioCount > 0)) return "音频生成节点只接受文本或单个角色卡输入";
+    if (mode === "audio") {
+        const model = routedAudioModel(config, target, input);
+        if (isDoubaoAudioModel(config, model)) return doubaoAudioInputError(input);
+        if (input.imageCount > 0 || input.videoCount > 0) return "音频生成节点不能连接参考图片或参考视频";
+        if (input.characterCount > 1) return "角色配音一次只能连接一个角色卡";
+        const maxAudios = audioReferenceCapacity(config, model);
+        if (input.audioCount > maxAudios) {
+            return maxAudios > 0 ? `音频生成节点最多连接 ${maxAudios} 个参考音频` : "当前音频模型不支持参考音频";
+        }
+    }
     return "";
+}
+
+function routedAudioModel(config: AiConfig, target: CanvasNodeData, input: ModelInputSummary) {
+    const generationSpec = readNodeGenerationSpec(target);
+    const selectedModel = generationSpec?.mode === "audio" ? resolveGenerationSelection(config, generationSpec.modelSelection) : "";
+    const explicit = audioModelForConnection(config, selectedModel || target.metadata?.model || "");
+    // 同名模型组会在生成时改选到能接受当前参考的成员。连线必须按这个结果判断，
+    // 不能拿组里一个不支持图片的模型把豆包音频挡掉。
+    return resolveCompatibleModel(config, explicit, { capability: "audio", input }) || explicit;
 }
 
 function acceptedInputKindLabel(kind: "image" | "video" | "audio" | "text" | "table_data") {

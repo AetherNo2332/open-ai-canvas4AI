@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"strings"
 	"sync"
 	"time"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type Service struct {
@@ -45,15 +45,11 @@ func (s *Service) ReadSubmission(ctx context.Context, p identity.Principal, canv
 	if err != nil {
 		return TaskHandle{}, &commands.Error{Reason: "receipt_missing", Message: "任务提交回执不存在"}
 	}
-	version, err := s.repo.CanvasMediaVersionForTask(p.OwnerID, binding.TaskID)
+	base, _, err := mediaversions.BindingBase(binding)
 	if err != nil {
 		return TaskHandle{}, err
 	}
-	versionID := ""
-	if version != nil {
-		versionID = version.ID
-	}
-	return TaskHandle{TaskID: binding.TaskID, VersionID: versionID, Receipt: receipt}, nil
+	return TaskHandle{TaskID: binding.TaskID, VersionID: base.ResultVersionID, Receipt: receipt}, nil
 }
 func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRequest) (TaskHandle, error) {
 	if !p.HasScope("generation.submit") || p.Role == "viewer" {
@@ -72,7 +68,6 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 		return TaskHandle{}, commands.BadAuthRequest("生成意图无效")
 	}
 	var taskID string
-	var versionID string
 	receipt, fresh, err := s.commands.ExecuteHost(ctx, p, req.Command, "task_submit", req, false, func(tx *repository.Repository, doc commands.Document) (commands.Document, map[string]bool, error) {
 		node := findNode(doc, req.TargetNodeID)
 		if node == nil {
@@ -189,6 +184,25 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 			}
 			binding.OriginalContent = string(raw)
 		}
+		versioned := mediaversions.Supported(req.Task.Mode)
+		var target map[string]any
+		if versioned {
+			target = node
+			if req.Consumer.OutputNodeID != "" {
+				target = findNode(doc, req.Consumer.OutputNodeID)
+			}
+			if target == nil {
+				return nil, nil, commands.BadAuthRequest("媒体输出节点不存在")
+			}
+			if _, err := mediaversions.ScopeForNode(tx, p.OwnerID, req.Command.CanvasID, str(target["id"])); err != nil {
+				return nil, nil, mediaVersionError(err)
+			}
+			base, err := mediaversions.Begin(target, prepared.Task, objectList(doc["nodes"]))
+			if err != nil {
+				return nil, nil, mediaVersionError(err)
+			}
+			binding.MediaVersionJSON = base.Encode()
+		}
 		if err = tx.InsertCanvasTaskBinding(&binding); err != nil {
 			return nil, nil, err
 		}
@@ -208,29 +222,9 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 				return nil, nil, err
 			}
 		}
-		versioned := mediaversions.Supported(req.Task.Mode)
 		if versioned {
-			target := node
-			if req.Consumer.OutputNodeID != "" {
-				target = findNode(doc, req.Consumer.OutputNodeID)
-			}
-			if target == nil {
-				return nil, nil, commands.BadAuthRequest("媒体输出节点不存在")
-			}
-			scope, err := mediaversions.ScopeForNode(tx, p.OwnerID, req.Command.CanvasID, str(target["id"]))
-			if err != nil {
-				return nil, nil, mediaVersionError(err)
-			}
-			version, err := mediaversions.Begin(tx, scope, target, prepared.Task, req.Intent, objectList(doc["nodes"]))
-			if err != nil {
-				return nil, nil, mediaVersionError(err)
-			}
-			versionID = version.ID
 			if req.Consumer.Kind == "storyboard" || req.Consumer.Kind == "batch" {
 				setPending(node, req, prepared.Task)
-			}
-			if mediaversions.ReadState(target).CurrentVersionID == "" {
-				metadata(target)["taskId"], metadata(target)["taskStatus"] = prepared.Task.ID, string(prepared.Task.Status)
 			}
 			reads["node:"+str(target["id"])] = true
 		} else {
@@ -262,16 +256,7 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 	if fresh {
 		s.submitter.Wake()
 	}
-	if versionID == "" {
-		version, e := s.repo.CanvasMediaVersionForTask(p.OwnerID, taskID)
-		if e != nil {
-			return TaskHandle{}, e
-		}
-		if version != nil {
-			versionID = version.ID
-		}
-	}
-	return TaskHandle{TaskID: taskID, VersionID: versionID, Receipt: receipt}, nil
+	return TaskHandle{TaskID: taskID, Receipt: receipt}, nil
 }
 func findNode(doc commands.Document, id string) map[string]any {
 	for _, n := range objectList(doc["nodes"]) {

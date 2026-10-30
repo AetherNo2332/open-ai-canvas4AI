@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func nativeSkillLeasedFixture(t *testing.T) (*Service, *gorm.DB, *model.CloudAgentExecution, cloudAgentSkill) {
@@ -647,5 +647,39 @@ func TestNativeAssembledPromptSurvivesWorkerDirectoryChangeWithoutAllowingConten
 	state.Snapshot.AssembledPromptHash = cloudAgentTextDigest(original)
 	if err := cloudAgentVerifyAssembledPrompt(&state, restored); err == nil {
 		t.Fatal("legacy prompt identity was weakened")
+	}
+}
+
+func TestNativeSkillPromptIdentityIsIdentityForStableLocationsAndMatchesLegacyPaths(t *testing.T) {
+	skills := []cloudAgentSkill{{ID: "one", NativeName: "skill-abc"}, {ID: "two", NativeName: "skill-def"}}
+	stable := "SERVER POLICY\n<skills>\n<available_skills>\n<skill>\n<name>skill-abc</name>\n<location>skills/skill-abc/SKILL.md</location>\n</skill>\n<skill>\n<name>skill-def</name>\n<location>skills/skill-def/SKILL.md</location>\n</skill>\n</available_skills>\n</skills>\n<cwd>\ncanvas-agent-run\n</cwd>"
+	if got := nativeSkillPromptIdentity(stable, skills); got != stable {
+		t.Fatalf("stable prompt was rewritten:\n%s", got)
+	}
+	for _, root := range []string{"/tmp/canvas-pi-run-a1/cwd", `C:\Users\x\AppData\Local\Temp\canvas-pi-run-b2\cwd`} {
+		legacy := stable
+		sep := "/"
+		if strings.Contains(root, `\`) {
+			sep = `\`
+		}
+		for _, name := range []string{"skill-abc", "skill-def"} {
+			legacy = strings.ReplaceAll(legacy, "skills/"+name+"/SKILL.md", root+sep+"skills"+sep+name+sep+"SKILL.md")
+		}
+		legacy = strings.ReplaceAll(legacy, "canvas-agent-run", strings.ReplaceAll(root, `\`, "/"))
+		if got := nativeSkillPromptIdentity(legacy, skills); got != stable {
+			t.Fatalf("legacy prompt identity differs for %s:\n%s", root, got)
+		}
+		state := cloudAgentRuntime{SkillRuntimeMode: cloudAgentSkillRuntimeNative, Skills: skills,
+			Snapshot: &cloudAgentContractSnapshot{AssembledPromptHash: cloudAgentTextDigest(cloudAgentAssembledPromptIdentity(&cloudAgentRuntime{SkillRuntimeMode: cloudAgentSkillRuntimeNative, Skills: skills}, legacy))}}
+		if err := cloudAgentVerifyAssembledPrompt(&state, stable); err != nil {
+			t.Fatalf("a run frozen with a legacy prompt rejected the stable prompt: %v", err)
+		}
+	}
+}
+
+func TestNativeSkillReadToolDescribesStableRelativeLocation(t *testing.T) {
+	description := nativeSkillReadToolSchema()["function"].(map[string]any)["description"].(string)
+	if !strings.Contains(description, "skills/<name>/SKILL.md") || strings.Contains(description, "绝对路径") {
+		t.Fatalf("read description must point to the stable relative location: %s", description)
 	}
 }

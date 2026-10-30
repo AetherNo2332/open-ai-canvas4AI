@@ -29,3 +29,8 @@ export function WorkspaceSidebarLabel({ children, identity }: { children: ReactN
         </AnimatePresence>
     );
 }
+
+/** 侧栏展开/收起的过渡：时长来自当前皮肤的常规过渡（ms），减少动态效果时直接跳到终态。 */
+export function workspaceSidebarTransition(reducedMotion: boolean | null, motionNormalMs: number) {
+    return { duration: reducedMotion ? 0 : Math.max(0, motionNormalMs) / 1000, ease: [0.2, 0.8, 0.2, 1] as const };
+}

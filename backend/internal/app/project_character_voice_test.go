@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -36,7 +36,6 @@ func TestBindProjectCharacterVoiceWithSampleResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.AutoMigrate(
-		&model.User{},
 		&model.Project{}, &model.Asset{}, &model.AssetVersion{}, &model.AssetRepresentation{}, &model.ProjectAssetLink{},
 		&model.CharacterVoiceBinding{}, &model.VoiceProfile{}, &model.Resource{}, &model.Shot{}, &model.ShotAssetReference{},
 	); err != nil {
@@ -51,7 +50,7 @@ func TestBindProjectCharacterVoiceWithSampleResource(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now}
 	link := model.ProjectAssetLink{ID: "project-character-voice-link", ProjectID: project.ID, AssetID: asset.ID, CreatedAt: now}
 	resource := model.Resource{ID: "voice-sample", UserID: project.UserID, Kind: "audio", Status: model.ResourceStatusReady, MimeType: "audio/wav", ObjectKey: "voice-sample.wav", CreatedAt: now, UpdatedAt: now}
-	for _, value := range []any{&model.User{ID: project.UserID, Status: model.UserStatusActive}, &project, &asset, &version, &link, &resource} {
+	for _, value := range []any{&project, &asset, &version, &link, &resource} {
 		if err := db.Create(value).Error; err != nil {
 			t.Fatal(err)
 		}

@@ -3,7 +3,7 @@ package database
 import (
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func TestAgentMessageQueueMigrationFromV64PreservesRuns(t *testing.T) {
@@ -22,7 +22,7 @@ func TestAgentMessageQueueMigrationFromV64PreservesRuns(t *testing.T) {
 	if err = db.Migrator().DropTable(&model.AgentQueuedMessage{}, &model.AgentConversationQueue{}, &model.AgentUISetting{}); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Where("version = ?", 65).Delete(&schemaMigration{}).Error; err != nil {
+	if err = db.Where("version = ?", forkAgentRuntimeMigrationVersion).Delete(&schemaMigration{}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err = MigrateSchema(db); err != nil {

@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"strconv"
 	"strings"
 	"time"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // Outputs/asset registration is durable before canvas application. A crash
@@ -52,8 +53,12 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 	if err != nil {
 		return err
 	}
-	version, err := s.repo.CanvasMediaVersionForTask(task.UserID, task.ID)
+	base, versioned, err := mediaversions.BindingBase(binding)
 	if err != nil {
+		return err
+	}
+	var consumer Consumer
+	if err := json.Unmarshal([]byte(binding.ConsumerJSON), &consumer); err != nil {
 		return err
 	}
 	p := identity.Principal{ID: binding.OwnerID, OwnerID: binding.OwnerID, ClientID: binding.ClientID, Role: "owner", Scopes: identity.OwnerScopes()}
@@ -69,12 +74,18 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 				applyErr = tx.FinishCanvasMaterialization(taskID, outcome, binding.ResolutionVersion)
 			}
 		}()
-		if version != nil {
-			var result commands.Document
-			result, outcome, err = settleMediaVersion(tx, doc, *binding, *task, *version, outputs)
-			if err == nil && outcome == "target_changed" {
-				return nil, nil, errMediaVersionTargetChanged
+		if versioned {
+			// 绑定上的上下文在本事务内重读：投影可能已单调标记输出归属变化。
+			current, err := tx.CanvasTaskBinding(taskID)
+			if err != nil {
+				return nil, nil, err
 			}
+			fresh, _, err := mediaversions.BindingBase(current)
+			if err != nil {
+				return nil, nil, err
+			}
+			var result commands.Document
+			result, outcome, err = settleMediaVersion(tx, doc, *current, fresh, *task, outputs, consumer)
 			return result, nil, err
 		}
 		if binding.Mode == "previs" {
@@ -117,10 +128,6 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 		if node == nil {
 			outcome = "target_deleted"
 			return doc, nil, nil
-		}
-		var consumer Consumer
-		if err := json.Unmarshal([]byte(binding.ConsumerJSON), &consumer); err != nil {
-			return nil, nil, err
 		}
 		if consumer.Kind == "batch" || consumer.Kind == "storyboard" {
 			row := consumerRow(node, consumer)
@@ -231,18 +238,17 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 	}, origin)
 	if err != nil {
 		e, commandError := err.(*commands.Error)
-		if errors.Is(err, errMediaVersionTargetChanged) || (commandError && (e.Reason == "document_epoch_mismatch" || e.Reason == "entity_deleted")) {
+		if errors.Is(err, errMediaVersionUnchanged) || commandError && (e.Reason == "document_epoch_mismatch" || e.Reason == "entity_deleted") {
 			if commandError {
 				outcome = e.Reason
-			} else {
-				outcome = "target_changed"
 			}
-			if version != nil {
+			if versioned {
+				base.Settled = true
 				return s.repo.CommandTransaction(ctx, func(tx *repository.Repository) error {
 					if err := tx.LockCanvasWrite(binding.OwnerID, binding.CanvasID); err != nil {
 						return err
 					}
-					if _, _, err := settleMediaVersion(tx, commands.Document{}, *binding, *task, *version, outputs); err != nil {
+					if err := tx.UpdateCanvasTaskBindingMediaVersion(taskID, binding.OwnerID, base.Encode()); err != nil {
 						return err
 					}
 					return tx.FinishCanvasMaterialization(taskID, outcome, binding.ResolutionVersion)

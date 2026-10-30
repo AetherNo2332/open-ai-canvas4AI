@@ -4,10 +4,12 @@ import { useLocation, useNavigate } from "react-router";
 
 import { BannerAnnouncementsSlider } from "@/components/layout/banner-announcements-slider";
 import { ModelSetupGuide } from "@/components/layout/model-setup-guide";
+import { workspaceSidebarTransition } from "@/components/layout/workspace-sidebar-motion";
 import { WorkspaceSidebarNav } from "@/components/layout/workspace-sidebar-nav";
 import { readWorkspaceSidebarCollapsed, writeWorkspaceSidebarCollapsed } from "@/components/layout/workspace-sidebar-state";
 import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
 import { WorkspaceTopBarExtensionProvider } from "@/components/layout/workspace-top-bar-extension";
+import { WorkspaceStorageLimitNotice } from "@/components/layout/workspace-storage-limit-notice";
 import { WorkspaceWalletHost } from "@/components/layout/workspace-wallet-modal";
 import { cn } from "@/lib/utils";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
@@ -32,12 +34,14 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const [paletteOpen, setPaletteOpen] = useState(false);
     const mobileViewport = useSyncExternalStore(subscribeViewport, getMobileViewport, () => false);
     const reducedMotion = useReducedMotion();
+    // 侧栏宽度/位移动画时长跟随当前皮肤的常规过渡；减少动态效果时直接到终态。
     const motionNormal = useAppearanceStore((state) => state.appearance.activeSkin.tokens.components.motionNormal);
     const sidebarRef = useRef<HTMLElement>(null);
     const sidebarCollapsed = !mobileViewport && desktopSidebarCollapsed;
     const sidebarHidden = mobileViewport && !mobileSidebarExpanded;
-    const sidebarTransition = { duration: reducedMotion ? 0 : motionNormal / 1000, ease: [0.2, 0.8, 0.2, 1] as const };
+    const sidebarTransition = workspaceSidebarTransition(reducedMotion, motionNormal);
     const closeMobileSidebar = () => {
+        // 关闭前把焦点交还给顶栏菜单按钮，避免焦点留在已 inert 的侧栏里。
         if (sidebarRef.current?.contains(document.activeElement)) {
             document.querySelector<HTMLButtonElement>(".app-workspace-mobile-menu")?.focus();
         }
@@ -162,14 +166,11 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         </div>
                     </div>
 
-                    {paletteOpen ? (
-                        <Suspense fallback={null}>
-                            <WorkspaceCommandPalette open onClose={() => setPaletteOpen(false)} />
-                        </Suspense>
-                    ) : null}
+                    {paletteOpen ? <Suspense fallback={null}><WorkspaceCommandPalette open onClose={() => setPaletteOpen(false)} /></Suspense> : null}
                 </div>
             </WorkspaceTopBarExtensionProvider>
             <WorkspaceWalletHost />
+            <WorkspaceStorageLimitNotice />
             <ModelSetupGuide hidden={pathname === "/login" || pathname === "/register" || pathname.startsWith("/admin")} />
         </>
     );

@@ -1,4 +1,4 @@
-export type ImageResolutionTier = "1k" | "1.5k" | "2k" | "4k";
+export type ImageResolutionTier = string;
 
 export type ImageResolutionOption = {
     size: string;
@@ -64,7 +64,15 @@ function parseImageResolutionOption(value: string): ImageResolutionOption | null
     const height = Number(match[2]);
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return null;
     const pixels = width * height;
-    const tier: ImageResolutionTier | null = seedream15kSizes.has(`${width}x${height}`) ? "1.5k" : pixels <= 2_000_000 ? "1k" : pixels <= 5_000_000 ? "2k" : pixels <= 8_294_400 ? "4k" : null;
+    const tier: ImageResolutionTier | null = seedream15kSizes.has(`${width}x${height}`)
+        ? "1.5k"
+        : pixels <= 2_000_000
+          ? "1k"
+          : pixels <= 5_000_000
+            ? "2k"
+            : pixels <= 8_294_400
+              ? "4k"
+              : null;
     if (!tier) return null;
     let a = width, b = height;
     while (b) [a, b] = [b, a % b];

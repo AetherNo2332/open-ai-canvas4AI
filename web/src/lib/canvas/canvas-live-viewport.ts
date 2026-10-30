@@ -1,5 +1,4 @@
 import type { SelectionBox, ViewportTransform } from "@/types/canvas";
-import { canvasGridLayerStyle } from "@/lib/canvas/canvas-grid-geometry";
 
 export const CANVAS_VIEWPORT_PREVIEW_EVENT = "canvas:viewport-preview";
 export const CANVAS_GRAPHICS_VIEWPORT_PREVIEW_EVENT = "canvas:graphics-viewport-preview";
@@ -32,15 +31,36 @@ const nodeDragPreviewDomStates = new WeakMap<HTMLDivElement, NodeDragPreviewDomS
 const nodeSelectionPreviewDomStates = new WeakMap<HTMLDivElement, NodeSelectionPreviewDomState>();
 const liveViewportElements = new WeakMap<HTMLDivElement, { worldLayer: HTMLElement | null; gridLayer: HTMLElement | null }>();
 
+/** 网格层向左上多铺的像素，需大于最大网格间距，保证平移取模后仍覆盖视口。 */
+export const CANVAS_GRID_BLEED = 64;
+
+/**
+ * 网格跟随视口平移与缩放：间距随 k 缩放，并在 [base*2/3, base*4/3) 内按 2 倍折叠，
+ * 保持屏幕密度稳定。平移只改 transform（合成层），缩放才改 background-size。
+ */
+export function canvasGridMetrics(viewport: ViewportTransform, base: number) {
+    let spacing = base * viewport.k;
+    if (!Number.isFinite(spacing) || spacing <= 0) spacing = base;
+    while (spacing < (base * 2) / 3) spacing *= 2;
+    while (spacing >= (base * 4) / 3) spacing /= 2;
+    const wrap = (value: number) => ((value % spacing) + spacing) % spacing;
+    return { spacing, offsetX: wrap(viewport.x + CANVAS_GRID_BLEED), offsetY: wrap(viewport.y + CANVAS_GRID_BLEED) };
+}
+
+function applyCanvasGridViewport(gridLayer: HTMLElement, viewport: ViewportTransform) {
+    const base = Number(gridLayer.dataset.canvasGridBase) || 24;
+    const { spacing, offsetX, offsetY } = canvasGridMetrics(viewport, base);
+    const size = `${spacing}px ${spacing}px`;
+    if (gridLayer.style.backgroundSize !== size) gridLayer.style.backgroundSize = size;
+    gridLayer.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0)`;
+}
+
 export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewport: ViewportTransform, notify = true) {
     if (!container) return;
     const committedScale = Number(container.style.getPropertyValue("--canvas-committed-scale")) || viewport.k;
     let elements = liveViewportElements.get(container);
     if (!elements) {
-        elements = {
-            worldLayer: container.querySelector<HTMLElement>("[data-canvas-world-layer]"),
-            gridLayer: container.querySelector<HTMLElement>("[data-canvas-grid-layer]"),
-        };
+        elements = { worldLayer: null, gridLayer: null };
         liveViewportElements.set(container, elements);
     }
     if (!elements.worldLayer?.isConnected) elements.worldLayer = container.querySelector<HTMLElement>("[data-canvas-world-layer]");
@@ -54,15 +74,10 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
         const willChange = container.dataset.canvasViewportInteracting === "true" ? "transform" : "";
         if (worldLayer.style.willChange !== willChange) worldLayer.style.willChange = willChange;
     }
-    const gridLayer = elements.gridLayer;
-    if (gridLayer) {
-        // 网格同样按帧跟随视口；只写网格层自身的样式，避免画布根变量的继承重算。
-        const gridStyle = canvasGridLayerStyle(viewport);
-        gridLayer.style.backgroundSize = gridStyle.backgroundSize;
-        gridLayer.style.transform = gridStyle.transform;
-        gridLayer.style.visibility = gridStyle.visible ? "" : "hidden";
-    }
-    // 交互期避免修改根变量触发整棵节点树样式重算；提交帧会统一校正尺寸。
+    if (elements.gridLayer) applyCanvasGridViewport(elements.gridLayer, viewport);
+    // 交互期不要修改根容器上的继承变量。它们会让整棵节点 DOM 子树失效并
+    // 触发样式重算；交互结束后由 CanvasViewport 的 committed render 一次性校正。
+    // 标题和选框在交互期暂时跟随世界层缩放，换取连续帧的合成路径。
     if (container.dataset.canvasViewportInteracting !== "true") {
         container.style.setProperty("--canvas-live-scale", String(viewport.k));
         container.style.setProperty("--canvas-live-inverse-scale", String(1 / Math.max(viewport.k, 0.05)));

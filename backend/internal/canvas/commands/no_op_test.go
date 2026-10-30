@@ -8,10 +8,9 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func noOpRequest(snap Snapshot, operationID string, ops ...Operation) Command {
@@ -267,27 +266,16 @@ func TestNoOpCommandRetainsAuthorityAndPreconditions(t *testing.T) {
 	}
 }
 
-func TestNoOpOptimizationRetainsSameMediaSelection(t *testing.T) {
+func TestNoOpSelectionOfCurrentVersionIsSuccess(t *testing.T) {
 	svc, _, snap, _ := managedHistoryFixture(t)
 	ctx, p := context.Background(), ownerContext().Principal
-	before := mediaversions.ReadState(entity(snap.Document, "node:a"))
-	for _, operationID := range []string{"select-current", "select-current-again"} {
-		receipt, err := svc.Execute(ctx, p, noOpRequest(snap, operationID, Operation{Type: "use_media_version", ID: "a", VersionID: before.CurrentVersionID}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if receipt.Revision != snap.Revision+1 || receipt.EventSeq != snap.EventSeq+1 || len(receipt.Changes.Entities) != 1 {
-			t.Fatalf("same-media selection was swallowed: %+v", receipt)
-		}
-		snap, err = svc.ReadSnapshot(ctx, p, snap.CanvasID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		after := mediaversions.ReadState(entity(snap.Document, "node:a"))
-		if after.SelectionRevision != before.SelectionRevision+1 || after.CurrentVersionID != before.CurrentVersionID {
-			t.Fatalf("same-media selection lost user intent: before=%+v after=%+v", before, after)
-		}
-		before = after
+	current := currentVersion(entity(snap.Document, "node:a"))
+	receipt, err := svc.Execute(ctx, p, noOpRequest(snap, "select-current", Operation{Type: "use_media_version", ID: "a", VersionID: current}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(receipt.Changes.Entities) != 0 {
+		t.Fatalf("already-current selection must be a no-op: %+v", receipt)
 	}
 }
 

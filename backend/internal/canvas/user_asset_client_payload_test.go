@@ -5,13 +5,15 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func TestClientAssetPayloadRepairsWorkflowAssetDocument(t *testing.T) {
 	createdAt := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	asset := model.Asset{
-		ID: "workflow-asset-test",
+		ID:   "workflow-asset-test",
+		Kind: "video", Title: "镜头01 · 视频",
+		Category: model.AssetCategoryMaterial, Status: model.AssetVersionStatusConfirmed,
 		PayloadJSON: `{
 			"id":"workflow-asset-test",
 			"kind":"video",
@@ -61,6 +63,35 @@ func TestClientAssetPayloadPreservesCompleteDocument(t *testing.T) {
 	}
 }
 
+func TestClientAssetPayloadUsesPersistedIdentity(t *testing.T) {
+	asset := model.Asset{
+		ID: "actual-id", Kind: "video", Title: "当前标题", Category: model.AssetCategoryMaterial,
+		Status: model.AssetVersionStatusConfirmed, PrimaryVersionID: "current-version",
+		PayloadJSON: `{"id":"stale-id","kind":"image","title":"旧标题","folderId":"removed-folder","primaryVersionId":"old-version","data":{"url":"/api/resources/video/file","width":1920,"height":1080,"bytes":1024,"mimeType":"video/mp4"}}`,
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(ClientAssetPayload(asset), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["id"] != "actual-id" || payload["kind"] != "video" || payload["title"] != "当前标题" || payload["primaryVersionId"] != "current-version" {
+		t.Fatalf("response returned stale payload identity: %#v", payload)
+	}
+	if _, exists := payload["folderId"]; exists {
+		t.Fatal("response restored a removed folder")
+	}
+}
+
+func TestClientAssetPayloadDoesNotInventMissingMedia(t *testing.T) {
+	asset := model.Asset{
+		ID: "broken-video", Kind: "video", Title: "缺少资源信息",
+		PayloadJSON: `{"data":{"width":1920,"height":1080,"mimeType":"video/mp4"}}`,
+	}
+	raw := ClientAssetPayload(asset)
+	if _, err := AssetFromJSON("owner", raw); err == nil {
+		t.Fatalf("invalid media unexpectedly became writable: %s", raw)
+	}
+}
+
 func TestClientAssetListPayloadDropsVerboseMetadata(t *testing.T) {
 	asset := model.Asset{PayloadJSON: `{"id":"asset-1","kind":"image","title":"列表","coverUrl":"https://example.com/a.png","tags":[],"data":{"dataUrl":"https://example.com/a.png","width":2,"height":3,"bytes":1,"mimeType":"image/png"},"metadata":{"prompt":"很长的生成提示词","nodeId":"node-1","projectIds":["project-1"]}}`}
 	var payload map[string]any
@@ -79,23 +110,5 @@ func TestClientAssetListPayloadDropsVerboseMetadata(t *testing.T) {
 	}
 	if payload["coverUrl"] != "" {
 		t.Fatalf("duplicate cover URL was not removed: %#v", payload["coverUrl"])
-	}
-}
-
-func TestClientAssetListPayloadPreservesCanvasOriginAndGenerationSource(t *testing.T) {
-	asset := model.Asset{PayloadJSON: `{"id":"a","kind":"image","metadata":{"source":"generation-task","canvasId":"c","canvasName":"自由画布 7","taskId":"private-task"},"data":{"storageKey":"resource:r","width":2,"height":3}}`}
-	var payload map[string]any
-	if err := json.Unmarshal(ClientAssetListPayload(asset), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload["source"] != "生成任务" {
-		t.Fatalf("source=%v", payload["source"])
-	}
-	metadata := payload["metadata"].(map[string]any)
-	if metadata["canvasName"] != "自由画布 7" || metadata["canvasId"] != "c" {
-		t.Fatalf("origin=%v", metadata)
-	}
-	if metadata["taskId"] != nil {
-		t.Fatal("verbose task metadata leaked")
 	}
 }

@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 var ErrAgentMessageQueueFull = errors.New("待发消息已达到上限")
@@ -159,8 +159,8 @@ func (r *Repository) LatestAgentConversationRun(userID, conversationID string) (
 // The account write reservation is shared with run admission, checkpoint saves
 // and cancellation, and is acquired before reading any queue or run snapshot.
 func (r *Repository) WithAgentConversation(userID, conversationID string, fn func(*Repository, *model.AgentConversationQueue, *model.CloudAgentExecution) error) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		writer := r.transactionRepository(tx)
+	return r.transact(r.db, func(writer *Repository) error {
+		tx := writer.db
 		if err := writer.LockCanvasWrite(userID, ""); err != nil {
 			return err
 		}

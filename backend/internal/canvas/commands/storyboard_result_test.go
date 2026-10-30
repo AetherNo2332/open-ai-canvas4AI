@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/capability"
 )
 
 func generatedStoryboardDoc(t *testing.T, visibleColumns string) Document {

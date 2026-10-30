@@ -1,27 +1,34 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
+	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/canvas"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/canvas"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type (
-	CanvasShareRequest   = canvas.CanvasShareRequest
-	CanvasShareStatus    = canvas.CanvasShareStatus
-	PublicCanvasShare    = canvas.PublicCanvasShare
-	AssetsSyncRequest    = canvas.AssetsSyncRequest
-	CanvasHistoryList    = canvas.CanvasHistoryList
-	UserDataSummary      = canvas.UserDataSummary
-	UserDataSnapshot     = canvas.UserDataSnapshot
-	CanvasLibrarySummary = canvas.CanvasLibrarySummary
-	CanvasLibraryPage    = canvas.CanvasLibraryPage
+	CanvasShareRequest      = canvas.CanvasShareRequest
+	CanvasShareStatus       = canvas.CanvasShareStatus
+	PublicCanvasShare       = canvas.PublicCanvasShare
+	AssetsSyncRequest       = canvas.AssetsSyncRequest
+	CanvasHistoryList       = canvas.CanvasHistoryList
+	UserDataSummary         = canvas.UserDataSummary
+	UserDataSnapshot        = canvas.UserDataSnapshot
+	CanvasLibrarySummary    = canvas.CanvasLibrarySummary
+	CanvasLibraryPage       = canvas.CanvasLibraryPage
+	CanvasOperationsRequest = canvas.CanvasOperationsRequest
+	CanvasOperation         = canvas.CanvasOperation
+	CanvasEditLeaseRequest  = canvas.CanvasEditLeaseRequest
+	CanvasSyncStatus        = canvas.CanvasSyncStatus
 )
 
 type canvasHost struct {
@@ -68,6 +75,23 @@ func (h canvasHost) WithStorageLock(fn func() error) error {
 	return fn()
 }
 
+func (h canvasHost) CanvasQuotaCheck(userID string) (func(*repository.Repository, bool, int64) error, error) {
+	if h.svc == nil {
+		return func(*repository.Repository, bool, int64) error { return nil }, nil
+	}
+	policy, err := h.svc.RuntimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	return func(repo *repository.Repository, creating bool, deltaBytes int64) error {
+		usage, err := repo.UserStructuredStorageUsage(userID)
+		if err != nil {
+			return err
+		}
+		return validateStructuredStorageQuotaWithPolicy(usage, "canvas", creating, deltaBytes, policy.Resource)
+	}, nil
+}
+
 func (h canvasHost) StructuredQuota(userID, kind string, creating bool, deltaBytes int64) error {
 	if h.svc == nil {
 		return nil
@@ -76,7 +100,7 @@ func (h canvasHost) StructuredQuota(userID, kind string, creating bool, deltaByt
 	if err != nil {
 		return err
 	}
-	usage, err := h.svc.repo.UserStorageUsage(userID)
+	usage, err := h.svc.repo.UserStructuredStorageUsage(userID)
 	if err != nil {
 		return err
 	}
@@ -91,7 +115,7 @@ func (h canvasHost) StructuredReplacementQuota(userID, kind string, count int, b
 	if err != nil {
 		return err
 	}
-	usage, err := h.svc.repo.UserStorageUsage(userID)
+	usage, err := h.svc.repo.UserStructuredStorageUsage(userID)
 	if err != nil {
 		return err
 	}
@@ -182,10 +206,6 @@ func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataS
 	return s.canvasDomain().UpsertUserAsset(userID, raw)
 }
 
-func (s *Service) CreateUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
-	return s.canvasDomain().CreateUserAsset(userID, raw)
-}
-
 func (s *Service) DeleteUserAsset(userID string, id string) error {
 	return s.canvasDomain().DeleteUserAsset(userID, id)
 }
@@ -218,12 +238,24 @@ func (s *Service) UserCanvasProjectMetadata(userID string, id string) (*model.Ca
 	return s.canvasDomain().UserCanvasProjectMetadata(userID, id)
 }
 
+func (s *Service) UserCanvasSyncStatus(userID, id string) (CanvasSyncStatus, error) {
+	return s.canvasDomain().UserCanvasSyncStatus(userID, id)
+}
+
+func (s *Service) ChangeUserCanvasEditLease(userID, id string, req CanvasEditLeaseRequest) (map[string]any, error) {
+	return s.canvasDomain().ChangeUserCanvasEditLease(userID, id, req)
+}
+
 func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
 	return s.canvasDomain().UserCanvasProject(userID, id)
 }
 
 func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
 	return s.canvasDomain().UpsertUserCanvasProject(userID, raw)
+}
+
+func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasOperationsRequest) (UserDataSummary, error) {
+	return s.canvasDomain().ApplyUserCanvasOperations(userID, canvasID, req)
 }
 
 func (s *Service) RepairUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
@@ -246,6 +278,9 @@ func (s *Service) RestoreCanvasHistory(userID, canvasID, snapshotID string, revi
 	return s.canvasDomain().RestoreCanvasHistory(userID, canvasID, snapshotID, revision)
 }
 
+// saveCreationCanvasWithHistory 是 Agent 整份写回（工具改写、撤销、创作提交）的落库入口。
+// 调用方已完成引用、归属与额度校验；这里和命令层一样经 SaveAgentCanvasWrite 落库，
+// 与浏览器写入共用 revision 序列，事件按 Agent 归属投影，并记录画布历史快照。
 func saveCreationCanvasWithHistory(repo *repository.Repository, project *model.CanvasProject, previous string) error {
 	before, err := repo.CanvasProjectForUser(project.UserID, project.ID)
 	if err != nil {
@@ -254,12 +289,62 @@ func saveCreationCanvasWithHistory(repo *repository.Repository, project *model.C
 	if before.PayloadJSON != previous || before.Revision != project.Revision {
 		return repository.ErrCreationConflict
 	}
-	project.UpdatedAt = time.Now().UTC()
-	err = canvas.SaveDocumentWithHistory(repo, before, project, "automatic")
+	desired, err := creationDocument(project.PayloadJSON)
+	if err != nil {
+		return err
+	}
+	current, err := creationDocument(before.PayloadJSON)
+	if err != nil {
+		return err
+	}
+	// 只刷新簿记字段（updatedAt 等）不算编辑，不产生新 revision。
+	if reflect.DeepEqual(withoutCanvasBookkeeping(desired), withoutCanvasBookkeeping(current)) {
+		return nil
+	}
+	// 与 operations 写入保持同一份落库形态：revision 等簿记不进正文，列从正文派生。
+	now := time.Now().UTC()
+	delete(desired, "revision")
+	delete(desired, "remoteContentHash")
+	desired["id"], desired["updatedAt"] = project.ID, now.Format(time.RFC3339Nano)
+	raw, err := json.Marshal(desired)
+	if err != nil {
+		return err
+	}
+	after := *before
+	after.PayloadJSON = string(raw)
+	after.UpdatedAt = now
+	if title, ok := desired["title"].(string); ok {
+		after.Title = strings.TrimSpace(title)
+	}
+	if projectID, ok := desired["projectId"].(string); ok {
+		after.ProjectID = strings.TrimSpace(projectID)
+	}
+	// 调用方多在 Agent 检查点事务内；CanvasAtomicWrite 加入该事务，不开嵌套保存点。
+	err = repo.CanvasAtomicWrite(context.Background(), project.UserID, project.ID, func(tx *repository.Repository) error {
+		if err := tx.SaveAgentCanvasWrite(before, &after, repository.AgentActor{UserID: project.UserID}, nil); err != nil {
+			return err
+		}
+		return canvas.CaptureDocumentHistory(tx, before, after, "automatic")
+	})
 	if errors.Is(err, repository.ErrCanvasRevisionConflict) {
 		return repository.ErrCreationConflict
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	project.PayloadJSON, project.Title, project.ProjectID = after.PayloadJSON, after.Title, after.ProjectID
+	project.Revision, project.UpdatedAt = after.Revision, after.UpdatedAt
+	return nil
+}
+
+func withoutCanvasBookkeeping(doc map[string]any) map[string]any {
+	out := make(map[string]any, len(doc))
+	for key, value := range doc {
+		if key != "updatedAt" && key != "revision" && key != "remoteContentHash" {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func (s *Service) UserAssetsByIDs(userID string, ids []string) ([]json.RawMessage, error) {

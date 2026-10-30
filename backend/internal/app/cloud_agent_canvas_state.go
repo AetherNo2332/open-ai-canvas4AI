@@ -6,10 +6,10 @@ import (
 	"sort"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/repository"
 )
 
 // cloudAgentProjectionMode 决定一次读取往模型上下文里注入多少节点内容。
@@ -74,6 +74,9 @@ var (
 		"viewport": true, "updatedAt": true, "activeChatId": true, "chatSessions": true,
 		"showImageInfo": true, "starterMode": true,
 		"backgroundMode": true, "appearance": true,
+		// 行元数据：上游 operations 写入时以数据库列为准投影进正文（id/title/projectId/createdAt），
+		// 并去掉 revision/remoteContentHash。它们不是 Agent 可写内容，不能让投影本身变成"并发修改"。
+		"id": true, "title": true, "projectId": true, "createdAt": true, "revision": true, "remoteContentHash": true,
 	}
 	// Node fields stamped by the client on save, not authored by the Agent.
 	cloudAgentCanvasUINodeKeys = map[string]bool{"createdAt": true, "updatedAt": true}
@@ -95,6 +98,10 @@ func cloudAgentCanvasContent(doc map[string]any) map[string]any {
 			continue
 		}
 		content[key] = value
+	}
+	// 上游 operations 写回总会带上 connections；缺省与空列表是同一份内容。
+	if content["connections"] == nil {
+		content["connections"] = []any{}
 	}
 	nodes := creationMaps(doc["nodes"])
 	if len(nodes) == 0 {
@@ -446,19 +453,16 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			}
 			item["generation"] = generation
 			if mediaversions.Supported(capability.GenerationMode) {
-				state := mediaversions.ReadState(node)
-				generation["currentVersionId"], generation["pendingVersionId"], generation["activeTaskId"], generation["versionCount"] = state.CurrentVersionID, state.PendingVersionID, state.ActiveTaskID, state.VersionCount
+				if current := mediaversions.Current(node); current != nil {
+					generation["currentMediaVersionId"] = current["id"]
+				}
+				generation["versionCount"] = len(mediaversions.List(node))
 				scope, scopeErr := mediaversions.ScopeForNode(repo, userID, canvasID, id)
 				if scopeErr == nil {
 					admission := mediaversions.CheckAdmission(repo, scope, node, "new_version")
 					generation["canCreateVersion"] = admission == nil
 					if e, ok := admission.(*mediaversions.Error); ok {
 						generation["newVersionBlockedReason"] = e.Reason
-					}
-				}
-				if state.ActiveTaskID != "" {
-					if pending, err := repo.TaskForUser(userID, state.ActiveTaskID); err == nil {
-						generation["pendingTask"] = cloudAgentTaskDiagnostic(repo, pending)
 					}
 				}
 			}
@@ -545,7 +549,7 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 	migration := map[string]any{"required": !references.Enabled(doc)}
 	if !references.Enabled(doc) {
 		migration["reason"] = "reference_migration_required"
-		migration["nextAction"] = "请用户在画布迁移面板完成引用规范化后再关联资产；不要重试或改写其他字段来替代绑定"
+		migration["nextAction"] = "这是旧版引用格式的画布，Agent 暂不能在其上关联素材或生成媒体；请如实告知用户，建议在新建的画布上继续；不要重试或改写其他字段来替代绑定"
 	}
 	result["referenceMigration"] = migration
 	if selectedMode {

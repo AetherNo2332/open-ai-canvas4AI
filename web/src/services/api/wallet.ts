@@ -14,7 +14,7 @@ export type CreditAccount = {
 export type CreditLedgerEntry = {
     id: string;
     userId: string;
-    type: "redeem" | "payment_topup" | "admin_grant" | "consume" | "refund" | "admin_adjustment" | "signup_bonus" | "checkin_bonus";
+    type: "redeem" | "payment_topup" | "admin_grant" | "consume" | "refund" | "admin_adjustment" | "signup_bonus" | "checkin_bonus" | "referral_commission";
     amountMicrocredits: number;
     availableAfterMicrocredits: number;
     reservedAfterMicrocredits: number;
@@ -262,6 +262,16 @@ export function getAdminCreditPolicy() {
 
 export function updateAdminCreditPolicy(policy: CreditPolicy) {
     return http.patch<{ policy: CreditPolicy }>("/admin/settings/credits", policy);
+}
+
+export type BillingAutoRefundSetting = { enabled: boolean; updatedAt?: string };
+
+export function getAdminBillingAutoRefund() {
+    return http.get<{ setting: BillingAutoRefundSetting }>("/admin/settings/billing-auto-refund");
+}
+
+export function updateAdminBillingAutoRefund(enabled: boolean) {
+    return http.patch<{ setting: BillingAutoRefundSetting }>("/admin/settings/billing-auto-refund", { enabled });
 }
 
 export function getAdminLinuxDOSetting() {

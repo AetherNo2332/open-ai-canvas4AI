@@ -1,40 +1,80 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { avoidCanvasNodePanels, canvasNodePanelBounds, canvasOverlayBounds, canvasToolbarLayoutLevel, placeCanvasNodePanel, subscribeCanvasNodePanelBounds, updateCanvasNodePanelBounds } from "@/lib/canvas/canvas-overlay-layout";
+import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
-const read = (path: string) => readFileSync(resolve(import.meta.dir, "../src", path), "utf8");
+const image: CanvasNodeData = { id: "image", title: "Image", type: CanvasNodeType.Image, position: { x: 20, y: 500 }, width: 180, height: 160 };
 
-describe("画布叠层安全区", () => {
-    test("小地图跟随工作区安全区，避免压住左侧栏和工作区轨道", () => {
-        const minimap = read("components/canvas/canvas-mini-map.tsx");
-        const workspaceCss = read("components/canvas/canvas-workspace-panel.css");
-
-        expect(minimap).toContain("canvas-workspace-minimap");
-        expect(workspaceCss).toContain(".canvas-main-with-workspace .canvas-workspace-minimap");
-        expect(workspaceCss).toContain("left: calc(var(--canvas-workspace-inset) + var(--canvas-inset-x))");
+describe("canvas floating overlay layout", () => {
+    test("late composer layout moves the toolbar above its measured 1366px viewport bounds", () => {
+        const bounds = canvasOverlayBounds({ width: 1366, height: 768 }, { left: 76, top: 64, bottom: 704 });
+        const panel = { left: 247.514, top: 349.538, right: 927.514, bottom: 587.538 };
+        const position = avoidCanvasNodePanels({ left: 587.514, top: 567.538 }, { width: 918, height: 44 }, bounds, [panel]);
+        expect(position.top).toBeCloseTo(341.538);
+        expect(position.top).toBeLessThan(panel.top);
+        expect(position.top - 44).toBeGreaterThanOrEqual(bounds.top);
     });
 
-    test("工具栏定位于不会被 Agent 压缩的外壳，展开 Agent 不改变居中基准", () => {
-        const toolbar = read("components/canvas/canvas-toolbar.tsx");
-        const project = read("pages/canvas/project.tsx");
-        const globalCss = read("styles/globals.css");
-
-        expect(toolbar).not.toContain("agentFloating");
-        expect(globalCss).not.toContain("--canvas-toolbar-right-reserve");
-        const sectionEnd = project.indexOf("</section>", project.indexOf("<section data-canvas-editor"));
-        expect(project.indexOf("<CanvasToolbar", project.indexOf("<section data-canvas-editor"))).toBeGreaterThan(sectionEnd);
-        expect(project).toContain("!versions.preview && (!focusMode || focusDockRevealed)");
-        expect(globalCss).toContain(".canvas-agent-panel[data-agent-compact]");
+    test("panel resize and removal notify subscribers without repeated identical layouts", () => {
+        const container = new EventTarget() as HTMLElement;
+        const panel = {} as HTMLElement;
+        const anchor = { left: 587.514, top: 567.538 };
+        const safeArea = canvasOverlayBounds({ width: 1366, height: 768 }, { left: 76, top: 64, bottom: 704 });
+        let calls = 0;
+        let toolbar = anchor;
+        const unsubscribe = subscribeCanvasNodePanelBounds(container, () => {
+            calls++;
+            toolbar = avoidCanvasNodePanels(anchor, { width: 918, height: 44 }, safeArea, canvasNodePanelBounds(container));
+        });
+        const first = { left: 247.514, top: 397.538, right: 927.514, bottom: 587.538 };
+        updateCanvasNodePanelBounds(container, panel, first);
+        updateCanvasNodePanelBounds(container, panel, { ...first });
+        expect(calls).toBe(1);
+        expect(toolbar.top).toBeCloseTo(389.538);
+        updateCanvasNodePanelBounds(container, panel, { ...first, top: 349.538 });
+        expect(calls).toBe(2);
+        expect(toolbar.top).toBeCloseTo(341.538);
+        updateCanvasNodePanelBounds(container, panel, null);
+        expect(calls).toBe(3);
+        expect(toolbar).toEqual(anchor);
+        expect(canvasNodePanelBounds(container)).toEqual([]);
+        unsubscribe();
+        updateCanvasNodePanelBounds(container, panel, first);
+        expect(calls).toBe(3);
+        updateCanvasNodePanelBounds(container, panel, null);
     });
 
-    test("模型思考正文保留内边距和长文本换行，不扩大面板", () => {
-        const css = read("components/canvas/canvas-cloud-agent.css");
-        const content = css.match(/\.agent-reasoning-content\s*\{([^}]+)\}/)?.[1] || "";
-        const text = css.match(/\.agent-reasoning-text\s*\{([^}]+)\}/)?.[1] || "";
-        expect(content).toContain("padding: var(--space-2) var(--space-4) var(--space-3)");
-        expect(content).toContain("overflow-x: hidden");
-        expect(content).toContain("scrollbar-gutter: stable");
-        expect(text).toContain("white-space: pre-wrap");
-        expect(text).toContain("overflow-wrap: anywhere");
+    test("bottom-edge image editor stays above the dock and outside the workspace rail", () => {
+        const bounds = canvasOverlayBounds({ width: 1024, height: 720 }, { left: 76, top: 64, bottom: 626 });
+        const position = placeCanvasNodePanel(image, { x: 0, y: 0, k: 1 }, bounds, { width: 680, height: 238 });
+        expect(position.placement).toBe("above");
+        expect(position.left).toBeGreaterThanOrEqual(76);
+        expect(position.left + 680).toBeLessThanOrEqual(1012);
+        expect(position.top).toBeGreaterThanOrEqual(64);
+        expect(position.top + 238).toBeLessThanOrEqual(626);
+    });
+
+    test("oversized editor is anchored to the usable area in a narrow short viewport", () => {
+        const bounds = canvasOverlayBounds({ width: 320, height: 320 }, { left: 76, top: 64, bottom: 244 });
+        const position = placeCanvasNodePanel(image, { x: -200, y: 100, k: 2 }, bounds, { width: 680, height: 540 });
+        expect(position.left).toBe(76);
+        expect(position.top).toBe(64);
+        expect(bounds.right - bounds.left).toBe(232);
+        expect(bounds.bottom - bounds.top).toBe(180);
+    });
+
+    test("roomy viewport keeps the below-node anchor and follows live drag and zoom", () => {
+        const bounds = canvasOverlayBounds({ width: 1920, height: 1080 });
+        const source = { ...image, position: { x: 400, y: 100 } };
+        const position = placeCanvasNodePanel(source, { x: 40, y: 20, k: 1.5 }, bounds, { width: 680, height: 238 }, { x: 20, y: 10 });
+        expect(position).toEqual({ left: 465, top: 435, placement: "below" });
+    });
+
+    test("toolbar folds against actual available width and unfolds only when measured content fits", () => {
+        expect(canvasToolbarLayoutLevel(936, [918, 0, 0], 0)).toBe(0);
+        expect(canvasToolbarLayoutLevel(840, [918, 0, 0], 0)).toBe(1);
+        expect(canvasToolbarLayoutLevel(450, [918, 520, 0], 1)).toBe(2);
+        expect(canvasToolbarLayoutLevel(232, [918, 520, 180], 2)).toBe(2);
+        expect(canvasToolbarLayoutLevel(600, [918, 520, 180], 2)).toBe(1);
+        expect(canvasToolbarLayoutLevel(936, [918, 520, 180], 1)).toBe(0);
     });
 });

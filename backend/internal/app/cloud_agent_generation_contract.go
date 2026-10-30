@@ -1,8 +1,8 @@
 package app
 
 import (
-	"infinite-canvas/backend/internal/canvas/contract"
 	"strings"
+	"yingce/backend/internal/canvas/contract"
 )
 
 // Agent arguments and the canvas editor enter the same public generation codec.

@@ -2,9 +2,9 @@ package commands
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/identity"
 	"reflect"
 	"testing"
+	"yingce/backend/internal/identity"
 )
 
 func fixture(t *testing.T, raw string) Document {

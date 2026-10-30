@@ -1,6 +1,6 @@
 package mediaversions
 
-import "infinite-canvas/backend/internal/model"
+import "yingce/backend/internal/model"
 
 type OutputOwner = model.CanvasMediaOutputOwner
 

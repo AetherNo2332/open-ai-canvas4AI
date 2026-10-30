@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // CI supplies the output of the real TypeScript producers, not hand-written Go

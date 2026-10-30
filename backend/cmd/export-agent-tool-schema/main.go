@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/service"
 )
 
 // Export the runtime catalog without starting the server or executing tests.

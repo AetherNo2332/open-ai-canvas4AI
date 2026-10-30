@@ -1,4 +1,4 @@
-import { canvasThemes, DEFAULT_CANVAS_COLOR_THEME, type CanvasBackgroundMode, type CanvasColorTheme } from "@/lib/canvas-theme";
+import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme } from "@/lib/canvas-theme";
 import { scopedLocalStorage } from "@/lib/user-scope";
 
 export type CanvasAppearanceMode = CanvasColorTheme | "custom" | "preset";
@@ -44,11 +44,12 @@ export type ResolvedCanvasAppearance = {
     grid: string;
 };
 
-export const DEFAULT_CANVAS_BACKGROUND_MODE: CanvasBackgroundMode = "blank";
+export const DEFAULT_CANVAS_BACKGROUND_MODE: CanvasBackgroundMode = "dots";
 export const NEW_CANVAS_BACKGROUND_MODE: CanvasBackgroundMode = "dots";
 
-const CANVAS_APPEARANCE_DEFAULT_KEY = "infinite-canvas:canvas-appearance-default";
+const CANVAS_APPEARANCE_DEFAULT_KEY = "yingce:canvas-appearance-default";
 const HEX_COLOR_PATTERN = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i;
+const CUSTOM_GRID_COLOR: Record<CanvasColorTheme, string> = { light: "#000000", dark: "#FFFFFF" };
 const CUSTOM_GRID_OPACITY: Record<CanvasColorTheme, number> = { light: 80, dark: 32 };
 
 export function canvasAppearanceForTheme(theme: CanvasColorTheme, previous?: CanvasAppearance): CanvasAppearance {
@@ -91,14 +92,10 @@ export function customCanvasAppearanceFromTheme(theme: CanvasColorTheme): Canvas
             baseTheme: theme,
             backgroundColor: canvasThemes[theme].canvas.background.toUpperCase(),
             backgroundBrightness: 0,
-            gridColor: canvasThemes[theme].canvas.line.toUpperCase(),
-            gridOpacity: 100,
+            gridColor: CUSTOM_GRID_COLOR[theme],
+            gridOpacity: CUSTOM_GRID_OPACITY[theme],
         },
     };
-}
-
-export function defaultCanvasAppearance(theme: CanvasColorTheme = DEFAULT_CANVAS_COLOR_THEME): CanvasAppearance {
-    return canvasAppearanceForPreset(theme);
 }
 
 export function enterCustomCanvasAppearance(current: CanvasAppearance, currentTheme: CanvasColorTheme): CanvasAppearance {

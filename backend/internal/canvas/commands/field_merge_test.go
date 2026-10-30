@@ -8,9 +8,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func baselineOperation(t *testing.T, id string, patch map[string]any, fields string) Operation {
@@ -309,7 +310,7 @@ func TestFieldMergeCannotBypassOldClientFallbackDeletionLeaseOrSQLAtomicity(t *t
 					t.Fatal(err)
 				}
 			case "lease":
-				if _, err := repository.New(db).AcquireCanvasEditLease("owner", before.CanvasID, repository.CanvasEditProof{NodeID: "a", SessionID: "other-tab", Token: strings.Repeat("t", 48)}); err != nil {
+				if _, err := repository.New(db).ChangeCanvasEditLease("owner", before.CanvasID, model.CanvasEditProof{NodeID: "a", SessionID: "other-tab"}, "acquire", strings.Repeat("t", 48), time.Now().UTC()); err != nil {
 					t.Fatal(err)
 				}
 			case "receipt-failure":

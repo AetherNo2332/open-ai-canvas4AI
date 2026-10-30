@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"infinite-canvas/backend/internal/canvas/contract"
-	"infinite-canvas/backend/internal/canvas/references"
+	"yingce/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/references"
 )
 
 // cloudAgentLegacyConnectionOperations 是模型可见合同里已经停用的画布操作。连线改由
@@ -66,7 +66,7 @@ func validateCloudAgentReferenceOperations(ops []agentCanvasOp) error {
 // 排序、绘图、批量表既有行字段）不受影响。
 func cloudAgentReferenceMigrationRequired() error {
 	return cloudAgentFieldError("snapshotHash", "reference_migration_required",
-		"资产关联未执行：请用户先在画布迁移面板完成一次引用规范化；完成前停止重试引用写入，不得改写 characters 或正文来替代绑定，也不得报告资产已关联")
+		"资产关联未执行：这是旧版引用格式的画布，Agent 暂不能在其上关联素材或生成媒体；请如实告知用户并建议在新建的画布上继续，停止重试引用写入，不得改写 characters 或正文来替代绑定，也不得报告资产已关联")
 }
 
 func cloudAgentReferenceMigrationBlocked(err error) bool {
@@ -182,6 +182,8 @@ func validateCloudAgentReferenceDocument(doc map[string]any, ops []agentCanvasOp
 func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 	p := schema["properties"].(map[string]any)
 	switch name {
+	case "director":
+		cloudAgentDirectorContracts(schema)
 	case "canvas_read_storyboard":
 		schema["allOf"] = []map[string]any{
 			{"oneOf": []map[string]any{

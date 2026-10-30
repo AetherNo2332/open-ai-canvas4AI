@@ -5,10 +5,11 @@ import { AlertTriangle, Clapperboard, Coins, ListChecks, MonitorCog, PlugZap, Ra
 
 import { cn } from "@/lib/utils";
 import { getAdminFeatureAvailability, updateAdminFeatureAvailability } from "@/services/api/auth";
-import { useUserStore, type DirectorDeskPrevisMode, type FeatureAvailability } from "@/stores/use-user-store";
+import { useUserStore, type FeatureAvailability } from "@/stores/use-user-store";
 import { AdminStatusBadge } from "./admin-ui";
 
-type FeatureKey = "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers";
+type FeatureKey =
+    "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "inspirationSourcesVisible" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers" | "imageWorkbenchEnabled" | "videoWorkbenchEnabled";
 type FeatureRow = {
     key: FeatureKey;
     title: string;
@@ -17,7 +18,18 @@ type FeatureRow = {
     dependsOn?: FeatureKey;
 };
 
-const editableFeatureKeys: FeatureKey[] = ["shortDramaEnabled", "taskCenterEnabled", "creditsEnabled", "customChannelsEnabled", "frontendModelsEnabled", "pluginCenterEnabled", "systemPluginsVisibleToUsers"];
+const editableFeatureKeys: FeatureKey[] = [
+    "shortDramaEnabled",
+    "taskCenterEnabled",
+    "creditsEnabled",
+    "customChannelsEnabled",
+    "inspirationSourcesVisible",
+    "imageWorkbenchEnabled",
+    "videoWorkbenchEnabled",
+    "frontendModelsEnabled",
+    "pluginCenterEnabled",
+    "systemPluginsVisibleToUsers",
+];
 
 const workspaceFeatureRows: FeatureRow[] = [
     {
@@ -43,6 +55,24 @@ const workspaceFeatureRows: FeatureRow[] = [
         title: "自定义渠道",
         description: "允许用户配置并使用自己的模型渠道。",
         icon: <RadioTower className="size-4" aria-hidden="true" />,
+    },
+    {
+        key: "inspirationSourcesVisible",
+        title: "素材来源署名",
+        description: "显示创作首页的素材来源说明；关闭后隐藏该面板。",
+        icon: <Sparkles className="size-4" aria-hidden="true" />,
+    },
+    {
+        key: "imageWorkbenchEnabled",
+        title: "图片生成",
+        description: "开放生图入口并允许创建新的工作台图片任务；关闭不删除结果和历史。",
+        icon: <Sparkles className="size-4" aria-hidden="true" />,
+    },
+    {
+        key: "videoWorkbenchEnabled",
+        title: "视频生成",
+        description: "开放视频入口并允许创建新的工作台视频任务；关闭不删除结果和历史。",
+        icon: <Clapperboard className="size-4" aria-hidden="true" />,
     },
 ];
 
@@ -148,59 +178,6 @@ export default function FeatureAvailabilityPanel() {
         }
     };
 
-    const setDirectorDeskMode = async (mode: DirectorDeskPrevisMode) => {
-        if (!savedFeatures || saving || savedFeatures.directorDeskPrevisMode === mode) return;
-        const previous = savedFeatures;
-        const expected = { ...savedFeatures, directorDeskPrevisMode: mode };
-        setDraftFeatures(expected);
-        setSaving(true);
-        setSaveError("");
-        try {
-            const result = await updateAdminFeatureAvailability(toEditablePayload(expected));
-            const value = parseFeatureAvailability(result.features);
-            if (!sameEditableFeatures(value, expected)) throw new Error("服务端返回的功能状态与本次保存内容不一致，请重新读取后核对");
-            setSavedFeatures(value);
-            setDraftFeatures(value);
-            setGlobalFeatures(value);
-            message.success(`导演台已切换为${directorDeskModeLabel(mode)}`);
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "保存导演台开放配置失败";
-            setDraftFeatures(previous);
-            setSaveError(`${errorMessage}。已恢复修改前状态。`);
-            message.error(errorMessage);
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const setDirectorDeskCanaryGroup = async (users: string[], basisPoints: number) => {
-        if (!savedFeatures || saving) return;
-        const normalizedUsers = users.map((value) => value.trim()).filter((value) => value !== "");
-        const clamped = Math.min(10000, Math.max(0, Math.round(basisPoints)));
-        if (sameStringArray(savedFeatures.directorDeskPrevisCanaryUsers, normalizedUsers) && (savedFeatures.directorDeskPrevisCanaryBasisPoints ?? 0) === clamped) return;
-        const previous = savedFeatures;
-        const expected = { ...savedFeatures, directorDeskPrevisCanaryUsers: normalizedUsers, directorDeskPrevisCanaryBasisPoints: clamped };
-        setDraftFeatures(expected);
-        setSaving(true);
-        setSaveError("");
-        try {
-            const result = await updateAdminFeatureAvailability(toEditablePayload(expected));
-            const value = parseFeatureAvailability(result.features);
-            if (!sameEditableFeatures(value, expected)) throw new Error("服务端返回的功能状态与本次保存内容不一致，请重新读取后核对");
-            setSavedFeatures(value);
-            setDraftFeatures(value);
-            setGlobalFeatures(value);
-            message.success("灰度分组已保存");
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "保存灰度分组失败";
-            setDraftFeatures(previous);
-            setSaveError(`${errorMessage}。已恢复修改前状态。`);
-            message.error(errorMessage);
-        } finally {
-            setSaving(false);
-        }
-    };
-
     const requestFeatureChange = (key: FeatureKey, enabled: boolean) => {
         if (!savedFeatures || saving || savedFeatures[key] === enabled) return;
         if (key === "creditsEnabled" && !enabled) {
@@ -298,7 +275,7 @@ export default function FeatureAvailabilityPanel() {
                     title="1. 用户工作台入口"
                     description="先决定普通用户能进入哪些核心工作区"
                     icon={<MonitorCog className="size-4" aria-hidden="true" />}
-                    status={<AdminStatusBadge label={`${enabledWorkspaceFeatures}/4 开放`} tone={enabledWorkspaceFeatures === 4 ? "success" : "neutral"} />}
+                    status={<AdminStatusBadge label={`${enabledWorkspaceFeatures}/7 开放`} tone={enabledWorkspaceFeatures === 5 ? "success" : "neutral"} />}
                 >
                     {workspaceFeatureRows.map((row) => (
                         <FeatureSettingRow key={row.key} row={row} saved={savedFeatures} draft={draftFeatures} saving={saving} onChange={requestFeatureChange} />
@@ -322,23 +299,6 @@ export default function FeatureAvailabilityPanel() {
                     status={<AdminStatusBadge label={draftFeatures.frontendModelsEnabled ? "前台模型目录" : "系统渠道"} tone="info" />}
                 >
                     <FeatureSourceRow row={modelFeatureRows[0]} saved={savedFeatures} draft={draftFeatures} saving={saving} onChange={requestFeatureChange} />
-                </FeatureDomainPanel>
-
-                <FeatureDomainPanel
-                    title="4. 导演台迁移"
-                    description="控制 DirectorDesk 预演台的灰度范围；关闭时回退到旧预演台"
-                    icon={<Clapperboard className="size-4" aria-hidden="true" />}
-                    status={<AdminStatusBadge label={directorDeskModeLabel(draftFeatures.directorDeskPrevisMode)} tone={draftFeatures.directorDeskPrevisMode === "on" ? "success" : "info"} />}
-                >
-                    <DirectorDeskModeRow
-                        mode={draftFeatures.directorDeskPrevisMode}
-                        savedMode={savedFeatures.directorDeskPrevisMode}
-                        saving={saving}
-                        canaryUsers={draftFeatures.directorDeskPrevisCanaryUsers ?? []}
-                        canaryBasisPoints={draftFeatures.directorDeskPrevisCanaryBasisPoints ?? 0}
-                        onChange={(mode) => void setDirectorDeskMode(mode)}
-                        onCanaryGroupChange={(users, basisPoints) => void setDirectorDeskCanaryGroup(users, basisPoints)}
-                    />
                 </FeatureDomainPanel>
             </div>
         </div>
@@ -421,29 +381,17 @@ function toEditablePayload(features: FeatureAvailability) {
         taskCenterEnabled: features.taskCenterEnabled,
         creditsEnabled: features.creditsEnabled,
         customChannelsEnabled: features.customChannelsEnabled,
+        inspirationSourcesVisible: features.inspirationSourcesVisible,
+        imageWorkbenchEnabled: features.imageWorkbenchEnabled,
+        videoWorkbenchEnabled: features.videoWorkbenchEnabled,
         frontendModelsEnabled: features.frontendModelsEnabled,
         pluginCenterEnabled: features.pluginCenterEnabled,
         systemPluginsVisibleToUsers: features.systemPluginsVisibleToUsers,
-        directorDeskPrevisMode: features.directorDeskPrevisMode,
-        directorDeskPrevisCanaryUsers: features.directorDeskPrevisCanaryUsers,
-        directorDeskPrevisCanaryBasisPoints: features.directorDeskPrevisCanaryBasisPoints,
     };
 }
 
-function sameStringArray(left?: string[], right?: string[]) {
-    if (left === undefined && right === undefined) return true;
-    if (left === undefined || right === undefined) return false;
-    if (left.length !== right.length) return false;
-    return left.every((value, index) => value === right[index]);
-}
-
 function sameEditableFeatures(left: FeatureAvailability, right: FeatureAvailability) {
-    return (
-        editableFeatureKeys.every((key) => left[key] === right[key]) &&
-        left.directorDeskPrevisMode === right.directorDeskPrevisMode &&
-        sameStringArray(left.directorDeskPrevisCanaryUsers, right.directorDeskPrevisCanaryUsers) &&
-        (left.directorDeskPrevisCanaryBasisPoints ?? 0) === (right.directorDeskPrevisCanaryBasisPoints ?? 0)
-    );
+    return editableFeatureKeys.every((key) => left[key] === right[key]);
 }
 
 function parseFeatureAvailability(value: unknown): FeatureAvailability {
@@ -458,96 +406,16 @@ function parseFeatureAvailability(value: unknown): FeatureAvailability {
         taskCenterEnabled: record.taskCenterEnabled as boolean,
         creditsEnabled: record.creditsEnabled as boolean,
         customChannelsEnabled: record.customChannelsEnabled as boolean,
+        inspirationSourcesVisible: record.inspirationSourcesVisible as boolean,
+        imageWorkbenchEnabled: record.imageWorkbenchEnabled as boolean,
+        videoWorkbenchEnabled: record.videoWorkbenchEnabled as boolean,
         frontendModelsEnabled: record.frontendModelsEnabled as boolean,
         pluginCenterEnabled: record.pluginCenterEnabled as boolean,
         systemPluginsVisibleToUsers: record.systemPluginsVisibleToUsers as boolean,
+        // 动态子代理开关在「Agent 设置」页维护，这里只透传当前值。
         agentSubagentsEnabled: record.agentSubagentsEnabled === true,
-        directorDeskPrevisMode: record.directorDeskPrevisMode === "canary" || record.directorDeskPrevisMode === "on" ? record.directorDeskPrevisMode : "off",
-        directorDeskPrevisCanaryUsers: Array.isArray(record.directorDeskPrevisCanaryUsers) ? (record.directorDeskPrevisCanaryUsers.filter((value): value is string => typeof value === "string" && value.trim() !== "") as string[]) : [],
-        directorDeskPrevisCanaryBasisPoints:
-            typeof record.directorDeskPrevisCanaryBasisPoints === "number" && Number.isFinite(record.directorDeskPrevisCanaryBasisPoints) ? Math.min(10000, Math.max(0, Math.round(record.directorDeskPrevisCanaryBasisPoints))) : 0,
         configured: typeof record.configured === "boolean" ? record.configured : undefined,
         updatedBy: typeof record.updatedBy === "string" ? record.updatedBy : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
     };
-}
-
-function directorDeskModeLabel(mode: DirectorDeskPrevisMode) {
-    if (mode === "on") return "全量开放";
-    if (mode === "canary") return "灰度开放";
-    return "已关闭";
-}
-
-function DirectorDeskModeRow({
-    mode,
-    savedMode,
-    saving,
-    canaryUsers,
-    canaryBasisPoints,
-    onChange,
-    onCanaryGroupChange,
-}: {
-    mode: DirectorDeskPrevisMode;
-    savedMode: DirectorDeskPrevisMode;
-    saving: boolean;
-    canaryUsers: string[];
-    canaryBasisPoints: number;
-    onChange: (mode: DirectorDeskPrevisMode) => void;
-    onCanaryGroupChange: (users: string[], basisPoints: number) => void;
-}) {
-    const [userText, setUserText] = useState(canaryUsers.join(", "));
-    const [ratioText, setRatioText] = useState(String(canaryBasisPoints / 100));
-    const syncedKey = canaryUsers.join(", ") + "|" + String(canaryBasisPoints / 100);
-    useEffect(() => {
-        if (userText !== canaryUsers.join(", ") || Number(ratioText) !== canaryBasisPoints / 100) {
-            setUserText(canaryUsers.join(", "));
-            setRatioText(String(canaryBasisPoints / 100));
-        }
-    }, [syncedKey, userText, ratioText, canaryUsers, canaryBasisPoints]);
-
-    const groupUsers = userText
-        .split(",")
-        .map((value) => value.trim())
-        .filter((value) => value !== "");
-    const groupRatio = Number(ratioText);
-    const groupDirty = !sameStringArray(groupUsers, canaryUsers) || !Number.isFinite(groupRatio) || groupRatio / 100 !== canaryBasisPoints / 100;
-    const groupInvalid = !Number.isFinite(groupRatio) || groupRatio < 0 || groupRatio > 100;
-
-    return (
-        <article className={cn("admin-feature-board-row is-source", (savedMode !== mode || groupDirty) && "is-dirty")}>
-            <div className="admin-feature-board-row-copy">
-                <span className="admin-feature-board-row-icon">
-                    <Clapperboard className="size-4" aria-hidden="true" />
-                </span>
-                <span className="admin-feature-board-row-name">
-                    <small>迁移开关</small>
-                    <strong>DirectorDesk 预演台</strong>
-                    <span>灰度阶段只对受控用户启用，发生运行时错误时可立即回退。</span>
-                </span>
-                {savedMode !== mode || groupDirty ? <span className="admin-feature-board-row-dirty">待保存</span> : null}
-            </div>
-            <div className="admin-feature-board-source-selector" role="radiogroup" aria-label="设置 DirectorDesk 预演台开放范围">
-                {(["off", "canary", "on"] as const).map((value) => (
-                    <button key={value} type="button" role="radio" aria-checked={mode === value} disabled={saving} className={cn(mode === value && "is-selected")} onClick={() => onChange(value)}>
-                        {directorDeskModeLabel(value)}
-                    </button>
-                ))}
-            </div>
-            {mode === "canary" ? (
-                <div className="admin-director-canary-group" aria-label="设置灰度分组">
-                    <div className="admin-director-canary-field">
-                        <label htmlFor="director-canary-users">内部用户(逗号分隔)</label>
-                        <input id="director-canary-users" value={userText} disabled={saving} placeholder="例如 user-1, user-2" onChange={(event) => setUserText(event.target.value)} />
-                    </div>
-                    <div className="admin-director-canary-field admin-director-canary-ratio">
-                        <label htmlFor="director-canary-ratio">比例(%)</label>
-                        <input id="director-canary-ratio" type="number" min={0} max={100} step={0.1} value={ratioText} disabled={saving} onChange={(event) => setRatioText(event.target.value)} />
-                    </div>
-                    <Button size="small" disabled={saving || !groupDirty || groupInvalid} onClick={() => onCanaryGroupChange(groupUsers, groupRatio * 100)}>
-                        保存灰度分组
-                    </Button>
-                </div>
-            ) : null}
-        </article>
-    );
 }

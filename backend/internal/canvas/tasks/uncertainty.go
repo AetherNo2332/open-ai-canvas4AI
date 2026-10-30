@@ -2,9 +2,9 @@ package tasks
 
 import (
 	"context"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/repository"
 )
 
 // A host's explicit acknowledgement ends LOCAL waiting. It never asserts that

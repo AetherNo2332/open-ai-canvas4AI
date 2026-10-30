@@ -3,13 +3,13 @@ package main
 
 import (
 	"fmt"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/canvas/tasks"
 	"os"
 	"reflect"
 	"sort"
 	"strings"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/canvas/tasks"
 )
 
 var seen = map[reflect.Type]string{}

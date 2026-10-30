@@ -5,14 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/outbound"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/outbound"
 )
 
 type agentWebSearchSource struct {

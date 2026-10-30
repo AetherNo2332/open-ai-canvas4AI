@@ -2,16 +2,15 @@ package handler
 
 import (
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/auth"
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
-	"infinite-canvas/backend/internal/service"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
+	"yingce/backend/internal/auth"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
+	"yingce/backend/internal/service"
 )
 
 func TestTaskMediaRecoveryHTTPAuthenticationAndOwnership(t *testing.T) {
@@ -60,16 +59,6 @@ func TestTaskMediaRecoveryHTTPAuthenticationAndOwnership(t *testing.T) {
 		router.ServeHTTP(w, r)
 		if w.Code != tc.want {
 			t.Fatalf("%s auth=%v: %d %s", tc.id, tc.auth, w.Code, w.Body.String())
-		}
-		repairRequest := httptest.NewRequest(http.MethodPost, "/api/tasks/"+tc.id+"/recover-previs-writeback", strings.NewReader(`{"mode":"link"}`))
-		repairRequest.Header.Set("Content-Type", "application/json")
-		if tc.auth {
-			repairRequest.AddCookie(&http.Cookie{Name: service.SessionCookieName, Value: "media-session.test-token"})
-		}
-		repairResponse := httptest.NewRecorder()
-		router.ServeHTTP(repairResponse, repairRequest)
-		if repairResponse.Code != tc.want {
-			t.Fatalf("previs repair %s auth=%v: %d %s", tc.id, tc.auth, repairResponse.Code, repairResponse.Body.String())
 		}
 	}
 }

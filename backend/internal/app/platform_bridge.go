@@ -5,13 +5,14 @@ import (
 	"net/http"
 	"time"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/platform"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/platform"
 )
 
 type (
 	RuntimeResourcePolicy      = platform.RuntimeResourcePolicy
+	RuntimeStoragePolicy       = platform.RuntimeStoragePolicy
 	RuntimeTaskPolicy          = platform.RuntimeTaskPolicy
 	RuntimeRequestPolicy       = platform.RuntimeRequestPolicy
 	RuntimePolicySetting       = platform.RuntimePolicySetting
@@ -29,7 +30,10 @@ const (
 	FeatureFrontendModels        = platform.FeatureFrontendModels
 	FeaturePluginCenter          = platform.FeaturePluginCenter
 	FeatureSystemPlugins         = platform.FeatureSystemPlugins
+	FeatureInspirationSources    = platform.FeatureInspirationSources
 	FeatureTimelineTranscription = platform.FeatureTimelineTranscription
+	FeatureImageWorkbench        = platform.FeatureImageWorkbench
+	FeatureVideoWorkbench        = platform.FeatureVideoWorkbench
 	FeatureAgentSubagents        = platform.FeatureAgentSubagents
 )
 
@@ -112,11 +116,6 @@ func (s *Service) FeatureAvailability() (*PublicFeatureAvailability, error) {
 	return s.platformDomain().FeatureAvailability()
 }
 
-// UserFeatureAvailability 按当前用户解析灰度分群(导演预演台 canary 白名单/比例桶)。
-func (s *Service) UserFeatureAvailability(user *model.User) (*PublicFeatureAvailability, error) {
-	return s.platformDomain().UserFeatureAvailability(user)
-}
-
 func (s *Service) AdminFeatureAvailability(actor *model.User) (*PublicFeatureAvailability, error) {
 	return s.platformDomain().AdminFeatureAvailability(actor)
 }
@@ -154,17 +153,16 @@ func (s *Service) RecordChannelResult(ctx context.Context, channelID string, fai
 }
 
 func (s *Service) Close() error {
-	realtimeErr := s.closeCanvasRealtime()
-	if s == nil || s.coordinator == nil {
-		return realtimeErr
+	if s == nil {
+		return nil
+	}
+	if s.coordinator == nil {
+		return nil
 	}
 	if !s.coordinator.HasRedis() {
-		return realtimeErr
+		return nil
 	}
-	if err := s.coordinator.Redis().Close(); err != nil {
-		return err
-	}
-	return realtimeErr
+	return s.coordinator.Redis().Close()
 }
 
 func ChannelSlotFailureDetails(err error) (string, string) {

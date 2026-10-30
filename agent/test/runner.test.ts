@@ -1210,3 +1210,58 @@ test("服务端策略是强制层：工作区文件只能追加，不能顶掉�
   // 策略前缀为空时才允许 SYSTEM.md 单独充当系统提示（本地调试路径）。
   assert.equal(assembleSystemPrompt({ system: "Only file", context: [] }, ""), "Only file");
 });
+
+test("native system prompt is byte-identical across runs and resumes, with stable relative Skill locations", async () => {
+  const entry = '---\nname: "skill-abc"\ndescription: "For scripts"\n---\n# Body\n';
+  const hash = createHash("sha256").update(entry).digest("hex");
+  const prepare = (snapshot: PiSnapshot): void => {
+    snapshot.skillRuntimeMode = "pi-native";
+    snapshot.skills = [{ id: "skill-1", nativeName: "skill-abc", displayName: "Scripts", description: "For scripts",
+      versionId: "v1", version: "1", contentHash: "package-hash", entryPath: "SKILL.md", entryContent: entry,
+      files: [{ path: "SKILL.md", sha256: hash, size: Buffer.byteLength(entry), text: true }] }];
+    snapshot.tools = [{ name: "read", category: "native_skill", description: "Read selected Skill text", allowed: true,
+      parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }];
+  };
+  const first = fakeBridge([
+    { toolCalls: [{ id: "read-1", function: { name: "read", arguments: JSON.stringify({ path: "skills/skill-abc/SKILL.md" }) } }] },
+    { text: "Used Skill" },
+  ]);
+  prepare(first.snapshot);
+  authorizeNativeEntry(first.bridge, first.snapshot);
+  const saved: Record<string, unknown>[] = [];
+  const checkpoint = first.bridge.checkpoint.bind(first.bridge);
+  first.bridge.checkpoint = async (...args) => {
+    await checkpoint(...args);
+    saved.push(...(args[5]?.entries || []));
+    return { saved: true, sessionRevision: (args[5]?.revision || 1) + 1 };
+  };
+  await runCanvasAgent(first.bridge, first.snapshot, undefined, promptParts());
+  assert.equal(first.state.steps, 2);
+  assert.equal(first.state.checkpoints.find(({ role }) => role === "toolResult")?.text, entry, "relative read reaches the Skill");
+  const prompt = first.state.canonical[0]!.systemPrompt;
+  assert.match(prompt, /<location>skills\/skill-abc\/SKILL\.md<\/location>/);
+  assert.match(prompt, /<cwd>\ncanvas-agent-run\n<\/cwd>/);
+  assert.doesNotMatch(prompt, /canvas-pi-run-/);
+  assert.equal(first.state.canonical[1]!.systemPrompt, prompt);
+
+  const second = fakeBridge([{ text: "Fresh run" }]);
+  prepare(second.snapshot);
+  await runCanvasAgent(second.bridge, second.snapshot, undefined, promptParts());
+  assert.equal(second.state.canonical[0]!.systemPrompt, prompt, "a new temp directory must not change the prompt");
+
+  // A run persisted before this fix carries the previous worker's absolute
+  // locations in its Pi system message; the resumed request must still be stable.
+  const oldRoot = "C:/temp/canvas-pi-run-old/cwd";
+  const legacy = JSON.parse(JSON.stringify(saved).split("skills/skill-abc/SKILL.md").join(`${oldRoot}/skills/skill-abc/SKILL.md`)
+    .split("canvas-agent-run").join(oldRoot)) as Record<string, unknown>[];
+  assert.ok(JSON.stringify(legacy).includes("canvas-pi-run-old"), "fixture must contain a persisted system message");
+  const resumed = fakeBridge([{ text: "Resumed" }]);
+  prepare(resumed.snapshot);
+  resumed.snapshot.canonical.messages = [...first.state.canonical[1]!.messages, { role: "user", content: "Continue" }];
+  resumed.snapshot.piSessionEntries = legacy.map(entry => ({ runId: "previous-run", entry }));
+  resumed.snapshot.piActiveLeafId = String(legacy.at(-1)!.id);
+  resumed.snapshot.piSessionRevision = 4;
+  resumed.snapshot.piMessages = [{ role: "user" }];
+  await runCanvasAgent(resumed.bridge, resumed.snapshot, undefined, promptParts());
+  assert.equal(resumed.state.canonical[0]!.systemPrompt, prompt, "a resumed legacy session must send the stable prompt");
+});

@@ -3,14 +3,16 @@ package canvas
 import (
 	"encoding/json"
 	"errors"
-	"infinite-canvas/backend/internal/kernel"
 	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/kernel"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -20,17 +22,16 @@ type AssetsSyncRequest struct {
 }
 
 type UserDataSummary struct {
-	ID          string           `json:"id"`
-	FolderID    string           `json:"folderId,omitempty"`
-	Kind        string           `json:"kind,omitempty"`
-	Category    string           `json:"category,omitempty"`
-	Status      string           `json:"status,omitempty"`
-	Title       string           `json:"title"`
-	CreatedAt   time.Time        `json:"createdAt"`
-	UpdatedAt   time.Time        `json:"updatedAt"`
-	Revision    int64            `json:"revision,omitempty"`
-	Connections json.RawMessage  `json:"connections,omitempty"`
-	SaveAudit   *CanvasSaveAudit `json:"-"`
+	ID        string           `json:"id"`
+	FolderID  string           `json:"folderId,omitempty"`
+	Kind      string           `json:"kind,omitempty"`
+	Category  string           `json:"category,omitempty"`
+	Status    string           `json:"status,omitempty"`
+	Title     string           `json:"title"`
+	CreatedAt time.Time        `json:"createdAt"`
+	UpdatedAt time.Time        `json:"updatedAt"`
+	Revision  int64            `json:"revision,omitempty"`
+	SaveAudit *CanvasSaveAudit `json:"-"`
 }
 
 type CanvasSaveAudit struct {
@@ -84,33 +85,11 @@ func (s *Service) UserAsset(userID string, id string) (json.RawMessage, error) {
 }
 
 func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
-	return s.persistUserAsset(userID, raw, false)
-}
-
-func (s *Service) CreateUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
-	return s.persistUserAsset(userID, raw, true)
-}
-
-func (s *Service) persistUserAsset(userID string, raw json.RawMessage, createOnly bool) (UserDataSummary, error) {
 	asset, err := AssetFromJSON(userID, raw)
 	if err != nil {
 		return UserDataSummary{}, err
 	}
 	err = s.host.WithStorageLock(func() error {
-		if createOnly {
-			err := s.repo.CreateAssetIfAbsent(&asset)
-			if errors.Is(err, repository.ErrAssetAlreadyExists) {
-				return &kernel.AppError{Status: 412, Code: 412, Reason: "asset_already_exists", Message: "素材已存在，请重新读取"}
-			}
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return kernel.BadAuthRequest("素材分类不存在")
-			}
-			if err != nil {
-				return err
-			}
-			s.host.RecordActivity(userID, "asset", 1)
-			return nil
-		}
 		if asset.FolderID != "" {
 			if _, err := s.repo.AssetFolderForUser(userID, asset.FolderID); err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -242,14 +221,13 @@ func (s *Service) UserCanvasProjectSummaries(userID string) ([]UserDataSummary, 
 }
 
 func (s *Service) UserCanvasProjectMetadata(userID string, id string) (*model.CanvasProject, error) {
-	project, err := s.repo.LiveCanvasProjectMetadataForUser(userID, id)
-	return project, s.canvasSyncError(err)
+	return s.repo.CanvasProjectMetadataForUser(userID, id)
 }
 
 func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
-	project, err := s.repo.LiveCanvasProjectForUser(userID, id)
+	project, err := s.repo.CanvasProjectForUser(userID, id)
 	if err != nil {
-		return nil, s.canvasSyncError(err)
+		return nil, err
 	}
 	return canvasProjectPayload(*project)
 }
@@ -258,10 +236,205 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 	return s.upsertUserCanvasProjectWithHistory(userID, raw, "automatic")
 }
 
+type canvasMutationReceiptResult struct {
+	Summary  UserDataSummary `json:"summary"`
+	Document json.RawMessage `json:"document"`
+}
+
+func decodeCanvasMutationReceipt(raw string, result *UserDataSummary) error {
+	var stored canvasMutationReceiptResult
+	if err := json.Unmarshal([]byte(raw), &stored); err == nil && stored.Summary.ID != "" {
+		*result = stored.Summary
+		return nil
+	}
+	return json.Unmarshal([]byte(raw), result)
+}
+
+// ApplyUserCanvasOperations applies only the objects changed by the caller to the
+// latest server document. The request is idempotent by mutation ID and commits
+// the canvas row plus its receipt in one database transaction.
+func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasOperationsRequest) (UserDataSummary, error) {
+	if canvasID == "" || len(canvasID) > 80 || req.MutationID == "" || len(req.MutationID) > 160 || len(req.Operations) == 0 || len(req.Operations) > 500 {
+		return UserDataSummary{}, kernel.BadAuthRequest("画布操作请求 ID、操作内容或批次大小无效")
+	}
+	if req.BaseRevision != nil && (*req.BaseRevision < 0 || *req.BaseRevision >= 9007199254740991) {
+		return UserDataSummary{}, kernel.BadAuthRequest("画布基线版本无效")
+	}
+	if len(req.EditProofs) > 500 {
+		return UserDataSummary{}, kernel.BadAuthRequest("画布编辑凭据数量超出限制")
+	}
+	seenProofs := make(map[string]bool, len(req.EditProofs))
+	for _, proof := range req.EditProofs {
+		if proof.NodeID == "" || len(proof.NodeID) > 160 || proof.SessionID == "" || len(proof.SessionID) > 160 || proof.Token == "" || len(proof.Token) > 80 || seenProofs[proof.NodeID] {
+			return UserDataSummary{}, kernel.BadAuthRequest("画布编辑凭据无效或重复")
+		}
+		seenProofs[proof.NodeID] = true
+	}
+	quota, err := s.host.CanvasQuotaCheck(userID)
+	if err != nil {
+		return UserDataSummary{}, err
+	}
+	digest := CanvasOperationsDigest(req)
+	var result UserDataSummary
+	err = s.host.WithStorageLock(func() error {
+		return s.repo.Transaction(func(tx *repository.Repository) error {
+			tx = tx.WithCanvasEditProofs(req.EditProofs)
+			if err := tx.LockCanvasMutation(userID, canvasID); err != nil {
+				return err
+			}
+			candidate := &model.CanvasMutationReceipt{ID: kernel.NewID(), UserID: userID, CanvasID: canvasID, MutationID: req.MutationID, PayloadDigest: digest}
+			created, err := tx.TryCreateCanvasMutationReceipt(candidate)
+			if err != nil {
+				return err
+			}
+			if !created {
+				receipt, err := tx.CanvasMutationReceiptForUser(userID, canvasID, req.MutationID)
+				if err != nil {
+					return err
+				}
+				if receipt.PayloadDigest != digest {
+					return canvasMutationError("canvas_mutation_id_reused", "同一画布请求 ID 对应的操作内容不一致")
+				}
+				return decodeCanvasMutationReceipt(receipt.ResultJSON, &result)
+			}
+			existing, err := tx.CanvasProjectForUser(userID, canvasID)
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				existing = nil
+			}
+			isCreate := existing == nil
+			if isCreate && (len(req.Operations) == 0 || req.Operations[0].Type != "create_canvas") {
+				return kernel.NotFound("画布不存在或已删除")
+			}
+			if !isCreate {
+				for _, operation := range req.Operations {
+					if operation.Type == "create_canvas" {
+						return canvasOperationConflict("画布 %q 已存在，不能重复创建", canvasID)
+					}
+				}
+			}
+			if req.BaseRevision != nil && *req.BaseRevision > 0 && isCreate {
+				return canvasMutationError("canvas_invalid_base", "新画布不能使用已有版本作为基线")
+			}
+			now := time.Now().UTC()
+			var payload map[string]json.RawMessage
+			var operations []CanvasOperation
+			if isCreate {
+				create := req.Operations[0]
+				if create.ID != "" && create.ID != canvasID {
+					return kernel.BadAuthRequest("画布创建操作的 ID 与请求路径不一致")
+				}
+				payload = map[string]json.RawMessage{
+					"id":          jsonRawValue(canvasID),
+					"nodes":       json.RawMessage(`[]`),
+					"connections": json.RawMessage(`[]`),
+				}
+				for field, value := range create.Patch {
+					if !allowedCanvasOperationField(field) {
+						return kernel.BadAuthRequest("不支持的新画布字段")
+					}
+					payload[field] = append(json.RawMessage(nil), value...)
+				}
+				operations = req.Operations[1:]
+			} else {
+				// 客户端的 beforeValue 来自 GET 返回的投影（title/projectId 等以数据库列为准），
+				// 字段基线校验必须对同一份投影进行，否则 projectId 列为 "" 而 payload 缺省时会误判冲突。
+				base, err := canvasProjectPayload(*existing)
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(base, &payload); err != nil {
+					return err
+				}
+				operations = req.Operations
+			}
+			if err := applyCanvasOperations(payload, operations); err != nil {
+				if errors.Is(err, ErrCanvasObjectMissing) || errors.Is(err, ErrCanvasOperationConflict) {
+					return err
+				}
+				return kernel.BadAuthRequest(err.Error())
+			}
+			if isCreate {
+				// ApplyUserCanvasOperations 每批最多 500 个操作；满批说明客户端拆分了创建。
+				if err := adoptDeclarativeReferences(payload, len(req.Operations) >= 500); err != nil {
+					return err
+				}
+			}
+			delete(payload, "revision")
+			delete(payload, "remoteContentHash")
+			payload["id"] = jsonRawValue(canvasID)
+			payload["updatedAt"] = jsonRawValue(now)
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				return err
+			}
+			if err := New(tx, nil).ValidateCanvasMediaAssets(userID, raw); err != nil {
+				return err
+			}
+			project, err := canvasProjectFromJSON(userID, raw)
+			if err != nil {
+				return err
+			}
+			if project.ID != canvasID {
+				return kernel.BadAuthRequest("画布 ID 与请求路径不一致")
+			}
+			if existing != nil {
+				project.ID, project.CreatedAt, project.Revision, project.UpdatedAt = existing.ID, existing.CreatedAt, existing.Revision, now
+			} else {
+				project.CreatedAt, project.Revision, project.UpdatedAt = now, 0, now
+			}
+			var existingPayload string
+			if existing != nil {
+				existingPayload = existing.PayloadJSON
+			}
+			if err := quota(tx, existing == nil, int64(len(raw)-len(existingPayload))); err != nil {
+				return err
+			}
+			if err := tx.UpsertCanvasProject(&project); err != nil {
+				return err
+			}
+			result = UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision,
+				SaveAudit: &CanvasSaveAudit{NodesBefore: canvasNodeCount(existingPayload), NodesAfter: canvasNodeCount(project.PayloadJSON)}}
+			document, err := canvasProjectPayload(project)
+			if err != nil {
+				return err
+			}
+			encoded, err := json.Marshal(canvasMutationReceiptResult{Summary: result, Document: document})
+			if err != nil {
+				return err
+			}
+			candidate.ResultJSON, candidate.Revision = string(encoded), project.Revision
+			return tx.FinalizeCanvasMutationReceipt(candidate)
+		})
+	})
+	if errors.Is(err, ErrCanvasObjectMissing) {
+		return UserDataSummary{}, canvasMutationError("canvas_object_missing", err.Error())
+	}
+	if errors.Is(err, ErrCanvasOperationConflict) {
+		return UserDataSummary{}, canvasMutationError("canvas_field_conflict", err.Error())
+	}
+	if errors.Is(err, repository.ErrCanvasRevisionConflict) {
+		retry := canvasMutationError("canvas_concurrent_write", "画布正在更新，将自动重放原请求")
+		retry.Retryable = true
+		return UserDataSummary{}, retry
+	}
+	if errors.Is(err, repository.ErrCanvasEditLease) {
+		return UserDataSummary{}, canvasMutationError("canvas_edit_lease_conflict", err.Error())
+	}
+	return result, err
+}
+
+func canvasMutationError(reason kernel.ErrorReason, message string) *kernel.AppError {
+	err := kernel.NewAppError(http.StatusConflict, message)
+	err.Reason = reason
+	return err
+}
+
 func (s *Service) upsertUserCanvasProjectWithHistory(userID string, raw json.RawMessage, reason string) (UserDataSummary, error) {
 	var version struct {
-		Revision               *int64 `json:"revision"`
-		ReferenceFieldsVersion int    `json:"referenceFieldsVersion"`
+		Revision *int64 `json:"revision"`
 	}
 	if err := json.Unmarshal(raw, &version); err != nil {
 		return UserDataSummary{}, kernel.BadAuthRequest("画布版本格式错误")
@@ -319,6 +492,9 @@ func (s *Service) upsertUserCanvasProjectWithHistory(userID string, raw json.Raw
 			return err
 		}
 		if err := SaveDocumentWithHistory(s.repo, existing, &project, reason); err != nil {
+			if errors.Is(err, repository.ErrCanvasEditLease) {
+				return canvasMutationError("canvas_edit_lease_conflict", err.Error())
+			}
 			if errors.Is(err, repository.ErrCanvasRevisionConflict) {
 				return canvasRevisionConflict()
 			}
@@ -340,21 +516,15 @@ func (s *Service) upsertUserCanvasProjectWithHistory(userID string, raw json.Raw
 	if err != nil {
 		return UserDataSummary{}, err
 	}
-	summary := UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision, SaveAudit: &audit}
-	if version.ReferenceFieldsVersion == 1 {
-		var projection struct {
-			Connections json.RawMessage `json:"connections"`
-		}
-		if err := json.Unmarshal([]byte(project.PayloadJSON), &projection); err != nil {
-			return UserDataSummary{}, err
-		}
-		summary.Connections = projection.Connections
-	}
-	return summary, nil
+	return UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision, SaveAudit: &audit}, nil
 }
 
 func (s *Service) DeleteUserCanvasProject(userID string, id string) error {
-	return s.repo.DeleteCanvasProject(userID, id)
+	err := s.repo.DeleteCanvasProject(userID, id)
+	if errors.Is(err, repository.ErrCanvasEditLease) {
+		return canvasMutationError("canvas_edit_lease_conflict", err.Error())
+	}
+	return err
 }
 
 func AssetFromJSON(userID string, raw json.RawMessage) (model.Asset, error) {
@@ -486,4 +656,58 @@ func parseClientTime(value string, fallback time.Time) time.Time {
 		return parsed
 	}
 	return fallback
+}
+
+// adoptDeclarativeReferences 让新建画布与 commands.Service.Create 一样使用声明式引用，
+// 否则 Agent 会把每张新画布都当作待迁移的历史画布。同一请求带入节点与连线（导入、
+// 离线后首次同步）时先按历史画布规范化：只有规范化成功且无冲突才采用，冲突、引用
+// 无法解析（循环、悬空、角色多匹配）或含内置能力表以外的节点类型时保持历史画布，
+// 照常保存，不在未核对字段与连线时打标记。
+// truncated 表示客户端把创建拆成了多批，后续批次的连线不在本次文档里，同样保持历史画布。
+func adoptDeclarativeReferences(payload map[string]json.RawMessage, truncated bool) error {
+	if truncated {
+		return nil
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return err
+	}
+	registry := capability.BuiltinRegistry()
+	for _, item := range nodesOf(doc) {
+		if node, _ := item.(map[string]any); node != nil {
+			if nodeType, _ := node["type"].(string); nodeType != "" {
+				if _, known := registry.Resolve(nodeType); !known {
+					return nil
+				}
+			}
+		}
+	}
+	migrated, err := references.NormalizeLegacy(doc, nil, registry, nil)
+	var referenceErr *references.Error
+	if errors.As(err, &referenceErr) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(migrated.Conflicts) > 0 {
+		return nil
+	}
+	for _, field := range []string{"referenceFieldsVersion", "nodes", "connections"} {
+		value, err := json.Marshal(migrated.Document[field])
+		if err != nil {
+			return err
+		}
+		payload[field] = value
+	}
+	return nil
+}
+
+func nodesOf(doc map[string]any) []any {
+	nodes, _ := doc["nodes"].([]any)
+	return nodes
 }

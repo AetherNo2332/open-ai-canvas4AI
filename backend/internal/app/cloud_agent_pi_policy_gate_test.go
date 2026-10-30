@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // TestPiModelStepRejectsPromptWithoutServerPolicy 锁住"服务端策略不可被移除"这条合同。

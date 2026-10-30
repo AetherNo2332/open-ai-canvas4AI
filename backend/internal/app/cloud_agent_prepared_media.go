@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/canvas/contract"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 const cloudAgentMediaQuoteLifetime = 30 * time.Minute
@@ -87,7 +87,7 @@ func cloudAgentMediaDependencyHash(doc map[string]any, args cloudAgentMediaArgs)
 			return "", err
 		}
 		metadata, _ := target["metadata"].(map[string]any)
-		for _, key := range []string{"locked", "taskId", "generationTaskId", "agentDraftRunId", "status", "mediaVersion"} {
+		for _, key := range []string{"locked", "taskId", "generationTaskId", "agentDraftRunId", "status", "currentMediaVersionId"} {
 			input[key] = metadata[key]
 		}
 		targetInput = map[string]any{"id": target["id"], "type": target["type"], "locked": target["locked"], "input": input, "resource": resourceProjection(metadata)}

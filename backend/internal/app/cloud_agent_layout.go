@@ -6,9 +6,9 @@ import (
 	"math"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/layout"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/layout"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // errCloudAgentSnapshotConflict 标记"画布在模型读取之后变了"这一可恢复结果。

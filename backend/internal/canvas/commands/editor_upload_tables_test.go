@@ -154,7 +154,7 @@ func TestEditorResourceBindingRejectsWrongKindAndManagedMedia(t *testing.T) {
 	for _, raw := range []string{
 		`{"nodes":[{"id":"upload","type":"video","metadata":{}}],"connections":[]}`,
 		`{"nodes":[{"id":"upload","type":"image","metadata":{"status":"loading"}}],"connections":[]}`,
-		`{"nodes":[{"id":"upload","type":"image","metadata":{"mediaVersion":{"id":"version"},"storageKey":"resource:old","content":"/api/resources/old/file"}}],"connections":[]}`,
+		`{"nodes":[{"id":"upload","type":"image","metadata":{"mediaVersions":[{"id":"version","number":1,"createdAt":"x","source":"upload","media":{"storageKey":"resource:old"}}],"currentMediaVersionId":"version","storageKey":"resource:old","content":"/api/resources/old/file"}}],"connections":[]}`,
 	} {
 		ctx := ownerContext()
 		ctx.ResourceAllowed = func(string) bool { return true }

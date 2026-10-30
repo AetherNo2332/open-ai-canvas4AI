@@ -179,7 +179,8 @@ export function mergeAgentCanvasEditor(previous: CanvasProject, incoming: Canvas
     const locallyRemovedIds = new Set(previous.nodes.filter((node) => !liveIds.has(node.id)).map((node) => node.id));
     // A delayed server projection must not reconnect a node deleted locally
     // while the save was in flight. Explicit connection edits still merge below.
-    const incomingConnections = incoming.connections.filter((edge) => edge.managedBy !== "reference-fields-v1"
+    // Agent 画布命令写入的引用连线带 managedBy / referenceOwnerNodeId（见后端 canvas/references）。
+    const incomingConnections = (incoming.connections as Array<CanvasConnection & { managedBy?: string; referenceOwnerNodeId?: string }>).filter((edge) => edge.managedBy !== "reference-fields-v1"
         || !(locallyRemovedIds.has(edge.fromNodeId) || locallyRemovedIds.has(edge.toNodeId) || locallyRemovedIds.has(edge.referenceOwnerNodeId || "")));
     const changes = <T extends { id: string }>(before: T[], after: T[]): Change<T>[] => {
         const byId = new Map(before.map((item) => [item.id, item]));
@@ -198,3 +199,6 @@ export function mergeAgentCanvasEditor(previous: CanvasProject, incoming: Canvas
         ...(!equal(previous.connections.map((item) => item.id), incomingConnections.map((item) => item.id)) ? { previousConnectionOrder: previous.connections.map((item) => item.id), connectionOrder: incomingConnections.map((item) => item.id) } : {}),
     });
 }
+
+// user-data-sync 用同一套三方合并处理多端字段冲突。
+export const mergeThreeWayValue = mergeValue;

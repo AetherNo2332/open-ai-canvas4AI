@@ -6,9 +6,9 @@ import (
 	"reflect"
 	"unicode/utf8"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // Pi must carry an exact billed call through preflight even when its JSON is

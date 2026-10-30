@@ -2,9 +2,10 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
 	"strings"
 	"testing"
+	"yingce/backend/internal/canvas/mediaversions"
+	"yingce/backend/internal/model"
 )
 
 func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testing.T) {
@@ -44,9 +45,7 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 			if !strings.Contains(string(preview), "新版本") || !strings.Contains(string(preview), "旧版本") || strings.Contains(string(preview), "草稿节点和引用连线已创建") {
 				t.Fatalf("misleading version preview: %s", preview)
 			}
-			var versions int64
-			db.Model(&model.CanvasMediaVersion{}).Count(&versions)
-			if versions != 0 {
+			if versions := agentNodeVersions(t, s, args.NodeID); len(versions) != 0 {
 				t.Fatal("approval created a version")
 			}
 			assertAgentCurrentResource(t, s, args.NodeID, "resource:ref-two")
@@ -57,9 +56,17 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 			if len(changed) != 1 || changed[0]["after"].(map[string]any)["id"] != args.NodeID {
 				t.Fatalf("version submit lacks the actual pending node: %+v", submitted)
 			}
-			projection := changed[0]["after"].(map[string]any)["metadata"].(map[string]any)["mediaVersion"].(map[string]any)
-			if projection["pendingVersionId"] == "" || projection["currentVersionId"] == "" {
-				t.Fatalf("version submit lost current/pending: %+v", projection)
+			projection := changed[0]["after"].(map[string]any)["metadata"].(map[string]any)
+			// 提交把节点当前媒体登记为版本 1（等价浏览器 recordCommittedMediaVersion），
+			// 在途生成单独走 generating，不是版本条目；版本 1 的媒体与来源必须仍是旧媒体。
+			submittedVersions := mediaversions.List(changed[0]["after"].(map[string]any))
+			if projection["taskId"] == nil || projection["storageKey"] != "resource:ref-two" || len(submittedVersions) != 1 {
+				t.Fatalf("version submit must keep old media and register only the current media as version 1: %+v", projection)
+			}
+			first := submittedVersions[0]
+			firstMedia, _ := first["media"].(map[string]any)
+			if first["source"] != "upload" || firstMedia["storageKey"] != "resource:ref-two" || projection["currentMediaVersionId"] != first["id"] {
+				t.Fatalf("submitted version 1 must snapshot the pre-task current media: %+v", first)
 			}
 			if state.MediaTaskID == "" {
 				t.Fatalf("approved version has no task: %+v", state.Events[len(state.Events)-1])
@@ -96,15 +103,35 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 				var history struct {
 					SnapshotHash string `json:"snapshotHash"`
 					Versions     struct {
-						State struct {
-							Current string `json:"currentVersionId"`
-						} `json:"state"`
+						Generating struct {
+							TaskID string `json:"taskId"`
+						} `json:"generating"`
+						Items []struct {
+							ID string `json:"id"`
+						} `json:"items"`
 					} `json:"mediaVersions"`
 				}
 				_ = json.Unmarshal(raw, &history)
+				if history.Versions.Generating.TaskID != task.ID || len(history.Versions.Items) != 1 || strings.Contains(string(raw), "beforeVersion") {
+					t.Fatalf("read must report generation apart from versions: %s", raw)
+				}
+				// The user adopts an older version in the browser while the task runs.
+				canvas, _ := s.repo.CanvasProjectForUser("user", "agent-canvas")
+				doc, _ := creationDocument(canvas.PayloadJSON)
+				nodes, _ := creationObjects(doc["nodes"])
+				meta := cloudAgentNodeMetadata(nodes["hero"])
+				meta["mediaVersions"] = []any{map[string]any{"id": "manual-v1", "number": 1, "createdAt": "2026-10-01T00:00:00.000Z", "source": "upload", "media": map[string]any{"storageKey": "resource:ref-two", "content": "/api/resources/ref-two/file"}}}
+				meta["currentMediaVersionId"] = "manual-v1"
+				delete(meta, "taskId")
+				encoded, _ := json.Marshal(doc)
+				canvas.PayloadJSON = string(encoded)
+				if err := s.repo.UpsertCanvasProject(canvas); err != nil {
+					t.Fatal(err)
+				}
+				history.SnapshotHash = cloudAgentCanvasHash(doc)
 				selectCall := cloudAgentCall{ID: "select-during-generation"}
 				selectCall.Function.Name = "canvas_apply_ops"
-				body, _ := json.Marshal(map[string]any{"snapshotHash": history.SnapshotHash, "ops": []any{map[string]any{"type": "use_media_version", "id": "hero", "versionId": history.Versions.State.Current}}})
+				body, _ := json.Marshal(map[string]any{"snapshotHash": history.SnapshotHash, "ops": []any{map[string]any{"type": "use_media_version", "id": "hero", "versionId": "manual-v1"}}})
 				selectCall.Function.Arguments = string(body)
 				policy, err := s.RuntimePolicy()
 				if err != nil {
@@ -123,14 +150,18 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 			if err = s.materializeCloudAgentStoryboardTask(func() *model.Task { r, _ := s.repo.Task(task.ID); return r }()); err != nil {
 				t.Fatal(err)
 			}
-			expectedResource, expectedAdoption := "resource:version-output", "adopted"
+			expectedResource, expectedVersions := "resource:version-output", 2
 			if manual {
-				expectedResource, expectedAdoption = "resource:ref-two", "selection_changed"
+				expectedResource = "resource:ref-two"
 			}
 			assertAgentCurrentResource(t, s, args.NodeID, expectedResource)
-			version, err := s.repo.CanvasMediaVersionForTask("user", task.ID)
-			if err != nil || version == nil || version.Adoption != expectedAdoption {
-				t.Fatalf("version not adopted: %+v %v", version, err)
+			versions := agentNodeVersions(t, s, args.NodeID)
+			if len(versions) != expectedVersions {
+				t.Fatalf("node history after writeback: %+v", versions)
+			}
+			newest := versions[len(versions)-1]
+			if generation, _ := newest["generation"].(map[string]any); generation["taskId"] != task.ID || newest["source"] != "generate" {
+				t.Fatalf("agent version not traceable by generation.taskId: %+v", newest)
 			}
 			if err = advancePiAgentForTest(t, s, run.ID); err != nil {
 				t.Fatal(err)
@@ -144,9 +175,9 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 				}
 				expected := "生成结果已回写画布节点"
 				if manual {
-					expected = "新版本已保存，保留手动选择的当前版本"
+					expected = "新版本已加入节点版本历史，保留手动选择的当前版本"
 				}
-				found = event.Type == "tool_completed" && result["summary"] == expected
+				found = event.Type == "tool_completed" && result["summary"] == expected && result["adopted"] == !manual && result["versionId"] == newest["id"]
 			}
 			if !found {
 				t.Fatal("completion did not report the persisted adoption decision")
@@ -169,4 +200,18 @@ func assertAgentCurrentResource(t *testing.T, s *Service, nodeID, key string) {
 	if cloudAgentNodeMetadata(nodes[nodeID])["storageKey"] != key {
 		t.Fatalf("current media changed: %+v", nodes[nodeID])
 	}
+}
+
+func agentNodeVersions(t *testing.T, s *Service, nodeID string) []map[string]any {
+	t.Helper()
+	canvas, err := s.repo.CanvasProjectForUser("user", "agent-canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, _ := creationObjects(doc["nodes"])
+	return mediaversions.List(nodes[nodeID])
 }

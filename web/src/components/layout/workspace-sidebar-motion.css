@@ -20,11 +20,11 @@
         background-color var(--motion-state),
         color var(--motion-state);
     transform: none;
-    border-radius: var(--r-md) !important;
+    border-radius: var(--menu-radius) !important;
 }
 
 .app-user-workspace .app-workspace-sidebar[data-motion-sidebar] .app-workspace-nav-link:focus-visible {
-    outline: 2px solid var(--primary);
+    outline: 2px solid var(--ring);
     outline-offset: -2px;
 }
 

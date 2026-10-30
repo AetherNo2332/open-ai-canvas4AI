@@ -1,8 +1,8 @@
 package commands
 
 import (
-	"infinite-canvas/backend/internal/canvas/capability"
 	"testing"
+	"yingce/backend/internal/canvas/capability"
 )
 
 func TestCapabilitiesExposeCanonicalEditorPathsAndStructuredFields(t *testing.T) {

@@ -8,11 +8,11 @@ import (
 	"image"
 	_ "image/jpeg"
 	"image/png"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/canvas/tasks"
-	"infinite-canvas/backend/internal/model"
 	"io"
 	"strings"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/canvas/tasks"
+	"yingce/backend/internal/model"
 )
 
 // Local image transformation runs before the materialization transaction. It
@@ -73,7 +73,7 @@ func (s *Service) prepareCanvasTaskOutput(ctx context.Context, task model.Task, 
 		if err != nil {
 			return task, err
 		}
-		saved, _, err := s.storeResourceWithWriter(task.UserID, "image", "emotion.png", "image/png", int64(encoded.Len()), combined.Bounds().Dx(), combined.Bounds().Dy(), 0, bytes.NewReader(encoded.Bytes()), uploadKey, false, s.storeTaskMediaObject)
+		saved, _, err := s.storeResourceWithWriter(task.UserID, "image", "emotion.png", "image/png", int64(encoded.Len()), combined.Bounds().Dx(), combined.Bounds().Dy(), 0, bytes.NewReader(encoded.Bytes()), uploadKey, false, s.storeResourceObject)
 		if err != nil {
 			s.releaseUserUploadQuota(task.UserID, day, int64(encoded.Len()))
 			return task, err

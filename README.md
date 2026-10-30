@@ -1,215 +1,570 @@
 <p align="center">
-  <img src="web/public/logo.svg" width="80" alt="ArrowFX">
+  <img src="web/public/logo.svg" width="88" alt="影策 logo">
 </p>
 
-<h1 align="center">ArrowFX</h1>
+<h1 align="center">影策</h1>
 
-<p align="center">用画布组织创作，让 Agent 协助完成剧本、资产与分镜。</p>
+<p align="center">让一个故事，从文字走向银幕</p>
 
 <p align="center">
   <a href="https://github.com/AetherNo2332/open-ai-canvas4AI">本仓库</a> ·
-  <a href="docs/content/docs/overview/features.mdx">功能清单</a> ·
-  <a href="docs/content/docs/backend/production-deployment.mdx">生产部署</a> ·
-  <a href="CHANGELOG.md">更新日志</a>
+  <a href="https://github.com/ddcat-ai/open-ai-canvas">上游</a> ·
+  <a href="docs/content/docs/overview/features.mdx">功能</a> ·
+  <a href="docs/content/docs/overview/quick-start.mdx">文档</a> ·
+  <a href="SECURITY.md">安全策略</a>
 </p>
 
-ArrowFX 是基于 [影策 / Open AI Canvas](https://github.com/ddcat-ai/open-ai-canvas) 二次开发的 AI 影视创作工作台。它把文本、图片、视频、音频、角色卡和分镜表放在同一张画布中，通过模型渠道、异步任务与云端 Agent 连接创作步骤。
+影策是一个开源的 AI 影视与短剧创作工作台。上传一本小说，流水线会完成改编、拆集、建角色、出分镜，再逐段生成视频并合成成片；需要自由发挥时，可以在无限画布上用节点组织图片、视频、文本和 3D 预演，也可以让 Agent 直接在画布上动手。模型渠道、技能、插件、素材和计费都可以自部署、自管理。
 
-本仓库维护画布与 Agent 的交互、结构化分镜、资产引用、技能运行和自部署能力。站点名称、助手名称、主题与圆角可在后台配置；代码默认品牌为 ArrowFX。
+本仓库跟随 [ddcat-ai/open-ai-canvas](https://github.com/ddcat-ai/open-ai-canvas) 同步，画布云端 Agent 使用本仓库自己的实现：独立 Node Pi Worker（`agent/`）负责会话与工具循环，模型调用、审批、计费和画布写入都回到后端校验，部署时多一个 `agent` 服务。
 
-项目仍在持续开发。当前能力和验收边界分别见[功能清单](docs/content/docs/overview/features.mdx)与[待测试清单](docs/content/docs/progress/pending-test.mdx)。
+<p align="center">
+  <img src="assets/screenshots/storyboard.jpg" alt="短剧制作：分镜视图，每段显示镜头、台词、参考图和视频生成状态" width="100%">
+</p>
 
-## 能做什么
+<p align="center">
+  <a href="https://yingce.tv"><strong>在线演示 yingce.tv</strong></a>（账号/密码：test/test123456） ·
+  <a href="#快速开始">本地启动</a> ·
+  <a href="#服务器部署">服务器部署</a>
+</p>
 
-| 能力 | 当前实现 |
+> 项目仍在快速开发，数据结构和外部接口可能调整。默认适合个人、本地或可信环境部署；未经安全配置，不要直接作为公网多人服务使用。
+
+## 下个版本：影策世界引擎（内测中）
+
+在 3D 世界里搭场景、排机位、做动画：天气、布景、建筑、花木和角色直接摆进场景，在地面标记 A、B 点后，用一句话告诉 Agent「将角色从 B 点跑步移动到 A 点」，它会补问细节并生成关键帧。镜头可在时间轴上编排，并导出白模和深度画面作为视频生成的参考。
+
+<p align="center">
+  <img src="assets/screenshots/3d.png" alt="影策世界引擎：古代集市 3D 场景、A/B 标记点、主摄影机、时间轴与 Agent 对话面板" width="100%">
+</p>
+
+## 赞助商
+
+感谢以下赞助商对影策项目的支持：
+
+| LOGO | 类型 | 赞助商名称 | 说明 | 网站 |
+| --- | --- | --- | --- | --- |
+| <img src="assets/artdance.png" alt="ArtDance" width="160"> | 商业 | ArtDance | 本项目 Seedance 模型的天使投资人。 | [artbox.top](https://artbox.top) |
+| <img src="assets/soonstudio.jpg" alt="soonstudio" width="160"> | 商业 | soonstudio | API 一站式网站，自研系统，非 New API；支持手机、短信接码，覆盖国内外几乎所有模型 API 接口，并发高、稳定性强。源于开源，步入 AI 领域，感谢开源。 | [soonstudio.ai](https://soonstudio.ai/) |
+| <img src="assets/fluxion.jpg" alt="Fluxion AI" width="160"> | 商业 | Fluxion AI | 面向个人开发者、技术团队与企业，通过统一 API 接入并管理全球主流 AI 模型，根据不同模型与线路，API 调用成本较官方或基准价格可降低 40%—98%。 | [注册送 $3.88 试用福利](https://fluxionai.space/register?source=github&campaign=yingce&promo=yingce) |
+| <img src="assets/sponsor1.svg" alt="快乐机艺术小组" width="160"> | 团队 | 快乐机艺术小组 | 一支跨学科的艺术创作团队，持续探索数字与艺术的全新表达形式。 | 暂无 |
+| <img src="assets/metaso.png" alt="秘塔" width="160"> | 企业 | 秘塔 | 提供 MiniMax H3 视频生成 API，支持原生 2K、音画同步和 OpenAI 兼容协议。 | [metaso.cn](https://metaso.cn/minimax-h3/?s=dd) |
+| <img src="assets/fruivision.png" alt="浮瑞万相AI" width="160"> | 企业 | 浮瑞万相AI | 一家专注于AI视听的AI Native公司 | 暂无 |
+| <img src="assets/xmzm.png" alt="喜马抓马" width="160"> | 团队 | 喜马抓马 | 中国AI视听先锋厂牌/AI 视听全链路综合服务平台 | [himadrama.com](https://himadrama.com) |
+| <img src="assets/yuyutech.jpg" alt="羽宇科技" width="160"> | 企业 | 羽宇科技 | 一站式AI应用平台。提供模型算力入口、AI短剧视频制作（Studio）、企业数字员工（Agent）及内容出海（OPC）全栈解决方案。 | 暂无 |
+| <img src="assets/panda.jpg" alt="panda AI" width="160"> | 团队 | panda AI | API接口平台，面向个人开发者、技术团队与企业，稳定提供GPT、Gemini、grok等图片视频模型 | [api.pandatk.com](https://api.pandatk.com) |
+
+### 3D 预演台赞助用户
+
+感谢以下用户赞助 3D 预演台的开发：
+
+<p>
+  <a href="https://github.com/TripsCoder"><img src="https://github.com/TripsCoder.png?size=64" width="48" height="48" alt="TripsCoder"></a>
+  <a href="https://github.com/sugtex"><img src="https://github.com/sugtex.png?size=64" width="48" height="48" alt="sugtex"></a>
+  <a href="https://github.com/Leyi813"><img src="https://github.com/Leyi813.png?size=64" width="48" height="48" alt="Leyi813"></a>
+  <a href="https://github.com/daoge05178"><img src="https://github.com/daoge05178.png?size=64" width="48" height="48" alt="daoge05178"></a>
+  <a href="https://github.com/AetherNo2332"><img src="https://github.com/AetherNo2332.png?size=64" width="48" height="48" alt="AetherNo2332"></a>
+</p>
+
+GitHub 用户：[@TripsCoder](https://github.com/TripsCoder) · [@sugtex](https://github.com/sugtex) · [@Leyi813](https://github.com/Leyi813) · [@daoge05178](https://github.com/daoge05178) · [@AetherNo2332](https://github.com/AetherNo2332)
+
+| 赞助用户 | 联系方式 |
 | --- | --- |
-| 自由画布 | 文本和媒体节点、分组与排版、缩放与小地图、撤销重做、版本记录、导入导出和只读分享。 |
-| 角色与分镜 | 角色卡、参考素材、结构化分镜表；共享引用与逐镜资产绑定、素材版本选择、媒体预览和生成结果回填。 |
-| 多媒体生成 | 通过已配置渠道执行文本、图片、视频和音频任务；图片、视频和音频在原节点保留版本历史，参考图、首尾帧等输入按模型能力提供。 |
-| 云端 Agent | 跨设备对话恢复、流式回复、画布读写、批量操作与任务跟踪；默认发送方式可选插队或排队，待发消息支持编辑；支持只读、审批和自动执行模式，工具按需披露。 |
-| Skills 与规则 | 内置及安装技能、后台全局默认技能、对话技能选择；“提示词与规则”统一编辑账户全局提示词和当前画布 Workspace 文档。 |
-| 任务与素材 | 查看任务状态与产出，管理素材分类与来源，复用生成素材，校验资源引用和访问权限。 |
-| 预演与剪辑 | 3D 预演工作台、画布时间线和项目剪辑台；支持片段编排与导出，服务端字幕转写和渲染需配置相应依赖。 |
-| 管理后台 | 用户、系统渠道与模型管理、可选逻辑模型、用量与积分、对象存储、插件、功能开关、站点外观和 Agent 执行限制。 |
+| vv | 2838033228@qq.com |
+| 克里斯 | [artbox.top](https://artbox.top) |
+| 宇熙 | 53121904@qq.com |
+| 落羽 | luoyyv66@gmail.com |
+| 今夕何在 | 809321478@qq.com |
+| Alpha-M·Break | 15739564793@qq.com |
+| 不吃鸭梨 | elio02519@gmail.com |
+| 九月 | 563641352@qq.com |
+| A | jiaboxuan1205@gmail.com |
 
-短剧项目、任务中心、插件等入口受后台功能开关控制。模型能力取决于实际配置的渠道；本项目不附带模型 API Key 或生成额度。
+## 产品一览
 
-更新图片、视频或音频时，可在原节点的版本菜单中生成新版本。生成期间继续使用旧媒体；成功后自动采用新版。期间手动选过版本时，生成结果会留在历史中，保留你的选择。切换已保存版本不会再次调用生成模型。
+### 从小说到成片：短剧制作流水线
 
-分镜表的图片、视频产物沿用原节点与绑定。原任务仍在执行、提交结果待确认或媒体保存未完成时，应先查看或恢复原任务；恢复保存会复用原任务，明确重新生成才会建立新的生成申请。
+上传小说或粘贴正文，影策按集拆分剧本，提取角色、道具和场景，生成结构化分镜，再按剧情段逐段生成视频。第 2 段起自动以上一段最后一帧作为首帧，镜头之间保持连贯。每一步都可以人工接管：改写台词、锁定角色形象、单段重新生成。
 
-## 本地运行
+<table>
+<tr>
+<td width="50%"><img src="assets/screenshots/script.jpg" alt="剧本视图：本集梗概、开场钩子、结尾悬念，镜头逐条对照小说原文"></td>
+<td width="50%"><img src="assets/screenshots/cast.jpg" alt="设定视图：角色三视图、别名、外貌描述和声线，可锁定形象"></td>
+</tr>
+<tr>
+<td><b>剧本</b>：本集梗概、开场钩子和结尾悬念一目了然；每个镜头标注景别、运镜和时长，右侧对照小说原文。</td>
+<td><b>设定</b>：角色、道具、场景统一管理。角色有三视图、别名、外貌和声线，锁定后整部剧沿用同一形象。</td>
+</tr>
+</table>
 
-推荐先使用 Docker 本地构建，包含前端、后端和 Agent Worker。宿主机只需 Git、Docker 和 Compose 插件，无需先安装 Go 或 Bun。
+### 一句话开始创作
 
-### 1. 获取代码与配置
+创作首页把视频、图片、文本和 Agent 放在同一个输入框里。选模型、调比例和清晰度、加参考图，然后直接生成；灵感大厅收录可复用的提示词案例，点开即可继续创作。
+
+<table>
+<tr>
+<td width="50%"><img src="assets/screenshots/create.jpg" alt="创作首页：视频、图片、文本、Agent 四种模式与灵感大厅"></td>
+<td width="50%"><img src="assets/screenshots/agent.jpg" alt="Agent 模式：新建画布并与 Agent 协作"></td>
+</tr>
+<tr>
+<td><b>创作首页</b>：最近画布、快捷入口和灵感大厅集中在一页。</td>
+<td><b>画布 Agent</b>：Agent 结合素材、技能和画布上下文直接在画布上生成和修改，生成操作仍需经过审批和额度检查。</td>
+</tr>
+</table>
+
+### 无限画布
+
+节点、连线、框选、小地图、撤销重做、导入第三方画布和只读分享都已就绪。图片、视频、文本、音频和 3D 预演节点可以互相引用，适合做角色设定、场景概念和镜头实验。
+
+<p align="center">
+  <img src="assets/screenshots/canvas.jpg" alt="无限画布：角色三视图节点与连线" width="100%">
+</p>
+
+### 图片与视频工作台
+
+按出品目标选模板（如商品白底图、广告英雄出场），上传参考素材，描述画面，确认参数后生成。进行中的任务和历史结果都在右侧。
+
+<p align="center">
+  <img src="assets/screenshots/image-studio.jpg" alt="图片生成工作台：出品目标模板、参考素材、生成结果与历史" width="100%">
+</p>
+
+### 技能、插件与素材
+
+<table>
+<tr>
+<td width="50%"><img src="assets/screenshots/skills.jpg" alt="技能库：短剧影视、电商营销、创意设计等分类技能"></td>
+<td width="50%"><img src="assets/screenshots/plugins.jpg" alt="插件中心：文本、图片、视频、音频、支付协议和应用插件"></td>
+</tr>
+<tr>
+<td><b>技能库</b>：把分镜方法、角色设计、广告导演思路等沉淀成技能，在对话里用 <code>@技能</code> 调用，也可以从 GitHub 安装社区技能。</td>
+<td><b>插件中心</b>：模型协议以插件形式接入，覆盖主流文本、图片、视频、音频供应商，另有支付协议和应用插件。</td>
+</tr>
+<tr>
+<td><img src="assets/screenshots/assets.jpg" alt="素材库：按类型和业务分类管理生成结果与上传素材"></td>
+<td><img src="assets/screenshots/tasks.jpg" alt="创作历史：任务状态、模型、所属项目和积分消耗"></td>
+</tr>
+<tr>
+<td><b>素材库</b>：文本、图片、视频、音频和 3D 模型统一归档，按角色、场景、道具分类，删除前检查引用。</td>
+<td><b>创作历史</b>：所有生成任务的状态、模型、所属项目和积分消耗，可按画布、类型和模型筛选。</td>
+</tr>
+</table>
+
+### 自部署管理后台
+
+<table>
+<tr>
+<td width="50%"><img src="assets/screenshots/admin-overview.jpg" alt="运行总览：活跃用户、生成任务、服务质量、P95 耗时与费用统计"></td>
+<td width="50%"><img src="assets/screenshots/admin-channels.jpg" alt="系统渠道：渠道列表、模型管理、请求协议和规格售价"></td>
+</tr>
+<tr>
+<td><b>运行总览</b>：任务量、服务质量、P95 耗时、成本与收入，异常请求单独列出。</td>
+<td><b>渠道与模型</b>：接入多个上游渠道，为每个模型配置请求协议、规格成本和售价。</td>
+</tr>
+</table>
+
+后台还包括用户管理、登录日志、系统公告、提示词模板、存储资源、积分运营、兑换码和支付充值。
+
+### 更多能力
+
+- **时间线剪辑**：片段编排、拆分、修剪、字幕转写和服务端成片导出，支持插件化编辑面板。
+- **3D 预演台**：从画布镜头节点打开，提供摆场、姿态、动画、摄影机与时间轴，可输出构图截图、白模视频和深度图。
+- **任务系统**：异步队列、进度与日志、取消和重试，登录后跨设备同步。
+- **存储**：媒体可存放在后端数据目录、阿里云 OSS 或腾讯云 COS。
+- **明暗主题**：工作台支持明暗主题切换。
+- **社区技能**：[judian-skills](https://github.com/itsWyatt-K/judian-skills) 提供 34 个场景域包索引。安装方式：技能页 → 安装技能 → GitHub 标签 → 仓库地址填 `https://github.com/itsWyatt-K/judian-skills`，子目录填 `skills/drama/story-structure-engine` 这类域包路径。
+
+<p align="center">
+  <img src="assets/screenshots/storyboard-dark.jpg" alt="暗色主题下的短剧分镜视图" width="100%">
+</p>
+
+完整功能以[功能清单](docs/content/docs/overview/features.mdx)为准。
+
+## 快速开始
+
+### 环境要求
+
+- [Bun](https://bun.sh/)：前端和文档站
+- [Go 1.25](https://go.dev/)：后端
+- Docker Compose：仅在使用容器开发或部署时需要
+
+### 宿主机启动
 
 ```bash
 git clone https://github.com/AetherNo2332/open-ai-canvas4AI.git open-ai-canvas
 cd open-ai-canvas
-cp .env.example .env
+
+# 使用 Git 忽略的目录保存本地开发数据和缓存
+mkdir -p .local/project-workbench-debug .local/cache/go-build .local/cache/go-mod
+
+# 终端一：后端
+cd backend
+CANVAS_BACKEND_ADDR=127.0.0.1:8080 \
+CANVAS_BACKEND_DATA_DIR=../.local/project-workbench-debug \
+GOCACHE=../.local/cache/go-build \
+GOMODCACHE=../.local/cache/go-mod \
+go run ./cmd/server
+
+# 终端二：前端
+cd ../web
+bun install --frozen-lockfile
+bun run dev
 ```
 
-编辑 `.env`，分别生成两个至少 32 字符的随机值：`CANVAS_AGENT_INTERNAL_TOKEN` 仅供 backend 签发运行授权，`CANVAS_AGENT_WORKER_TOKEN` 是 Worker 凭据；保留默认 `CANVAS_AGENT_WORKER_ID` 或设置独立实例身份。两个值分别生成，Agent 容器只接收 Worker 凭据：
+打开 <http://localhost:3000>。首次使用时注册管理员账号，并在设置中配置模型渠道。前端默认将 `/api` 代理到 `http://127.0.0.1:8080`；如需修改代理目标，可设置 `VITE_API_PROXY_TARGET`。
+
+Windows PowerShell 用户可在仓库根目录执行：
+
+```powershell
+.\scripts\start-local.ps1
+```
+
+### Docker 开发与本地构建
+
+以下命令用于本地开发或试运行。部署服务器并使用后台在线更新，请使用下文的官方 Release 镜像部署。
+
+源码热更新：
 
 ```bash
-openssl rand -hex 32
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+  docker compose -f docker-compose.dev.yml up --build
 ```
 
-该命令执行两次，将结果分别填入配置。已有 Worker 身份的凭据与撤销状态保存在数据库中，重启不会覆盖；更换凭据或租户范围时使用新的 Worker ID，见[生产部署](docs/content/docs/backend/production-deployment.mdx)。
-
-### 2. 构建并启动
+本地构建并运行 release 镜像：
 
 ```bash
 docker compose -f docker-compose.local.yml up -d --build
 ```
 
-打开 <http://localhost:3000>。该编排只公开 web 的 `3000` 端口，backend 与 Agent 在容器网络内通信；本地数据库和上传资源保存在 `backend-data` 命名卷中。
+热更新开发默认前端端口为 `3000`、后端端口为 `8080`；端口冲突时可通过 `CANVAS_WEB_HOST_PORT` 和 `CANVAS_BACKEND_HOST_PORT` 覆盖。本地构建编排只暴露 web 的 `3000`，后端留在容器网络内，不安装 Host Updater。
 
-```bash
-# 查看服务状态与 Agent 日志
-docker compose -f docker-compose.local.yml ps
-docker compose -f docker-compose.local.yml logs -f --tail=100 agent
+更多本地开发说明（包括时间线字幕转写）见[本地开发文档](docs/content/docs/backend/local-development.mdx)。
+
+## 架构概览
+
+```text
+浏览器（web/）
+  ├─ React 工作区、画布、任务中心和素材库
+  ├─ Zustand / localForage 本地状态与降级缓存
+  └─ 登录态 API、资源请求和 SSE
+          │
+          ▼
+后端（backend/）
+  ├─ Gin handler -> service -> repository/model
+  ├─ SQLite（本地）或 PostgreSQL + Redis（部署）
+  ├─ 异步任务 worker、权限、资源存储和模型中转
+  └─ provider / outbound -> 外部模型渠道
 ```
 
-### 3. 完成首次配置
+前端业务 API 统一经 `web/src/services/api/request.ts` 调用。生产环境由 Nginx 托管前端并代理后端，公网只需暴露 web 入口；SSE 仅在明确的流式路径关闭代理缓冲。
 
-1. 首个注册账号自动成为管理员，后续公开注册默认关闭。
-2. 在个人设置的“渠道”中配置 Base URL、API Key 和模型，或由管理员配置系统渠道及渠道模型。个人渠道受功能开关控制；逻辑模型是可选高级路径。
-3. 进入自由画布，添加素材、角色卡或分镜表，再选择生成模型或使用 Agent。
-4. 在 Skills 页面安装或创建技能，再通过 Agent 面板顶部的技能图标选择；后台启用的全局默认技能会自动加入新会话。
+## 服务器部署
 
-纯文本对话不需要公开资源地址。使用 Agent 看图或向模型传入本地素材时，需要配置上游能够访问的 `CANVAS_PUBLIC_BASE_URL`，或可用的对象存储分发地址；`localhost` 不能作为远端模型可访问的资源入口。
+### 官方 Release 镜像（推荐，支持后台在线更新）
 
-## 六份 Compose 如何选择
+适用于使用 systemd 的 Linux 服务器。先从[本仓库 Releases](https://github.com/AetherNo2332/open-ai-canvas4AI/releases)选择包含 backend、web、Agent 三份镜像、Host Updater 二进制和 `SHA256SUMS` 的已发布版本，将下方 `vX.Y.Z` 替换为该版本：
 
-| 文件 | 用途 | Agent 与端口 |
-| --- | --- | --- |
-| [docker-compose.local.yml](docker-compose.local.yml) | 本地构建并运行应用，默认 SQLite；适合体验和联调。 | 默认包含 Agent；web 为 `3000`，backend 不公开端口。 |
-| [docker-compose.yml](docker-compose.yml) | 基础本地编排。 | Agent 需加 `--profile pi`；web 为 `3000`。 |
-| [docker-compose.dev.yml](docker-compose.dev.yml) | 挂载源码的前后端开发环境。 | 不包含 Agent；web 为 `3000`，backend 绑定 `127.0.0.1:8080`。 |
-| [docker-compose.deploy.yml](docker-compose.deploy.yml) | PostgreSQL、Redis、独立迁移和三份应用镜像的生产部署。 | 默认包含 Agent；web 由 `CANVAS_HTTP_PORT` 控制，默认 `3000`。 |
-| [docker-compose.build.yml](docker-compose.build.yml) | 为 deploy 提供 backend、web、Agent 的源码构建覆盖。 | 作为叠加文件使用；源码安装脚本负责提供必填镜像变量。 |
-| [docker-compose.server.yml](docker-compose.server.yml) | 服务器源码构建，使用宿主机目录保存数据。 | 默认包含 Agent；web 绑定 `127.0.0.1:5173`，供入口代理接入。 |
+```bash
+CANVAS_RELEASE=vX.Y.Z
+curl -fsSL "https://raw.githubusercontent.com/AetherNo2332/open-ai-canvas4AI/${CANVAS_RELEASE}/scripts/install-server-image.sh" \
+  | sudo env CANVAS_IMAGE_TAG="${CANVAS_RELEASE}" REPOSITORY_REF="${CANVAS_RELEASE}" bash
+```
 
-只有 dev 编排支持 `CANVAS_WEB_HOST_PORT` 与 `CANVAS_BACKEND_HOST_PORT` 两个端口覆盖变量。六份文件是不同运行方式，不能任意叠加；默认编排不包含监控、字幕转写或独立预演渲染服务。
+脚本使用 `docker-compose.deploy.yml`，启动 PostgreSQL、Redis、独立 Agent Worker（`agent` 服务）、backend 和 web，由一次性 `migrate` 服务迁移数据库，并安装宿主机 Host Updater。backend、web、Agent 镜像会固定为对应 GHCR digest；Agent 的内部凭据、Worker 身份与升级约束见[生产部署](docs/content/docs/backend/production-deployment.mdx)。默认访问 `http://服务器IP:3000`，安装完成后在“系统配置 → 系统更新”检查后续版本。
 
-## Linux 服务器部署
+查看状态和日志：
 
-### 从源码安装
+```bash
+cd /opt/open-ai-canvas
+sudo docker compose --env-file .env -f docker-compose.deploy.yml ps
+sudo docker compose --env-file .env -f docker-compose.deploy.yml logs -f --tail=200
+```
+
+### 源码构建与已有部署
+
+需要运行自行修改的源码时，可以使用源码安装脚本：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AetherNo2332/open-ai-canvas4AI/main/scripts/install-server.sh | sudo bash
 ```
 
-脚本默认安装到 `/opt/open-ai-canvas`，安装 Docker、获取本仓库源码、生成数据库密码及 Agent 内部令牌，使用 PostgreSQL、Redis 和独立迁移服务，构建并启动 backend、web 和 Agent。默认访问 `http://服务器IP:3000`；可通过 `INSTALL_DIR`、`CANVAS_HTTP_PORT`、`REPOSITORY_URL`、`REPOSITORY_REF` 调整安装参数。
+脚本使用 PostgreSQL、Redis、独立 Agent 和源码构建叠加层，但不安装 Host Updater；该部署不属于后台在线更新管理范围，需自行构建、备份和升级。根目录的 `docker-compose.yml`、`docker-compose.local.yml` 和自行编写的两容器 SQLite 编排用于本地试运行，不作为默认服务器部署方案。
 
-公网使用前应配置 HTTPS、准确的 CORS Origin 和资源公开地址，并先完成管理员注册。数据目录、卷和备份的说明见[生产部署](docs/content/docs/backend/production-deployment.mdx)。
+已有 SQLite 或自定义 Compose 部署，不能只替换 Compose 文件或补装更新器就获得在线更新；应先核对原数据卷、完成备份和数据迁移。方案选择见 [Docker 部署](docs/content/docs/overview/docker.mdx)，更新约束、备份和回退见[系统更新文档](docs/content/docs/backend/system-update.mdx)。
 
-### 使用已发布镜像
+## 安全边界
 
-先从[本仓库 Releases](https://github.com/AetherNo2332/open-ai-canvas4AI/releases)选择包含当前部署编排的版本，将下方占位替换为实际版本：
+- 首次管理员注册应在受控网络完成，公网部署保持 `CANVAS_REGISTRATION_ENABLED=false`。
+- 设置准确的 `CANVAS_CORS_ORIGINS`，不要在公网使用 `*`；使用 HTTPS 并正确转发代理头。
+- 后端默认拒绝本机、私网和链路本地模型地址。开发时只通过 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 精确放行可信主机，不要使用全量放行开关。
+- 用户 API Key 不应出现在 URL、日志、错误上报或服务端长期明文存储中；只在可信部署和 HTTPS 链路中使用真实密钥。
+- 后端 `8080` 应留在 Compose 网络内，不要直接暴露到公网；限制 `.env`、数据库、上传目录、备份和 `.settings-key` 的权限。
+- 媒体资源可使用后端数据目录、阿里云 OSS 或腾讯云 COS；删除素材前会检查业务引用。
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/AetherNo2332/open-ai-canvas4AI/main/scripts/install-server-image.sh \
-  | sudo env CANVAS_IMAGE_TAG='v<已发布版本>' bash
-```
+安全问题请按 [`SECURITY.md`](SECURITY.md) 报告，不要在公开 Issue 中粘贴密钥、Cookie、数据库或生产日志。
 
-此路径需要该版本已发布 backend、web、Agent 三份 GHCR 镜像，以及 Host Updater 的 Linux 二进制和校验清单；服务器需要 systemd，CPU 架构为 amd64 或 arm64。脚本会固定三份应用镜像的仓库 digest，不以 `latest` 作为部署版本。
+## 文档与验证
 
-镜像安装脚本会安装 Host Updater。首次安装后，需在安装目录执行下面的命令，让 backend 读取新生成的更新服务令牌：
+### 文档导航
 
-```bash
-cd /opt/open-ai-canvas
-sudo docker compose --env-file .env -f docker-compose.deploy.yml up -d backend
-```
-
-自定义安装目录时使用对应路径。源码安装路径不会自动安装 Host Updater。旧版 updater、旧 Compose 和缺失 Agent 的迁移步骤见[生产部署](docs/content/docs/backend/production-deployment.mdx)。
-
-## 开发
-
-前端使用 Bun，后端要求 Go 1.25，独立 Agent Worker 要求 Node.js 22.19.0 或更高版本。使用 SQLite 的宿主机开发还需要可用的 CGO / C 编译环境。
-
-以下两个终端均从仓库根目录开始：
-
-```bash
-# 终端一：后端，使用独立开发数据目录
-mkdir -p .local/project-workbench-debug
-cd backend
-CANVAS_BACKEND_ADDR=127.0.0.1:8080 \
-CANVAS_BACKEND_DATA_DIR=../.local/project-workbench-debug \
-go run ./cmd/server
-```
-
-```bash
-# 终端二：前端
-cd web
-bun install --frozen-lockfile
-bun run dev
-```
-
-前端默认将 `/api` 代理到 `http://127.0.0.1:8080`，可用 `VITE_API_PROXY_TARGET` 修改。Windows 也可在仓库根目录运行 [scripts/start-local.ps1](scripts/start-local.ps1)。
-
-上述宿主机命令和 Windows 脚本只启动前后端。调试云端 Agent 时，还需运行 `agent/` Worker：backend 单独持有 `CANVAS_AGENT_INTERNAL_TOKEN`，backend 和 Worker 配置相同的 `CANVAS_AGENT_WORKER_ID` 与 `CANVAS_AGENT_WORKER_TOKEN`；Worker 的后端地址改为 `http://127.0.0.1:8080`，Harness 目录指向 `agent/harness`。构建与启动命令见 [agent/package.json](agent/package.json)。
-
-使用 Docker 开发编排前，需要先创建它挂载的数据和缓存目录：
-
-```bash
-mkdir -p .local/project-workbench-debug .local/cache/go-build .local/cache/go-mod
-LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
-  docker compose -f docker-compose.dev.yml up --build
-```
-
-此命令适用于 Bash 环境；dev 编排不启动 Agent。测试、构建及协作约定见 [AGENTS.md](AGENTS.md) 和 [CONTRIBUTING.md](CONTRIBUTING.md)，按改动范围运行验证。
-
-## 运行组成与可选依赖
-
-```text
-浏览器 / web
-    │ API、资源请求与 SSE
-    ▼
-backend ── 模型渠道 / 资源存储
-    ▲
-    │ 内部鉴权、任务领取与执行回执
-agent / Pi Worker
-```
-
-| 目录 | 职责 |
-| --- | --- |
-| `web/` | React、TypeScript、Vite 工作区，画布、分镜、素材与任务界面。 |
-| `backend/` | Go、Gin、GORM 服务，认证、权限、任务、资源、模型中转和 Agent 编排。 |
-| `agent/` | 基于 Pi 的独立 Worker，执行模型与工具循环，通过内部接口访问后端。 |
-| `director-desk/` | 集成的导演台应用与桥接代码；运行模式由后台配置控制。 |
-| `renderer/` | 可选白模视频预演渲染服务，不属于默认 Compose。 |
-| `plugin-packages/` | 模型及编辑等插件包。 |
-| `docs/` | 功能、接口、设计和验收资料；具体索引见下方文档入口。 |
-
-画布时间线包含浏览器本地导出路径；项目剪辑台的服务端渲染需要后端可用的 FFmpeg，自动字幕需要 whisper.cpp 服务。浏览器内的 3D 预演与截帧可本地完成；DirectorDesk 或 Agent 提交的后台白模视频渲染需要 renderer 及对应服务地址、独立令牌。可选依赖需单独部署并将配置传入对应进程，安装基础应用不会自动提供这些服务。
-
-## 部署与数据边界
-
-- 模型生成需要自行配置渠道及凭据，具体输入能力、耗时和费用由渠道决定。
-- 生产只公开 web，backend、数据库、Redis 和 Agent 保留在内部网络；使用 HTTPS，设置明确的 `CANVAS_CORS_ORIGINS`。
-- 默认拒绝后端访问本机和私网模型地址；可信服务通过 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 精确放行。
-- 保护 `.env`、数据库、上传文件、备份和 `.settings-key`，不要向公开 Issue 提交真实密钥、Cookie 或原始生产日志。
-- 生产升级前备份数据库、资源和配置；容器健康与启动成功不能替代真实登录、生成、Agent 对话和资源访问验收。
-
-更多要求见[安全策略](SECURITY.md)。
-
-## 文档入口
-
+- [快速开始](docs/content/docs/overview/quick-start.mdx)
 - [功能清单](docs/content/docs/overview/features.mdx)
-- [Agent 工具与按需披露](docs/content/docs/backend/agent-tools.mdx)
-- [Agent 提示词与规则](docs/content/docs/backend/agent-prompt-policy.mdx)
-- [Agent 读取视图与配额](docs/content/docs/backend/agent-tool-reads.mdx)
-- [生产部署与升级边界](docs/content/docs/backend/production-deployment.mdx)
-- [HTTP API](docs/content/docs/backend/http-api.mdx) · [数据库结构](docs/content/docs/backend/backend-database.mdx)
 - [代码功能地图](docs/content/docs/backend/code-map.mdx)
-- [待办](docs/content/docs/progress/todo.mdx) · [待测试](docs/content/docs/progress/pending-test.mdx)
-- [更新日志](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [影策贡献者名录](CONTRIBUTORS.md)
+- [本地开发](docs/content/docs/backend/local-development.mdx)
+- [数据库结构](docs/content/docs/backend/backend-database.mdx)
+- [画布操作手册](docs/content/docs/canvas/canvas-node-manual.mdx)
+- [插件系统](docs/content/docs/plugins/plugin-system.mdx)
+- [待办与待测试](docs/content/docs/progress/todo.mdx) · [待测试清单](docs/content/docs/progress/pending-test.mdx)
+- [更新日志](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md)
 
-## 许可证与上游致谢
+### 验证命令
 
-本项目采用 [MIT](LICENSE) 协议。ArrowFX 在 [ddcat-ai/open-ai-canvas](https://github.com/ddcat-ai/open-ai-canvas)（影策）基础上继续开发；影策源于 [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas) 的早期版本。
+按改动范围运行最小验证：
 
-感谢原作者、上游贡献者与社区的工作。原有版权、署名及第三方权利说明保留在 [LICENSE](LICENSE) 和 [NOTICE](NOTICE) 中；各依赖与插件遵循其自身许可证。
+```bash
+# 前端
+cd web && bun run lint && bun run build
+
+# 后端
+cd backend && go test ./...
+
+# 文档站
+cd docs && bun run types:check
+```
+
+## 许可证
+
+本项目采用 [MIT](LICENSE) 协议。项目特定代码的版权归 Open AI Canvas 贡献者所有；第三方组件按各自附带的许可证和版权声明使用。
+
+---
+
+## 贡献者与团队
+
+感谢参与产品设计、开发、测试、内容和社区建设的成员。以下为紧凑展示，完整保留每位成员的头像、昵称、联系方式和个性签名：
+
+<table>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-ddcat.jpg" alt="ddCat" width="56" align="left">
+  <strong>ddCat<br><sub>项目发起者 · 微信：ddcat0829</sub></strong><br>
+  <a href="mailto:ddcat666@126.com">ddcat666@126.com</a><br>
+  <em>在计算机里头没有任何黑魔法，所有的东西只不过是我现在不知道而已，总有一天我会把所有的细节、所有的内部的东西全搞明白的。</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-sikongyue.png" alt="爱笑的毛毛虫" width="56" align="left">
+  <strong>爱笑的毛毛虫<br><sub>用户名：sikongyue</sub></strong><br>
+  <a href="mailto:315515767@qq.com">315515767@qq.com</a><br>
+  <em>正在啃 main 分支，争取下次 merge 的时候变成蝴蝶</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-delve.jpg" alt="delve-s" width="56" align="left">
+  <strong>delve-s</strong><br>
+  <a href="mailto:3013141136@qq.com">3013141136@qq.com</a><br>
+  <em>我亦无他，惟手熟尔</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-CyrusAuyeung.jpg" alt="CyrusAuyeung" width="56" align="left">
+  <strong>CyrusAuyeung</strong><br>
+  <a href="mailto:cyrusauyeungho@gmail.com">cyrusauyeungho@gmail.com</a><br>
+  <em>HKUST(GZ) UG</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-nz.jpg" alt="奶大佬" width="56" align="left">
+  <strong>奶大佬</strong><br>
+  <a href="mailto:1304634970@qq.com">1304634970@qq.com</a><br>
+  <em>人生就是要不断的探索</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-dyh.jpg" alt="dyh" width="56" align="left">
+  <strong>dyh</strong><br>
+  <a href="mailto:1613203335@qq.com">1613203335@qq.com</a><br>
+  <em>无</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-kyori.jpg" alt="kyori" width="56" align="left">
+  <strong>kyori</strong><br>
+  <a href="mailto:1771634408@qq.com">1771634408@qq.com</a><br>
+  <em>励志成为未来最好用的画布仓库的贡献者</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-bowen.jpg" alt="Bowen" width="56" align="left">
+  <strong>Bowen</strong><br>
+  <a href="mailto:admin@bowen.games">admin@bowen.games</a><br>
+  <em>剑走偏峰，雷厉风行。</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-ken.jpg" alt="ken" width="56" align="left">
+  <strong>ken</strong><br>
+  <a href="mailto:2506802@qq.com">2506802@qq.com</a><br>
+  <em>走自己的路</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-fish.png.jpg" alt="fish" width="56" align="left">
+  <strong>fish</strong><br>
+  <a href="mailto:cihai.sea@gmail.com">cihai.sea@gmail.com</a><br>
+  <em>AI 界热于助人的拖油瓶</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-QAyong.jpg" alt="QAyong" width="56" align="left">
+  <strong>QAyong<br><sub>ID：QAyong<br>B站：QAyong</sub></strong><br>
+  <a href="mailto:2110491559@qq.com">2110491559@qq.com</a><br>
+  <em>AI 短剧合规，资产确权</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-K37ix.jpg" alt="_K37ix." width="56" align="left">
+  <strong>_K37ix.</strong><br>
+  <a href="mailto:2773843782@qq.com">2773843782@qq.com</a><br>
+  <em>Making things that think</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-rou.jpg" alt="Rou" width="56" align="left">
+  <strong>Rou</strong><br>
+  <a href="mailto:rou325089@163.com">rou325089@163.com</a><br>
+  <em>上善若水</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-vv.jpg" alt="vv" width="56" align="left">
+  <strong>vv<br><sub>dy/xhs：荣灵</sub></strong><br>
+  <a href="mailto:2838033228@qq.com">2838033228@qq.com</a><br>
+  <em>就是水水</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-dominic1556.jpg" alt="Dominic1556" width="56" align="left">
+  <strong>Dominic1556</strong><br>
+  <a href="mailto:184026530@qq.com">184026530@qq.com</a><br>
+  <em>Done is better than perfect</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-yuxi.jpg" alt="宇熙" width="56" align="left">
+  <strong>宇熙</strong><br>
+  <a href="mailto:53121904@qq.com">53121904@qq.com</a><br>
+  <em>年轻的时候不狂，老了拿什么回忆</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-yingzi.png" alt="影子" width="56" align="left">
+  <strong>影子</strong><br>
+  <a href="mailto:305818148@qq.com">305818148@qq.com</a><br>
+  <em>年纪大佬才明白人要顺势而为。</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-ray.jpg" alt="Ray" width="56" align="left">
+  <strong>Ray</strong><br>
+  <a href="mailto:cnraylee@qq.com">cnraylee@qq.com</a><br>
+  <em>AI时代的全栈落地工，欢迎找我聊需求</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-bjsg.jpg" alt="不见山谷" width="56" align="left">
+  <strong>不见山谷<br><sub>VV：yu170718</sub></strong><br>
+  <a href="mailto:1762202553@qq.com">1762202553@qq.com</a><br>
+  <em>空山不见人，但闻人语响</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-yep.jpg" alt="yep" width="56" align="left">
+  <strong>yep</strong><br>
+  <a href="mailto:1239738103@qq.com">1239738103@qq.com</a><br>
+  <em>思考，坚持</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-hamburger.jpg" alt="汉堡爸爸" width="56" align="left">
+  <strong>汉堡爸爸<br><sub>VV：jxs62888</sub></strong><br>
+  <a href="mailto:309151651@qq.com">309151651@qq.com</a><br>
+  <em>没什么大不了</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-bensharp.jpg" alt="bensharp" width="56" align="left">
+  <strong>nancy<br><sub>VV：jiahezuiai</sub></strong><br>
+  <a href="mailto:275008147@qq.com">275008147@qq.com</a><br>
+  <em>在哪跌倒，就在哪睡一觉</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-daqzia.jpg" alt="daqzia" width="56" align="left">
+  <strong>daqzia<br><sub>VV：wangzhiwei-8234</sub></strong><br>
+  <a href="mailto:wzwzcb@gmail.com">wzwzcb@gmail.com</a><br>
+  <em>NullPointerException</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-xingmeng.jpg" alt="醒梦" width="56" align="left">
+  <strong>醒梦<br><sub>VV：love-is-heart-is</sub></strong><br>
+  <a href="mailto:1948863412@qq.com">1948863412@qq.com</a><br>
+  <em>Always believe that good things will happen</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-morrow.jpg" alt="morrow" width="56" align="left">
+  <strong>morrow<br><sub>VV：morrow0127</sub></strong><br>
+  <a href="mailto:3201190041@qq.com">3201190041@qq.com</a><br>
+  <em>最难不过坚持</em>
+  <br clear="left">
+</td>
+<td width="50%" valign="top">
+  <img src="assets/user-chunqiu.jpg" alt="春秋" width="56" align="left">
+  <strong>春秋<br><sub>Agent记忆核心贡献者 · VV：A13068788886</sub></strong><br>
+  <a href="mailto:558328@qq.com">558328@qq.com</a><br>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-song.jpg" alt="亿媒网老宋" width="56" align="left">
+  <strong>亿媒网老宋</strong><br>
+  <a href="mailto:61731514@qq.com">61731514@qq.com</a><br>
+  <a href="https://em8.top">亿媒网 em8.top</a><br>
+  <em>全国10W+媒体、自媒体，助力企业品牌传播</em>
+  <br clear="left">
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+  <img src="assets/user-Wyatt_K.png" alt="Wyatt_K" width="56" align="left">
+  <strong>Wyatt_K</strong><br>
+  <em>千里之行，始于足下。</em>
+  <br clear="left">
+</td>
+</tr>
+</table>

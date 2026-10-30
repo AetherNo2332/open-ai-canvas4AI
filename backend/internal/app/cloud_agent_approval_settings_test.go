@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestCloudAgentMediaReadHashSurvivesMoveBeforeDraft(t *testing.T) {
@@ -237,7 +237,12 @@ func TestCloudAgentImageApprovalEditsAreValidatedAndIdempotent(t *testing.T) {
 	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
 		t.Fatal(err)
 	}
-	if input.Config.Model != settings.ChannelModelKey || input.Config.Size != settings.Size || input.Config.Quality != settings.Quality || task.Prompt != approvedArgs.Prompt || len(input.ReferenceImages) != 1 {
+	// 带分辨率档位的图片模型在 admission 时把 quality 归一为 imageResolution。
+	quality := input.Config.Quality
+	if quality == "" {
+		quality = input.Config.ImageResolution
+	}
+	if input.Config.Model != settings.ChannelModelKey || input.Config.Size != settings.Size || quality != settings.Quality || task.Prompt != approvedArgs.Prompt || len(input.ReferenceImages) != 1 {
 		t.Fatalf("approved inputs were lost: %+v", input.Config)
 	}
 	var count int64

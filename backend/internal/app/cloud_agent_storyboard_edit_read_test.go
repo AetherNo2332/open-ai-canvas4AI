@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 func storyboardFieldReadFixture(t *testing.T, rows []map[string]any) (*Service, *model.CanvasProject) {

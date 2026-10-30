@@ -2,125 +2,107 @@ package handler
 
 import (
 	"context"
-	"net/http"
-	"net/url"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/service"
 )
 
-func realtimeOriginAllowed(r *http.Request) bool {
-	raw := strings.TrimSpace(r.Header.Get("Origin"))
-	origin, err := url.Parse(raw)
-	if err != nil || origin.Host == "" || origin.User != nil || origin.Scheme != "http" && origin.Scheme != "https" || origin.Path != "" && origin.Path != "/" || origin.RawQuery != "" || origin.Fragment != "" {
-		return false
-	}
-	host := r.Host
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwarded != "" {
-		host = strings.TrimSpace(strings.Split(forwarded, ",")[0])
-	}
-	if strings.EqualFold(origin.Host, host) {
-		return true
-	}
-	configured := strings.TrimSpace(os.Getenv("CANVAS_CORS_ORIGINS"))
-	for _, entry := range strings.Split(configured, ",") {
-		entry = strings.TrimSuffix(strings.TrimSpace(entry), "/")
-		if entry == "*" || strings.EqualFold(entry, origin.Scheme+"://"+origin.Host) {
-			return true
-		}
-	}
-	if configured == "" {
-		name := strings.ToLower(origin.Hostname())
-		return name == "localhost" || name == "127.0.0.1" || name == "::1"
-	}
-	return false
-}
 func RegisterCanvasRealtimeRoutes(r *gin.RouterGroup, svc *service.Service) {
-	r.GET("/canvas-projects/:id/realtime", func(c *gin.Context) { serveCanvasRealtime(c, svc, 15*time.Second) })
-}
-func serveCanvasRealtime(c *gin.Context, svc *service.Service, interval time.Duration) {
-	if c.Request.URL.RawQuery != "" {
-		failService(c, service.NewAppError(400, "实时画布不接受查询参数"))
-		return
-	}
-	if !realtimeOriginAllowed(c.Request) {
-		failService(c, service.Forbidden("实时画布来源不被允许"))
-		return
-	}
-	user, err := currentUser(c, svc)
-	if err != nil {
-		failService(c, err)
-		return
-	}
-	cookie, canvasID := sessionCookie(c), c.Param("id")
-	session, err := svc.OpenCanvasRealtime(c.Request.Context(), cookie, canvasID)
-	if err != nil {
-		failService(c, err)
-		return
-	}
-	defer session.Close()
-	conn, err := websocket.Accept(c.Writer, c.Request, &websocket.AcceptOptions{OriginPatterns: []string{c.GetHeader("Origin")}, CompressionMode: websocket.CompressionDisabled})
-	if err != nil {
-		return
-	}
-	defer conn.CloseNow()
-	conn.SetReadLimit(32 << 10)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	writerDone := make(chan struct{})
-	go func() {
-		defer close(writerDone)
+	r.GET("/canvas-projects/:id/realtime", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		session, peers, err := svc.OpenCanvasRealtime(ctx, user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		defer session.Close()
+		options := &websocket.AcceptOptions{}
+		// The shared CORS middleware has already validated this exact origin,
+		// including the public forwarded host behind Vite/Nginx.
+		if origin := c.GetHeader("Origin"); origin != "" && c.Writer.Header().Get("Access-Control-Allow-Origin") == origin {
+			options.OriginPatterns = []string{origin}
+		}
+		conn, err := websocket.Accept(c.Writer, c.Request, options)
+		if err != nil {
+			return
+		}
 		defer conn.CloseNow()
-		ticker := time.NewTicker(interval)
+		conn.SetReadLimit(32768)
+		write := func(value any) error {
+			deadline, stop := context.WithTimeout(ctx, 5*time.Second)
+			defer stop()
+			return wsjson.Write(deadline, conn, value)
+		}
+		if write(gin.H{"type": "welcome", "selfId": session.ID(), "peers": peers}) != nil {
+			return
+		}
+		go func() {
+			defer cancel()
+			window, count := time.Now(), 0
+			for {
+				var message struct {
+					Type   string                       `json:"type"`
+					Cursor *service.CanvasPresencePoint `json:"cursor"`
+					Drag   []service.CanvasPresenceNode `json:"drag"`
+				}
+				if wsjson.Read(ctx, conn, &message) != nil {
+					return
+				}
+				if time.Since(window) >= time.Second {
+					window, count = time.Now(), 0
+				}
+				count++
+				if count > 80 || message.Type != "presence" || session.Update(message.Cursor, message.Drag) != nil {
+					_ = conn.Close(websocket.StatusPolicyViolation, "invalid presence message")
+					return
+				}
+			}
+		}()
+		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-session.Done():
-				_ = conn.Close(websocket.StatusCode(session.CloseStatus()), "reconnect and synchronize")
 				return
-			case data := <-session.Messages():
-				session.Consumed(data)
-				writeCtx, stop := context.WithTimeout(ctx, 5*time.Second)
-				err := conn.Write(writeCtx, websocket.MessageText, data)
-				stop()
-				if err != nil {
+			case event := <-session.Events:
+				if event.Peer != nil && event.Peer.ID == session.ID() {
+					continue
+				}
+				if write(event) != nil {
 					return
 				}
 			case <-ticker.C:
-				checkCtx, stop := context.WithTimeout(ctx, 5*time.Second)
-				err := svc.AuthorizeCanvasRealtime(checkCtx, cookie, user.ID, canvasID)
-				stop()
-				if err != nil {
-					_ = conn.Close(websocket.StatusPolicyViolation, "session or canvas authorization revoked")
+				// Revoked login sessions and deleted canvases cannot retain a subscription.
+				if _, err := svc.CurrentUser(sessionCookie(c)); err != nil {
+					_ = conn.Close(websocket.StatusPolicyViolation, "session expired")
 					return
 				}
-				pingCtx, stop := context.WithTimeout(ctx, 5*time.Second)
-				err = conn.Ping(pingCtx)
+				if _, err := svc.UserCanvasProjectMetadata(user.ID, c.Param("id")); err != nil {
+					_ = conn.Close(websocket.StatusPolicyViolation, "canvas unavailable")
+					return
+				}
+				ping, stop := context.WithTimeout(ctx, 5*time.Second)
+				err := conn.Ping(ping)
 				stop()
 				if err != nil {
 					return
 				}
+				if write(gin.H{"type": "heartbeat"}) != nil {
+					return
+				}
+				session.Heartbeat()
 			}
 		}
-	}()
-	for {
-		kind, data, err := conn.Read(ctx)
-		if err != nil {
-			break
-		}
-		if kind != websocket.MessageText || session.Receive(data) != nil {
-			_ = conn.Close(websocket.StatusPolicyViolation, "invalid realtime message or rate")
-			break
-		}
-	}
-	cancel()
-	_ = conn.CloseNow()
-	<-writerDone
+	})
 }

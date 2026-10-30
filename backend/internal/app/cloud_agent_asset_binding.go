@@ -2,10 +2,10 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/assets"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"strings"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func cloudAgentListAssets(repo *repository.Repository, userID string, call cloudAgentCall) (any, error) {

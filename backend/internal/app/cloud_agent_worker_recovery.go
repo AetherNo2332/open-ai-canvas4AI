@@ -3,12 +3,12 @@ package app
 import (
 	"encoding/json"
 	"fmt"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"math/rand/v2"
 	"strings"
 	"time"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type PiWorkerRecoveryRequest struct {

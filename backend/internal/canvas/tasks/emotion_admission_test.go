@@ -3,8 +3,8 @@ package tasks
 import (
 	"context"
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
 	"testing"
+	"yingce/backend/internal/model"
 )
 
 func TestEmotionAdmissionChecksAndGuardsFrozenSource(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/model"
 )
 
 // 本文件是从 dev 的 cloud_agent_context_frame_test.go 恢复过来的**可恢复子集**。

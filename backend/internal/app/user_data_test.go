@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/canvas"
+	"yingce/backend/internal/model"
 )
 
 func testUserAssetPayload(kind string, extra map[string]any) map[string]any {
@@ -275,7 +275,7 @@ func TestValidateCanvasMediaAssetsRejectsMismatchedAsset(t *testing.T) {
 	raw := json.RawMessage(`{"nodes":[{"type":"image","metadata":{"assetId":"asset-wrong","storageKey":"resource:resource-canvas"}}]}`)
 
 	err := svc.validateCanvasMediaAssets("user-1", raw)
-	if err == nil || !strings.Contains(err.Error(), "不一致") {
+	if appErr, ok := err.(*AppError); !ok || appErr.Reason != "canvas_media_assets_pending" {
 		t.Fatalf("validateCanvasMediaAssets() error = %v", err)
 	}
 }

@@ -5,17 +5,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"infinite-canvas/backend/internal/assets"
-	canvasdomain "infinite-canvas/backend/internal/canvas"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/canvas/references"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+	"yingce/backend/internal/assets"
+	canvasdomain "yingce/backend/internal/canvas"
+	"yingce/backend/internal/canvas/references"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type ServiceOptions struct {
@@ -339,25 +338,6 @@ func (s *Service) validation(ctx context.Context, tx *repository.Repository, p i
 			owned[resource.ID] = additionalResourcePolicy == nil || additionalResourcePolicy(resource.ID)
 			v.Resources[resource.ID] = ResourceMetadata{ID: resource.ID, Kind: resource.Kind, MimeType: resource.MimeType, Size: resource.Size, Width: resource.Width, Height: resource.Height, DurationMs: resource.DurationMs}
 		}
-		if op.Type == "use_media_version" {
-			canvasID := text(doc["id"])
-			if len(canvasIDs) > 0 {
-				canvasID = canvasIDs[0]
-			}
-			scope, err := mediaversions.ScopeForNode(tx, p.OwnerID, canvasID, op.ID)
-			if err != nil {
-				return v, PersistenceError(err)
-			}
-			selection, err := mediaversions.PrepareSelection(tx, scope, op.VersionID)
-			if err != nil {
-				return v, PersistenceError(err)
-			}
-			if v.MediaVersionSelections == nil {
-				v.MediaVersionSelections = map[string]mediaversions.Selection{}
-			}
-			v.MediaVersionSelections[op.VersionID] = selection
-			owned[selection.Version.ResourceID] = additionalResourcePolicy == nil || additionalResourcePolicy(selection.Version.ResourceID)
-		}
 		if len(op.PrevisEntityOperations) > 0 {
 			ids := map[string]bool{}
 			for _, scene := range maps(doc["previsScenes"]) {
@@ -649,7 +629,6 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 }
 func (s *Service) persist(tx *repository.Repository, p identity.Principal, req Command, body string, row *model.CanvasProject, epoch *model.CanvasDocumentEpoch, before Document, plan PlanResult, history bool, snapshotReasons ...string) (Receipt, error) {
 	prior := *row
-	oldRevision := row.Revision
 	row.Revision++
 	epoch.EventSeq++
 	epoch.UpdatedAt = time.Now()
@@ -667,9 +646,6 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 	epoch.Deleted = plan.Document["_deleted"] == true
 	if title, ok := plan.Document["title"].(string); ok {
 		row.Title = title
-	}
-	if err = tx.PersistCommandCanvas(row, oldRevision); err != nil {
-		return Receipt{}, err
 	}
 	reason := "automatic"
 	if len(snapshotReasons) > 0 {
@@ -696,7 +672,7 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 	if err = tx.FenceChangedMediaOutputOwners(p.OwnerID, row.ID, epoch.Epoch, maps(before["nodes"]), maps(plan.Document["nodes"]), plan.Changes.RecreatedEntities); err != nil {
 		return Receipt{}, err
 	}
-	out := Receipt{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, OperationID: req.OperationID, ClientID: req.ClientID, ActorID: p.ID, Revision: row.Revision, EventSeq: epoch.EventSeq, Changes: plan.Changes}
+	out := Receipt{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, OperationID: req.OperationID, ClientID: req.ClientID, ActorID: p.ID, ActorKind: ActorKindAgent, Revision: row.Revision, EventSeq: epoch.EventSeq, Changes: plan.Changes}
 	out.EntityVersions = expected
 	out.EntityGenerations = map[string]int64{}
 	for _, version := range versions {
@@ -711,7 +687,10 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 	if err = tx.InsertCommandReceipt(&key); err != nil {
 		return Receipt{}, err
 	}
-	if err = tx.InsertCommandEvent(&model.CanvasCommandEvent{CanvasID: row.ID, Sequence: epoch.EventSeq, OwnerID: p.OwnerID, Epoch: epoch.Epoch, OperationID: req.OperationID, EventJSON: encoded, CreatedAt: time.Now()}); err != nil {
+	// The canvas row is written through the same revision CAS as browser saves;
+	// this layer has already derived the event, entity versions and receipt.
+	event := model.CanvasCommandEvent{CanvasID: row.ID, Sequence: epoch.EventSeq, OwnerID: p.OwnerID, Epoch: epoch.Epoch, OperationID: req.OperationID, EventJSON: encoded, CreatedAt: time.Now()}
+	if err = tx.SaveAgentCanvasWrite(&prior, row, agentActor(p, req.ClientID), []model.CanvasCommandEvent{event}); err != nil {
 		return Receipt{}, err
 	}
 	if err = tx.SaveCommandEpoch(epoch); err != nil {
@@ -742,14 +721,21 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 	}
 	// Return the exact persisted wire representation, including numeric JSON
 	// values and omitted empty fields, so retries are identical to the first ACK.
-	if err = tx.PruneCanvasMediaVersions(p.OwnerID, row.ID); err != nil {
-		return Receipt{}, err
-	}
 	var durable Receipt
 	if err = json.Unmarshal([]byte(encoded), &durable); err != nil {
 		return Receipt{}, err
 	}
 	return durable, nil
+}
+
+// agentActor attributes a command write. The command service has no browser
+// HTTP route, so every write it persists comes from an Agent run or its tasks.
+func agentActor(p identity.Principal, clientID string) repository.AgentActor {
+	actor := repository.AgentActor{UserID: p.OwnerID}
+	if runID, ok := strings.CutPrefix(clientID, "agent:"); ok {
+		actor.RunID = runID
+	}
+	return actor
 }
 func (s *Service) GetReceipt(ctx context.Context, p identity.Principal, canvasID, epoch, clientID, operationID string) (Receipt, error) {
 	if err := validateClient(p, clientID, operationID); err != nil {

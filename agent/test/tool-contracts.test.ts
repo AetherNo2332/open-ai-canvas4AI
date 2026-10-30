@@ -31,6 +31,14 @@ const cases: [string, ToolCall["arguments"], boolean][] = [
   ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "add_node", id: "n", nodeType: "text", fromNodeId: "a" }] }, false],
   ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "delete_node", id: "n" }] }, true],
   ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "duplicate_node", id: "new", sourceNodeId: "n" }] }, true],
+  // 节点版本历史：读一次返回全部版本，切换与取出都用 media_versions 返回的版本 id。
+  ["canvas_get_state", { view: "media_versions", nodeIds: ["hero"] }, true],
+  ["canvas_get_state", { view: "media_versions", nodeIds: ["hero"], beforeVersion: 20 }, false],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "use_media_version", id: "hero", versionId: "v1" }] }, true],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "use_media_version", id: "hero" }] }, false],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "extract_media_version", id: "hero", versionId: "v1", nodeId: "hero-v1" }] }, true],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "extract_media_version", id: "hero", versionId: "v1" }] }, false],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "delete_media_version", id: "hero", versionId: "v1" }] }, false],
   ["canvas_read_content", { nodeId: "n", field: "content", offset: 0, limit: 16000 }, true],
   ["canvas_read_content", { nodeId: "n", field: "content", offset: -1 }, false],
   ["canvas_bind_asset", { snapshotHash: "h", nodeId: "n", assetId: "a" }, true],
@@ -78,6 +86,17 @@ const cases: [string, ToolCall["arguments"], boolean][] = [
   ["canvas_edit_batch_table", { snapshotHash: "h", nodeId: "n", action: "set_concurrency", concurrency: 5, patch: {} }, false],
   ["canvas_inspect_image", { nodeId: "n", sha256: "a".repeat(64), summary: { short: "cat", detailed: { subjects: ["cat"] } } }, true],
   ["canvas_inspect_image", { nodeId: "n", summary: { short: "cat", detailed: {} } }, false],
+  // director：一个工具按 action 分支约束必填字段。
+  ["director", { action: "read" }, true],
+  ["director", { action: "read", sceneId: "scene" }, true],
+  ["director", { action: "create_scene", template: "dialogue" }, true],
+  ["director", { action: "create_scene" }, false],
+  ["director", { action: "apply_patch", sceneId: "scene", expectedSceneHash: "h", patch: { operations: [{ type: "scene_update", id: "scene", title: "t" }] } }, true],
+  ["director", { action: "apply_patch", sceneId: "scene", patch: { operations: [{ type: "scene_update", id: "scene", title: "t" }] } }, false],
+  ["director", { action: "apply_patch", expectedSceneHash: "h", patch: { operations: [{ type: "scene_update", id: "scene" }] } }, false],
+  ["director", { action: "preview", sceneId: "scene" }, true],
+  ["director", { action: "render" }, false],
+  ["director", { sceneId: "scene" }, false],
 ];
 test("Pi validates the shared conditional contracts before execution", () => {
   for (const [name, args, valid] of cases) {
@@ -86,5 +105,18 @@ test("Pi validates the shared conditional contracts before execution", () => {
     const validate = () => validateToolArguments(tool, { type: "toolCall", id: "test", name, arguments: structuredClone(args) });
     if (valid) assert.doesNotThrow(validate, name);
     else assert.throws(validate, Error, name);
+  }
+});
+
+test("director character binding fields explain their source and joint requirement", () => {
+  const director = artifact.tools.map((entry: any) => entry.function).find((entry: any) => entry.name === "director");
+  assert.ok(director, "director");
+  assert.match(director.description, /character\.assetId/);
+  assert.match(director.description, /character\.versionId/);
+  const operation = director.parameters.properties.patch.properties.operations.items;
+  for (const [field, source] of <[string, string][]>[["characterAssetId", "character.assetId"], ["characterVersionId", "character.versionId"], ["referenceNodeId", "角色卡节点 id"]]) {
+    const description: string = operation.properties[field].description ?? "";
+    assert.ok(description.includes(source), `${field} must name its source`);
+    assert.ok(description.includes("三者必须同时提供"), `${field} must state the joint requirement`);
   }
 });

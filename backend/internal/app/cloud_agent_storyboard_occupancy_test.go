@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"infinite-canvas/backend/internal/database"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/model"
 )
 
 // 行与输出的 metadata 可以被历史回滚，因此 Agent 的产物归属写入必须核对持久任务

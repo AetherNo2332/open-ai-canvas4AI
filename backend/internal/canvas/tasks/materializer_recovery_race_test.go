@@ -3,11 +3,10 @@ package tasks
 import (
 	"context"
 	"errors"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/canvas/mediaversions"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"testing"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestTaskCenterCannotReuseCanvasGenerationAttempt(t *testing.T) {
@@ -70,8 +69,7 @@ func TestRecoveredSuccessSurvivesPriorMaterializerCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := findNode(f.snapshot(t).Document, "output")
-	state := mediaversions.ReadState(node)
-	if state.ActiveTaskID != "" || metadata(node)["storageKey"] != "resource:recovered-result" {
+	if metadata(node)["status"] != "success" || metadata(node)["taskStatus"] != "succeeded" || metadata(node)["storageKey"] != "resource:recovered-result" {
 		t.Fatal("prior failure materialization swallowed recovered success")
 	}
 }

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -131,6 +131,11 @@ func (s *Service) Wallet(user *model.User, entryType string, page int, limit int
 	entries, total, err := s.repo.CreditLedger(user.ID, strings.TrimSpace(entryType), limit, (page-1)*limit)
 	if err != nil {
 		return nil, err
+	}
+	for index := range entries {
+		if strings.TrimSpace(entries[index].Note) != "" {
+			entries[index].Note = userFacingTaskError(entries[index].Note)
+		}
 	}
 	policy, err := s.publicCreditPolicy(user.ID)
 	if err != nil {
@@ -457,7 +462,7 @@ func (s *Service) taskBillingOrder(userID string, task *model.Task, input map[st
 	scene := firstNonEmpty(strings.TrimSpace(task.Operation), task.Type)
 	intent := ModelRequestIntentFromTaskInput(input, task.Type, task.Operation)
 	priceTierID, _ := config["priceTierId"].(string)
-	return s.newBillingOrderWithPriceTier(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, billingQuantity(capability, config["videoSeconds"]), estimateTaskBillingTokens(input, capability), strings.TrimSpace(priceTierID), intent)
+	return s.newBillingOrderWithPriceTier(userID, task.ID, "task:"+task.ID+":"+newID(), channelID, modelKey, capability, scene, requestedBillingQuantity(capability, config), estimateTaskBillingTokens(input, capability), strings.TrimSpace(priceTierID), intent)
 }
 
 func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, input map[string]any) (*model.BillingOrder, error) {
@@ -481,7 +486,7 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 	if logicalModel.PricePolicy == "channel" {
 		intent := ModelRequestIntentFromTaskInput(input, task.Type, task.Operation)
 		priceTierID, _ := config["priceTierId"].(string)
-		order, priceErr := s.newBillingOrderWithPriceTier(userID, task.ID, "task:"+task.ID+":"+newID(), channelModel.ChannelID, channelModel.ModelKey, capability, firstNonEmpty(strings.TrimSpace(task.Operation), task.Type), billingQuantity(capability, config["videoSeconds"]), estimateTaskBillingTokens(input, capability), strings.TrimSpace(priceTierID), intent)
+		order, priceErr := s.newBillingOrderWithPriceTier(userID, task.ID, "task:"+task.ID+":"+newID(), channelModel.ChannelID, channelModel.ModelKey, capability, firstNonEmpty(strings.TrimSpace(task.Operation), task.Type), requestedBillingQuantity(capability, config), estimateTaskBillingTokens(input, capability), strings.TrimSpace(priceTierID), intent)
 		if priceErr != nil {
 			return nil, priceErr
 		}
@@ -499,8 +504,8 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 	case "fixed_request":
 		amount = logicalModel.UnitPriceMicrocredits
 	case "per_second":
-		quantity = billingQuantity(capability, config["videoSeconds"])
-		if capability != "video" || quantity <= 0 {
+		quantity = requestedBillingQuantity(capability, config)
+		if (capability != "video" && capability != "audio") || quantity <= 0 {
 			return nil, BadAuthRequest("当前模型按时长计费，但请求未提供有效时长")
 		}
 		amount, err = creditAmount(logicalModel.UnitPriceMicrocredits, quantity, 10_000)
@@ -543,7 +548,11 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 	}
 	intent := ModelRequestIntentFromTaskInput(input, task.Type, task.Operation)
 	priceTierID, _ := config["priceTierId"].(string)
-	snapshotCreditCost(order, channelModelPriceTierForBilling(*channelModel, priceTierID, capability, intent), billingQuantity(capability, config["videoSeconds"]), tokenEstimate)
+	costTier, err := s.channelModelPriceTierForBilling(*channelModel, priceTierID, capability, intent)
+	if err != nil {
+		return nil, err
+	}
+	snapshotCreditCost(order, costTier, requestedBillingQuantity(capability, config), tokenEstimate)
 	return order, nil
 }
 
@@ -587,7 +596,10 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, ide
 	if err != nil {
 		return nil, err
 	}
-	tier := channelModelPriceTierForBilling(*item, priceTierID, capability, intents...)
+	tier, err := s.channelModelPriceTierForBilling(*item, priceTierID, capability, intents...)
+	if err != nil {
+		return nil, err
+	}
 	if tier == nil {
 		return nil, BadAuthRequest("当前模型尚未配置所选规格的用户积分价格")
 	}
@@ -596,11 +608,11 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, ide
 	switch tier.BillingMode {
 	case "fixed_request":
 	case "per_second":
-		if item.Capability != "video" || capability != "video" {
-			return nil, BadAuthRequest("按秒计费仅适用于视频生成")
+		if (item.Capability != "video" && item.Capability != "audio") || capability != item.Capability {
+			return nil, BadAuthRequest("按秒计费仅适用于视频或音频生成")
 		}
 		if requestedQuantity <= 0 {
-			return nil, BadAuthRequest("视频生成时长无效，无法按秒计费")
+			return nil, BadAuthRequest("生成时长无效，无法按秒计费")
 		}
 		quantity = requestedQuantity
 	case "token":
@@ -657,24 +669,42 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, ide
 	return order, nil
 }
 
-func channelModelPriceTierForBilling(channelModel model.ChannelModel, priceTierID string, capability string, intents ...ModelRequestIntent) *model.ChannelModelPriceTier {
+func (s *Service) channelModelPriceTierForBilling(channelModel model.ChannelModel, priceTierID string, capability string, intents ...ModelRequestIntent) (*model.ChannelModelPriceTier, error) {
+	intent := ModelRequestIntent{Capability: capability, Options: map[string]any{}}
+	if len(intents) > 0 {
+		intent = intents[0]
+		if normalizeCapability(intent.Capability) == "" {
+			intent.Capability = capability
+		}
+	}
+	var specs []CapabilitySpec
+	if normalizeCapability(capability) == "image" && strings.TrimSpace(channelModel.CapabilityConfigJSON) != "" {
+		spec, err := channelModelCapabilitySpec(channelModel, s.protocolRegistry())
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, spec)
+		intent = normalizeImageSizeIntent(spec, intent)
+	}
 	if priceTierID != "" {
 		for index := range channelModel.PriceTiers {
 			tier := &channelModel.PriceTiers[index]
 			if tier.ID == priceTierID && tier.Enabled && tier.PriceConfigured {
-				return tier
+				if len(specs) > 0 && specs[0].ImageParameters != nil {
+					selector := model.DecodeSKUSelector(tier.SelectorJSON)
+					if err := validateImageParameterPriceSelector(specs[0].ImageParameters, selector); err != nil {
+						return nil, err
+					}
+					if matched, _ := matchSKUSelector(selector, imagePriceSelectorForParameters(specs[0].ImageParameters, intent)); !matched {
+						return nil, BadAuthRequest("价格档与实际图片参数不一致")
+					}
+				}
+				return tier, nil
 			}
 		}
-		return nil
+		return nil, nil
 	}
-	if len(intents) > 0 {
-		intent := intents[0]
-		if normalizeCapability(intent.Capability) == "" {
-			intent.Capability = capability
-		}
-		return channelModelPriceTierForIntent(channelModel, intent)
-	}
-	return channelModelPriceTierForIntent(channelModel, ModelRequestIntent{Capability: capability, Options: map[string]any{}})
+	return channelModelPriceTierForIntent(channelModel, intent, specs...), nil
 }
 
 func estimateTaskTokens(input map[string]any) tokenBillingEstimate {
@@ -741,7 +771,7 @@ func tokenEstimateAmount(item *model.ChannelModel, estimate tokenBillingEstimate
 }
 
 func billingQuantity(capability string, value any) int64 {
-	if capability != "video" {
+	if capability != "video" && capability != "audio" {
 		return 1
 	}
 	quantity, err := strconv.ParseInt(strings.TrimSpace(fmt.Sprint(value)), 10, 64)
@@ -749,6 +779,28 @@ func billingQuantity(capability string, value any) int64 {
 		return 0
 	}
 	return quantity
+}
+
+// requestedBillingQuantity is the quantity reserved before a provider has
+// returned the generated media. Audio output length is not known at request
+// time, so an audio per-second order uses one second as the minimum
+// preauthorization unless the caller explicitly supplied audioSeconds.
+// Settlement must replace this estimate with the measured output duration.
+func requestedBillingQuantity(capability string, config map[string]any) int64 {
+	if capability == "audio" {
+		if config == nil {
+			return 1
+		}
+		value, present := config["audioSeconds"]
+		if !present || strings.TrimSpace(fmt.Sprint(value)) == "" {
+			return 1
+		}
+		return billingQuantity(capability, value)
+	}
+	if config == nil {
+		return billingQuantity(capability, nil)
+	}
+	return billingQuantity(capability, config["videoSeconds"])
 }
 
 func (s *Service) MarkBillingRunning(orderID string) error {

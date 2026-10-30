@@ -11,9 +11,9 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestCanvasMediaAdmissionPostgres(t *testing.T) {
@@ -94,7 +94,7 @@ func TestCanvasMediaAdmissionPostgres(t *testing.T) {
 	if accepted != 1 || one.calls+two.calls != 1 || one.wakes+two.wakes != 1 {
 		t.Fatalf("duplicate cross-device admission: accepted=%d prepared=%d wakes=%d", accepted, one.calls+two.calls, one.wakes+two.wakes)
 	}
-	for _, table := range []any{&model.Task{}, &model.CanvasTaskBinding{}, &model.CanvasMediaVersion{}} {
+	for _, table := range []any{&model.Task{}, &model.CanvasTaskBinding{}} {
 		var count int64
 		if err := firstDB.Model(table).Count(&count).Error; err != nil || count != 1 {
 			t.Fatalf("atomic task/version admission %T=%d err=%v", table, count, err)

@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/contract"
 )
 
 func updatedGenerationSpec(d Descriptor, node, patch map[string]any) (*contract.GenerationSpec, error) {

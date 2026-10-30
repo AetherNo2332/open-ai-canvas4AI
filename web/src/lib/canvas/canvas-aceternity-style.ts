@@ -18,6 +18,6 @@ export function canvasDockStyle(theme: CanvasTheme, color: string = theme.toolba
         // 分段控件跟随画布主题：浅色为白色滑块，深色为抬亮的灰色滑块。
         "--dock-switch-track": theme.toolbar.itemHover,
         "--dock-switch-thumb": theme.node.panel,
-        "--dock-switch-thumb-text": theme.node.text,
+        "--dock-switch-thumb-text": theme.toolbar.activeText,
     } as CSSProperties;
 }

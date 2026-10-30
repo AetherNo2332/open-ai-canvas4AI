@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -18,7 +18,6 @@ func newProjectAssetLinkTestService(t *testing.T) (*Service, *gorm.DB) {
 		t.Fatal(err)
 	}
 	if err := db.AutoMigrate(
-		&model.User{},
 		&model.Project{},
 		&model.ProjectAssetLink{},
 		&model.ProjectAssetFolder{},
@@ -92,6 +91,9 @@ func TestLinkProjectAssetCreatesAssetFromUploadedResource(t *testing.T) {
 	}
 	if payload.Data.Source != AssetSourceCanvas {
 		t.Errorf("payload.source = %q, want canvas", payload.Data.Source)
+	}
+	if _, err := assetFromJSON("user-1", json.RawMessage(asset.PayloadJSON)); err != nil {
+		t.Fatalf("uploaded asset must persist a complete library document: %v; %s", err, asset.PayloadJSON)
 	}
 }
 

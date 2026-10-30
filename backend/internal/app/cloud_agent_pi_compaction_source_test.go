@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"infinite-canvas/backend/internal/agentcontext"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/agentcontext"
+	"yingce/backend/internal/model"
 )
 
 func piCompactionTestEntry(t *testing.T, id, parentID, kind string, body map[string]any) model.CloudAgentPiEntry {

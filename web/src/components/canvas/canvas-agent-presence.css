@@ -1,0 +1,68 @@
+.canvas-agent-presence {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    z-index: var(--z-node-active);
+}
+
+.canvas-agent-presence-node {
+    --agent-presence-color: var(--status-loading);
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: var(--card-radius);
+    pointer-events: none;
+}
+
+.canvas-agent-presence-node[data-agent-editing="true"] {
+    --agent-presence-color: var(--ring);
+}
+
+/* The outline lives on a pseudo-element so the pulse animates opacity only. */
+.canvas-agent-presence-node::before {
+    content: "";
+    position: absolute;
+    inset: calc(var(--space-1) * -1);
+    border: 2px solid var(--agent-presence-color);
+    border-radius: inherit;
+    animation: canvas-agent-presence-pulse calc(var(--motion-dur-slow) * 6) var(--motion-ease-in-out) infinite alternate;
+}
+
+.canvas-agent-presence-node[data-agent-editing="false"]::before {
+    border-style: dashed;
+}
+
+.canvas-agent-presence-label {
+    position: absolute;
+    bottom: calc(100% + var(--space-2));
+    left: calc(var(--space-1) * -1);
+    padding: var(--space-half) var(--space-2);
+    border-radius: var(--overlay-radius);
+    background: var(--agent-presence-color);
+    color: var(--background);
+    font-size: var(--fs-label);
+    font-weight: 500;
+    line-height: 1.5;
+    white-space: nowrap;
+    /* Keep the badge readable at any zoom, like node titles. */
+    transform: scale(var(--canvas-live-inverse-scale, 1));
+    transform-origin: 0 100%;
+}
+
+@keyframes canvas-agent-presence-pulse {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0.45;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .canvas-agent-presence-node::before {
+        animation: none;
+    }
+}

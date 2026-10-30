@@ -15,13 +15,13 @@ test("模型行只保留选中高亮，价格使用独立的彩色标签", async
     expect(styles).toContain(".canvas-model-picker-option:focus-visible");
     const price = styles.match(/\.model-picker-price \{([^}]+)\}/)?.[1] || "";
     expect(price).toContain("color: var(--model-price-ink)");
-    expect(price).toContain("font-weight: 650");
+    expect(price).toContain("font-weight: 600");
     expect(price).not.toContain("background:");
     expect(styles).toContain(".dark .model-picker-price");
     const badge = styles.match(/\.canvas-model-picker-option \.model-picker-price \{([^}]+)\}/)?.[1] || "";
     expect(badge).toContain("border-radius: var(--r-sm)");
     expect(badge).toContain("background: color-mix");
-    expect(badge).toContain("padding: 2px 5px");
+    expect(badge).toContain("padding: 2px 4px");
     expect(price).toContain("--model-price-ink: #946900");
     expect(component).toContain('<Coins className="model-picker-price-icon" aria-hidden="true" />');
     expect(styles).toContain("width: min(800px, calc(100vw - 24px))");
@@ -44,28 +44,52 @@ test("选择模型保留菜单及行内焦点，仍可通过 Escape 和外部点
     expect(component).toContain('window.addEventListener("pointerdown", closeOnOutsidePointer, true)');
 });
 
-test("ModelPicker 样式独立加载，并保留模型列表的视口边界", async () => {
-    const [application, globals, pickerStyles] = await Promise.all([
+test("ModelPicker 样式独立加载，所有入口继承可用高度约束", async () => {
+    const [application, globals, pickerStyles, component] = await Promise.all([
         Bun.file(new URL("../src/application.tsx", import.meta.url)).text(),
         Bun.file(new URL("../src/styles/globals.css", import.meta.url)).text(),
         Bun.file(new URL("../src/styles/shared/model-picker.css", import.meta.url)).text(),
+        Bun.file(new URL("../src/components/model-picker.tsx", import.meta.url)).text(),
     ]);
 
     expect(application).toContain('import "./styles/shared/model-picker.css";');
     expect(globals).not.toContain("canvas-model-picker");
-    expect(pickerStyles).toContain(".canvas-model-picker-menu {");
-    expect(pickerStyles).toContain("max-height: min(420px, calc(100vh - 32px));");
 
-    const creationMenu = pickerStyles.match(/\.creation-model-picker-menu \{([\s\S]*?)\}/)?.[1] || "";
-    expect(creationMenu).toContain("max-height: min(460px, calc(100vh - 24px));");
-    expect(creationMenu).toContain("overflow-y: auto;");
-    expect(pickerStyles).toContain(".app-user-workspace .creation-model-picker-menu.is-brand-list");
-    expect(pickerStyles).toContain(".creation-model-picker-surface .creation-model-picker-menu.is-model-list");
-    expect(pickerStyles).toContain(".creation-model-picker-surface .creation-model-picker-menu.is-brand-list");
+    const menu = pickerStyles.match(/\.canvas-model-picker-menu\s*\{([^}]+)\}/)?.[1] || "";
+    expect(menu).toMatch(/display:\s*flex\s*;/);
+    expect(menu).toMatch(/flex-direction:\s*column\s*;/);
+    const maxHeight = menu.match(/max-height:\s*([^;]+);/)?.[1] || "";
+    expect(maxHeight).toContain("min(");
+    expect(maxHeight).toContain("100dvh");
+    expect(maxHeight).toContain("var(--canvas-model-picker-available-height)");
+    expect(menu).toMatch(/overflow-y:\s*auto\s*;/);
+    expect(component).toContain('"--canvas-model-picker-available-height": `${availableHeight}px`');
 
-    const modelList = pickerStyles.match(/\.creation-model-picker-surface \.creation-model-picker-menu\.is-model-list \{([\s\S]*?)\}/)?.[1] || "";
-    expect(modelList).toContain("max-height: min(460px, calc(100vh - 24px)) !important;");
-    expect(modelList).toContain("overflow-y: auto !important;");
-    expect(pickerStyles).not.toContain(".app-user-workspace .creation-model-picker-menu {");
-    expect(pickerStyles).not.toContain(".creation-model-picker-surface .creation-model-picker-menu {");
+    // portal 和工作区覆盖只负责外观，不能重新取消共享菜单的高度或滚动限制。
+    const overrides = [...pickerStyles.matchAll(/[^{}]*\.creation-model-picker-menu(?:\.is-(?:brand|model)-list)?\s*\{([^}]+)\}/g)];
+    expect(overrides.length).toBeGreaterThan(0);
+    for (const [, declarations] of overrides) {
+        expect(declarations).not.toMatch(/(?:max-)?height\s*:/);
+        expect(declarations).not.toMatch(/overflow(?:-y)?\s*:\s*visible/);
+    }
+});
+
+test("模型和渠道分别滚动，外层双栏不被长列表撑高", async () => {
+    const pickerStyles = await Bun.file(new URL("../src/styles/shared/model-picker.css", import.meta.url)).text();
+    const modelList = pickerStyles.match(/\.canvas-model-picker-menu\.is-model-list\s*\{([^}]+)\}/)?.[1] || "";
+    expect(modelList).toMatch(/overflow:\s*hidden\s*;/);
+
+    const twoPane = pickerStyles.match(/\.canvas-model-picker-two-pane\s*\{([^}]+)\}/)?.[1] || "";
+    expect(twoPane).toMatch(/grid-template-rows:\s*minmax\(0,\s*1fr\)\s*;/);
+    expect(twoPane).toMatch(/min-height:\s*0\s*;/);
+    expect(twoPane).toMatch(/overflow:\s*hidden\s*;/);
+    expect(twoPane).not.toMatch(/align-items:\s*(?:start|flex-start)/);
+
+    const brandRail = pickerStyles.match(/\.canvas-model-picker-menu\.is-model-list\s+\.canvas-model-picker-brand-rail\s*\{([^}]+)\}/)?.[1] || "";
+    const modelPane = pickerStyles.match(/\.canvas-model-picker-model-pane\s*\{([^}]+)\}/)?.[1] || "";
+    for (const pane of [brandRail, modelPane]) {
+        expect(pane).toMatch(/min-height:\s*0\s*;/);
+        expect(pane).toMatch(/overflow-x:\s*hidden\s*;/);
+        expect(pane).toMatch(/overflow-y:\s*auto\s*;/);
+    }
 });

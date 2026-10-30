@@ -11,7 +11,7 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 版本号是策略文件的公开合同：工具披露规则改变时一同更新。
-	if system.ID != "cloud-agent-system" || system.Version != 21 || media.ID != "cloud-agent-media" || media.Version != 5 {
+	if system.ID != "cloud-agent-system" || system.Version != 22 || media.ID != "cloud-agent-media" || media.Version != 5 {
 		t.Fatalf("unexpected policy metadata: system=%s@%d media=%s@%d", system.ID, system.Version, media.ID, media.Version)
 	}
 	if strings.Contains(system.Text, "id: cloud-agent-system") || !strings.HasPrefix(system.Text, "# ArrowFX Cloud Agent") ||
@@ -20,12 +20,46 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 	}
 	for _, phrase := range []string{
 		"auto 由服务端完成模型、价格、预算和资源准入后提交",
-		"成功自动采用，但用户期间手动选择过版本或输出归属曾改变时只进入历史",
+		"成功后新结果进入节点 mediaVersions 并自动采用；用户期间手动切换过版本或输出归属曾改变时只进入历史",
 		"request_approval 必须等待界面独立审批",
 		"authorizedChargeMicrocredits / chargeLimitMicrocredits 是预授权或上限，不是实际消费",
 	} {
 		if !strings.Contains(media.Text, phrase) {
 			t.Fatalf("media policy lost required contract phrase %q", phrase)
+		}
+	}
+}
+
+// 用户纠正、插话和当前画布优先于模型自己的上下文；写入前按需重读，不再以"只有实际冲突才重读"为默认。
+func TestSystemPolicyPrefersUserCorrectionsAndCurrentCanvas(t *testing.T) {
+	system, _, err := LoadAgentPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phrase := range []string{
+		"优先于你之前读到的画布状态、你自己的结论与计划、上下文检查点和个人记忆",
+		"不要坚持旧判断，也不要要求用户重复已说明的事实",
+		"写入前先重新读取目标节点",
+		"成功后下一步可沿用回执里的新 snapshotHash",
+		"每个模型步骤最多一个写入/生成调用",
+		"没有成功返回就不能声称完成",
+		"用户可能同时在编辑或刚纠正过时，先重新读取目标并核对",
+		"先与最新有效用户要求核对",
+		"不要把取消项标记为已完成",
+		"errorClass 为 state_conflict",
+		"requiredAction 为 ask_user",
+	} {
+		if !strings.Contains(system.Text, phrase) {
+			t.Fatalf("system policy lost required phrase %q", phrase)
+		}
+	}
+	for _, stale := range []string{
+		"只有实际冲突或所需状态未知时才重新读取",
+		"实际冲突或缺少所需状态时才重新读取",
+		"由你按最新有效用户要求自行维护",
+	} {
+		if strings.Contains(system.Text, stale) {
+			t.Fatalf("system policy still contains stale phrase %q", stale)
 		}
 	}
 }

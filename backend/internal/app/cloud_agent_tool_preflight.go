@@ -141,7 +141,7 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 		if call.ID != "" {
 			seenCalls[call.ID] = true
 		}
-		if cloudAgentWrite(name) {
+		if cloudAgentWriteCall(call) {
 			switch {
 			case writeFailed && admission.Allowed:
 				admission = cloudAgentSkipCall(call, cloudAgentAdmissionBatchCancel, "同一批里前面的写入/生成调用未通过校验，本调用已跳过；请先修正那条调用的参数，再在下一步单独提交")

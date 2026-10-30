@@ -6,8 +6,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // setPiRunStatus 把运行直接置为给定状态，用于构造"worker 仍在途、但运行已终结"的竞态。

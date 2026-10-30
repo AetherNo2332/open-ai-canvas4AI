@@ -2,7 +2,7 @@ import { type GenerationTask } from "@/services/api/task-center";
 import { backendProviderConfig, logicalModelIDForConfig, runBackendGenerationTask, type GenerationTaskDependencies } from "@/services/api/generation-task";
 import { configuredModelMatchesCapability, defaultConfig, normalizeModelOptionValue, normalizeRunningHubCapability, resolveModelRequestConfig, type AiConfig, type WorkflowFieldMapping } from "@/stores/use-config-store";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { resolveMediaUrl } from "@/services/file-storage";
+import { resolveMediaUrl, resolveVideoMediaUrl } from "@/services/file-storage";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
@@ -19,8 +19,6 @@ import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, typ
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { generationSpecMetadata, readNodeGenerationSpec, resolveGenerationSelection } from "@/lib/canvas/generation-contract";
-import { stableDigestHex } from "@/lib/stable-digest";
-import type { consumeCanvasCommandGeneration } from "@/services/canvas-command-generation";
 
 export async function runBackendCanvasGenerationTask(
     {
@@ -56,16 +54,12 @@ export async function runBackendCanvasGenerationTask(
         retryOf?: string;
         attemptGroupId?: string;
     },
-    dependencies?: GenerationTaskDependencies & { consumeCanvas?: typeof consumeCanvasCommandGeneration },
+    dependencies?: GenerationTaskDependencies,
 ) {
     if (mode === "image") assertCanvasImageReferenceLimit(config, referenceImages);
-    const readOnlyDetection = mode === "text" && metadata?.edit === "text-detection";
-    // These provider outputs still require composition or expansion before saving.
-    const intermediateImages = mode === "image" && ["emotion", "layer-decomposition"].includes(String(metadata?.edit));
-    let lastTask: GenerationTask | undefined;
-    const result = await runBackendGenerationTask(
+    return runBackendGenerationTask(
         {
-            projectId: readOnlyDetection || intermediateImages ? undefined : projectId,
+            projectId,
             mode,
             prompt,
             config,
@@ -75,24 +69,13 @@ export async function runBackendCanvasGenerationTask(
             mask,
             signal,
             metadata: { nodeId, ...(mode === "video" && !metadata?.videoEditOperation ? { videoEditOperation: "image_to_video" } : {}), ...metadata },
-            onTaskUpdate: (task) => {
-                lastTask = task;
-                if (!intermediateImages) onTaskCreated?.(task);
-            },
+            onTaskUpdate: onTaskCreated,
             clientOperationId,
             retryOf,
             attemptGroupId,
         },
         dependencies,
     );
-    if (mode === "image" && projectId && typeof metadata?.sourceNodeId === "string" && ["mask", "text", "annotation", "angle"].includes(String(metadata.edit))) {
-        const consume = dependencies?.consumeCanvas ?? (!dependencies ? (await import("@/services/canvas-command-generation")).consumeCanvasCommandGeneration : undefined);
-        if (consume && lastTask) {
-            const materialized = await consume(projectId, lastTask.id, signal);
-            if (materialized) return { ...result, canvasMaterialized: true };
-        }
-    }
-    return result;
 }
 
 export function canvasImageReferenceLimitError(config: AiConfig, referenceImages: ReferenceImage[]) {
@@ -156,7 +139,9 @@ export type GenerationRetryContext = {
 };
 
 export async function createGenerationRetryContext(retryOf: string, attemptGroupId = retryOf): Promise<GenerationRetryContext> {
-    const hex = await stableDigestHex(`generation-retry\0${attemptGroupId}\0${retryOf}`);
+    const bytes = new TextEncoder().encode(`generation-retry\0${attemptGroupId}\0${retryOf}`);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
     return { retryOf, attemptGroupId, clientOperationId: `retry:${hex}` };
 }
 
@@ -225,6 +210,7 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
 }
 
 export function nodeReferenceImage(node: CanvasNodeData): ReferenceImage | null {
+    if (node.metadata?.imageLayerGroup?.compositeStatus && node.metadata.imageLayerGroup.compositeStatus !== "ready") return null;
     if (node.type === CanvasNodeType.MediaConversion) {
         // 转换结果只在成功物化后作为生成参考；运行中、跳过和失败状态都不能透传旧结果。
         const conversion = node.metadata?.mediaConversion;
@@ -256,6 +242,8 @@ export function buildAudioGenerationMetadata(config: AiConfig): CanvasNodeMetada
         audioVoice: config.audioVoice,
         audioFormat: config.audioFormat,
         audioSpeed: config.audioSpeed,
+        audioLanguage: config.audioLanguage,
+        audioDialect: config.audioDialect,
         audioInstructions: config.audioInstructions,
         audioEmotionControlMethod: config.audioEmotionControlMethod,
         audioEmotionRandom: config.audioEmotionRandom,
@@ -376,7 +364,8 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
                 node.type === CanvasNodeType.Video && node.metadata?.videoPreview?.storageKey
                     ? { ...node.metadata.videoPreview, content: await resolveImageUrl(node.metadata.videoPreview.storageKey, node.metadata.videoPreview.content, { cacheMiss: true }) }
                     : node.metadata?.videoPreview;
-            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(node.metadata.storageKey, content), videoPreview } };
+            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.storageKey)
+                return { ...node, metadata: { ...node.metadata, content: node.type === CanvasNodeType.Video ? await resolveVideoMediaUrl(node.metadata.storageKey, content) : await resolveMediaUrl(node.metadata.storageKey, content), videoPreview } };
             if (videoPreview !== node.metadata?.videoPreview) return { ...node, metadata: { ...node.metadata, videoPreview } };
             if (node.type === CanvasNodeType.Image && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveImageUrl(node.metadata.storageKey, content, { cacheMiss: true }) } };
             if (node.type !== CanvasNodeType.Image || !content) return node;
@@ -450,6 +439,8 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const requestedConfig: AiConfig = {
         ...config,
         quality: node?.metadata?.quality ?? workflowParameterValue("quality") ?? config.quality ?? defaultConfig.quality,
+        imageResolution: node?.metadata?.imageResolution ?? workflowParameterValue("imageResolution") ?? config.imageResolution ?? defaultConfig.imageResolution,
+        imageParameters: node?.metadata?.imageParameters ?? workflowParameterValue("imageParameters") ?? config.imageParameters ?? "{}",
         size: workflowProvider === "model" ? (node?.metadata?.size ?? config.size ?? defaultConfig.size) : workflowOutputSize || node?.metadata?.size || config.size || defaultConfig.size,
         transparentBackground: node?.metadata?.transparentBackground ?? config.transparentBackground ?? defaultConfig.transparentBackground,
         videoSeconds:
@@ -466,6 +457,8 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         audioVoice: node?.metadata?.audioVoice ?? config.audioVoice ?? defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat ?? config.audioFormat ?? defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed ?? config.audioSpeed ?? defaultConfig.audioSpeed,
+        audioLanguage: node?.metadata?.audioLanguage ?? config.audioLanguage ?? defaultConfig.audioLanguage,
+        audioDialect: node?.metadata?.audioDialect ?? config.audioDialect ?? defaultConfig.audioDialect,
         audioInstructions: node?.metadata?.audioInstructions ?? config.audioInstructions ?? defaultConfig.audioInstructions,
         count: String(node?.metadata?.count ?? (mode === "image" ? config.canvasImageCount || config.count || defaultConfig.count : config.count || defaultConfig.count)),
     };
@@ -484,6 +477,8 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
                   mode === "image"
                       ? {
                             size: node?.metadata?.size,
+                            imageResolution: node?.metadata?.imageResolution,
+                            imageParameters: node?.metadata?.imageParameters,
                             quality: node?.metadata?.quality,
                             transparentBackground: node?.metadata?.transparentBackground,
                             count: requestedConfig.count,
@@ -497,6 +492,8 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
                         },
                   {
                       size: requestedConfig.size,
+                      imageResolution: requestedConfig.imageResolution,
+                      imageParameters: requestedConfig.imageParameters,
                       quality: requestedConfig.quality,
                       transparentBackground: requestedConfig.transparentBackground,
                       count: requestedConfig.count,
@@ -530,6 +527,8 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         runningHub,
         model,
         quality: generationDefaults.quality || requestedConfig.quality,
+        imageResolution: generationDefaults.imageResolution || requestedConfig.imageResolution,
+        imageParameters: generationDefaults.imageParameters ?? requestedConfig.imageParameters,
         size: generationDefaults.size ?? requestedConfig.size,
         transparentBackground: generationDefaults.transparentBackground || (requestedConfig.transparentBackground === "true" ? "true" : "false"),
         videoSeconds: generationDefaults.videoSeconds ?? requestedConfig.videoSeconds,

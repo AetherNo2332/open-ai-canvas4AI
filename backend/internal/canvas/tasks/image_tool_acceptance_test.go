@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"testing"
 
-	"infinite-canvas/backend/internal/canvas/commands"
-	"infinite-canvas/backend/internal/identity"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/identity"
+	"yingce/backend/internal/model"
 )
 
 type imageToolSubmitter struct {

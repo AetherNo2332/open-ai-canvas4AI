@@ -1,189 +1,147 @@
 import { expect, test } from "bun:test";
-import { createCanvasRealtimeClient, canvasRealtimeURL } from "../src/services/canvas-realtime-client";
+import { canvasRealtimeURL, createCanvasRealtimeClient, type CanvasRealtimeSnapshot } from "../src/services/canvas-realtime-client";
 
 class Socket {
-    readyState = 0;
-    onopen: (() => void) | null = null;
-    onmessage: ((event: { data: unknown }) => void) | null = null;
-    onclose: ((event: { code: number }) => void) | null = null;
-    onerror: (() => void) | null = null;
+    readyState = 1;
+    bufferedAmount = 0;
     sent: any[] = [];
-    open() {
-        this.readyState = 1;
-        this.onopen?.();
-    }
-    frame(frame: object) {
-        this.onmessage?.({ data: JSON.stringify({ protocolVersion: 1, ...frame }) });
-    }
-    send(frame: string) {
-        this.sent.push(JSON.parse(frame));
+    onmessage?: (event: { data: string }) => void;
+    onclose?: (event: { code: number }) => void;
+    send(value: string) {
+        this.sent.push(JSON.parse(value));
     }
     close() {
-        this.readyState = 3;
+        this.onclose?.({ code: 1006 });
     }
-    drop(code = 1006) {
-        this.close();
-        this.onclose?.({ code });
+    receive(value: unknown) {
+        this.onmessage?.({ data: JSON.stringify(value) });
     }
 }
-function harness(reconcile: () => Promise<void> = async () => {}) {
-    let now = 1_000;
-    const timers = new Map<number, { at: number; fn: () => void }>();
-    let next = 0;
+
+function fixture() {
+    let now = 0,
+        sequence = 0;
+    const timers = new Map<number, { at: number; callback: () => void }>();
     const sockets: Socket[] = [];
+    const events: string[] = [];
+    let state: CanvasRealtimeSnapshot = { connected: false, selfId: null, peers: [] };
     const client = createCanvasRealtimeClient({
-        scope: "account-a",
-        canvasId: "canvas-a",
-        apiBaseURL: "/api",
-        pageURL: "https://canvas.test/project",
-        reconcile,
-        deviceLabel: "Browser",
+        url: "ws://localhost/api/canvas-projects/canvas/realtime",
         socket: () => {
             const socket = new Socket();
             sockets.push(socket);
-            return socket;
+            return socket as unknown as WebSocket;
         },
         now: () => now,
-        schedule: (fn, ms) => {
-            const id = ++next;
-            timers.set(id, { at: now + ms, fn });
-            return () => {
-                timers.delete(id);
-            };
+        random: () => 0.5,
+        schedule: (callback, delay) => {
+            const id = ++sequence;
+            timers.set(id, { at: now + delay, callback });
+            return id as unknown as ReturnType<typeof setTimeout>;
+        },
+        clear: (timer) => {
+            timers.delete(timer as unknown as number);
         },
     });
-    async function tick(ms: number) {
-        const end = now + ms;
-        for (;;) {
-            const due = [...timers].sort((a, b) => a[1].at - b[1].at).find(([, t]) => t.at <= end);
-            if (!due) break;
-            now = due[1].at;
-            timers.delete(due[0]);
-            due[1].fn();
-            await flush();
-        }
-        now = end;
-        await flush();
-    }
-    return { client, sockets, tick, timers, now: () => now };
+    client.subscribe((snapshot, event) => {
+        state = snapshot;
+        events.push(event);
+    });
+    return {
+        client,
+        sockets,
+        events,
+        get state() {
+            return state;
+        },
+        welcome(id = "self") {
+            sockets.at(-1)!.receive({ type: "welcome", selfId: id, peers: [{ id, number: 1, cursor: null, drag: null, updatedAt: now }] });
+        },
+        advance(ms: number) {
+            const until = now + ms;
+            for (;;) {
+                const next = [...timers.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+                if (!next || next[1].at > until) break;
+                now = next[1].at;
+                timers.delete(next[0]);
+                next[1].callback();
+            }
+            now = until;
+        },
+    };
 }
-async function flush() {
-    for (let i = 0; i < 8; i++) await Promise.resolve();
-}
-const ready = { type: "ready", sessionId: "self", deviceNumber: 1, coordination: "shared", heartbeatSeconds: 15, leaseSeconds: 60 };
-const peer = (sessionId = "remote", expiresAt = new Date(61_000).toISOString()) => ({ sessionId, deviceNumber: 2, coordination: "shared", deviceLabel: "Chrome", cursor: { x: 100, y: 200 }, drag: [{ nodeId: "node", x: 5, y: 6 }], expiresAt });
 
-test("cookie-only websocket URL uses the captured API origin and rejects URL credentials", () => {
-    expect(canvasRealtimeURL("/api", "a/b", "https://canvas.test/canvas")).toBe("wss://canvas.test/api/canvas-projects/a%2Fb/realtime");
-    expect(canvasRealtimeURL("https://api.test/root/api/", "c", "https://canvas.test")).toBe("wss://api.test/root/api/canvas-projects/c/realtime");
-    for (const base of ["https://token@api.test/api", "/api?token=secret", "/api#proof", "file:///api"]) expect(() => canvasRealtimeURL(base, "c", "https://canvas.test")).toThrow();
+test("realtime URL follows API deployment path, HTTPS and encoded canvas identity", () => {
+    expect(canvasRealtimeURL("/api", "a/b", "https://canvas.example/canvas/a")).toBe("wss://canvas.example/api/canvas-projects/a%2Fb/realtime");
+    expect(canvasRealtimeURL("https://api.example/custom/", "canvas", "https://canvas.example")).toBe("wss://api.example/custom/canvas-projects/canvas/realtime");
 });
-test("initial/open/sync/invalidate reconcile is coalesced and never acknowledges a document", async () => {
-    let calls = 0;
-    let release!: () => void;
-    const h = harness(() => {
-        calls++;
-        return new Promise<void>((resolve) => {
-            release = resolve;
-        });
-    });
-    h.client.start();
-    await flush();
-    expect(calls).toBe(1);
-    const socket = h.sockets[0];
-    socket.open();
-    socket.frame(ready);
-    socket.frame({ type: "sync" });
-    for (let i = 0; i < 20; i++) socket.frame({ type: "invalidate", revision: i });
-    await flush();
-    expect(calls).toBe(1);
-    release();
-    await flush();
-    expect(calls).toBe(2);
-    h.client.close();
-    release();
-    await flush();
-    expect(calls).toBe(2);
+
+test("presence coalesces rapid pointer and drag frames, retaining final coordinates", () => {
+    const f = fixture();
+    f.welcome();
+    f.sockets[0].sent = [];
+    for (let i = 0; i < 20; i++) f.client.update({ x: i, y: -i }, [{ id: "node", x: i * 10, y: 0, width: 240, height: 160 }]);
+    expect(f.sockets[0].sent).toHaveLength(0);
+    f.advance(50);
+    expect(f.sockets[0].sent).toHaveLength(1);
+    expect(f.sockets[0].sent[0].cursor).toEqual({ x: 19, y: -19 });
+    expect(f.sockets[0].sent[0].drag[0].x).toBe(190);
+    f.client.update(null, null, true);
+    expect(f.sockets[0].sent.at(-1).drag).toBeNull();
+    f.client.close();
 });
-test("presence is full state, throttled, versioned and never writes document nodes", async () => {
-    const h = harness();
-    h.client.start();
-    h.sockets[0].open();
-    h.sockets[0].frame(ready);
-    h.client.presence({ cursor: { x: 1, y: 2 }, drag: [{ nodeId: "n", x: 3, y: 4 }] });
-    h.client.presence({ cursor: { x: 5, y: 6 }, drag: [] });
-    await h.tick(80);
-    const last = h.sockets[0].sent.at(-1);
-    expect(last).toEqual({ type: "presence", protocolVersion: 1, cursor: { x: 5, y: 6 }, drag: [], deviceLabel: "Browser" });
-    h.client.presence({ cursor: null, drag: [] });
-    await h.tick(80);
-    expect(h.sockets[0].sent.at(-1).cursor).toBeNull();
-    await h.tick(15_000);
-    expect(h.sockets[0].sent).toContainEqual({ type: "heartbeat", protocolVersion: 1 });
-    h.client.close();
+
+test("congested transport eventually delivers the final drag cancellation", () => {
+    const f = fixture();
+    f.welcome();
+    f.sockets[0].bufferedAmount = 40000;
+    f.client.update(null, null, true);
+    f.advance(100);
+    f.sockets[0].bufferedAmount = 0;
+    f.advance(50);
+    expect(f.sockets[0].sent.at(-1)).toEqual({ type: "presence", cursor: null, drag: null });
+    f.client.close();
 });
-test("self-filter, validation, expiry and coordination recovery prevent ghost peers", async () => {
-    const h = harness();
-    h.client.start();
-    const socket = h.sockets[0];
-    socket.open();
-    socket.frame(ready);
-    socket.frame({ type: "peers", peers: [peer("self"), peer(), peer("bad", "invalid")] });
-    expect(h.client.state().peers.map((p) => p.sessionId)).toEqual(["remote"]);
-    socket.frame({ type: "coordination", coordination: "degraded" });
-    expect(h.client.state().peers).toEqual([]);
-    expect(h.client.state().deviceNumber).toBe(0);
-    socket.frame({ type: "peers", peers: [peer()] });
-    expect(h.client.state().peers).toEqual([]);
-    socket.frame({ type: "coordination", coordination: "recovering" });
-    socket.frame({ type: "coordination", coordination: "shared" });
-    socket.frame({ type: "peers", peers: [peer("self"), peer("remote", new Date(3_000).toISOString()), { ...peer("nan"), cursor: { x: null, y: 1 } }] });
-    expect(h.client.state().deviceNumber).toBe(2);
-    expect(h.client.state().peers).toHaveLength(1);
-    await h.tick(2_000);
-    expect(h.client.state().peers).toEqual([]);
-    h.client.close();
+
+test("outgoing presence does not echo into subscribers and identical state is not resent", () => {
+    const f = fixture();
+    f.welcome();
+    const events = f.events.length;
+    f.client.update({ x: 10, y: 20 }, null);
+    f.advance(50);
+    const sent = f.sockets[0].sent.length;
+    for (let i = 0; i < 100; i++) f.client.update({ x: 10, y: 20 }, null);
+    f.advance(50);
+    expect(f.sockets[0].sent).toHaveLength(sent);
+    expect(f.events).toHaveLength(events);
+    f.client.close();
 });
-test("reconnect backs off, replays presence and reconciles; policy close waits for explicit wake", async () => {
-    let calls = 0;
-    const h = harness(async () => {
-        calls++;
-    });
-    h.client.start();
-    await flush();
-    h.sockets[0].open();
-    h.sockets[0].frame(ready);
-    h.sockets[0].drop();
-    expect(h.client.state().peers).toEqual([]);
-    await h.tick(999);
-    expect(h.sockets).toHaveLength(1);
-    await h.tick(1);
-    expect(h.sockets).toHaveLength(2);
-    h.sockets[1].open();
-    await flush();
-    expect(calls).toBeGreaterThanOrEqual(2);
-    h.sockets[1].frame(ready);
-    h.sockets[1].drop(1008);
-    await h.tick(60_000);
-    expect(h.sockets).toHaveLength(2);
-    h.client.wake();
-    expect(h.sockets).toHaveLength(3);
-    const late = h.sockets[2].onmessage;
-    h.client.close();
-    late?.({ data: JSON.stringify({ protocolVersion: 1, ...ready }) });
-    expect(h.client.state().status).toBe("closed");
-    expect(h.timers.size).toBe(0);
+
+test("disconnect clears peers and reconnect invalidates the document; policy denial stops retries", () => {
+    const f = fixture();
+    f.welcome();
+    f.sockets[0].receive({ type: "peer", peer: { id: "remote", number: 2, cursor: { x: 1, y: 2 }, drag: null, updatedAt: 0 } });
+    expect(f.state.peers).toHaveLength(2);
+    f.sockets[0].close();
+    expect(f.state.connected).toBe(false);
+    expect(f.state.peers).toHaveLength(0);
+    f.advance(500);
+    expect(f.sockets).toHaveLength(2);
+    f.welcome("reconnected");
+    expect(f.events.filter((event) => event === "invalidate")).toHaveLength(2);
+    f.sockets[1].onclose?.({ code: 1008 });
+    f.advance(60000);
+    expect(f.sockets).toHaveLength(2);
+    f.client.close();
 });
-test("bounded server peer snapshot supports the full 64 by 32 presence room", () => {
-    const h = harness();
-    h.client.start();
-    h.sockets[0].open();
-    h.sockets[0].frame(ready);
-    const peers = Array.from({ length: 64 }, (_, i) => ({ ...peer(i === 0 ? "self" : `peer-${i}`), deviceNumber: i + 1, drag: Array.from({ length: 32 }, (_, j) => ({ nodeId: `${j}`.padEnd(128, "n"), x: 1, y: 2 })) }));
-    expect(JSON.stringify(peers).length).toBeGreaterThan(256_000);
-    h.sockets[0].frame({ type: "peers", peers });
-    expect(h.client.state().peers).toHaveLength(63);
-    h.sockets[0].frame({ type: "peers", peers: [], padding: "x".repeat(512 * 1024) });
-    expect(h.client.state().peers).toHaveLength(63);
-    h.client.close();
+
+test("leave removes ghosts and malformed remote coordinates cannot enter the renderer", () => {
+    const f = fixture();
+    f.welcome();
+    f.sockets[0].receive({ type: "peer", peer: { id: "invalid", number: 2, cursor: { x: "NaN", y: 2 }, drag: null, updatedAt: 0 } });
+    expect(f.state.peers).toHaveLength(1);
+    f.sockets[0].receive({ type: "peer", peer: { id: "remote", number: 2, cursor: { x: 1, y: 2 }, drag: null, updatedAt: 0 } });
+    f.sockets[0].receive({ type: "leave", peerId: "remote" });
+    expect(f.state.peers.map((peer) => peer.id)).toEqual(["self"]);
+    f.client.close();
 });

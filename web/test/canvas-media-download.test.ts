@@ -1,36 +1,72 @@
 import { describe, expect, test } from "bun:test";
-import { buildCanvasMediaDownloadFileName } from "@/lib/canvas/canvas-media-download";
-import { isCanvasDownloadableMediaNode, resolveCanvasMediaDownloadItems } from "@/lib/canvas/canvas-media-batch-download";
+
+import { buildImageGenerationNodeTitle } from "@/lib/canvas/canvas-generation-title";
+import { buildCanvasMediaDownloadFileName, canvasMediaFileExtension } from "@/lib/canvas/canvas-media-download";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
-function node(overrides: Partial<CanvasNodeData>): CanvasNodeData {
-    return { id: "node", type: CanvasNodeType.Video, title: "片头镜头", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: "https://cdn.test/clip.mp4", mimeType: "video/mp4" }, ...overrides };
+function mediaNode(overrides: Partial<CanvasNodeData> = {}): CanvasNodeData {
+    return {
+        id: "image-1",
+        type: CanvasNodeType.Image,
+        title: "女明星角色三视图",
+        position: { x: 0, y: 0 },
+        width: 1024,
+        height: 1024,
+        metadata: { content: "data:image/png;base64,aW1hZ2U=", mimeType: "image/png", status: "success" },
+        ...overrides,
+    };
 }
 
-describe("画布媒体下载命名", () => {
-    test("使用节点标题和媒体扩展名", () => {
-        expect(buildCanvasMediaDownloadFileName(node({}))).toBe("片头镜头.mp4");
+describe("canvas media download", () => {
+    test("按画布名、节点名和本地日期生成文件名", () => {
+        expect(buildCanvasMediaDownloadFileName("写给阿妈的情书", mediaNode(), new Date(2026, 7, 28, 12))).toBe("写给阿妈的情书_女明星角色三视图_20260828.png");
     });
 
-    test("清洗非法字符、空标题和保留设备名", () => {
-        expect(buildCanvasMediaDownloadFileName(node({ title: '片头:/?*"<>|', type: CanvasNodeType.Image, metadata: { content: "data:image/png;base64,AA" } }))).toBe("片头.png");
-        expect(buildCanvasMediaDownloadFileName(node({ title: "", type: CanvasNodeType.Audio, metadata: { content: "data:audio/mpeg;base64,AA" } }))).toBe("音频节点.mp3");
-        expect(buildCanvasMediaDownloadFileName(node({ title: "CON" }))).toBe("_CON.mp4");
+    test("清理跨平台非法字符且保留中文可读名称", () => {
+        const node = mediaNode({ title: "女明星/角色:三视图?" });
+        expect(buildCanvasMediaDownloadFileName("写给阿妈的情书|终稿", node, new Date(2026, 7, 28, 12))).toBe("写给阿妈的情书_终稿_女明星_角色_三视图_20260828.png");
     });
 
-    test("同名文件在扩展名前追加序号", () => {
-        const used = new Set(["片头镜头.mp4"]);
-        expect(buildCanvasMediaDownloadFileName(node({}), used)).toBe("片头镜头 (2).mp4");
+    test("截断长名称后不会留下 Windows 不接受的结尾句点", () => {
+        const node = mediaNode({ title: `${"a".repeat(79)}.extra` });
+        expect(buildCanvasMediaDownloadFileName("画布", node, new Date(2026, 7, 28, 12))).toBe(`画布_${"a".repeat(79)}_20260828.png`);
     });
 
-    test("混合选择只返回有媒体定位的图片视频音频节点", () => {
-        const items = resolveCanvasMediaDownloadItems([
-            node({ id: "video" }),
-            node({ id: "text", type: CanvasNodeType.Text, title: "说明", metadata: { content: "文本" } }),
-            node({ id: "empty", metadata: {} }),
-            node({ id: "image", type: CanvasNodeType.Image, title: "封面", metadata: { storageKey: "resource:image" } }),
-        ]);
-        expect(items.map((item) => item.node.id)).toEqual(["video", "image"]);
-        expect(isCanvasDownloadableMediaNode(node({ type: CanvasNodeType.Text }))).toBe(false);
+    test("优先按媒体 MIME 类型确定视频扩展名", () => {
+        expect(canvasMediaFileExtension(mediaNode({ type: CanvasNodeType.Video, metadata: { content: "https://example.com/video", mimeType: "video/webm" } }))).toBe("webm");
+        expect(canvasMediaFileExtension(mediaNode({ type: CanvasNodeType.Video, metadata: { content: "https://example.com/video", mimeType: "video/quicktime" } }))).toBe("mov");
+    });
+
+    test("MIME 类型不明确时从远程资源 URL 识别扩展名", () => {
+        expect(canvasMediaFileExtension(mediaNode({ metadata: { content: "https://example.com/result.jpeg?token=hidden", mimeType: "image/*" } }))).toBe("jpg");
+    });
+});
+
+describe("generated image title", () => {
+    test("普通节点继续使用提示词摘要", () => {
+        expect(buildImageGenerationNodeTitle("一座云层中的未来城市", mediaNode({ title: "原图" }))).toBe("一座云层中的未来城市");
+    });
+
+    test("快捷键复制节点生成后保留 copy 序号", () => {
+        const source = mediaNode({ title: "未来城市_copy2", metadata: { copiedFromNodeId: "source" } });
+        expect(buildImageGenerationNodeTitle("未来城市", source)).toBe("未来城市_copy2");
+    });
+
+    test("参数变体生成后保留版本字母", () => {
+        const source = mediaNode({ title: "未来城市 · C", metadata: { versionOfNodeId: "source", versionLabel: "C" } });
+        expect(buildImageGenerationNodeTitle("未来城市", source)).toBe("未来城市 · C");
+    });
+
+    test("复制变体和批量输出使用互不重复的标题", () => {
+        const source = mediaNode({ title: "未来城市_copy1 · B", metadata: { copiedFromNodeId: "source", versionOfNodeId: "source", versionLabel: "B" } });
+        expect([0, 1].map((index) => buildImageGenerationNodeTitle("未来城市", source, index, 2))).toEqual(["未来城市_copy1 · B · 1", "未来城市_copy1 · B · 2"]);
+    });
+
+    test("下载文件名继承 copy 和版本标识，不再互相重复", () => {
+        const now = new Date(2026, 7, 29, 12);
+        const copy = mediaNode({ title: buildImageGenerationNodeTitle("未来城市", mediaNode({ title: "未来城市_copy1", metadata: { copiedFromNodeId: "source" } })) });
+        const variant = mediaNode({ title: buildImageGenerationNodeTitle("未来城市", mediaNode({ title: "未来城市 · C", metadata: { versionOfNodeId: "source", versionLabel: "C" } })) });
+        expect(buildCanvasMediaDownloadFileName("自由画布", copy, now)).toBe("自由画布_未来城市_copy1_20260829.png");
+        expect(buildCanvasMediaDownloadFileName("自由画布", variant, now)).toBe("自由画布_未来城市 · C_20260829.png");
     });
 });

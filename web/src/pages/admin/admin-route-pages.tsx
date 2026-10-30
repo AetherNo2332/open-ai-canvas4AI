@@ -5,6 +5,7 @@ import { lazy, useState } from "react";
 import { useAdminContext } from "./admin-context";
 import { AdminPageFrame } from "./components/admin-shell";
 import { readAnnouncementPendingReview } from "./components/admin-announcement-safety";
+import { BillingAutoRefundToggle } from "./components/billing-auto-refund-toggle";
 
 const AnalyticsPanel = lazy(() => import("./components/analytics-panel"));
 const AdminAnnouncementsPanel = lazy(() => import("./components/admin-announcements-panel"));
@@ -14,6 +15,7 @@ const AccessSettingsPanel = lazy(() => import("./components/access-settings-pane
 const EmailSettingsPanel = lazy(() => import("./components/email-settings-panel"));
 const FeatureAvailabilityPanel = lazy(() => import("./components/feature-availability-panel"));
 const StorageResourcesPanel = lazy(() => import("./components/storage-resources-panel"));
+const AgentLessonsPanel = lazy(() => import("./components/agent-lessons-panel"));
 
 export function AnalyticsPage() {
     const { references } = useAdminContext();
@@ -83,6 +85,7 @@ export function CreditOperationsPage() {
             description="异常计费核对、积分策略与人工调账"
             actions={
                 <>
+                    <BillingAutoRefundToggle />
                     <Button icon={<Settings2 className="size-4" />} onClick={() => setActiveOperation("policy")}>
                         积分策略
                     </Button>
@@ -125,6 +128,14 @@ export function StorageResourcesPage() {
     return (
         <AdminPageFrame title="存储资源" description="只读查看资源记录、容量分布与文件预览" scroll>
             <StorageResourcesPanel />
+        </AdminPageFrame>
+    );
+}
+
+export function AgentLessonsPage() {
+    return (
+        <AdminPageFrame title="Agent 记忆" description="按用户查看个人记忆；批准仍由用户自己处理" scroll>
+            <AgentLessonsPanel />
         </AdminPageFrame>
     );
 }

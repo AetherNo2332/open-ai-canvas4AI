@@ -13,9 +13,6 @@ type DeliverySettings struct {
 	CDNAuthMode       string `json:"cdnAuthMode"`
 	RequireCDN        bool   `json:"requireCDN"`
 	AllowPrivateProxy bool   `json:"allowPrivateProxy"`
-	// Explicit operator contract: the public CDN forwards attachment response
-	// overrides to its origin and isolates those responses in its cache key.
-	CDNAttachmentQueryForwarding bool `json:"cdnAttachmentQueryForwarding"`
 }
 
 func CDNEnabled(setting Settings) bool {

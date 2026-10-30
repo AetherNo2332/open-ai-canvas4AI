@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	canvasdomain "infinite-canvas/backend/internal/canvas"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	canvasdomain "yingce/backend/internal/canvas"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func TestCommandVersionSnapshotsCaptureInitialThrottleHostAndRetention(t *testing.T) {

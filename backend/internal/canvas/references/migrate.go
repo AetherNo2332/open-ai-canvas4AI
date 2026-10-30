@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/contract"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/contract"
 )
 
 // 规范化的两种来源选择：字段是权威，还是旧连线是权威。

@@ -3,15 +3,15 @@ package repository
 import (
 	"fmt"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/model"
 	"time"
+	"yingce/backend/internal/model"
 )
 
 // MutateCloudAgentControl can terminate a run even if its transcript is damaged.
 // Only fresh append-only events are accepted; existing messages remain untouched.
 func (r *Repository) MutateCloudAgentControl(userID, id string, revision int64, fn func(*model.CloudAgentExecution, *Repository) error) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		repo := r.transactionRepository(tx)
+	return r.transact(r.db, func(repo *Repository) error {
+		tx := repo.db
 		if err := repo.LockCanvasWrite(userID, ""); err != nil {
 			return err
 		}
@@ -87,7 +87,9 @@ func (r *Repository) WorkerRecoveryRuns(after string, limit int) ([]model.CloudA
 // A takeover without progress spends a persisted attempt even when the worker
 // died before sending an error report. Explicit release and user waits do not.
 func (r *Repository) WorkerRecoveryProtectedWait(run model.CloudAgentExecution) (bool, error) {
-	if run.Status == "waiting_approval" || run.WaitKind == "subagents" {
+	// Approvals, subagents and director previews wait on people or a browser,
+	// not on this worker; a lease lapse there must not spend recovery budget.
+	if run.Status == "waiting_approval" || run.WaitKind == "subagents" || run.WaitKind == "director_preview" {
 		return true, nil
 	}
 	resourceTask := run.RuntimePhase == "waiting_resource" && (run.WaitKind == "model" || run.WaitKind == "tool" || run.WaitKind == "compaction")
@@ -95,7 +97,7 @@ func (r *Repository) WorkerRecoveryProtectedWait(run model.CloudAgentExecution) 
 		return false, nil
 	}
 	var count int64
-	err := r.db.Model(&model.Task{}).Where("user_id = ? AND id IN ? AND status IN ?", run.UserID, []string{run.ActiveTaskID, run.MediaTaskID, run.WaitID}, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusQueued}).Count(&count).Error
+	err := r.db.Model(&model.Task{}).Where("user_id = ? AND id IN ? AND status IN ?", run.UserID, []string{run.ActiveTaskID, run.MediaTaskID, run.WaitID}, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusQueued, model.TaskStatusSubmissionUncertain}).Count(&count).Error
 	return count > 0, err
 }
 

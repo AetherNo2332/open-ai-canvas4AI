@@ -6,14 +6,7 @@ import type { StoryboardColumn } from "@/types/canvas";
  * 新建节点、历史默认迁移、生成结果回写和 Agent 读取的缺省值都以这里为准；
  * 默认值只在这一处维护，其他调用方从这里 import。
  */
-export const DEFAULT_STORYBOARD_COLUMNS: readonly StoryboardColumn[] = [
-    "shotNumber",
-    "durationSeconds",
-    "plotDescription",
-    "shotSize",
-    "motion",
-    "assets",
-];
+export const DEFAULT_STORYBOARD_COLUMNS: readonly StoryboardColumn[] = ["shotNumber", "durationSeconds", "plotDescription", "shotSize", "motion", "assets"];
 
 /**
  * 旧版本写入节点 metadata 的默认集合：读取时归一到当前默认，避免旧默认锁死新默认。
@@ -25,23 +18,7 @@ const LEGACY_DEFAULT_STORYBOARD_COLUMN_SETS: ReadonlyArray<readonly StoryboardCo
     ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
     ["shotNumber", "durationSeconds", "plotDescription", "dialogue"],
     ["shotNumber", "plotDescription", "videoMotionPrompt", "dialogue"],
-    [
-        "shotNumber",
-        "durationSeconds",
-        "videoMotionPrompt",
-        "dialogue",
-        "assets",
-        "shotSize",
-        "narrativeIntent",
-        "viewerPOV",
-        "performanceBlocking",
-        "camera",
-        "motion",
-        "timeBeats",
-        "lightingAndAtmosphere",
-        "continuityOut",
-        "negativePrompt",
-    ],
+    ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets", "shotSize", "narrativeIntent", "viewerPOV", "performanceBlocking", "camera", "motion", "timeBeats", "lightingAndAtmosphere", "continuityOut", "negativePrompt"],
 ];
 
 /** 全屏编辑器的列顺序与中文标签；画布节点卡片按同一套顺序渲染。 */
