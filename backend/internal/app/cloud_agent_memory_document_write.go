@@ -68,7 +68,7 @@ func agentMemoryCapacityDetail(entries []model.AgentMemoryEntry, capErr *agentMe
 // auto 直接生效并留可撤销修订，review 只生成待确认修订，off 拒绝。同一 callID 重放时返回原结果。
 func (s *Service) agentMemoryAgentWrite(userID, runID, callID string, ops []agentMemoryOperation, reason string) (agentMemoryWriteOutcome, map[string]any, error) {
 	if strings.TrimSpace(callID) != "" {
-		if prior, err := s.repo.AgentMemoryDocumentRevisionByCall(userID, callID); err == nil {
+		if prior, err := s.repo.AgentMemoryDocumentRevisionByCall(userID, runID, callID); err == nil {
 			return agentMemoryOutcomeFromRevision(prior, agentMemoryDefaultCapacity), nil, nil
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return agentMemoryWriteOutcome{}, nil, err

@@ -358,3 +358,36 @@ func TestCloudAgentPermissionCatalogExtendsWithoutSchemaDrift(t *testing.T) {
 		}
 	}
 }
+
+// 收紧到只读后，卡片上的写入已不被允许：批准被明确拒绝且卡片保留，改回权限后仍可批准执行。
+func TestCloudAgentPermissionApproveAfterTighteningIsRefused(t *testing.T) {
+	s, db, root := permissionTestRun(t, "request_approval")
+	agentSettleToolStep(t, s, db, root.ID, "read-1", "canvas_get_state", `{}`)
+	run, state := agentSettleToolStep(t, s, db, root.ID, "write-1", "canvas_apply_ops", permissionAddNodeArgs(t, db, "pending-node"))
+	if run.Status != "waiting_approval" || state.Approval == nil {
+		t.Fatalf("expected waiting approval: %s", run.Status)
+	}
+	approvalID := state.Approval.ID
+	if _, err := s.ChangeCloudAgentPermission("user", root.ID, "read_only", "perm-ro"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DecideCloudAgentApproval("user", root.ID, approvalID, "approve", ""); permissionReason(err) != kernel.ReasonAgentApprovalNotPermitted {
+		t.Fatalf("approve under read_only error = %v", err)
+	}
+	run, state = agentInterjectionState(t, s, root.ID)
+	if run.Status != "waiting_approval" || state.Approval == nil || state.Approval.ID != approvalID || state.Approval.Decision != "" {
+		t.Fatalf("refused approval must leave the card pending: status=%s approval=%+v", run.Status, state.Approval)
+	}
+	if _, err := s.ChangeCloudAgentPermission("user", root.ID, "request_approval", "perm-back"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DecideCloudAgentApproval("user", root.ID, approvalID, "approve", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := agentPiExecuteCallForTest(t, s, root.ID, "write-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !permissionCanvasHas(t, db, "pending-node") {
+		t.Fatal("approved write did not execute after restoring permission")
+	}
+}

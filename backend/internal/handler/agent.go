@@ -248,6 +248,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "agent-permission:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+			return
+		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
 		var req struct {
 			PermissionMode string `json:"permissionMode"`

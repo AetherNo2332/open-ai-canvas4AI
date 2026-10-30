@@ -195,14 +195,15 @@ func (r *Repository) AgentMemoryDocumentRevision(userID, id string) (*model.Agen
 	return &row, nil
 }
 
-// AgentMemoryDocumentRevisionByCall 查找某个 Agent 工具调用已经产生的修订，用于重放幂等。
-func (r *Repository) AgentMemoryDocumentRevisionByCall(userID, callID string) (*model.AgentMemoryDocumentRevision, error) {
-	userID, callID = strings.TrimSpace(userID), strings.TrimSpace(callID)
-	if userID == "" || callID == "" {
+// AgentMemoryDocumentRevisionByCall 查找某次运行里某个工具调用已经产生的修订，用于重放幂等。
+// 必须带运行 ID：部分模型供应商每轮从 call_0 重新编号，只按调用 ID 会把上一轮的修订当成本次结果。
+func (r *Repository) AgentMemoryDocumentRevisionByCall(userID, runID, callID string) (*model.AgentMemoryDocumentRevision, error) {
+	userID, runID, callID = strings.TrimSpace(userID), strings.TrimSpace(runID), strings.TrimSpace(callID)
+	if userID == "" || runID == "" || callID == "" {
 		return nil, gorm.ErrRecordNotFound
 	}
 	var row model.AgentMemoryDocumentRevision
-	if err := r.db.Where("user_id = ? AND call_id = ?", userID, callID).Order("created_at ASC").First(&row).Error; err != nil {
+	if err := r.db.Where("user_id = ? AND run_id = ? AND call_id = ?", userID, runID, callID).Order("created_at ASC").First(&row).Error; err != nil {
 		return nil, err
 	}
 	return &row, nil

@@ -203,3 +203,27 @@ func TestAgentMemoryUndoRefusesWhenEntryChangedLater(t *testing.T) {
 		t.Fatal("stale revision edit must conflict")
 	}
 }
+
+// 部分模型供应商每轮从 call_0 重新编号：另一轮的同名调用 ID 不能被当成重放，必须真正写入。
+func TestAgentMemoryReplayIsScopedToRun(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	if sqlDB, err := db.DB(); err == nil {
+		t.Cleanup(func() { _ = sqlDB.Close() })
+	}
+	first, _, err := s.agentMemoryAgentWrite("user", "run-a", "call_0", []agentMemoryOperation{{Action: "add", Section: "user", Text: "偏好暖色调"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, _, err := s.agentMemoryAgentWrite("user", "run-a", "call_0", []agentMemoryOperation{{Action: "add", Section: "user", Text: "偏好暖色调"}}, "")
+	if err != nil || replay.RevisionID != first.RevisionID {
+		t.Fatalf("same run and call must replay: first=%+v replay=%+v err=%v", first, replay, err)
+	}
+	second, _, err := s.agentMemoryAgentWrite("user", "run-b", "call_0", []agentMemoryOperation{{Action: "add", Section: "notes", Text: "分镜默认每镜 3-5 秒"}}, "")
+	if err != nil || second.RevisionID == first.RevisionID {
+		t.Fatalf("another run reusing call_0 must write: first=%+v second=%+v err=%v", first, second, err)
+	}
+	view, err := s.AgentMemoryDocument("user")
+	if err != nil || len(view.Entries) != 2 {
+		t.Fatalf("both writes must be in the document: %+v err=%v", view, err)
+	}
+}

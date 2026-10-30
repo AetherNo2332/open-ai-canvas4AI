@@ -31,7 +31,8 @@
 /* 停靠在画布右侧：与画布并排，不压在画布上，只留一条 1px 栏间分隔线。 */
 .canvas-agent-panel.is-docked {
     border-width: 0 0 0 1px;
-    border-radius: 0;
+    /* 贴着视口右缘与上下缘的一侧不留圆角，面向画布的左侧跟随皮肤浮层圆角。 */
+    border-radius: var(--overlay-radius) 0 0 var(--overlay-radius);
     box-shadow: none;
 }
 

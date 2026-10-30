@@ -80,6 +80,14 @@ func migrateOwnerLessons(tx *gorm.DB, owner string, now time.Time) error {
 			return nil // 已导入过（运行时首次建文件或上次迁移）
 		}
 	}
+	// 导入过但用户之后撤销或删掉了这些条目：导入修订仍在（无论已撤销与否），不能再导一次。
+	var seeded int64
+	if err := tx.Model(&model.AgentMemoryDocumentRevision{}).Where("user_id = ? AND actor = ?", owner, model.AgentMemoryActorSeed).Count(&seeded).Error; err != nil {
+		return err
+	}
+	if seeded > 0 {
+		return nil
+	}
 	capacity := doc.Capacity
 	if capacity <= 0 {
 		capacity = agentmemory.DefaultCapacity

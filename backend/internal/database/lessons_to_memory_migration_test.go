@@ -221,3 +221,25 @@ func TestMigrateLessonsToMemoryPostgresRespectsCapacity(t *testing.T) {
 func TestMigrateLessonsToMemoryPostgresRetiresCompactTasks(t *testing.T) {
 	checkLessonsMigrationRetiresCompactTasks(t, openLessonsToMemoryPostgres(t))
 }
+
+// 用户在导入后撤销或删除了这些条目：保留下来的导入修订说明已经导入过，重跑迁移不得把它们加回来。
+func TestMigrateLessonsToMemorySkipsUsersWhoRemovedImportedEntries(t *testing.T) {
+	db := openLessonsToMemorySQLite(t)
+	seedLesson(t, db, model.AgentLesson{ID: "l-removed", Topic: "称呼", Category: "other", Situation: "首次回答", Lesson: "称呼用户为长官", Status: model.AgentLessonStatusApproved, AuthorUserID: "lesson-d", Hits: 1})
+	if err := rerunLessonsToMemoryMigration(db); err != nil {
+		t.Fatal(err)
+	}
+	doc, entries := memoryDocument(t, db, "lesson-d")
+	if len(entries) != 1 {
+		t.Fatalf("setup import = %+v", entries)
+	}
+	if err := db.Model(&model.AgentMemoryDocument{}).Where("user_id = ?", "lesson-d").Updates(map[string]any{"entries_json": "[]", "char_count": 0, "revision": doc.Revision + 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := rerunLessonsToMemoryMigration(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, entries := memoryDocument(t, db, "lesson-d"); len(entries) != 0 {
+		t.Fatalf("removed imported entries came back: %+v", entries)
+	}
+}

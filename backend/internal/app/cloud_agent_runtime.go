@@ -2650,6 +2650,11 @@ func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, rea
 	if run.Status != "waiting_approval" || state.Approval == nil || state.Approval.ID != approvalID {
 		return creationConflict("审批不存在或已过期")
 	}
+	// 运行中把权限收紧到只读后，卡片上的写入已不被允许：批准也不会执行，直接拒绝并说明，
+	// 不让用户先看到“已批准”再看到失败。卡片仍在，用户可改回权限后再批准，或选择拒绝。
+	if decision == "approve" && !cloudAgentToolAllowed(state.Request, state.Approval.Call.Function.Name) {
+		return &kernel.AppError{Status: 409, Code: 409, Reason: kernel.ReasonAgentApprovalNotPermitted, Message: "当前执行权限不允许这次写入；请先切换权限后再批准，或拒绝本次操作"}
+	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	return s.repo.MutateCloudAgent(userID, id, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {

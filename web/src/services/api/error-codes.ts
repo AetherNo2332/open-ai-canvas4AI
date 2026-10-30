@@ -11,6 +11,7 @@ export const API_ERROR_REASONS = {
     agentRunFinished: "agent_run_finished",
     /** `POST /agent/runs/:id/permission`：子代理固定为只读，不能切换权限。 */
     agentSubagentPermissionFixed: "agent_subagent_permission_fixed",
+    agentApprovalNotPermitted: "agent_approval_not_permitted",
 } as const;
 
 export type ApiErrorReason = (typeof API_ERROR_REASONS)[keyof typeof API_ERROR_REASONS];
