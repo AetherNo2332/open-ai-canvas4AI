@@ -255,6 +255,10 @@ type cloudAgentRuntime struct {
 	Plan                 []cloudAgentPlanItem                    `json:"plan,omitempty"`
 	PendingInterjections []cloudAgentInterjection                `json:"pendingInterjections,omitempty"`
 	InterjectionIDs      []string                                `json:"interjectionIds,omitempty"`
+	// StartPermissionMode 是首次运行中切换权限前的开局权限（为空表示从未切换）：
+	// 系统提示与 prompt cache 身份按它冻结，执行判定读 Request.PermissionMode。
+	StartPermissionMode string                       `json:"startPermissionMode,omitempty"`
+	PermissionChanges   []cloudAgentPermissionChange `json:"permissionChanges,omitempty"`
 	// PiModelStepFingerprint 绑定最近一次模型任务的完整请求，确保丢响应重投复用原任务；
 	// 同一在途任务收到不同请求正文时拒绝，而不是静默复用。
 	PiModelStepFingerprint string `json:"piModelStepFingerprint,omitempty"`
@@ -531,8 +535,14 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if state.Request.CanvasID == "" || state.Request.Prompt == "" || state.Request.PermissionMode == "" {
 		return errors.New("Agent runtime request is incomplete")
 	}
-	if err := validateCloudAgentRequest(&state.Request); err != nil {
+	// 运行中可以切换权限，但预算按开局请求校验（例如自动执行开局带生成预算、中途收紧为只读）。
+	startRequest := state.Request
+	startRequest.PermissionMode = cloudAgentStartPermissionMode(state)
+	if err := validateCloudAgentRequest(&startRequest); err != nil {
 		return fmt.Errorf("invalid Agent runtime request: %w", err)
+	}
+	if !cloudAgentValidPermissionMode(state.Request.PermissionMode) {
+		return errors.New("Agent runtime permission mode is invalid")
 	}
 	if err := validateCloudAgentPolicySnapshotStructure(state.Policy); err != nil {
 		return err

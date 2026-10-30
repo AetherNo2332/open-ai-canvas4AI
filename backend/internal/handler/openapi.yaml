@@ -1238,6 +1238,37 @@ paths:
           description: 信封 data.accepted 与 data.pending
         "409":
           description: 本轮已结束，应改为新一轮发送
+  /agent/runs/{id}/permission:
+    parameters:
+      - $ref: "#/components/parameters/AgentRunID"
+    post:
+      tags: [agent]
+      summary: 运行中切换 Agent 执行权限
+      description: 放宽与收紧都从下一次工具调用生效；正在等待的审批仍需用户批准或拒绝。模型在下一步收到一条权限变更系统通知，系统提示与 prompt cache 键不变。同一 requestId 重放返回原结果；与当前权限相同时直接成功。生成预算不随权限改变。成功后运行事件流出现 permission_changed（from、to、requestId）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [permissionMode, requestId]
+              properties:
+                permissionMode:
+                  type: string
+                  enum: [read_only, request_approval, auto]
+                requestId:
+                  type: string
+                  maxLength: 160
+      responses:
+        "200":
+          description: 信封 data.permissionMode 为当前生效权限，data.changed 表示本次是否切换
+        "400":
+          description: 权限值或 requestId 无效
+        "404":
+          description: 运行不存在或不属于当前用户
+        "409":
+          description: 运行已结束（reason 为 agent_run_finished）、子代理权限固定为只读（reason 为 agent_subagent_permission_fixed）或写入冲突
   /agent/runs/{id}/cancel:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"

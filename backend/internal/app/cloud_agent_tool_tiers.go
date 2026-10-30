@@ -143,7 +143,7 @@ func cloudAgentNextAdvertisedToolNames(state *cloudAgentRuntime, inventory cloud
 }
 
 func cloudAgentRecordDeliveredToolIntent(state *cloudAgentRuntime, item cloudAgentInterjection) {
-	if item.Source == "subagent" {
+	if item.Source == "subagent" || item.Source == cloudAgentPermissionSource {
 		return
 	}
 	unlocked := cloudAgentUnlockedL1Tools(cloudAgentCanvasInventory{}, cloudAgentPromptIntentFlags(item.Text))
