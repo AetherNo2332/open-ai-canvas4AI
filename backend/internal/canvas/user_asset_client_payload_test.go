@@ -112,3 +112,17 @@ func TestClientAssetListPayloadDropsVerboseMetadata(t *testing.T) {
 		t.Fatalf("duplicate cover URL was not removed: %#v", payload["coverUrl"])
 	}
 }
+
+// 早期生成结果以 "ready" 入库；下发给浏览器时必须落在素材合同的状态里，否则整张素材列表被拒收。
+func TestClientAssetPayloadMapsLegacyReadyStatus(t *testing.T) {
+	for stored, want := range map[model.AssetVersionStatus]any{"ready": "confirmed", "confirmed": "confirmed", "bogus": nil} {
+		raw := ClientAssetPayload(model.Asset{ID: "task-output-x-0", Kind: "image", Title: "图", Status: stored, PayloadJSON: `{"id":"task-output-x-0","kind":"image","data":{"url":"/a.png"}}`})
+		var payload map[string]any
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if got := payload["status"]; (want == nil && got != nil) || (want != nil && got != model.AssetVersionStatus(want.(string)) && got != want) {
+			t.Fatalf("stored %q -> status %#v, want %#v", stored, got, want)
+		}
+	}
+}

@@ -386,7 +386,8 @@ func (s *Service) materializeOutputs(ctx context.Context, task model.Task) ([]mo
 				}
 			}
 			now := time.Now()
-			asset := model.Asset{ID: assetID, UserID: task.UserID, Kind: outputMode, Status: "ready", Title: truncate(task.Prompt, 240), PayloadJSON: string(raw), CreatedAt: now, UpdatedAt: now}
+			// 生成结果即为可用素材：状态取素材合同里的 confirmed（前端只接受 draft/review/confirmed/archived）。
+			asset := model.Asset{ID: assetID, UserID: task.UserID, Kind: outputMode, Status: model.AssetVersionStatusConfirmed, Title: truncate(task.Prompt, 240), PayloadJSON: string(raw), CreatedAt: now, UpdatedAt: now}
 			if err = tx.InsertCanvasOutputAsset(&asset); err != nil {
 				return err
 			}

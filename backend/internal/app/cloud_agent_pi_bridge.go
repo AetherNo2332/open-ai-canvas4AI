@@ -610,7 +610,9 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 				Path string `json:"path"`
 			}
 			_ = json.Unmarshal(block.Arguments, &arguments)
-			path := strings.ReplaceAll(arguments.Path, "\\", "/")
+			// 系统提示给的是相对路径 skills/<name>/SKILL.md；补一个前导斜杠，
+			// 让相对与绝对路径都能按同一标记定位到技能目录。
+			path := "/" + strings.TrimLeft(strings.ReplaceAll(arguments.Path, "\\", "/"), "/")
 			for skillIndex := range state.Skills {
 				skill := &state.Skills[skillIndex]
 				marker := "/skills/" + skill.NativeName + "/"
