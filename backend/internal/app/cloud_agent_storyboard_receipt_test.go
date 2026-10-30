@@ -110,15 +110,20 @@ func TestStoryboardEditReceiptScalesWithChanges(t *testing.T) {
 
 func TestStoryboardNoopReceipt(t *testing.T) {
 	f := newStoryboardReceiptFixture(t, 2)
-	receipt := f.edit(t, "receipt-noop", map[string]any{
+	args := map[string]any{
 		"action": "update", "rowIds": []string{stringValue(f.rows[0]["id"]), stringValue(f.rows[1]["id"])},
 		"patch": map[string]any{"durationSeconds": 4.0},
-	})
+	}
+	receipt := f.edit(t, "receipt-noop", args)
 	if receipt["applied"] != true || receipt["changed"] != false || receipt["affectedRows"] != 2 || len(creationMaps(receipt["changedRows"])) != 0 {
 		t.Fatalf("no-op is not explicit: %+v", receipt)
 	}
-	if receipt["snapshotHash"] != receipt["beforeSnapshotHash"] {
+	// edit 用写入前的画布哈希作为 snapshotHash 参数；无变化时回执里的新哈希必须与它相同。
+	if receipt["snapshotHash"] != args["snapshotHash"] {
 		t.Fatal("no-op changed content snapshot")
+	}
+	if receipt["beforeSnapshotHash"] != nil {
+		t.Fatalf("model receipt should not carry beforeSnapshotHash: %+v", receipt)
 	}
 }
 

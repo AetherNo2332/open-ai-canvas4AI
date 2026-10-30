@@ -1377,6 +1377,42 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	return exhausted
 }
 
+// cloudAgentModelHiddenFields 列出只供界面、版本链与审计使用、模型不会回传给任何工具参数的字段。
+// 处理函数照常返回完整结果（recordCanvasBatchHash 等在投影之前读取），这里只从模型那份里去掉。
+var cloudAgentModelHiddenFields = map[string][]string{
+	// 导演写入：模型下一步只需要场景 snapshotHash（作为 expectedSceneHash）。
+	cloudAgentDirectorTool: {"canvasId", "canvasSnapshotHash", "beforeCanvasSnapshotHash"},
+	// 撤销/重做的 operationId 是写入记录行 ID，没有工具接收它。
+	"canvas_undo": {"operationId", "canvasId"},
+	"canvas_redo": {"operationId", "canvasId"},
+}
+
+func cloudAgentWithoutModelHiddenFields(toolName string, fields map[string]any) map[string]any {
+	hidden := cloudAgentModelHiddenFields[toolName]
+	if cloudAgentCanvasWriteTool(toolName) {
+		// canvasId 是本轮唯一画布，beforeSnapshotHash 只给版本链登记使用。
+		hidden = append(append([]string{}, hidden...), "canvasId", "beforeSnapshotHash")
+	}
+	present := false
+	for _, key := range hidden {
+		if _, ok := fields[key]; ok {
+			present = true
+			break
+		}
+	}
+	if !present {
+		return fields
+	}
+	trimmed := make(map[string]any, len(fields))
+	for key, value := range fields {
+		trimmed[key] = value
+	}
+	for _, key := range hidden {
+		delete(trimmed, key)
+	}
+	return trimmed
+}
+
 // cloudAgentModelToolResult 是"面向模型的那一份"工具结果。
 //
 // 审批卡明细是写给人看的，而且已经通过 approval_requested 事件进了 SSE/界面；
@@ -1390,9 +1426,10 @@ func cloudAgentModelToolResult(toolName string, result any) any {
 	if !ok {
 		return result
 	}
+	fields = cloudAgentWithoutModelHiddenFields(toolName, fields)
 	preview, hasPreview := fields["preview"]
 	if !hasPreview {
-		return result
+		return fields
 	}
 	receipt := make(map[string]any, len(fields)+2)
 	for key, value := range fields {
@@ -1936,11 +1973,8 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 						current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "waiting_tool", "subagents", call.ID, "等待子代理结果"
 						return cloudAgentSave(current, state)
 					}
-					messages, messageErr := repo.AgentSubagentMessages(current.UserID, current.ID)
-					if messageErr != nil {
-						return messageErr
-					}
-					result = map[string]any{"pending": false, "subagents": views, "messages": messages}
+					// 子代理消息已按子代理归入 subagents[].messages（含正文）；不再附带原始消息行。
+					result = map[string]any{"pending": false, "subagents": views}
 					current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "running", "", "", ""
 				}
 			case call.Function.Name == "subagent_status":
