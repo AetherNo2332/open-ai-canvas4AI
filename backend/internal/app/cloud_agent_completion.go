@@ -65,9 +65,9 @@ func cloudAgentCompletionBlockers(state *cloudAgentRuntime) []cloudAgentCompleti
 	if state.ActiveSubagents > 0 {
 		blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "pending_subagents", Detail: "使用 wait_subagents 等待并收集子代理结果"})
 	}
-	// 权限通知不阻止收尾：它只是事实同步，不该为它多开一步模型调用。
+	// 权限与生成完成通知不阻止收尾：它们只是事实同步，不该为它们多开一步模型调用。
 	for _, item := range state.PendingInterjections {
-		if item.Source != cloudAgentPermissionSource {
+		if item.Source != cloudAgentPermissionSource && item.Source != cloudAgentGenerationSource {
 			blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "pending_interjection"})
 			break
 		}

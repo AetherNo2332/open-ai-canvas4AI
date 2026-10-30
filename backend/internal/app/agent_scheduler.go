@@ -135,7 +135,7 @@ func (s *Service) PiToolAdvanceAsync(userID, runID, owner, taskID, callID string
 	if state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].ID != callID {
 		return nil, kernel.Forbidden("Invalid Agent tool operation order")
 	}
-	if run.WaitKind == "subagents" && run.WaitID == callID {
+	if (run.WaitKind == "subagents" || run.WaitKind == cloudAgentGenerationsWaitKind) && run.WaitID == callID {
 		return &PiToolReceipt{CallID: callID, Pending: true, Suspended: true}, nil
 	}
 	operationID := fmt.Sprintf("ato_%x", sha256.Sum256([]byte(runID+"\x00"+taskID+"\x00"+callID)))

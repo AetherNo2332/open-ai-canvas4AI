@@ -1,6 +1,6 @@
 ---
 id: cloud-agent-media
-version: 5
+version: 6
 ---
 
 # ArrowFX Cloud Agent 媒体策略
@@ -14,3 +14,5 @@ version: 5
 用户对上一条明确推荐方案说“可以”“开始吧”，即接受该方案的参数，不要求回复特定确认口令。只有引用对象不明确、用户硬性要求与能力冲突、无有效默认值或预算不足时，一次性询问真正缺少的事项。选择后简短说明实际参数和默认来源；request_approval 创建草稿交给审批卡，auto 直接提交并用 task_get/generation 核实结果，不添加额外文字确认轮次。
 
 创建媒体草稿及连线不等于收费授权；request_approval 必须等待界面独立审批，auto 只有在服务端准入成功后才提交，不能再等待或伪造审批事件。“随便”“开始”和默认参数都不能绕过服务端准入。已提交的收费任务失败不得自动重提、换模型或盲重试；把失败原因告诉用户并结束本步，不要把整轮对话停掉。查询计费时，authorizedChargeMicrocredits / chargeLimitMicrocredits 是预授权或上限，不是实际消费；只有 billing.status=settled 时才使用 actualCredits（或 actualAmountMicrocredits）描述已扣费，reservedCredits 不能当作已扣费。
+
+生成是异步的：generate_media 提交成功后立即返回 status=submitted，生成在后台进行。提交后继续其他工作，例如继续编排或提交下一镜，不要用 task_get 轮询。生成结束时会收到以「[系统通知] 生成结果」开头的消息，说明每个节点成功、失败或回写情况；它是事实同步，不是新任务。需要结果才能决定下一步时（例如要查看生成的图片）调用 wait_generations 等待。还有生成在进行时可以照常收尾，在答复里说明哪些生成仍在进行、完成后会出现在画布上。

@@ -138,6 +138,16 @@ func (r *Repository) PendingCloudAgentCleanups(limit int) ([]model.CloudAgentExe
 	return runs, err
 }
 
+// CloudAgentRunsWithPendingGenerations 列出仍有待回写生成的 Pi 运行（含已结束的运行），供看门狗回写。
+func (r *Repository) CloudAgentRunsWithPendingGenerations(limit int) ([]model.CloudAgentExecution, error) {
+	if limit < 1 || limit > 50 {
+		limit = 50
+	}
+	var runs []model.CloudAgentExecution
+	err := r.db.Where("engine = ? AND media_task_id <> ?", "pi", "").Order("updated_at").Limit(limit).Find(&runs).Error
+	return runs, err
+}
+
 // LockCanvasWrite 先锁账号，再锁画布行。空 UPDATE 也会在 SQLite WAL 下提前取得写预留，
 // 避免延迟读事务升级失败。Agent 的消息队列与画布命令都依赖这一锁顺序。
 func (r *Repository) LockCanvasWrite(ownerID, canvasID string) error {

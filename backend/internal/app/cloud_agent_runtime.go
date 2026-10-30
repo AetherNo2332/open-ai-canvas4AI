@@ -143,20 +143,23 @@ type cloudAgentRuntime struct {
 	// Snapshot 是本轮不可变的提示合同；首个模型步补齐 Harness 正文，之后只比对不重写。
 	Snapshot *cloudAgentContractSnapshot `json:"contractSnapshot,omitempty"`
 	// PlaceholderTaskID 是承载本轮报价预留的占位任务（当前实现里等于运行 ID）。
-	PlaceholderTaskID    string           `json:"placeholderTaskId,omitempty"`
-	ActiveTaskID         string           `json:"activeTaskId"`
-	PiNoToolTaskID       string           `json:"piNoToolTaskId,omitempty"`
-	PiNoToolNudge        string           `json:"piNoToolNudge,omitempty"`
-	PiModelFailureTaskID string           `json:"piModelFailureTaskId,omitempty"`
-	PiModelFailureNudge  string           `json:"piModelFailureNudge,omitempty"`
-	ActiveTextDraft      string           `json:"activeTextDraft,omitempty"`
-	MediaTaskID          string           `json:"mediaTaskId,omitempty"`
-	TaskIDs              []string         `json:"taskIds"`
-	Step                 int              `json:"step"`
-	Generations          int              `json:"generations"`
-	VideoSeconds         int              `json:"videoSeconds"`
-	Calls                []cloudAgentCall `json:"calls"`
-	CallIndex            int              `json:"callIndex"`
+	PlaceholderTaskID    string `json:"placeholderTaskId,omitempty"`
+	ActiveTaskID         string `json:"activeTaskId"`
+	PiNoToolTaskID       string `json:"piNoToolTaskId,omitempty"`
+	PiNoToolNudge        string `json:"piNoToolNudge,omitempty"`
+	PiModelFailureTaskID string `json:"piModelFailureTaskId,omitempty"`
+	PiModelFailureNudge  string `json:"piModelFailureNudge,omitempty"`
+	ActiveTextDraft      string `json:"activeTextDraft,omitempty"`
+	MediaTaskID          string `json:"mediaTaskId,omitempty"`
+	// PendingGenerations 是已提交、尚未回写的媒体生成：工具提交后立即返回，
+	// 完成时由 settleCloudAgentPendingGenerations 回写画布并以系统通知告知 Agent。
+	PendingGenerations []cloudAgentPendingGeneration `json:"pendingGenerations,omitempty"`
+	TaskIDs            []string                      `json:"taskIds"`
+	Step               int                           `json:"step"`
+	Generations        int                           `json:"generations"`
+	VideoSeconds       int                           `json:"videoSeconds"`
+	Calls              []cloudAgentCall              `json:"calls"`
+	CallIndex          int                           `json:"callIndex"`
 	// DirectorPreview 是 director preview 等待浏览器视口回传的持久挂起点。
 	DirectorPreview *cloudAgentDirectorPreview `json:"directorPreview,omitempty"`
 	// ToolRepairs is counted per tool so reads do not reset write-argument repairs.
@@ -596,9 +599,6 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if err := validateCloudAgentRuntimeEnvironmentConflicts(state); err != nil {
 		return err
 	}
-	if state.ActiveTaskID != "" && state.MediaTaskID != "" {
-		return errors.New("Agent runtime has multiple active tasks")
-	}
 	if state.HistoryIncludesCurrent && len(state.Canonical.Messages) < len(state.TextHistory) {
 		return errors.New("Agent compacted history exceeds canonical transcript")
 	}
@@ -629,9 +629,12 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if state.ActiveTaskID != "" && !cloudAgentContainsString(state.TaskIDs, state.ActiveTaskID) {
 		return errors.New("Agent runtime active task is not in task history")
 	}
-	if state.MediaTaskID != "" {
-		if !cloudAgentContainsString(state.TaskIDs, state.MediaTaskID) || state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].Function.Name != "generate_media" {
-			return errors.New("Agent runtime media task is not attached to current call")
+	if state.MediaTaskID != "" && !cloudAgentContainsString(state.TaskIDs, state.MediaTaskID) {
+		return errors.New("Agent runtime media task is not in task history")
+	}
+	for _, item := range state.PendingGenerations {
+		if !cloudAgentContainsString(state.TaskIDs, item.TaskID) {
+			return errors.New("Agent runtime pending generation is not in task history")
 		}
 	}
 	if state.AutoPreparedMedia != nil {
@@ -811,7 +814,9 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if len(raw) > cloudAgentStateHardLimitBytes {
 		return fmt.Errorf("%w: Agent 状态超过 512KB 上限", errCloudAgentCheckpoint)
 	}
-	run.CanvasID, run.ActiveTaskID, run.MediaTaskID = state.Request.CanvasID, state.ActiveTaskID, state.MediaTaskID
+	run.CanvasID, run.ActiveTaskID = state.Request.CanvasID, state.ActiveTaskID
+	// media_task_id 列是“仍有待回写生成”的索引：巡检据此找出需要回写的运行（含已结束的运行）。
+	run.MediaTaskID = cloudAgentPendingGenerationIndexID(state)
 	run.ParentID = state.ParentID
 	if run.Status == "waiting_approval" && state.Approval != nil {
 		run.RuntimePhase = "waiting_approval"
@@ -1989,6 +1994,12 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 					result = map[string]any{"pending": false, "subagents": views}
 					current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "running", "", "", ""
 				}
+			case call.Function.Name == "wait_generations":
+				var suspended bool
+				result, suspended = cloudAgentWaitGenerations(current, state, call)
+				if suspended {
+					return cloudAgentSave(current, state)
+				}
 			case call.Function.Name == "subagent_status":
 				if state.Subagent != nil {
 					toolErr = kernel.Forbidden("子代理不能读取父级子代理状态")
@@ -2363,6 +2374,7 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 		}
 		state.TaskIDs = append(state.TaskIDs, task.ID)
 		if media != nil {
+			// MediaTaskID 只记最近一次提交的生成，供诊断与取消事件引用；不再把运行钉在这次调用上。
 			state.MediaTaskID = task.ID
 			state.Generations++
 			state.VideoSeconds += media.Args.Duration
@@ -2371,6 +2383,15 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				toolName = state.Calls[state.CallIndex].Function.Name
 			}
 			state.event(run.ID, "generation_task_created", map[string]any{"toolName": toolName, "taskId": task.ID, "nodeId": media.Args.NodeID, "title": media.Args.Title, "mode": media.Args.Mode, "canvasId": state.Request.CanvasID, "referenceNodeIds": media.Args.ReferenceNodeIDs, "text": "媒体节点与引用连线已创建，生成任务已提交"})
+			// 提交即返回：生成在后台进行，结束时由 settleCloudAgentPendingGenerations 回写并通知。
+			pending := cloudAgentPendingGeneration{TaskID: task.ID, NodeID: media.Args.NodeID, Mode: media.Args.Mode, Title: media.Args.Title, SubmittedAt: time.Now().UTC()}
+			if state.CallIndex >= 0 && state.CallIndex < len(state.Calls) {
+				pending.CallID = state.Calls[state.CallIndex].ID
+			}
+			state.PendingGenerations = append(state.PendingGenerations, pending)
+			if state.CallIndex >= 0 && state.CallIndex < len(state.Calls) {
+				cloudAgentToolResult(run.ID, state, state.Calls[state.CallIndex], cloudAgentGenerationSubmittedReceipt(pending, len(state.PendingGenerations)), nil)
+			}
 		} else {
 			state.ActiveTaskID = task.ID
 			// A model task owns exactly one cumulative draft. Clear the prior
@@ -2476,8 +2497,16 @@ func (s *Service) cloudAgentMediaError(run *model.CloudAgentExecution, state *cl
 	})
 }
 
+// cloudAgentLegacyBlockingMedia：升级前保存、仍停在 generate_media 上等待结果的运行
+// （有 MediaTaskID、没有异步待回写记录、当前调用就是那次生成）。新运行提交即返回，不走这里。
+func cloudAgentLegacyBlockingMedia(state *cloudAgentRuntime) bool {
+	return state.MediaTaskID != "" && len(state.PendingGenerations) == 0 && cloudAgentPendingGenerationIndex(state, state.MediaTaskID) < 0 &&
+		state.CallIndex >= 0 && state.CallIndex < len(state.Calls) && state.Calls[state.CallIndex].Function.Name == "generate_media" &&
+		!cloudAgentCallHasResult(state, state.Calls[state.CallIndex].ID)
+}
+
 func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
-	if state.MediaTaskID != "" {
+	if cloudAgentLegacyBlockingMedia(state) {
 		task, err := s.repo.TaskForUser(run.UserID, state.MediaTaskID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return s.cloudAgentMediaError(run, state, "completion", true, true, BadAuthRequest("媒体任务不存在或已失去归属，结果未回写画布"))
@@ -2767,7 +2796,7 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 			current.Status = "cancelled"
 			current.CleanupPending = true
 			if decodeErr == nil {
-				current.CanvasID, current.ActiveTaskID, current.MediaTaskID = state.Request.CanvasID, state.ActiveTaskID, state.MediaTaskID
+				current.CanvasID, current.ActiveTaskID, current.MediaTaskID = state.Request.CanvasID, state.ActiveTaskID, cloudAgentPendingGenerationIndexID(&state)
 				if firstCancellation {
 					state.event(id, "run_cancelled", map[string]any{"source": "user_request", "activeTaskId": state.ActiveTaskID, "mediaTaskId": state.MediaTaskID, "text": "用户取消接口已接收请求，正在取消关联任务"})
 					if saveErr := cloudAgentSave(current, &state); saveErr != nil {

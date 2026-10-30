@@ -1501,6 +1501,11 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 		}
 		run = terminalRun
 	}
+	if settled, err := s.settleCloudAgentGenerationsAndReload(run); err != nil {
+		return nil, err
+	} else if settled != nil {
+		run = settled
+	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
 		return nil, err
@@ -1526,7 +1531,7 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 		return &PiToolReceipt{CallID: callID, Pending: true}, nil
 	}
 	var advanceErr error
-	if state.MediaTaskID != "" {
+	if cloudAgentLegacyBlockingMedia(&state) {
 		advanceErr = s.executeCloudAgentMediaCall(run, &state, state.Calls[state.CallIndex])
 	} else {
 		advanceErr = s.executeCloudAgentToolCall(run, &state)
@@ -1552,7 +1557,7 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 	if cloudAgentRunTerminal(latest.Status) {
 		return &PiToolReceipt{CallID: callID, Terminated: true}, nil
 	}
-	if latest.WaitKind == "subagents" {
+	if latest.WaitKind == "subagents" || latest.WaitKind == cloudAgentGenerationsWaitKind {
 		return &PiToolReceipt{CallID: callID, Pending: true, Suspended: true}, nil
 	}
 	return &PiToolReceipt{CallID: callID, Pending: true}, nil
@@ -1659,6 +1664,16 @@ func parsePiAgentLeaseOwner(owner string) (string, int64, bool, error) {
 }
 
 func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnapshot, error) {
+	// 先回写已结束的生成：通知随这份快照的待送插话一起交给模型。
+	if run, err := s.settleCloudAgentGenerationsAndReload(run); err != nil {
+		return nil, err
+	} else if run != nil {
+		return s.piAgentSnapshotSettled(run)
+	}
+	return s.piAgentSnapshotSettled(run)
+}
+
+func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAgentSnapshot, error) {
 	run, err := s.cloudAgentRefreshToolLoadout(run)
 	if err != nil {
 		return nil, err

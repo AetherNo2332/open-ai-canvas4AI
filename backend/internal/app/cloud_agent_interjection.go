@@ -47,7 +47,7 @@ type cloudAgentInterjection struct {
 }
 
 func cloudAgentInterjectionContent(item cloudAgentInterjection) string {
-	if item.Source == cloudAgentPermissionSource {
+	if item.Source == cloudAgentPermissionSource || item.Source == cloudAgentGenerationSource {
 		return item.Text
 	}
 	if item.Source == "subagent" {
@@ -59,6 +59,9 @@ func cloudAgentInterjectionContent(item cloudAgentInterjection) string {
 func cloudAgentInterjectionSource(item cloudAgentInterjection) string {
 	if item.Source == cloudAgentPermissionSource {
 		return "permission_notice"
+	}
+	if item.Source == cloudAgentGenerationSource {
+		return "generation_notice"
 	}
 	if item.Source == "subagent" {
 		return "subagent_message"

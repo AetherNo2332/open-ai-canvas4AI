@@ -47,6 +47,11 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 	activeID, mediaID, canvasID := run.ActiveTaskID, run.MediaTaskID, run.CanvasID
 	if decodeErr == nil {
 		activeID, mediaID, canvasID = state.ActiveTaskID, state.MediaTaskID, state.Request.CanvasID
+		// 异步生成不随运行结束而取消：它们照常完成，由看门狗回写画布。
+		// 只有升级前仍停在生成调用上的旧运行，才按原流程收尾那一个任务。
+		if !cloudAgentLegacyBlockingMedia(&state) {
+			mediaID = ""
+		}
 	}
 	// Failed/cancelled runs always pass through cleanup: clear their presence.
 	s.publishCloudAgentIdle(run.UserID, run.ID, canvasID)
@@ -149,7 +154,11 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 			}
 		}
 		current.CleanupPending = false
+		// 仍在进行的异步生成保留索引，看门狗据此在运行结束后继续回写。
 		current.ActiveTaskID, current.MediaTaskID = "", ""
+		if decodeErr == nil {
+			current.MediaTaskID = cloudAgentPendingGenerationIndexID(&state)
+		}
 		// 占位预留与"清理完成"必须同一个事务提交：先清 CleanupPending 再退款，崩在中间就再也没有
 		// 任何一方会回来退这笔钱。这里刻意不依赖解码后的状态 —— 收尾可能拿不到可解码的
 		// StateJSON，而"解码失败"绝不能等价于"不用退钱"（见 cloudAgentRefundHoldingReservation）。

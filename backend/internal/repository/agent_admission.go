@@ -141,6 +141,10 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 		for _, candidate := range candidates {
 			{
 				// Suspended parents yield residency until their dependencies terminate.
+				// 等待生成的运行在生成结束前不占常驻名额；结束时回写会清空 WaitKind。
+				if candidate.WaitKind == "generations" {
+					continue
+				}
 				if candidate.WaitKind == "subagents" {
 					var pending int64
 					if err := tx.Table("agent_subagent_links AS links").Joins("JOIN cloud_agent_executions AS child ON child.id = links.child_run_id AND child.user_id = links.user_id").Where("links.user_id = ? AND links.parent_run_id = ? AND child.status IN ?", candidate.UserID, candidate.ID, []string{"queued", "running", "waiting_approval"}).Count(&pending).Error; err != nil {

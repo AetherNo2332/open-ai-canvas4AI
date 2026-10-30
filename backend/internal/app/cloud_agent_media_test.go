@@ -229,7 +229,7 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 			found = true
 		}
 	}
-	if !found || state.MediaTaskID != "" {
+	if !found || len(state.PendingGenerations) != 0 {
 		t.Fatal("completion event/checkpoint missing")
 	}
 }
@@ -493,10 +493,13 @@ func TestCloudAgentMediaFailedTaskUpdatesNode(t *testing.T) {
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
 	state, _ = cloudAgentDecode(run)
+	// 异步生成：失败以 generation_settled 事件与「[系统通知] 生成结果」送达，不再是这次调用的工具失败。
 	last := state.Events[len(state.Events)-1]
-	result, _ := last.Payload["result"].(map[string]any)
-	if last.Type != "tool_failed" || result["taskId"] != taskID || result["nodeId"] != a.NodeID || !strings.Contains(stringValue(result["error"]), "上游拒绝该生成规格") {
+	if last.Type != "generation_settled" || last.Payload["taskId"] != taskID || last.Payload["nodeId"] != a.NodeID || !strings.Contains(stringValue(last.Payload["error"]), "上游拒绝该生成规格") {
 		t.Fatalf("failure lost diagnostic details: %+v", last)
+	}
+	if len(state.PendingGenerations) != 0 || len(state.PendingInterjections) != 1 || !strings.Contains(state.PendingInterjections[0].Text, "上游拒绝该生成规格") {
+		t.Fatalf("failure must be queued as one generation notice: pending=%+v notices=%+v", state.PendingGenerations, state.PendingInterjections)
 	}
 	if run.Status == "failed" {
 		t.Fatalf("media task failure must keep the agent run alive: status=%s events=%d", run.Status, len(state.Events))
@@ -816,26 +819,49 @@ func TestCloudAgentMediaPromptCountsUnicodeCharacters(t *testing.T) {
 	}
 }
 
-func TestCloudAgentMediaCancellationUpdatesNode(t *testing.T) {
+// 用户决定（2026-10-30）：取消运行不取消已提交的生成；生成照常完成，由巡检回写画布。
+func TestCloudAgentMediaCancellationKeepsGenerationRunning(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
 	run, _ := agentMediaPiRun(t, s, db, a, "request_approval")
 	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	approveAgentMediaDraft(t, s, run.ID)
+	run, _ = s.repo.CloudAgent("user", run.ID)
+	state, _ := cloudAgentDecode(run)
+	if len(state.PendingGenerations) != 1 {
+		t.Fatalf("approved generation must be pending: %+v", state.PendingGenerations)
+	}
+	taskID := state.PendingGenerations[0].TaskID
 	if err := s.CancelCloudAgent(context.Background(), "user", run.ID); err != nil {
 		t.Fatal(err)
+	}
+	task, err := s.repo.TaskForUser("user", taskID)
+	if err != nil || (task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning) {
+		t.Fatalf("cancelling the run must not cancel its generation: %+v %v", task, err)
+	}
+	run, _ = s.repo.CloudAgent("user", run.ID)
+	if run.Status != "cancelled" || run.MediaTaskID != taskID {
+		t.Fatalf("cancelled run must keep the pending generation indexed: status=%s media=%s", run.Status, run.MediaTaskID)
+	}
+	if err := db.Create(&model.Resource{ID: "late-output", UserID: "user", Kind: "video", Status: "ready", MimeType: "video/mp4", Width: 720, Height: 1280}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": `{"mode":"video","video":{"storageKey":"resource:late-output"}}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if settled, err := s.SettlePendingCloudAgentGenerations(); err != nil || settled != 1 {
+		t.Fatalf("watchdog settle = %d, %v", settled, err)
 	}
 	canvas, _ := s.repo.CanvasProjectForUser("user", "agent-canvas")
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	nodes, _ := creationObjects(doc["nodes"])
-	if nodes[a.NodeID]["metadata"].(map[string]any)["status"] != "error" {
-		t.Fatal("cancelled generation remained loading")
+	if meta := nodes[a.NodeID]["metadata"].(map[string]any); meta["status"] != "success" || meta["storageKey"] != "resource:late-output" {
+		t.Fatalf("generation finished after cancel was not written back: %+v", meta)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
-	state, _ := cloudAgentDecode(run)
-	if run.Status != "cancelled" || state.MediaTaskID != "" {
-		t.Fatal("cancellation did not checkpoint media completion")
+	if run.Status != "cancelled" || run.MediaTaskID != "" {
+		t.Fatalf("settle must keep the run cancelled and clear the index: status=%s media=%s", run.Status, run.MediaTaskID)
 	}
 }
 

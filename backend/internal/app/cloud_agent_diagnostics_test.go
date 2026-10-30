@@ -188,8 +188,9 @@ func TestCloudAgentCancellationRecordsSourceOnce(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected one cancellation event, got %d", count)
 	}
+	// 用户决定（2026-10-30）：取消运行不取消已提交的生成，生成照常完成并写回画布。
 	task, _ := s.repo.TaskForUser("user", before.MediaTaskID)
-	if task.Status != model.TaskStatusCancelled {
-		t.Fatalf("child not cancelled: %s", task.Status)
+	if task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning {
+		t.Fatalf("submitted generation must keep running after cancel: %s", task.Status)
 	}
 }

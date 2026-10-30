@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -78,14 +79,15 @@ func TestCloudAgentMediaCompletionReplaysCommittedResultAfterBackgroundAndCheckp
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if err = advancePiAgentForTest(t, s, run.ID); !errors.Is(err, failure) {
+			// 异步生成由回写巡检完成：第一次回写在 Agent 检查点上失败并整体回滚，再次回写只落一次结果。
+			if _, err = s.SettlePendingCloudAgentGenerations(); !errors.Is(err, failure) {
 				t.Fatalf("checkpoint failure did not roll back: %v", err)
 			}
 			if err = db.Callback().Update().Remove("test:media-checkpoint"); err != nil {
 				t.Fatal(err)
 			}
-			if err = advancePiAgentForTest(t, s, run.ID); err != nil {
-				t.Fatal(err)
+			if settled, err := s.SettlePendingCloudAgentGenerations(); err != nil || settled != 1 {
+				t.Fatalf("settle after rollback = %d, %v", settled, err)
 			}
 			_, state = agentInterjectionState(t, s, run.ID)
 			event := agentCanvasPatchForOperation(t, state, "generate_media_complete")
@@ -107,8 +109,8 @@ func TestCloudAgentMediaCompletionReplaysCommittedResultAfterBackgroundAndCheckp
 				}
 				found := false
 				for _, event := range state.Events {
-					if result, ok := event.Payload["result"].(map[string]any); ok && result["taskId"] == taskID && result["writebackReason"] == "output_binding_changed" {
-						found = event.Type == "tool_failed"
+					if event.Type == "generation_settled" && event.Payload["taskId"] == taskID && strings.Contains(stringValue(event.Payload["summary"]), "画布回写未完成") {
+						found = true
 					}
 				}
 				if !found {
