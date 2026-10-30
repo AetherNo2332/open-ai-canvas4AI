@@ -1,7 +1,7 @@
 import { agentCanvasActions, agentCanvasActionLabel } from "@/lib/canvas/agent-canvas-actions";
 import { Button, Typography } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
@@ -15,23 +15,18 @@ import {
     CircleAlert,
     CircleDot,
     Clapperboard,
-    Eye,
     HelpCircle,
     ImagePlus,
     Layers3,
-    List,
     ListChecks,
     LoaderCircle,
     Palette,
-    Pencil,
-    Plus,
     RotateCcw,
     Shapes,
     Share2,
     ShoppingBag,
     Sparkles,
     Square,
-    Wrench,
     X,
     XCircle,
 } from "lucide-react";
@@ -46,10 +41,16 @@ import type { Skill, SkillPreset } from "@/services/api/skills";
 import type { AgentSendMode } from "@/services/api/agent";
 import { AgentSendModeButton } from "./canvas-agent-message-queue";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
-import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary, type AgentToolCategory } from "@/lib/canvas/agent-tool-presentation";
+import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary, isAgentCanvasReadTool, type AgentToolCategory } from "@/lib/canvas/agent-tool-presentation";
 import { agentOperationCategory, agentOperationFailed, agentOperationSegmentLabel } from "@/lib/canvas/agent-operation-feed";
 import { agentToolRetry, type AgentToolRetryAttempt } from "@/lib/canvas/agent-tool-retry";
 import { AgentMemoryUpdateCard, type CloudAgentMemoryUpdate } from "./canvas-cloud-agent-memory-cards";
+import { AgentReplyOptionCards, agentReplyOptionsTarget } from "./canvas-agent-reply-options";
+import { AgentThinkGlyph, agentActivityGlyph } from "./agent-activity-icons";
+import type { AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
+import { agentErrorContent } from "@/lib/canvas/agent-error-presentation";
+import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
+import type { Components } from "streamdown";
 
 export type CloudAgentChatAttachment = { id: string; name: string; url: string };
 type CloudAgentOperationImpact = {
@@ -71,6 +72,8 @@ export type CloudAgentChatMessage = {
     role: "user" | "assistant" | "system" | "tool" | "error";
     title?: string;
     text: string;
+    /** 错误卡的严重程度：warning 用警示色（例如自动重试中），缺省按 error。 */
+    errorSeverity?: "warning" | "error";
     streaming?: boolean;
     reasoning?: boolean;
     /**
@@ -87,6 +90,8 @@ export type CloudAgentChatMessage = {
     runId?: string;
     detail?: unknown;
     attachments?: CloudAgentChatAttachment[];
+    /** 由画布节点发起的请求（如「根据此图…」）：正文里的“此图”渲染成该节点的 chip。 */
+    canvasReferenceNodeId?: string;
     /** withdrawn 由撤回插话（U8）写入；当前只保留状态与标签。 */
     interjection?: AgentInterjectionStatus;
     /** memory_updated 事件：渲染为记忆变更卡（可撤销 / 等确认）。 */
@@ -110,15 +115,11 @@ export function agentControlMessage(id: string, text: string, meta?: string): Cl
 }
 
 /**
- * 类别的图标语言：三档互不串味 —— 清单用 List（读到存在与规模）、画面用 Eye（图片字节真的
- * 交给了模型）、写画布用 Pencil / 创建用 Plus；未登记的工具走中性的 Wrench。
+ * 类别的图标语言：清单用节点网格（读到存在与规模）、信息用文档、画面用眼睛（图片字节真的
+ * 交给了模型）、创建用加号方块、写画布用笔尖；未登记的工具走中性的滑杆，自动纠正用回转箭头。
  */
-function agentToolCategoryIcon(category: AgentToolCategory) {
-    if (category === "vision") return <Eye className="size-3.5" />;
-    if (category === "read") return <List className="size-3.5" />;
-    if (category === "create") return <Plus className="size-3.5" />;
-    if (category === "operate") return <Pencil className="size-3.5" />;
-    return <Wrench className="size-3.5" />;
+function agentToolCategoryIcon(toolName: string, category: AgentToolCategory, retry = false) {
+    return agentActivityGlyph(category, { canvasInventory: isAgentCanvasReadTool(toolName), retry });
 }
 
 export type CloudAgentQuickAction = { label: string; prompt: string };
@@ -152,31 +153,189 @@ function clampAgentPromptHeight(height: number) {
     return Math.min(MAX_AGENT_PROMPT_HEIGHT, Math.max(MIN_AGENT_PROMPT_HEIGHT, Math.ceil(height)));
 }
 
-export function AgentChatMessage({
-    item,
-    theme,
-    references = [],
-    isStreaming = false,
-    retrying = false,
-    onRejectTool,
-    onApproveTool,
-    onRetry,
-    onFocusNode,
-}: {
+const AGENT_NODE_LINK_PREFIX = "#agent-node:";
+const AGENT_NODE_TYPE_LABELS: Record<string, string> = {
+    image: "图片节点",
+    video: "视频节点",
+    audio: "音频节点",
+    text: "文本节点",
+    script: "脚本节点",
+    drawing: "绘图节点",
+    config: "工作流节点",
+    frame: "画框节点",
+    markdown: "Markdown 节点",
+    svg: "SVG 节点",
+    html: "HTML 节点",
+    panorama: "全景节点",
+    compare: "对比节点",
+    chart: "图表节点",
+    colorgrade: "调色节点",
+    "media-conversion": "转码节点",
+    "batch-table": "批量表节点",
+};
+const AGENT_NODE_TYPE_PREFIXES = Object.keys(AGENT_NODE_TYPE_LABELS).sort((left, right) => right.length - left.length);
+const BUILTIN_AGENT_NODE_ID_PATTERN = `(?:${AGENT_NODE_TYPE_PREFIXES.join("|")})-[A-Za-z0-9][A-Za-z0-9_-]*`;
+
+function escapeAgentNodePattern(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function agentNodeTypeLabel(nodeId: string, reference?: CanvasResourceReference) {
+    // 角色卡底层是 text 节点，sourceType 会是 text；按资源 kind 先识别，避免报成"文本节点"。
+    if (reference?.kind === "character") return "角色卡";
+    const sourceType = String(reference?.sourceType || "");
+    if (sourceType && AGENT_NODE_TYPE_LABELS[sourceType]) return AGENT_NODE_TYPE_LABELS[sourceType];
+    const prefix = AGENT_NODE_TYPE_PREFIXES.find((candidate) => nodeId.startsWith(`${candidate}-`));
+    return (prefix && AGENT_NODE_TYPE_LABELS[prefix]) || (reference?.kind ? `${reference.kind} 节点` : "画布节点");
+}
+
+function agentNodeLinkLabel(nodeId: string, reference?: CanvasResourceReference) {
+    const kindLabel = agentNodeTypeLabel(nodeId, reference);
+    const title = (reference?.title || reference?.label || "").replace(/\s+/gu, " ").trim();
+    return title ? `${kindLabel} · ${title}` : kindLabel;
+}
+
+function createAgentNodeLink(nodeId: string, reference?: CanvasResourceReference) {
+    return `[${agentNodeLinkLabel(nodeId, reference).replace(/[\\[\]]/gu, "\\$&")}](${AGENT_NODE_LINK_PREFIX}${encodeURIComponent(nodeId)})`;
+}
+
+/**
+ * 把助手 Markdown 里的画布节点 ID 换成语义链接（渲染时再变成节点 chip）。
+ * 围栏代码保持原样；“新节点 ID：”这类实现措辞缩成“新节点：”，用户看到的是节点卡而不是 ID。
+ */
+export function rewriteAgentNodeLinks(text: string, references: readonly CanvasResourceReference[] = []) {
+    if (!text) return text;
+    const referenceByNodeId = new Map(references.filter((reference) => reference.nodeId).map((reference) => [reference.nodeId, reference]));
+    const exactNodeIds = [...referenceByNodeId.keys()].sort((left, right) => right.length - left.length).map(escapeAgentNodePattern);
+    const nodeIdPattern = exactNodeIds.length ? `(?:${exactNodeIds.join("|")}|${BUILTIN_AGENT_NODE_ID_PATTERN})` : BUILTIN_AGENT_NODE_ID_PATTERN;
+    const nodeTokenPattern = new RegExp(`(?<![A-Za-z0-9_-])(?:\\x60(${nodeIdPattern})\\x60|(${nodeIdPattern}))(?![A-Za-z0-9_-])`, "gu");
+    const newNodePrefixPattern = /(新节点|节点|新建节点)\s*ID(?=\s*[：:])/gu;
+    let inFence = false;
+    return text
+        .split(/(\r?\n)/u)
+        .map((part) => {
+            if (/^\r?\n$/u.test(part)) return part;
+            if (/^\s{0,3}(`{3,}|~{3,})/u.test(part)) {
+                inFence = !inFence;
+                return part;
+            }
+            if (inFence) return part;
+            return part.replace(newNodePrefixPattern, "$1").replace(nodeTokenPattern, (match, backtickedId: string | undefined, plainId: string | undefined) => {
+                const nodeId = backtickedId || plainId;
+                return nodeId ? createAgentNodeLink(nodeId, referenceByNodeId.get(nodeId)) : match;
+            });
+        })
+        .join("");
+}
+
+function agentNodeIdFromHref(href?: string) {
+    if (!href?.startsWith(AGENT_NODE_LINK_PREFIX)) return null;
+    try {
+        return decodeURIComponent(href.slice(AGENT_NODE_LINK_PREFIX.length)) || null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 节点链接的渲染器。画布里（有 onFocusNode）渲染成可点击的节点 chip；画布外没有可定位的
+ * 节点，只渲染成纯文本，避免出现点了没反应的按钮。
+ */
+function createAgentMessageMarkdownComponents(references: readonly CanvasResourceReference[], onFocusNode?: (nodeId: string) => void): Components {
+    const referenceByNodeId = new Map(references.filter((reference) => reference.nodeId).map((reference) => [reference.nodeId, reference]));
+    return {
+        a: ({ children, href, className, ...props }) => {
+            const nodeId = agentNodeIdFromHref(href);
+            if (!nodeId) {
+                return (
+                    <a {...props} href={href} className={`ai-message-markdown-link ${className || ""}`.trim()} target="_blank" rel="noreferrer">
+                        {children}
+                    </a>
+                );
+            }
+            if (!onFocusNode) return <span className="agent-message-node-text">{children}</span>;
+            const reference = referenceByNodeId.get(nodeId);
+            const title = reference?.title || reference?.label || "画布节点";
+            return (
+                <a
+                    {...props}
+                    href={href}
+                    className="agent-message-node-link"
+                    data-agent-node-id={nodeId}
+                    aria-label={`定位到画布中的${title}`}
+                    title={`定位到画布中的${title}`}
+                    onClick={(event) => {
+                        event.preventDefault();
+                        onFocusNode(nodeId);
+                    }}
+                >
+                    {reference?.previewUrl ? (
+                        <img className="agent-message-node-link-preview" src={reference.previewUrl} alt="" loading="lazy" />
+                    ) : (
+                        <span className="agent-message-node-link-icon" aria-hidden="true">
+                            <CircleDot className="size-3.5" />
+                        </span>
+                    )}
+                    <span className="agent-message-node-link-copy">
+                        <span className="agent-message-node-link-kind">{agentNodeTypeLabel(nodeId, reference)}</span>
+                        <span className="agent-message-node-link-title">{reference?.title || reference?.label || children}</span>
+                    </span>
+                </a>
+            );
+        },
+    };
+}
+
+const EMPTY_REFERENCES: readonly CanvasResourceReference[] = [];
+
+/**
+ * 渲染计数探针：只给测试用，默认关闭，生产路径不记录任何数据。
+ * 打开后每次 AgentChatMessage 实际渲染都按消息 id 计一次，用来证明流式更新只重渲染当前消息。
+ */
+export const agentChatRenderProbe: { enabled: boolean; counts: Map<string, number> } = { enabled: false, counts: new Map() };
+
+type AgentChatMessageProps = {
     item: CloudAgentChatMessage;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
-    references?: CanvasResourceReference[];
+    references?: readonly CanvasResourceReference[];
     isStreaming?: boolean;
     retrying?: boolean;
     onRejectTool?: (id: string) => void;
     onApproveTool?: (id: string) => void;
     onRetry?: () => void;
     onFocusNode?: (nodeId: string) => void;
-}) {
+    /** 只给最后一条、还没被回复的 Agent 消息：末尾编号选项改为可点击卡片。 */
+    replyOptions?: AgentReplyOptions | null;
+    onReplyOption?: (text: string) => void;
+    replyOptionsDisabled?: boolean;
+};
+
+// 面板输入、流式输出都会让对话列表重渲染；消息组件 memo 后，只有自己的消息或展示参数变了才重新解析 Markdown。
+export const AgentChatMessage = memo(function AgentChatMessage({
+    item,
+    theme,
+    references = EMPTY_REFERENCES,
+    isStreaming = false,
+    retrying = false,
+    onRejectTool,
+    onApproveTool,
+    onRetry,
+    onFocusNode,
+    replyOptions,
+    onReplyOption,
+    replyOptionsDisabled = false,
+}: AgentChatMessageProps) {
+    if (agentChatRenderProbe.enabled) agentChatRenderProbe.counts.set(item.id, (agentChatRenderProbe.counts.get(item.id) ?? 0) + 1);
     const isUser = item.role === "user";
     const isSystem = item.role === "system";
-    const displayedText = useTypewriterText(item.text, item.role === "assistant" && isStreaming);
-    const color = item.role === "error" ? "#ef4444" : theme.node.text;
+    const isAssistant = item.role === "assistant";
+    const displayedText = useTypewriterText(item.text, isAssistant && isStreaming);
+    const markdownComponents = useMemo(() => createAgentMessageMarkdownComponents(references, onFocusNode), [onFocusNode, references]);
+    const showReplyOptions = Boolean(replyOptions && onReplyOption && isAssistant && !isStreaming);
+    const agentMarkdownText = isAssistant ? rewriteAgentNodeLinks(showReplyOptions && replyOptions ? replyOptions.body : displayedText, references) : "";
+    // 「根据此图…」这类由画布节点发起的请求：把“此图”换成节点 chip。节点已不在引用表里时保持原句。
+    const canvasReference = isUser && item.canvasReferenceNodeId && item.text.includes("此图") ? references.find((reference) => reference.nodeId === item.canvasReferenceNodeId) : undefined;
+    const streamingAssistant = isAssistant && isStreaming;
     if (item.reasoning) {
         return <AgentReasoningFeed items={[item]} theme={theme} />;
     }
@@ -186,7 +345,7 @@ export function AgentChatMessage({
     if (item.memoryUpdate) return <AgentMemoryUpdateCard update={item.memoryUpdate} theme={theme} />;
     if (isSystem) {
         return (
-            <div className="agent-status-message flex items-start gap-2 text-xs">
+            <div className="agent-status-message flex items-start gap-2 text-xs" data-agent-enter="">
                 <AgentTimelineMarker theme={theme} tone="muted" icon={<Sparkles className="size-3" />} />
                 <div className="min-w-0 flex-1 py-0.5 leading-5" style={{ color: theme.node.muted }}>
                     {item.text}
@@ -203,49 +362,31 @@ export function AgentChatMessage({
             </div>
         );
     }
-    if (item.role === "error") {
-        return (
-            <div className="agent-status-message flex items-start gap-2">
-                <AgentTimelineMarker theme={theme} tone="error" icon={<CircleAlert className="size-3.5" />} />
-                <div className="min-w-0 flex-1 py-0.5 text-[13px] leading-5">
-                    <div className="font-medium" style={{ color }}>
-                        {item.title || "Agent 暂时无法继续"}
-                    </div>
-                    <div className="mt-0.5 whitespace-pre-wrap break-words" style={{ color: theme.node.muted }}>
-                        {item.text}
-                    </div>
-                    {item.meta ? (
-                        <div className="mt-1 text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
-                            {item.meta}
-                        </div>
-                    ) : null}
-                    {item.runId ? (
-                        <div className="mt-1 break-all text-[var(--fs-label)]">
-                            <Typography.Text style={{ color: theme.node.muted }} copyable={{ text: item.runId, tooltips: ["复制 Run ID", "已复制"], icon: <span aria-label="复制 Run ID">复制</span> }}>
-                                Run ID：<span className="font-mono select-text">{item.runId}</span>
-                            </Typography.Text>
-                        </div>
-                    ) : null}
-                    {onRetry ? (
-                        <Button type="text" size="small" className="mt-1 !h-7 !px-0" icon={retrying ? <LoaderCircle className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />} disabled={retrying} onClick={onRetry}>
-                            {retrying ? "重试中" : "重试本轮"}
-                        </Button>
-                    ) : null}
-                </div>
-            </div>
-        );
-    }
+    if (item.role === "error") return <AgentErrorCard item={item} theme={theme} retrying={retrying} onRetry={onRetry} />;
     return (
-        <div className={`flex items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-            <div className={`agent-message-body min-w-0 text-sm leading-6 text-left ${isUser ? "agent-message-user max-w-[82%] px-4 py-3" : "max-w-full flex-1"}`} style={{ color }}>
+        <div className={`flex items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`} data-agent-enter={isUser ? "user" : ""}>
+            <div
+                className={`agent-message-body min-w-0 text-sm leading-6 text-left ${isUser ? "agent-message-user max-w-[82%] px-4 py-3" : "max-w-full flex-1"}${streamingAssistant ? " is-streaming" : ""}`}
+                style={{ color: theme.node.text }}
+                aria-busy={streamingAssistant || undefined}
+            >
                 {item.interjection ? (
                     <span className="agent-interjection-tag" data-status={item.interjection}>
                         {AGENT_INTERJECTION_LABELS[item.interjection]}
                     </span>
                 ) : null}
-                {item.role === "assistant" ? (
-                    <AIMessageMarkdown className="text-left" isStreaming={isStreaming} streamingAnimation="none">
-                        {displayedText}
+                {isAssistant ? (
+                    <>
+                        {agentMarkdownText ? (
+                            <AIMessageMarkdown className="text-left" isStreaming={isStreaming} streamingAnimation="none" components={markdownComponents}>
+                                {agentMarkdownText}
+                            </AIMessageMarkdown>
+                        ) : null}
+                        {showReplyOptions && replyOptions && onReplyOption ? <AgentReplyOptionCards options={replyOptions.options} disabled={replyOptionsDisabled} onSelect={(option) => onReplyOption(option.text)} /> : null}
+                    </>
+                ) : canvasReference ? (
+                    <AIMessageMarkdown className="text-left" components={markdownComponents}>
+                        {item.text.replace("此图", createAgentNodeLink(canvasReference.nodeId, canvasReference))}
                     </AIMessageMarkdown>
                 ) : (
                     <AgentMessageText text={item.text} references={references} />
@@ -255,16 +396,173 @@ export function AgentChatMessage({
             </div>
         </div>
     );
+});
+
+/**
+ * 错误卡：标题与可操作提示常显，色调按严重程度取皮肤状态色（warning / error）；
+ * 诊断号和 Run ID 只在排查时有用，折叠在“诊断信息”后面，默认收起。
+ */
+function AgentErrorCard({ item, theme, retrying, onRetry }: { item: CloudAgentChatMessage; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; retrying: boolean; onRetry?: () => void }) {
+    const tone = item.errorSeverity === "warning" ? "warning" : "error";
+    const title = item.title || (tone === "warning" ? "Agent 正在重试" : "Agent 暂时无法继续");
+    const { description, diagnosticId } = agentErrorContent(item.text, title);
+    return (
+        <div className={`agent-status-message agent-status-message--${tone} agent-error-message`} data-agent-enter="">
+            <span className="agent-error-icon" aria-hidden="true">
+                <CircleAlert className="size-3.5" />
+            </span>
+            <div className="min-w-0 flex-1">
+                <div role="status">
+                    <div className="agent-error-title">{title}</div>
+                    {description ? <p className="agent-error-detail">{description}</p> : null}
+                </div>
+                {item.meta ? <p className="agent-error-meta">{item.meta}</p> : null}
+                {diagnosticId || item.runId ? (
+                    <details className="agent-error-diagnostics">
+                        <summary>
+                            <ChevronDown className="size-3" aria-hidden="true" />
+                            诊断信息
+                        </summary>
+                        <div className="agent-error-diagnostics-body">
+                            {diagnosticId ? (
+                                <>
+                                    <p>如反复出现，请将诊断号反馈给管理员。</p>
+                                    <code>{diagnosticId}</code>
+                                </>
+                            ) : null}
+                            {item.runId && item.runId !== diagnosticId ? (
+                                <p className="break-all">
+                                    <Typography.Text style={{ color: "inherit" }} copyable={{ text: item.runId, tooltips: ["复制 Run ID", "已复制"], icon: <span aria-label="复制 Run ID">复制</span> }}>
+                                        Run ID：<span className="font-mono select-text">{item.runId}</span>
+                                    </Typography.Text>
+                                </p>
+                            ) : null}
+                        </div>
+                    </details>
+                ) : null}
+                {onRetry ? (
+                    <Button type="text" size="small" className="agent-error-retry" icon={retrying ? <LoaderCircle className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />} disabled={retrying} onClick={onRetry}>
+                        {retrying ? "重试中" : "重试本轮"}
+                    </Button>
+                ) : null}
+            </div>
+        </div>
+    );
+}
+
+/** 操作段与推理段每次都由消息列表重新切出新数组；元素都没变就视为同一段，不重渲染。 */
+function sameFeedProps<P extends { items: readonly CloudAgentChatMessage[] }>(previous: P, next: P) {
+    const keys = Object.keys(next) as Array<keyof P>;
+    if (keys.length !== Object.keys(previous).length) return false;
+    return keys.every((key) => {
+        if (key !== "items") return Object.is(previous[key], next[key]);
+        return previous.items === next.items || (previous.items.length === next.items.length && previous.items.every((item, index) => item === next.items[index]));
+    });
+}
+
+/** 消息只用引用表做节点链接和提及标签；节点正文变了不影响消息展示。 */
+function sameAgentLinkReference(left: CanvasResourceReference, right: CanvasResourceReference) {
+    return (
+        left === right ||
+        (left.id === right.id &&
+            left.nodeId === right.nodeId &&
+            left.kind === right.kind &&
+            left.label === right.label &&
+            left.title === right.title &&
+            left.previewUrl === right.previewUrl &&
+            left.mentionToken === right.mentionToken &&
+            left.sourceType === right.sourceType &&
+            left.assetId === right.assetId &&
+            left.skill === right.skill)
+    );
+}
+
+/**
+ * 面板每次渲染都会拼出新的引用表；链接字段都相同就沿用上一份，消息不会因此重新解析 Markdown。
+ * 输入框的 @ 菜单仍拿最新的完整引用表。
+ */
+function useLinkStableReferences(references: readonly CanvasResourceReference[]) {
+    const previousRef = useRef(references);
+    const previous = previousRef.current;
+    const stable = previous.length === references.length && previous.every((item, index) => sameAgentLinkReference(item, references[index])) ? previous : references;
+    useLayoutEffect(() => {
+        previousRef.current = stable;
+    }, [stable]);
+    return stable;
+}
+
+/**
+ * 对话消息列表：把消息切成正文 / 思考 / 操作段，并给 memo 过的子组件传稳定的回调与引用表，
+ * 流式输出某一条时其余消息不重渲染。回复选项只挂在最后一条未被回复的 Agent 消息上。
+ */
+export function AgentMessageList({
+    messages,
+    theme,
+    references,
+    busy,
+    streamingPaused = false,
+    onFocusNode,
+    onReplyOption,
+    replyOptionsDisabled = false,
+}: {
+    messages: CloudAgentChatMessage[];
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    references: readonly CanvasResourceReference[];
+    busy: boolean;
+    /** 等待审批等情况：本轮没停，但正文不在流式输出，也不该出选项卡片。 */
+    streamingPaused?: boolean;
+    onFocusNode?: (nodeId: string) => void;
+    /** 不传表示当前不该出现选项卡片（画布外、ask_user 提问条已在展示）。 */
+    onReplyOption?: (text: string) => void;
+    replyOptionsDisabled?: boolean;
+}) {
+    const segments = useMemo(() => buildAgentFeedSegments(messages), [messages]);
+    const lastMessage = messages.at(-1);
+    const replyOptionsEnabled = Boolean(onReplyOption) && !busy && !streamingPaused;
+    const replyTarget = useMemo(() => (replyOptionsEnabled ? agentReplyOptionsTarget(messages) : null), [messages, replyOptionsEnabled]);
+    // 父组件每次渲染都会传入新的回调；换成稳定引用，memo 过的消息才能跳过与它无关的重渲染。
+    const handlersRef = useRef({ onFocusNode, onReplyOption });
+    useLayoutEffect(() => {
+        handlersRef.current = { onFocusNode, onReplyOption };
+    });
+    const stableFocus = useCallback((nodeId: string) => handlersRef.current.onFocusNode?.(nodeId), []);
+    const stableReply = useCallback((text: string) => handlersRef.current.onReplyOption?.(text), []);
+    const focus = onFocusNode ? stableFocus : undefined;
+    const linkReferences = useLinkStableReferences(references);
+    return (
+        <>
+            {segments.map((segment) =>
+                segment.kind === "operations" ? (
+                    // 聚合后按最新事件判断当前动作，不按行在列表里的位置判断。
+                    <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={linkReferences} onFocusNode={focus} live={busy && segment.items.at(-1) === lastMessage} />
+                ) : segment.kind === "reasoning" ? (
+                    <AgentReasoningFeed key={segment.key} items={segment.items} theme={theme} />
+                ) : (
+                    <AgentChatMessage
+                        key={segment.key}
+                        item={segment.item}
+                        theme={theme}
+                        references={linkReferences}
+                        onFocusNode={focus}
+                        isStreaming={busy && !streamingPaused && segment.item.streaming === true && segment.item === lastMessage}
+                        replyOptions={replyTarget?.id === segment.item.id ? replyTarget.options : null}
+                        onReplyOption={replyTarget?.id === segment.item.id ? stableReply : undefined}
+                        replyOptionsDisabled={replyOptionsDisabled}
+                    />
+                ),
+            )}
+        </>
+    );
 }
 
 /**
  * 推理摘要默认只保留一行入口；流式更新不改变用户手动展开的状态。
  */
-export function AgentReasoningFeed({
+export const AgentReasoningFeed = memo(function AgentReasoningFeed({
     items,
     theme,
 }: {
-    items: CloudAgentChatMessage[];
+    items: readonly CloudAgentChatMessage[];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
 }) {
     const [expanded, setExpanded] = useState(false);
@@ -275,6 +573,9 @@ export function AgentReasoningFeed({
         <div className="agent-reasoning" style={{ "--agent-reasoning-accent": theme.accent.primary } as CSSProperties}>
             <div className={`agent-reasoning-card${expanded ? " is-open" : ""}${streaming ? " is-streaming" : ""}`}>
                 <button type="button" className="agent-reasoning-summary" aria-expanded={expanded} aria-controls={contentId} aria-label={`${expanded ? "收起" : "展开"}模型思考摘要`} onClick={() => setExpanded((current) => !current)}>
+                    <span className="agent-activity-glyph agent-reasoning-glyph" aria-hidden="true">
+                        <AgentThinkGlyph />
+                    </span>
                     <span className="agent-reasoning-copy">
                         <span className="agent-reasoning-title">{streaming ? "模型正在思考" : "模型思考"}</span>
                         <span className="agent-reasoning-subtitle">{expanded ? "点击收起" : "点击查看"}</span>
@@ -289,7 +590,7 @@ export function AgentReasoningFeed({
             </div>
         </div>
     );
-}
+}, sameFeedProps);
 
 /** 同时保留退出动画与辅助技术的即时收起语义；时长读取当前站点皮肤。 */
 function AgentFeedDisclosure({ expanded, id, label, children }: { expanded: boolean; id: string; label: string; children: ReactNode }) {
@@ -372,7 +673,7 @@ function useTypewriterText(targetText: string, shouldAnimate: boolean) {
     return visibleText;
 }
 
-function AgentMessageText({ text, references }: { text: string; references: CanvasResourceReference[] }) {
+function AgentMessageText({ text, references }: { text: string; references: readonly CanvasResourceReference[] }) {
     const parts = splitAgentMessageMentions(text, references);
     return (
         <div className="whitespace-pre-wrap break-words text-left">
@@ -394,7 +695,7 @@ function AgentMessageText({ text, references }: { text: string; references: Canv
 
 type AgentMessageMentionPart = { text: string; token?: string; reference?: CanvasResourceReference };
 
-function splitAgentMessageMentions(text: string, references: CanvasResourceReference[]): AgentMessageMentionPart[] {
+function splitAgentMessageMentions(text: string, references: readonly CanvasResourceReference[]): AgentMessageMentionPart[] {
     if (!text) return [];
     const byToken = new Map<string, CanvasResourceReference>();
     references.forEach((reference) => {
@@ -506,14 +807,14 @@ export function AgentToolCard({
     text,
     detail,
     theme,
-    references = [],
+    references = EMPTY_REFERENCES,
     onFocusNode,
 }: {
     title: string;
     text: string;
     detail?: unknown;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
-    references?: CanvasResourceReference[];
+    references?: readonly CanvasResourceReference[];
     onFocusNode?: (nodeId: string) => void;
 }) {
     const state = toolCardState(title, text, detail);
@@ -528,8 +829,8 @@ export function AgentToolCard({
     const collapsedReadNodeCount = isNodeRead ? Math.max(0, actions.length - visibleActions.length) : 0;
     const isPlain = !actions.length && !state.isError;
     const conciseError = text.length > 180 ? `${text.slice(0, 180)}…` : text;
-    const categoryIcon = agentToolCategoryIcon(category);
     const retry = agentToolRetry(detail);
+    const categoryIcon = agentToolCategoryIcon(toolName, category, Boolean(retry));
     const attempts = objectField(detail, "retryAttempts");
     if (retry && Array.isArray(attempts)) {
         const label = agentToolRetryLabel(retry);
@@ -619,16 +920,16 @@ export function AgentToolCard({
  * 失败也保持收起，通过摘要文字和错误色提示；新步骤不重置用户的展开状态。
  * `live` 由面板按"这一段是不是对话末尾且在跑"给出：只有还在推进时才流光。
  */
-export function AgentOperationFeed({
+export const AgentOperationFeed = memo(function AgentOperationFeed({
     items,
     theme,
-    references = [],
+    references = EMPTY_REFERENCES,
     onFocusNode,
     live = false,
 }: {
-    items: CloudAgentChatMessage[];
+    items: readonly CloudAgentChatMessage[];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
-    references?: CanvasResourceReference[];
+    references?: readonly CanvasResourceReference[];
     onFocusNode?: (nodeId: string) => void;
     live?: boolean;
 }) {
@@ -643,6 +944,8 @@ export function AgentOperationFeed({
     // 已自动纠正的旧错误不污染最新一步的状态。
     const failed = agentOperationFailed(latest);
     const shimmering = live && !failed;
+    const latestToolName = agentToolName(latest.title || "工具执行", latest.detail);
+    const latestGlyph = agentToolCategoryIcon(latestToolName, category, Boolean(agentToolRetry(latest.detail)));
     return (
         <div className={`agent-operation-feed${expanded ? " is-open" : ""}${failed ? " is-failed" : ""}${shimmering ? " is-live" : ""}`} data-agent-operation-feed data-agent-category={category}>
             <button
@@ -653,14 +956,17 @@ export function AgentOperationFeed({
                 aria-label={`${expanded ? "收起" : "展开"}工具调用记录，最新操作：${label}`}
                 onClick={() => setExpanded((current) => !current)}
             >
-                {/* 换步时旧文案高模糊淡出、新文案从下方上浮（先快后慢的非线性曲线）。 */}
+                <span className="agent-activity-glyph agent-operation-glyph" aria-hidden="true">
+                    {latestGlyph}
+                </span>
+                {/* 换步时旧文案淡出上移、新文案从下方上浮；只动 transform / opacity，减少动态效果时只换不动。 */}
                 <AnimatePresence mode="wait" initial={false}>
                     <motion.span
                         key={label}
                         className="agent-operation-latest"
-                        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 12, filter: "blur(6px)" }}
-                        animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, filter: "blur(0px)" }}
-                        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -8, filter: "blur(8px)" }}
+                        initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={reducedMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, y: -6 }}
                         transition={{ duration: reducedMotion ? 0 : duration, ease: [0.16, 1, 0.3, 1] }}
                     >
                         {label}
@@ -677,7 +983,7 @@ export function AgentOperationFeed({
             </AgentFeedDisclosure>
         </div>
     );
-}
+}, sameFeedProps);
 
 /**
  * 运行结束后的撤销入口：撤销本轮对画布的全部修改。它不是本卡片的主要命令，

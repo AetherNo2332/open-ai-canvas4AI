@@ -44,7 +44,6 @@ import {
     type AgentMessageReceipt,
 } from "@/services/api/agent";
 import { AGENT_APPROVAL_OPERATION_LABELS, agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
-import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
 import { agentApprovalMatchesSettings, agentImageApproval } from "@/lib/canvas/agent-media-approval";
 import type { AgentMediaSettings } from "@/services/api/agent";
 import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-settings";
@@ -75,11 +74,9 @@ import { ApiError } from "@/services/api/request";
 import { API_ERROR_REASONS } from "@/services/api/error-codes";
 import {
     AgentChatComposer,
-    AgentChatMessage,
-    AgentOperationFeed,
+    AgentMessageList,
     AgentPlanBar,
     AgentQuestionBar,
-    AgentReasoningFeed,
     AgentSceneCapsules,
     AgentRunUndoAction,
     AgentWorkingMessage,
@@ -88,6 +85,7 @@ import {
     type CloudAgentChatMessage,
 } from "./canvas-cloud-agent-chat-ui";
 import { CanvasAgentSkillLibraryModal } from "./canvas-agent-skill-library-modal";
+import { sendAgentReplyOption } from "./canvas-agent-reply-options";
 import { AgentSubagentList, type AgentSubagentAvatarItem } from "./canvas-agent-subagent-list";
 import { AgentSubagentConversation } from "./canvas-agent-subagent-conversation";
 import { CanvasCloudAgentSettings, agentPermissionLabel, agentPermissionMenuItems, agentPermissionVisual, type AgentContextKey } from "./canvas-cloud-agent-settings";
@@ -1509,6 +1507,9 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                     onApprovalReasonChange={(reason) => setApproval((current) => (current ? { ...current, reason } : current))}
                                     onApprove={(settings) => void submitApproval("approve", settings)}
                                     onReject={() => void submitApproval("reject")}
+                                    // 选项卡片走与画布页相同的全局投递路径；ask_user 提问条在输入区上方时不再重复出卡片。
+                                    onReplyOption={onCanvas && !pendingQuestion ? (text) => void sendAgentReplyOption({ canvasId, userScope, text }) : undefined}
+                                    replyOptionsDisabled={Boolean(prefillRequest || heldPrefill || pendingSubmission.current?.request || (run && connectionStatus !== "connected") || !historyHydrated || !pendingHydrated || activeHistoryState?.status === "unavailable")}
                                     footer={undoOffer && onCanvas && !busy ? <AgentRunUndoAction theme={theme} pending={undoingRunId === undoOffer} onUndo={() => void undoRun(undoOffer)} /> : null}
                                 />
                                 {planVisible ? (
@@ -2005,6 +2006,8 @@ function AgentConversation({
     onApprovalReasonChange,
     onApprove,
     onReject,
+    onReplyOption,
+    replyOptionsDisabled,
     footer,
 }: {
     theme: CanvasTheme;
@@ -2020,6 +2023,9 @@ function AgentConversation({
     onApprovalReasonChange: (reason: string) => void;
     onApprove: (settings?: AgentMediaSettings) => void;
     onReject: () => void;
+    /** 不传表示当前不出选项卡片（画布外，或 ask_user 提问条已在展示）。 */
+    onReplyOption?: (text: string) => void;
+    replyOptionsDisabled?: boolean;
     footer?: ReactNode;
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
@@ -2027,9 +2033,6 @@ function AgentConversation({
     const contentRef = useRef<HTMLDivElement>(null);
     const followRef = useRef(true);
     const lastUserId = messages.findLast((item) => item.role === "user")?.id;
-    // 正文之间的思考、工具分别共用一行，计划/提问载体由输入区固定条渲染。
-    const segments = useMemo(() => buildAgentFeedSegments(messages), [messages]);
-    const lastMessage = messages.at(-1);
 
     // 自己发送时恢复跟随；阅读旧消息时不让流式输出抢走滚动位置。
     useLayoutEffect(() => {
@@ -2063,16 +2066,7 @@ function AgentConversation({
         >
             {!messages.length ? <AgentWelcome appearance={appearance} nodeCount={nodeCount} onChooseSkill={onChooseSkill} onDraftPrompt={onDraftPrompt} /> : null}
             <div ref={contentRef} className="agent-conversation-messages">
-                {segments.map((segment) =>
-                    segment.kind === "operations" ? (
-                        // 聚合后按最新事件判断当前动作，不按行在列表里的位置判断。
-                        <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={references} onFocusNode={onFocusNode} live={busy && segment.items.at(-1) === lastMessage} />
-                    ) : segment.kind === "reasoning" ? (
-                        <AgentReasoningFeed key={segment.key} items={segment.items} theme={theme} />
-                    ) : (
-                        <AgentChatMessage key={segment.key} item={segment.item} theme={theme} references={references} onFocusNode={onFocusNode} isStreaming={busy && !approval && segment.item.streaming === true && segment.item === lastMessage} />
-                    ),
-                )}
+                <AgentMessageList messages={messages} theme={theme} references={references} busy={busy} streamingPaused={Boolean(approval)} onFocusNode={onFocusNode} onReplyOption={onReplyOption} replyOptionsDisabled={replyOptionsDisabled} />
                 {approval ? <ApprovalCard key={approval.approvalId} approval={approval} theme={theme} submitting={approvalSubmitting} onFocusNode={onFocusNode} onReasonChange={onApprovalReasonChange} onApprove={onApprove} onReject={onReject} /> : null}
                 {busy && !approval ? <AgentWorkingMessage theme={theme} label="正在处理当前画布" /> : null}
                 {footer}
