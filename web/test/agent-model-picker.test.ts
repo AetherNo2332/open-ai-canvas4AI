@@ -18,7 +18,8 @@ test("Agent 对话和设置复用创作页模型选择器，并且只展示文�
     expect(settings).toContain('placeholder="选择文本模型"');
 
     expect(css).toContain(".agent-model-picker-popover");
-    expect(css).toContain("z-index: var(--z-popover)");
+    // 全局面板层级为 --z-agent-panel（高于导演台 --z-toast），模型菜单必须再高一层。
+    expect(css).toContain("z-index: var(--z-dialog-popover)");
 
     const twoPane = pickerCss.match(/\.creation-model-picker-menu\.is-model-list \.canvas-model-picker-two-pane \{[^}]+\}/)?.[0] || "";
     expect(twoPane).toContain("min-height: 0");

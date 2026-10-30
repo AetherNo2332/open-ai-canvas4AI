@@ -37,6 +37,7 @@ const subagents = await import("@/services/api/agent-subagent");
 const { setActiveUserScope } = await import("@/lib/user-scope");
 const { useUserStore } = await import("@/stores/use-user-store");
 const { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } = await import("@/stores/use-config-store");
+const { useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
 let reducedMotion = false;
 let queueItems: AgentQueuedMessage[] = [];
 let receiveEvent: ((event: AgentEvent) => void) | undefined;
@@ -126,7 +127,7 @@ function toolbarVisibility(host: HTMLElement) {
     snapshot.remove();
     return visibility;
 }
-async function mount({ compact = false, floating = false, reduced = false, approval = false, queued = false, streaming = false, references = [] as CanvasResourceReference[], draft = savedConversation.draft } = {}) {
+async function mount({ compact = false, docked = true, reduced = false, approval = false, queued = false, streaming = false, references = [] as CanvasResourceReference[], draft = savedConversation.draft } = {}) {
     reducedMotion = reduced;
     receiveEvent = undefined;
     currentConversation = approval
@@ -167,8 +168,10 @@ async function mount({ compact = false, floating = false, reduced = false, appro
               updatedAt: savedConversation.updatedAt,
           }))
         : [];
-    dom.happyDOM.setWindowSize({ width: compact ? 700 : 1440, height: 900 });
+    dom.happyDOM.setWindowSize({ width: compact ? 600 : 1440, height: 900 });
     window.localStorage.clear();
+    // 面板改为读全局 store：画布上下文与开合状态都由 store 提供。
+    useGlobalAgentStore.setState({ open: true, prefillRequest: null, dock: { docked, width: 440 }, canvas: { canvasId: "canvas", nodeCount: 1, selectedNodeIds: [], references } });
     setActiveUserScope("visibility-user");
     useUserStore.setState({ hydrated: true, user: { id: "visibility-user", username: "test", displayName: "test", role: "user", status: "active" }, features: { agentSubagentsEnabled: false, customChannelsEnabled: true } as any });
     const channel = createModelChannel({
@@ -193,10 +196,11 @@ async function mount({ compact = false, floating = false, reduced = false, appro
     const root = createRoot(host);
     const render = async (open: boolean) =>
         act(async () => {
+            useGlobalAgentStore.setState({ open });
             root.render(
                 <>
                     <div className="canvas-main-toolbar">Toolbar</div>
-                    <CanvasCloudAgentPanel canvasId="canvas" nodeCount={1} selectedNodeIds={[]} references={references} open={open} floating={floating} launcher={false} onOpen={silent} onCollapse={silent} />
+                    <CanvasCloudAgentPanel launcher={false} />
                 </>,
             );
             await settle();
@@ -205,7 +209,7 @@ async function mount({ compact = false, floating = false, reduced = false, appro
     return {
         host,
         render,
-        aside: () => (floating ? document.body : host).querySelector<HTMLElement>("aside.canvas-agent-panel")!,
+        aside: () => host.querySelector<HTMLElement>("aside.canvas-agent-panel")!,
         close: async () => {
             await act(async () => root.unmount());
             host.remove();
@@ -550,25 +554,24 @@ test("close retains the real conversation, message DOM, reading position and dis
     }
 });
 
-test("panel visibility animates only transform and opacity while dock width changes immediately", async () => {
+test("panel visibility animates only transform and opacity and the docked shell takes the dock width", async () => {
     const mounted = await mount();
     try {
         const aside = mounted.aside();
         const contract = () => JSON.parse(aside.getAttribute("data-motion-contract")!);
         for (const state of [contract().initial, contract().animate, contract().exit]) {
             if (!state || typeof state !== "object") continue;
-            expect(Object.keys(state).every((key) => ["x", "opacity", "transform"].includes(key))).toBe(true);
+            expect(Object.keys(state).every((key) => ["x", "y", "opacity", "transform"].includes(key))).toBe(true);
         }
-        const slot = aside.parentElement!;
-        expect(slot.style.width).toBe("440px");
-        expect(slot.style.flexBasis).toBe("440px");
+        expect(aside.classList.contains("is-docked")).toBe(true);
+        expect(aside.style.width).toBe("440px");
+        expect(aside.getAttribute("data-agent-docked")).toBe("true");
+        expect(aside.style.right).toBe("0px");
         expect(contract().animate.opacity).toBe(1);
         await mounted.render(false);
-        expect(slot.style.width).toBe("0px");
-        expect(slot.style.flexBasis).toBe("0px");
         expect(contract().animate.opacity).toBe(0);
         expect(contract().animate.x).not.toBe(0);
-        expect(Object.keys(contract().animate).every((key) => ["x", "opacity", "transform"].includes(key))).toBe(true);
+        expect(Object.keys(contract().animate).every((key) => ["x", "y", "opacity", "transform"].includes(key))).toBe(true);
         expect(aside.style.width).toBe("440px");
     } finally {
         await mounted.close();
@@ -600,34 +603,33 @@ test("reopening preserves the real reasoning component's local disclosure state"
     }
 });
 
-test("manual drag changes real dock width and closing releases an active pointer capture", async () => {
+test("manual drag changes the real dock width and closing releases an active pointer capture", async () => {
     const mounted = await mount();
     try {
         const aside = mounted.aside();
-        const handle = aside.querySelector<HTMLElement>('[role="separator"]')!;
+        const handle = aside.querySelector<HTMLElement>('[data-agent-resize="dock"]')!;
+        expect(handle.getAttribute("role")).toBe("separator");
         const captures = new Set<number>();
-        Object.assign(handle, {
+        // 上游外壳在面板根元素上捕获指针。
+        Object.assign(aside, {
             setPointerCapture: (id: number) => captures.add(id),
             hasPointerCapture: (id: number) => captures.has(id),
-            releasePointerCapture: (id: number) => {
-                captures.delete(id);
-                handle.dispatchEvent(new dom.PointerEvent("lostpointercapture", { bubbles: true, pointerId: id }));
-            },
+            releasePointerCapture: (id: number) => captures.delete(id),
         });
         await act(async () => {
-            handle.dispatchEvent(new dom.PointerEvent("pointerdown", { bubbles: true, pointerId: 7, button: 0, clientX: 1000 }));
+            handle.dispatchEvent(new dom.PointerEvent("pointerdown", { bubbles: true, pointerId: 7, button: 0, isPrimary: true, clientX: 1000 }));
         });
         await act(async () => {
             handle.dispatchEvent(new dom.PointerEvent("pointermove", { bubbles: true, pointerId: 7, clientX: 940 }));
         });
-        expect(aside.parentElement!.style.width).toBe("500px");
+        expect(useGlobalAgentStore.getState().dock.width).toBe(500);
         expect(aside.style.width).toBe("500px");
         await mounted.render(false);
         expect(captures.has(7)).toBe(false);
         await mounted.render(true);
-        const contract = JSON.parse(mounted.aside().getAttribute("data-motion-contract")!);
-        expect(contract.transition.duration).toBeGreaterThan(0);
-        expect(window.localStorage.getItem("canvas-agent-panel-width")).toBe("500");
+        await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
+        expect(JSON.parse(window.localStorage.getItem("canvas:agent-panel-dock:v1")!)).toEqual({ docked: true, width: 500 });
+        expect(window.localStorage.getItem("canvas-agent-panel-width")).toBeNull();
     } finally {
         await mounted.close();
     }
@@ -666,17 +668,70 @@ test("new conversation still replaces the keyed conversation subtree", async () 
     }
 });
 
-test("floating reduced-motion panel retains content and takes no dock space", async () => {
-    const mounted = await mount({ floating: true, reduced: true });
+test("floating reduced-motion panel retains content and uses the window layout instead of the dock", async () => {
+    const mounted = await mount({ docked: false, reduced: true });
     try {
         const aside = mounted.aside();
-        expect(aside.hasAttribute("data-agent-floating")).toBe(true);
-        expect(getComputedStyle(aside).position).toBe("fixed");
-        expect(aside.parentElement!.style.width).toBe("0px");
+        expect(aside.classList.contains("is-docked")).toBe(false);
+        expect(aside.querySelector('[data-agent-resize="dock"]')).toBeNull();
+        expect(aside.querySelector('[data-agent-resize="northwest"]')).not.toBeNull();
+        expect(aside.classList.contains("fixed")).toBe(true);
+        expect(aside.hasAttribute("data-agent-docked")).toBe(false);
+        expect(aside.style.left).not.toBe("");
         expect(JSON.parse(aside.getAttribute("data-motion-contract")!).transition.duration).toBe(0);
         await mounted.render(false);
         expect(mounted.aside() === aside).toBe(true);
         expect(aside.hasAttribute("inert")).toBe(true);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("viewport below 960px falls back to the floating window and hides the dock toggle", async () => {
+    const mounted = await mount();
+    try {
+        await act(async () => {
+            dom.happyDOM.setWindowSize({ width: 900, height: 900 });
+            window.dispatchEvent(new Event("resize"));
+            await settle();
+        });
+        const aside = mounted.aside();
+        expect(aside.classList.contains("is-docked")).toBe(false);
+        expect(aside.querySelector('[aria-label="停靠到画布右侧"]')).toBeNull();
+        expect(aside.querySelector('[aria-label="改为浮动窗口"]')).toBeNull();
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("dock toggle uses aria-pressed and switches between docked and floating", async () => {
+    const mounted = await mount();
+    try {
+        const toggle = () => mounted.aside().querySelector<HTMLButtonElement>('[aria-label="改为浮动窗口"], [aria-label="停靠到画布右侧"]')!;
+        expect(toggle().getAttribute("aria-pressed")).toBe("true");
+        await act(async () => {
+            toggle().click();
+            await settle();
+        });
+        expect(mounted.aside().classList.contains("is-docked")).toBe(false);
+        expect(toggle().getAttribute("aria-pressed")).toBe("false");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("off canvas the panel keeps the conversation readable but disables the composer with the canvas hint", async () => {
+    const mounted = await mount();
+    try {
+        await act(async () => {
+            useGlobalAgentStore.getState().setCanvas(null);
+            await settle();
+        });
+        const aside = mounted.aside();
+        expect(aside.textContent).toContain("进入画布后使用 Agent");
+        expect(aside.textContent).toContain("A user message");
+        expect(aside.classList.contains("is-docked")).toBe(false);
+        expect(aside.querySelector('[aria-label="停靠到画布右侧"]')).toBeNull();
     } finally {
         await mounted.close();
     }

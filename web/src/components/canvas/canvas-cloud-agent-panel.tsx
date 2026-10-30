@@ -1,13 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { App, Button, Dropdown, Input, Popover } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, MoveDiagonal2, PanelRight, PictureInPicture2, RotateCcw, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
 import { saveAs } from "file-saver";
 import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { sameJsonData } from "@/lib/same-json-data";
 import { applyAgentEvent, appendUniqueMessage } from "@/lib/canvas/cloud-agent-events";
-import { isDirectorOpenStale, parseDirectorOpenEvent, type DirectorOpenRunEvent } from "@/lib/canvas/agent-director-launch";
+import { dispatchDirectorOpen } from "@/lib/canvas/agent-director-launch";
+import { appendAgentPromptPrefill } from "@/lib/canvas/agent-prompt-prefill";
 import { selectImageInspectionModel } from "@/lib/canvas/image-to-previs-agent";
 import { refreshCloudAgentConversations, mergeCloudAgentConversations } from "@/services/cloud-agent-history";
 import { agentPlanVisible, latestAgentPlanItems, latestAgentPlanTerminal, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
@@ -17,7 +18,6 @@ import { nanoid } from "nanoid";
 import { ModelPicker } from "@/components/model-picker";
 import { FluidOrb } from "@/components/ui/fluid-orb";
 import { cn } from "@/lib/utils";
-import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
@@ -92,46 +92,47 @@ import { AgentSubagentList, type AgentSubagentAvatarItem } from "./canvas-agent-
 import { AgentSubagentConversation } from "./canvas-agent-subagent-conversation";
 import { CanvasCloudAgentSettings, agentPermissionLabel, agentPermissionMenuItems, agentPermissionVisual, type AgentContextKey } from "./canvas-cloud-agent-settings";
 import { useAgentPanelLayout } from "./use-agent-panel-layout";
+import { useAgentPanelDock } from "./use-agent-panel-dock";
+import { settleAgentPrefill, takeAgentPrefill, useGlobalAgentStore, type AgentPrefillRequest } from "@/stores/use-global-agent-store";
+import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { AgentWelcome } from "./canvas-agent-welcome";
 import { DEFAULT_CANVAS_APPEARANCE, agentAvatarClipForState, agentAvatarStateForRunStatus, agentCopy, isAgentAvatarBundleManifest, type AgentAvatarBundleManifest } from "@/lib/canvas/agent-appearance";
 import { agentAvatarBundleFileURL, live2DModelURL } from "@/services/api/appearance";
 import { AgentAvatarVideo } from "./agent-avatar-video";
 import { Live2DAvatar } from "./live2d-avatar";
-import { createPortal } from "react-dom";
 import "./canvas-cloud-agent.css";
 import { createClientUUID } from "@/lib/client-id";
 import { getAgentSubagentPolicy, listAgentSubagents, updateAgentSubagentPolicy, type AgentSubagentPolicy, type AgentSubagent } from "@/services/api/agent-subagent";
 import { useAgentMessageQueue } from "./use-agent-message-queue";
 import { AgentMessageQueueList } from "./canvas-agent-message-queue";
 
-export type CanvasCloudAgentPanelHandle = {
-    /** requiresVision：本轮必须在支持图片输入的平台模型上运行（图片复现预演台）。 */
-    sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[]; requiresVision?: boolean }) => Promise<"sent" | "queued" | false>;
-};
 type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[]; mode?: AgentSendMode; oppositeMode?: boolean; replyToQuestionId?: string; requiresVision?: boolean };
 const AgentPanelVisibilityContext = createContext(true);
+const EMPTY_REFERENCES: CanvasResourceReference[] = [];
+const EMPTY_IDS: string[] = [];
+/** 非画布页的提示：fork 后端的运行与会话都以 canvasId 归属，离开画布后只能查看历史。 */
+export const AGENT_CANVAS_REQUIRED_HINT = "进入画布后使用 Agent";
 
-type CloudAgentPanelProps = {
-    ref?: Ref<CanvasCloudAgentPanelHandle>;
-    canvasId: string;
-    nodeCount: number;
-    selectedNodeIds: string[];
-    references: CanvasResourceReference[];
-    open: boolean;
-    floating?: boolean;
-    /** 是否显示悬浮唤起按钮;宿主另有入口(如导演台顶栏)时关闭。 */
-    launcher?: boolean;
-    prefillPrompt?: string;
-    onOpen: () => void;
-    onCollapse: () => void;
-    onFocusNode?: (nodeId: string) => void;
-    /** 实时收到 director_open（Agent 调用导演工具）时通知宿主打开导演台；历史回放不触发。 */
-    onDirectorOpen?: (event: DirectorOpenRunEvent) => void;
-};
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, ref, onOpen, onCollapse, onFocusNode, onDirectorOpen }: CloudAgentPanelProps) {
+/**
+ * 平台唯一的 Agent 面板，由 user-layout 全局挂载（按 userId 作 key）。画布编辑器经 useGlobalAgentStore
+ * 发布画布上下文；没有画布时面板只能查看本机缓存的历史，输入框禁用，任何请求都不会带上旧画布。
+ */
+export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean } = {}) {
+    const canvasId = useGlobalAgentStore((state) => state.canvas?.canvasId ?? "");
+    const nodeCount = useGlobalAgentStore((state) => state.canvas?.nodeCount ?? 0);
+    const selectedNodeIds = useGlobalAgentStore((state) => state.canvas?.selectedNodeIds ?? EMPTY_IDS);
+    const references = useGlobalAgentStore((state) => state.canvas?.references ?? EMPTY_REFERENCES);
+    const onFocusNode = useGlobalAgentStore((state) => state.canvas?.onFocusNode);
+    const prefillRequest = useGlobalAgentStore((state) => state.prefillRequest);
+    const open = useGlobalAgentStore((state) => state.open);
+    const onOpen = useGlobalAgentStore((state) => state.openAgent);
+    const onCollapse = useGlobalAgentStore((state) => state.closeAgent);
+    const setDocked = useGlobalAgentStore((state) => state.setDocked);
+    const dock = useAgentPanelDock();
+    const onCanvas = Boolean(canvasId);
     const userId = useUserStore((state) => state.user?.id);
     const userScope = getActiveUserScope();
     const subagentsAvailable = useUserStore((state) => state.features.agentSubagentsEnabled);
@@ -151,7 +152,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         setLoadedPolicyScope("");
         setSubagentPolicyError("");
         setSubagentPolicySaving(false);
-        if (userId && subagentsAvailable)
+        if (userId && subagentsAvailable && canvasId)
             void getAgentSubagentPolicy(canvasId, controller.signal)
                 .then((next) => {
                     if (!controller.signal.aborted && policyScopeRef.current === policyScope) {
@@ -165,7 +166,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         return () => controller.abort();
     }, [canvasId, userId, subagentsAvailable, policyScope, subagentPolicyReload]);
     const toggleSubagents = async () => {
-        if (!subagentsAvailable || !subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicySaving || running) return;
+        if (!canvasId || !subagentsAvailable || !subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicySaving || running) return;
         const scope = policyScope;
         const epoch = policyEpochRef.current.epoch;
         const isCurrent = () => policyScopeRef.current === scope && policyEpochRef.current.epoch === epoch;
@@ -211,7 +212,6 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const [connectionEpoch, setConnectionEpoch] = useState(0);
     const [messages, setMessages] = useState<CloudAgentChatMessage[]>([]);
     const [prompt, setPrompt] = useState("");
-    const lastPrefillPromptRef = useRef("");
     const [reasoningMode, setReasoningMode] = useState<AgentReasoningMode>("off");
     const [skills, setSkills] = useState<Skill[]>([]);
     const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
@@ -307,24 +307,20 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const [scenePresets, setScenePresets] = useState<SkillPreset[]>([]);
     const [presetApplyingId, setPresetApplyingId] = useState("");
     const presetApplyingRef = useRef<string | null>(null);
-    const panelLayout = useAgentPanelLayout();
+    const panelLayout = useAgentPanelLayout({ active: dock.shell, width: dock.width });
     const panelRef = useRef<HTMLElement>(null);
-    const resizeCaptureRef = useRef<{ element: HTMLDivElement; pointerId: number } | null>(null);
     useLayoutEffect(() => {
         if (open) return;
         setSkillsOpen(false);
-        const capture = resizeCaptureRef.current;
-        if (capture?.element.hasPointerCapture(capture.pointerId)) capture.element.releasePointerCapture(capture.pointerId);
-        resizeCaptureRef.current = null;
+        if (panelRef.current) panelLayout.cancelGesture(panelRef.current);
         const focused = document.activeElement;
         if (focused instanceof HTMLElement && panelRef.current?.contains(focused)) focused.blur();
     }, [open]);
     const lastSeqRef = useRef(0);
     const lastSeqRunIdRef = useRef<string | null>(null);
     const canvasSyncRef = useRef<ReturnType<typeof createAgentCanvasSync> | null>(null);
-    const onDirectorOpenRef = useRef(onDirectorOpen);
-    onDirectorOpenRef.current = onDirectorOpen;
     useEffect(() => {
+        if (!canvasId) return;
         const sync = createAgentCanvasSync({
             canvasId,
             applyPatches: (patches) => applyAgentCanvasPatches(canvasId, patches),
@@ -558,13 +554,33 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                               : "待命";
     const statusColor = status === "failed" ? "#e66b6b" : status === "rejected" || status === "cancelled" ? theme.node.muted : status === "waiting_approval" ? "#d6a24a" : status === "running" || status === "queued" ? "#69c29b" : theme.node.muted;
 
+    // 画布页投递的一次性输入（替代旧的 ref.sendPrompt）。同一 id 只消费一次；不属于当前画布或账号的请求直接丢弃。
+    const [pendingAutoSubmit, setPendingAutoSubmit] = useState<AgentPrefillRequest | null>(null);
+    const pendingAutoSubmitRef = useRef<AgentPrefillRequest | null>(null);
+    const busyRef = useRef(false);
+    busyRef.current = busy;
     useEffect(() => {
-        const value = prefillPrompt?.trim();
-        if (!value || value === lastPrefillPromptRef.current) return;
-        lastPrefillPromptRef.current = value;
-        setPrompt(value);
+        if (!prefillRequest) return;
+        const request = takeAgentPrefill(prefillRequest.id);
+        if (!request) return;
+        if (!canvasId || request.canvasId !== canvasId || request.userScope !== userScope || getActiveUserScope() !== userScope || !request.text.trim()) {
+            settleAgentPrefill(request.id, false);
+            return;
+        }
+        if (request.autoSubmit && (pendingAutoSubmitRef.current || busyRef.current || submissionRequestRef.current)) {
+            // 已有一条外部请求在等待或发送中：与旧 sendPrompt 一样拒绝重复投递。
+            settleAgentPrefill(request.id, false);
+            return;
+        }
         setView("chat");
-    }, [prefillPrompt]);
+        if (request.autoSubmit) {
+            pendingAutoSubmitRef.current = request;
+            setPendingAutoSubmit(request);
+            return;
+        }
+        setPrompt((current) => appendAgentPromptPrefill(current, request.text));
+        settleAgentPrefill(request.id, "prefilled");
+    }, [prefillRequest, canvasId, userScope]);
 
     useEffect(() => {
         if (!open || view !== "chat") setSkillsOpen(false);
@@ -666,6 +682,21 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
 
     useEffect(() => {
         let active = true;
+        if (!canvasId) {
+            // 离开画布：保留已加载的对话供只读查看，但撤掉运行、审批与待确认提交，之后不再以旧画布发任何请求。
+            pendingSubmission.current = null;
+            submissionRequestRef.current = false;
+            setBusy(false);
+            setRun(null);
+            setApproval(null);
+            setApprovalSubmitting(false);
+            approvalRequestRef.current = null;
+            setPendingHydrated(true);
+            setLoadedHistoryScope(`${userScope}:`);
+            return () => {
+                active = false;
+            };
+        }
         setLoadedHistoryScope("");
         setPendingHydrated(false);
         pendingSubmission.current = null;
@@ -747,7 +778,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     }, [activeConversationId, historyHydrated, messages, permissionMode, run, selectedModel, selectedSkillIds, contextUsage, prompt]);
 
     useEffect(() => {
-        if (!historyHydrated) return;
+        if (!historyHydrated || !canvasId) return;
         const timer = window.setTimeout(() => {
             void saveCloudAgentConversations(canvasId, activeConversationId, conversations, userScope);
         }, 180);
@@ -755,7 +786,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     }, [activeConversationId, canvasId, conversations, historyHydrated, userScope]);
 
     useEffect(() => {
-        if (!historyHydrated || !pendingHydrated || !userId) return;
+        if (!historyHydrated || !pendingHydrated || !userId || !canvasId) return;
         const controller = new AbortController();
         let loading = false;
         const refresh = async () => {
@@ -858,9 +889,8 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
                 setContextUsage((current) => reduceAgentContextUsage(current, event));
                 applyAgentEvent(event, setMessages, setRun, setApproval, setPrompt);
-                // 只有持久事件（seq>0）且未过期才拉起导演台：快照合成事件与重连回放的旧请求不弹窗。
-                const directorOpen = event.seq > 0 && !isDirectorOpenStale(event.createdAt) ? parseDirectorOpenEvent(event) : null;
-                if (directorOpen) onDirectorOpenRef.current?.(directorOpen);
+                // 只有持久事件（seq>0）且未过期才拉起导演台：快照合成事件与重连回放的旧请求不派发；画布页按 canvasId 过滤。
+                dispatchDirectorOpen(event);
                 if (["user_question", "run_completed", "run_failed", "run_cancelled"].includes(event.type)) void messageQueue.refresh();
                 if (event.type.startsWith("subagent_") || ["run_completed", "run_failed", "run_cancelled"].includes(event.type)) {
                     const request = ++subagentListRequestRef.current;
@@ -906,6 +936,8 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const submit = async (override?: string, options: AgentSubmitOptions = {}): Promise<"sent" | "queued" | false> => {
         if (activeHistoryState?.status === "unavailable") return false;
         const value = (override ?? prompt).trim();
+        // 没有画布时绝不发送：fork 后端以 canvasId 归属运行，离开画布后旧 canvasId 也不能再用。
+        if (!canvasId) return false;
         if (!value || busy || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return false;
         if (subagentsAvailable && (!subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicy.canvasId !== canvasId || subagentPolicySaving || subagentPolicyError)) {
             setSubagentPolicyError("请先加载并确认子代理授权设置，再发送消息");
@@ -1051,13 +1083,26 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         return accepted && currentScope.current === scope ? outcome : false;
     };
 
-    useImperativeHandle(ref, () => ({
-        sendPrompt: async (request) => {
-            if (request.canvasId !== canvasId || request.userScope !== userScope || getActiveUserScope() !== userScope) return false;
-            setView("chat");
-            return submit(request.prompt, { preserveDraft: true, focusNodeIds: request.focusNodeIds, requiresVision: request.requiresVision });
-        },
-    }));
+    // 自动提交等历史与待确认记录就绪后再发；保持 fork sendPrompt 的语义：保留草稿、带上聚焦节点与看图要求。
+    const autoSubmitRef = useRef<number | null>(null);
+    useEffect(() => {
+        const request = pendingAutoSubmit;
+        if (!request || autoSubmitRef.current === request.id) return;
+        if (request.canvasId !== canvasId || request.userScope !== userScope) {
+            pendingAutoSubmitRef.current = null;
+            setPendingAutoSubmit(null);
+            settleAgentPrefill(request.id, false);
+            return;
+        }
+        if (!historyHydrated || !pendingHydrated || busy || submissionRequestRef.current) return;
+        autoSubmitRef.current = request.id;
+        pendingAutoSubmitRef.current = null;
+        setPendingAutoSubmit(null);
+        void submit(request.text, { preserveDraft: true, focusNodeIds: request.focusNodeIds, requiresVision: request.requiresVision }).then(
+            (outcome) => settleAgentPrefill(request.id, outcome),
+            () => settleAgentPrefill(request.id, false),
+        );
+    }, [pendingAutoSubmit, canvasId, userScope, historyHydrated, pendingHydrated, busy]);
     const stop = async () => {
         const activeRun = run;
         if (!activeRun?.id || stopping) return;
@@ -1084,7 +1129,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     };
 
     const submitApproval = async (decision: "approve" | "reject", mediaSettings?: AgentMediaSettings) => {
-        if (!run || !approval || connectionStatus !== "connected" || approvalRequestRef.current === approval.approvalId) return;
+        if (!canvasId || !run || !approval || connectionStatus !== "connected" || approvalRequestRef.current === approval.approvalId) return;
         const runId = run.id;
         const approvalId = approval.approvalId;
         const scope = conversationScope;
@@ -1205,7 +1250,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     };
     const deleteConversation = async (id: string) => {
         const conversation = conversationsRef.current.find((item) => item.id === id);
-        if (!conversation) return;
+        if (!conversation || !canvasId) return;
         const scope = userScope;
         try {
             const serverId = cloudAgentConversationServerId(conversation) || conversation.run?.id;
@@ -1227,267 +1272,289 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const panel = (
         <>
             {!open && launcher ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} status={status} onOpen={onOpen} /> : null}
-            <div className="relative flex min-h-0 shrink-0" style={{ width: open && !floating ? panelLayout.width : 0, flexBasis: open && !floating ? panelLayout.width : 0 }}>
-                    <motion.aside
-                        ref={panelRef}
-                        initial={false}
-                        animate={{ opacity: open ? 1 : 0, x: open || reducedMotion ? 0 : "100%" }}
-                        transition={{ duration: reducedMotion || panelLayout.resizing ? 0 : 0.42, ease: [0.22, 1, 0.36, 1] }}
-                        className="canvas-agent-panel absolute inset-y-0 right-0 flex min-h-0 min-w-0 flex-col overflow-hidden"
-                        data-agent-floating={floating || undefined}
-                        style={{ width: panelLayout.width, "--agent-panel-width": `${panelLayout.width}px`, "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
-                        aria-label="Agent 工作台"
-                        aria-hidden={!open}
-                        inert={!open}
-                        data-agent-open={open}
-                        data-agent-compact={panelLayout.compact || undefined}
-                        data-canvas-no-zoom
-                        data-canvas-wheel-scroll
-                        onWheel={(event) => event.stopPropagation()}
-                    >
-                        {!panelLayout.compact ? <div
-                            role="separator"
-                            tabIndex={0}
-                            aria-label="调整 Agent 侧栏宽度"
-                            aria-orientation="vertical"
-                            aria-valuemin={panelLayout.minWidth}
-                            aria-valuemax={panelLayout.maxWidth}
-                            aria-valuenow={panelLayout.width}
-                            aria-valuetext={`${panelLayout.width} 像素`}
-                            title="拖动调整宽度，左右方向键微调，双击恢复默认"
-                            className="canvas-agent-width-handle"
-                            {...panelLayout.resizeHandlers}
-                            onPointerDown={(event) => {
-                                panelLayout.resizeHandlers.onPointerDown(event);
-                                if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeCaptureRef.current = { element: event.currentTarget, pointerId: event.pointerId };
-                            }}
-                            onLostPointerCapture={(event) => {
-                                resizeCaptureRef.current = null;
-                                panelLayout.resizeHandlers.onLostPointerCapture(event);
-                            }}
-                        /> : null}
-                        {/* 布局宽度即时切换，内容仅随侧栏平移；容器查询始终使用真实宽度。 */}
-                        <div className="canvas-agent-panel-content flex min-h-0 flex-1 flex-col">
-                            <AnimatePresence mode="wait" initial={false}>
-                                {view === "settings" ? (
-                                    <motion.div key="settings" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
-                                        <CanvasCloudAgentSettings
-                                            key={`${userId}:${canvasId}:${open}`}
-                                            sendMode={messageQueue.mode}
-                                            sendModeSaving={messageQueue.savingMode}
-                                            sendModeError={messageQueue.settingsError}
-                                            onSendModeChange={messageQueue.changeMode}
-                                            onSendModeRetry={messageQueue.retry}
-                                            theme={theme}
+            {/* 上游外壳：画布内且视口够宽时停靠为右侧全高栏（工作区让出同样宽度），否则是可移动、可调大小的浮动窗口。
+                收起时保留 DOM 并置为 inert，草稿、阅读位置与浮层状态都不丢。 */}
+            <motion.aside
+                ref={panelRef}
+                initial={false}
+                animate={open ? { opacity: 1, x: 0, y: 0 } : reducedMotion ? { opacity: 0 } : dock.shell ? { opacity: 0, x: 24 } : { opacity: 0, y: 12 }}
+                transition={{ duration: reducedMotion ? 0 : 0.26, ease: [0.16, 1, 0.3, 1] }}
+                className={`canvas-agent-panel fixed flex min-h-0 min-w-0 flex-col overflow-hidden${dock.shell ? " is-docked" : ""}`}
+                style={{ ...panelLayout.style, "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
+                aria-label="Agent 工作台"
+                aria-hidden={!open}
+                inert={!open}
+                data-agent-open={open}
+                data-agent-docked={dock.shell || undefined}
+                data-agent-compact={panelLayout.compact || undefined}
+                data-popover-anchor-container
+                data-canvas-no-zoom
+                data-canvas-wheel-scroll
+                {...panelLayout.pointerHandlers}
+                onWheel={(event) => event.stopPropagation()}
+            >
+                {panelLayout.compact ? null : dock.shell ? (
+                    // 停靠时只保留左边缘：拖动或用左右方向键调宽，画布同步让出空间。
+                    <div
+                        role="separator"
+                        tabIndex={0}
+                        aria-orientation="vertical"
+                        aria-label="调整 Agent 面板宽度"
+                        aria-valuenow={dock.width}
+                        aria-valuemin={dock.bounds.min}
+                        aria-valuemax={dock.bounds.max}
+                        aria-valuetext={`${dock.width} 像素`}
+                        title="拖动调整宽度，也可用左右方向键调整"
+                        data-agent-resize="dock"
+                        className="agent-panel-dock-resizer"
+                        onKeyDown={panelLayout.onResizeKeyDown}
+                    />
+                ) : (
+                    <>
+                        <div data-agent-resize="north" className="agent-panel-resize-edge is-north" />
+                        <div data-agent-resize="west" className="agent-panel-resize-edge is-west" />
+                        <button
+                            type="button"
+                            aria-label="调整 Agent 面板大小"
+                            title="拖动调整宽高，也可用方向键调整"
+                            data-agent-resize="northwest"
+                            className="agent-panel-resize-corner"
+                            onKeyDown={panelLayout.onResizeKeyDown}
+                            style={{ color: theme.node.muted }}
+                        >
+                            <MoveDiagonal2 className="size-3" aria-hidden="true" />
+                        </button>
+                    </>
+                )}
+                {/* 布局宽度即时切换，内容仅随侧栏平移；容器查询始终使用真实宽度。 */}
+                <div className="canvas-agent-panel-content flex min-h-0 flex-1 flex-col">
+                    <AnimatePresence mode="wait" initial={false}>
+                        {view === "settings" ? (
+                            <motion.div key="settings" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
+                                <CanvasCloudAgentSettings
+                                    key={`${userId}:${canvasId}:${open}`}
+                                    sendMode={messageQueue.mode}
+                                    sendModeSaving={messageQueue.savingMode}
+                                    sendModeError={messageQueue.settingsError}
+                                    onSendModeChange={messageQueue.changeMode}
+                                    onSendModeRetry={messageQueue.retry}
+                                    theme={theme}
+                                    config={config}
+                                    selectedModel={selectedModel}
+                                    permissionMode={permissionMode}
+                                    contextScope={contextScope}
+                                    nodeCount={nodeCount}
+                                    installedSkills={installedSkills}
+                                    marketSkills={marketSkills}
+                                    selectedSkillIds={selectedSkillIds}
+                                    skillSearch={skillSearch}
+                                    skillsLoading={skillsLoading}
+                                    skillHasMore={skillHasMore}
+                                    maxCredits={maxCredits}
+                                    maxGenerationTasks={maxGenerationTasks}
+                                    maxVideoSeconds={maxVideoSeconds}
+                                    onBack={() => setView("chat")}
+                                    onModelChange={setModel}
+                                    onPermissionChange={setPermissionMode}
+                                    reasoningMode={reasoningMode}
+                                    onReasoningModeChange={setReasoningMode}
+                                    canvasId={canvasId}
+                                    subagents={
+                                        subagentsAvailable
+                                            ? {
+                                                  enabled: loadedPolicyScope === policyScope && subagentPolicy?.enabled === true,
+                                                  disabled: !subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicySaving || running,
+                                                  saving: subagentPolicySaving,
+                                                  error: subagentPolicyError,
+                                                  onToggle: () => void toggleSubagents(),
+                                                  onReload: () => setSubagentPolicyReload((value) => value + 1),
+                                              }
+                                            : undefined
+                                    }
+                                    onContextToggle={(value) => setContextScope((current) => (current.includes(value) ? current.filter((item) => item !== value) : [...current, value]))}
+                                    onSkillSearch={setSkillSearch}
+                                    onSkillToggle={(id) => setSelectedSkillIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))}
+                                    onSkillInstall={installSkill}
+                                    onLoadMoreSkills={loadMoreSkills}
+                                    onMaxCreditsChange={setMaxCredits}
+                                    onMaxGenerationTasksChange={setMaxGenerationTasks}
+                                    onMaxVideoSecondsChange={setMaxVideoSeconds}
+                                />
+                            </motion.div>
+                        ) : view === "history" ? (
+                            <motion.div key="history" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
+                                <AgentHistory conversations={conversations} activeConversationId={activeConversationId} theme={theme} onBack={() => setView("chat")} onNew={newConversation} onOpen={openConversation} onDelete={deleteConversation} />
+                            </motion.div>
+                        ) : selectedSubagent ? (
+                            <AgentSubagentConversation
+                                key={selectedSubagent.id}
+                                agent={selectedSubagent}
+                                theme={theme}
+                                onBack={() => {
+                                    returnSubagentFocus.current = selectedSubagent.id;
+                                    setSelectedSubagentId(null);
+                                }}
+                            />
+                        ) : (
+                            <motion.div key="chat" className="flex min-h-0 flex-1 flex-col" initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
+                                <AgentHeader
+                                    theme={theme}
+                                    hasMessages={messages.length > 0}
+                                    statusLabel={statusLabel}
+                                    statusColor={statusColor}
+                                    nodeCount={onCanvas ? nodeCount : null}
+                                    onNew={newConversation}
+                                    onHistory={() => setView("history")}
+                                    exporting={exporting}
+                                    onExport={() => {
+                                        if (exporting) return;
+                                        setExporting(true);
+                                        void (async () => {
+                                            let snapshot = run;
+                                            let snapshotError: string | undefined;
+                                            if (run?.id) {
+                                                try {
+                                                    snapshot = (await getAgentRun(run.id, AbortSignal.timeout(15_000))).run;
+                                                } catch (cause) {
+                                                    snapshotError = cause instanceof Error ? cause.message : String(cause);
+                                                }
+                                            }
+                                            const text = buildAgentDebugExport({ canvasId, conversationId: activeConversationId, messages, run: snapshot, approval, model: selectedModel, permissionMode, snapshotError });
+                                            saveAs(new Blob([text], { type: "application/json;charset=utf-8" }), `agent-debug-${activeConversationId}-${Date.now()}.json`);
+                                        })()
+                                            .catch((cause) => setMessages((current) => appendAgentError(current, `export-${Date.now()}`, cause, "导出失败")))
+                                            .finally(() => setExporting(false));
+                                    }}
+                                    onSettings={() => setView("settings")}
+                                    onResetLayout={panelLayout.reset}
+                                    docked={dock.shell}
+                                    onToggleDock={dock.available && !panelLayout.compact ? () => setDocked(!dock.shell) : undefined}
+                                    onCollapse={onCollapse}
+                                    skillsOpen={skillsOpen}
+                                    selectedSkillCount={selectedSkillIds.length}
+                                    onSkills={() => setSkillsOpen(true)}
+                                />
+                                {run && connectionStatus !== "connected" ? (
+                                    <div role="status" className="flex items-center justify-between gap-2 px-5 py-2 text-xs" style={{ color: theme.node.muted }}>
+                                        <span>{connectionStatus === "disconnected" ? "连接已断开，服务端任务可能仍在执行；运行记录已保留" : "正在连接并校准运行状态…"}</span>
+                                        {connectionStatus === "disconnected" ? (
+                                            <Button size="small" onClick={() => setConnectionEpoch((value) => value + 1)}>
+                                                重新连接
+                                            </Button>
+                                        ) : null}
+                                    </div>
+                                ) : null}
+                                {workerAvailability?.queueReason ? (
+                                    <div role="status" className="px-5 py-2 text-xs text-foreground/70">{workerAvailability.reason}</div>
+                                ) : null}
+                                {activeHistoryState ? (
+                                    <div role="status" className="px-5 py-2 text-xs" style={{ color: theme.node.muted }}>{activeHistoryState.message}</div>
+                                ) : null}
+                                <AgentConversation
+                                    key={activeConversationId}
+                                    theme={theme}
+                                    messages={messages}
+                                    onFocusNode={onFocusNode}
+                                    references={[...references, ...buildSkillMentionReferences(installedSkills)]}
+                                    busy={busy || running}
+                                    approval={approval}
+                                    nodeCount={nodeCount}
+                                    approvalSubmitting={approvalSubmitting || connectionStatus !== "connected"}
+                                    onChooseSkill={() => setSkillsOpen(true)}
+                                    onDraftPrompt={(draft) => setPrompt((current) => (current.trim() ? `${current}\n\n${draft}` : draft))}
+                                    onApprovalReasonChange={(reason) => setApproval((current) => (current ? { ...current, reason } : current))}
+                                    onApprove={(settings) => void submitApproval("approve", settings)}
+                                    onReject={() => void submitApproval("reject")}
+                                    footer={undoOffer && !busy ? <AgentRunUndoAction theme={theme} pending={undoingRunId === undoOffer} onUndo={() => void undoRun(undoOffer)} /> : null}
+                                />
+                                {planVisible ? (
+                                    <AgentPlanBar
+                                        items={planItems}
+                                        theme={theme}
+                                        minimized={planMinimized}
+                                        terminal={planTerminal || Boolean(run && ["completed", "failed", "cancelled", "rejected"].includes(run.status))}
+                                        onToggle={() => setPlanMinimized((value) => !value)}
+                                    />
+                                ) : null}
+                                {allSubagents.length > 0 ? (
+                                    <div ref={collaboratorsRef} className="shrink-0">
+                                        <AgentSubagentList items={allSubagents} theme={theme} onSelect={setSelectedSubagentId} />
+                                    </div>
+                                ) : null}
+                                {subagentDetailsError ? (
+                                    <div role="alert" className="px-4 py-2 text-xs">
+                                        {subagentDetailsError}
+                                    </div>
+                                ) : null}
+                                {subagentPolicyError ? (
+                                    <div role="alert" className="flex items-center justify-between gap-2 px-4 py-2 text-xs">
+                                        <span>{subagentPolicyError}</span>
+                                        <Button size="small" onClick={() => setView("settings")}>
+                                            打开 Agent 设置
+                                        </Button>
+                                    </div>
+                                ) : null}
+                                {historyHydrated && !messages.some((message) => message.role === "user" || message.role === "assistant") && !run ? (
+                                    <AgentSceneCapsules
+                                        buckets={sceneBuckets}
+                                        installedIds={installedSkillIds}
+                                        theme={theme}
+                                        disabled={Boolean(busy || running || !pendingHydrated || presetApplyingId)}
+                                        onPick={(preset) => void applyScenePreset(preset)}
+                                        onPickSkill={(skill) => void applySingleSkill(skill)}
+                                    />
+                                ) : null}
+                                {!onCanvas ? (
+                                    <div role="status" className="agent-canvas-required px-5 py-2 text-xs">
+                                        {AGENT_CANVAS_REQUIRED_HINT}
+                                    </div>
+                                ) : null}
+                                {pendingQuestion ? <AgentQuestionBar question={pendingQuestion} theme={theme} disabled={approvalSubmitting || busy || !messageQueue.queue?.awaitingQuestionId} onAnswer={(label) => void submit(label, { mode: "interject", replyToQuestionId: messageQueue.queue?.awaitingQuestionId })} /> : null}
+                                {/* 只重置浮层控件；输入器及待发队列保留 DOM 和未提交的编辑。 */}
+                                <AgentChatComposer
+                                    visible={open}
+                                    queuedMessages={<>
+                                        <AgentMessageQueueList key={conversationScope} queue={messageQueue.queue} error={messageQueue.queueError || messageQueue.settingsError} busy={busy || messageQueue.acting} onEdit={messageQueue.edit} onPromote={messageQueue.promote} onRemove={messageQueue.remove} onResume={messageQueue.resume} onRetry={messageQueue.retry} />
+                                        {pendingSubmission.current?.request && !busy ? <div className="agent-message-queue agent-message-queue-error"><span>发送结果待确认</span><button type="button" onClick={() => { const request = pendingSubmission.current?.request; if (request) void submit(request.prompt, { preserveDraft: true }); }}>重试发送</button></div> : null}
+                                    </>}
+                                    prompt={prompt}
+                                    disabled={!onCanvas || activeHistoryState?.status === "unavailable" || !historyHydrated || !pendingHydrated}
+                                    sending={busy}
+                                    running={running}
+                                    placeholder={onCanvas ? "输入消息，用 @ 引用节点，用 / 引用技能" : AGENT_CANVAS_REQUIRED_HINT}
+                                    theme={theme}
+                                    onPromptChange={setPrompt}
+                                    onSubmit={(oppositeMode) => void submit(undefined, { oppositeMode })}
+                                    onStop={run?.id && running ? stop : undefined}
+                                    stopping={stopping}
+                                    sendMode={messageQueue.mode}
+                                    sendModeSaving={messageQueue.savingMode || !messageQueue.mode}
+                                    onSendModeSettings={() => setView("settings")}
+                                    references={[...references, ...buildSkillMentionReferences(installedSkills)]}
+                                    slashSkills={installedSkills}
+                                    includeAssetLibrary={false}
+                                    submitAccessory={<AgentContextRing key={String(open)} view={presentAgentContextUsage(contextUsage)} />}
+                                    left={
+                                        <ComposerControls
+                                            key={String(open)}
+                                            reasoningMode={reasoningSupported ? reasoningMode : "off"}
+                                            onReasoningModeChange={(value) => {
+                                                if (reasoningSupported) setReasoningMode(value);
+                                            }}
                                             config={config}
                                             selectedModel={selectedModel}
                                             permissionMode={permissionMode}
-                                            contextScope={contextScope}
-                                            nodeCount={nodeCount}
-                                            installedSkills={installedSkills}
-                                            marketSkills={marketSkills}
-                                            selectedSkillIds={selectedSkillIds}
-                                            skillSearch={skillSearch}
-                                            skillsLoading={skillsLoading}
-                                            skillHasMore={skillHasMore}
-                                            maxCredits={maxCredits}
-                                            maxGenerationTasks={maxGenerationTasks}
-                                            maxVideoSeconds={maxVideoSeconds}
-                                            onBack={() => setView("chat")}
+                                            theme={theme}
                                             onModelChange={setModel}
                                             onPermissionChange={setPermissionMode}
-                                            reasoningMode={reasoningMode}
-                                            onReasoningModeChange={setReasoningMode}
-                                            canvasId={canvasId}
-                                            subagents={
-                                                subagentsAvailable
-                                                    ? {
-                                                          enabled: loadedPolicyScope === policyScope && subagentPolicy?.enabled === true,
-                                                          disabled: !subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicySaving || running,
-                                                          saving: subagentPolicySaving,
-                                                          error: subagentPolicyError,
-                                                          onToggle: () => void toggleSubagents(),
-                                                          onReload: () => setSubagentPolicyReload((value) => value + 1),
-                                                      }
-                                                    : undefined
-                                            }
-                                            onContextToggle={(value) => setContextScope((current) => (current.includes(value) ? current.filter((item) => item !== value) : [...current, value]))}
-                                            onSkillSearch={setSkillSearch}
-                                            onSkillToggle={(id) => setSelectedSkillIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))}
-                                            onSkillInstall={installSkill}
-                                            onLoadMoreSkills={loadMoreSkills}
-                                            onMaxCreditsChange={setMaxCredits}
-                                            onMaxGenerationTasksChange={setMaxGenerationTasks}
-                                            onMaxVideoSecondsChange={setMaxVideoSeconds}
                                         />
-                                    </motion.div>
-                                ) : view === "history" ? (
-                                    <motion.div key="history" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
-                                        <AgentHistory conversations={conversations} activeConversationId={activeConversationId} theme={theme} onBack={() => setView("chat")} onNew={newConversation} onOpen={openConversation} onDelete={deleteConversation} />
-                                    </motion.div>
-                                ) : selectedSubagent ? (
-                                    <AgentSubagentConversation
-                                        key={selectedSubagent.id}
-                                        agent={selectedSubagent}
-                                        theme={theme}
-                                        onBack={() => {
-                                            returnSubagentFocus.current = selectedSubagent.id;
-                                            setSelectedSubagentId(null);
-                                        }}
-                                    />
-                                ) : (
-                                    <motion.div key="chat" className="flex min-h-0 flex-1 flex-col" initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
-                                        <AgentHeader
-                                            theme={theme}
-                                            hasMessages={messages.length > 0}
-                                            statusLabel={statusLabel}
-                                            statusColor={statusColor}
-                                            nodeCount={nodeCount}
-                                            onNew={newConversation}
-                                            onHistory={() => setView("history")}
-                                            exporting={exporting}
-                                            onExport={() => {
-                                                if (exporting) return;
-                                                setExporting(true);
-                                                void (async () => {
-                                                    let snapshot = run;
-                                                    let snapshotError: string | undefined;
-                                                    if (run?.id) {
-                                                        try {
-                                                            snapshot = (await getAgentRun(run.id, AbortSignal.timeout(15_000))).run;
-                                                        } catch (cause) {
-                                                            snapshotError = cause instanceof Error ? cause.message : String(cause);
-                                                        }
-                                                    }
-                                                    const text = buildAgentDebugExport({ canvasId, conversationId: activeConversationId, messages, run: snapshot, approval, model: selectedModel, permissionMode, snapshotError });
-                                                    saveAs(new Blob([text], { type: "application/json;charset=utf-8" }), `agent-debug-${activeConversationId}-${Date.now()}.json`);
-                                                })()
-                                                    .catch((cause) => setMessages((current) => appendAgentError(current, `export-${Date.now()}`, cause, "导出失败")))
-                                                    .finally(() => setExporting(false));
-                                            }}
-                                            onSettings={() => setView("settings")}
-                                            onCollapse={onCollapse}
-                                            skillsOpen={skillsOpen}
-                                            selectedSkillCount={selectedSkillIds.length}
-                                            onSkills={() => setSkillsOpen(true)}
-                                        />
-                                        {run && connectionStatus !== "connected" ? (
-                                            <div role="status" className="flex items-center justify-between gap-2 px-5 py-2 text-xs" style={{ color: theme.node.muted }}>
-                                                <span>{connectionStatus === "disconnected" ? "连接已断开，服务端任务可能仍在执行；运行记录已保留" : "正在连接并校准运行状态…"}</span>
-                                                {connectionStatus === "disconnected" ? (
-                                                    <Button size="small" onClick={() => setConnectionEpoch((value) => value + 1)}>
-                                                        重新连接
-                                                    </Button>
-                                                ) : null}
-                                            </div>
-                                        ) : null}
-                                        {workerAvailability?.queueReason ? (
-                                            <div role="status" className="px-5 py-2 text-xs text-foreground/70">{workerAvailability.reason}</div>
-                                        ) : null}
-                                        {activeHistoryState ? (
-                                            <div role="status" className="px-5 py-2 text-xs" style={{ color: theme.node.muted }}>{activeHistoryState.message}</div>
-                                        ) : null}
-                                        <AgentConversation
-                                            key={activeConversationId}
-                                            theme={theme}
-                                            messages={messages}
-                                            onFocusNode={onFocusNode}
-                                            references={[...references, ...buildSkillMentionReferences(installedSkills)]}
-                                            busy={busy || running}
-                                            approval={approval}
-                                            nodeCount={nodeCount}
-                                            approvalSubmitting={approvalSubmitting || connectionStatus !== "connected"}
-                                            onChooseSkill={() => setSkillsOpen(true)}
-                                            onDraftPrompt={(draft) => setPrompt((current) => (current.trim() ? `${current}\n\n${draft}` : draft))}
-                                            onApprovalReasonChange={(reason) => setApproval((current) => (current ? { ...current, reason } : current))}
-                                            onApprove={(settings) => void submitApproval("approve", settings)}
-                                            onReject={() => void submitApproval("reject")}
-                                            footer={undoOffer && !busy ? <AgentRunUndoAction theme={theme} pending={undoingRunId === undoOffer} onUndo={() => void undoRun(undoOffer)} /> : null}
-                                        />
-                                        {planVisible ? (
-                                            <AgentPlanBar
-                                                items={planItems}
-                                                theme={theme}
-                                                minimized={planMinimized}
-                                                terminal={planTerminal || Boolean(run && ["completed", "failed", "cancelled", "rejected"].includes(run.status))}
-                                                onToggle={() => setPlanMinimized((value) => !value)}
-                                            />
-                                        ) : null}
-                                        {allSubagents.length > 0 ? (
-                                            <div ref={collaboratorsRef} className="shrink-0">
-                                                <AgentSubagentList items={allSubagents} theme={theme} onSelect={setSelectedSubagentId} />
-                                            </div>
-                                        ) : null}
-                                        {subagentDetailsError ? (
-                                            <div role="alert" className="px-4 py-2 text-xs">
-                                                {subagentDetailsError}
-                                            </div>
-                                        ) : null}
-                                        {subagentPolicyError ? (
-                                            <div role="alert" className="flex items-center justify-between gap-2 px-4 py-2 text-xs">
-                                                <span>{subagentPolicyError}</span>
-                                                <Button size="small" onClick={() => setView("settings")}>
-                                                    打开 Agent 设置
-                                                </Button>
-                                            </div>
-                                        ) : null}
-                                        {historyHydrated && !messages.some((message) => message.role === "user" || message.role === "assistant") && !run ? (
-                                            <AgentSceneCapsules
-                                                buckets={sceneBuckets}
-                                                installedIds={installedSkillIds}
-                                                theme={theme}
-                                                disabled={Boolean(busy || running || !pendingHydrated || presetApplyingId)}
-                                                onPick={(preset) => void applyScenePreset(preset)}
-                                                onPickSkill={(skill) => void applySingleSkill(skill)}
-                                            />
-                                        ) : null}
-                                        {pendingQuestion ? <AgentQuestionBar question={pendingQuestion} theme={theme} disabled={approvalSubmitting || busy || !messageQueue.queue?.awaitingQuestionId} onAnswer={(label) => void submit(label, { mode: "interject", replyToQuestionId: messageQueue.queue?.awaitingQuestionId })} /> : null}
-                                        {/* 只重置浮层控件；输入器及待发队列保留 DOM 和未提交的编辑。 */}
-                                        <AgentChatComposer
-                                            visible={open}
-                                            queuedMessages={<>
-                                                <AgentMessageQueueList key={conversationScope} queue={messageQueue.queue} error={messageQueue.queueError || messageQueue.settingsError} busy={busy || messageQueue.acting} onEdit={messageQueue.edit} onPromote={messageQueue.promote} onRemove={messageQueue.remove} onResume={messageQueue.resume} onRetry={messageQueue.retry} />
-                                                {pendingSubmission.current?.request && !busy ? <div className="agent-message-queue agent-message-queue-error"><span>发送结果待确认</span><button type="button" onClick={() => { const request = pendingSubmission.current?.request; if (request) void submit(request.prompt, { preserveDraft: true }); }}>重试发送</button></div> : null}
-                                            </>}
-                                            prompt={prompt}
-                                            disabled={activeHistoryState?.status === "unavailable" || !historyHydrated || !pendingHydrated}
-                                            sending={busy}
-                                            running={running}
-                                            placeholder="输入消息，用 @ 引用节点，用 / 引用技能"
-                                            theme={theme}
-                                            onPromptChange={setPrompt}
-                                            onSubmit={(oppositeMode) => void submit(undefined, { oppositeMode })}
-                                            onStop={run?.id && running ? stop : undefined}
-                                            stopping={stopping}
-                                            sendMode={messageQueue.mode}
-                                            sendModeSaving={messageQueue.savingMode || !messageQueue.mode}
-                                            onSendModeSettings={() => setView("settings")}
-                                            references={[...references, ...buildSkillMentionReferences(installedSkills)]}
-                                            slashSkills={installedSkills}
-                                            includeAssetLibrary={false}
-                                            submitAccessory={<AgentContextRing key={String(open)} view={presentAgentContextUsage(contextUsage)} />}
-                                            left={
-                                                <ComposerControls
-                                                    key={String(open)}
-                                                    reasoningMode={reasoningSupported ? reasoningMode : "off"}
-                                                    onReasoningModeChange={(value) => {
-                                                        if (reasoningSupported) setReasoningMode(value);
-                                                    }}
-                                                    config={config}
-                                                    selectedModel={selectedModel}
-                                                    permissionMode={permissionMode}
-                                                    theme={theme}
-                                                    onModelChange={setModel}
-                                                    onPermissionChange={setPermissionMode}
-                                                />
-                                            }
-                                        />
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-                        </div>
-                    </motion.aside>
-            </div>
+                                    }
+                                />
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </div>
+            </motion.aside>
             {open ? <CanvasAgentSkillLibraryModal
                 open={skillsOpen}
                 theme={theme}
@@ -1515,8 +1582,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             /> : null}
         </>
     );
-    const scopedPanel = <AgentPanelVisibilityContext value={open}>{panel}</AgentPanelVisibilityContext>;
-    return floating ? createPortal(scopedPanel, document.body) : scopedPanel;
+    return <AgentPanelVisibilityContext value={open}>{panel}</AgentPanelVisibilityContext>;
 }
 
 function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, status, onOpen }: { theme: CanvasTheme; statusColor: string; approvalPending: boolean; reducedMotion: boolean; status: string; onOpen: () => void }) {
@@ -1571,7 +1637,7 @@ function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, sta
             type="button"
             aria-label={`打开${appearance.agentName}`}
             title={approvalPending ? "Agent 等待你的审批" : "打开 Agent 助手"}
-            className={cn("canvas-agent-launcher fixed z-[var(--z-panel-floating)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/35", live && "canvas-agent-launcher-live2d", media && "canvas-agent-launcher-media")}
+            className={cn("canvas-agent-launcher fixed z-[var(--z-agent-panel)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/35", live && "canvas-agent-launcher-live2d", media && "canvas-agent-launcher-media")}
             style={{ right: "var(--canvas-inset-x)", bottom: "var(--canvas-inset-y)", width, height, color: theme.node.text, "--canvas-agent-launcher-shadow": theme.spatial.shadow } as CSSProperties}
             data-canvas-no-zoom
             onClick={onOpen}
@@ -1606,6 +1672,9 @@ export function AgentHeader({
     onNew,
     onHistory,
     onSettings,
+    onResetLayout,
+    docked = false,
+    onToggleDock,
     onCollapse,
     onExport,
     exporting,
@@ -1617,10 +1686,15 @@ export function AgentHeader({
     hasMessages: boolean;
     statusLabel: string;
     statusColor: string;
-    nodeCount: number;
+    /** null 表示当前不在画布里。 */
+    nodeCount: number | null;
     onNew: () => void;
     onHistory: () => void;
     onSettings: () => void;
+    onResetLayout?: () => void;
+    docked?: boolean;
+    /** 只在画布里、视口够宽时提供：在“停靠右侧”和“浮动窗口”之间切换。 */
+    onToggleDock?: () => void;
     onCollapse: () => void;
     onExport: () => void;
     exporting: boolean;
@@ -1630,7 +1704,7 @@ export function AgentHeader({
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     return (
-        <header className="agent-panel-header flex shrink-0 flex-wrap items-center gap-3">
+        <header data-agent-drag-handle={docked ? undefined : ""} className="agent-panel-header flex shrink-0 flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1 basis-36">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="agent-panel-title">
@@ -1643,10 +1717,32 @@ export function AgentHeader({
                     </span>
                 </div>
                 <div className="agent-panel-context">
-                    {appearance.agentName} · 当前画布 {nodeCount} 个节点
+                    {appearance.agentName} · {nodeCount === null ? "未在画布中，可查看历史；进入画布后可继续对话" : `当前画布 ${nodeCount} 个节点`}
                 </div>
             </div>
             <div className="agent-header-actions ml-auto flex shrink-0 items-center gap-0.5" style={{ color: theme.node.muted }}>
+                {onToggleDock ? (
+                    <Button
+                        type="text"
+                        shape="circle"
+                        icon={docked ? <PictureInPicture2 className="size-4" /> : <PanelRight className="size-4" />}
+                        onClick={onToggleDock}
+                        aria-pressed={docked}
+                        aria-label={docked ? "改为浮动窗口" : "停靠到画布右侧"}
+                        title={docked ? "改为浮动窗口" : "停靠到画布右侧，画布让出位置不被遮挡"}
+                    />
+                ) : null}
+                {onResetLayout ? (
+                    <Button
+                        type="text"
+                        shape="circle"
+                        icon={<RotateCcw className="size-4" />}
+                        onClick={onResetLayout}
+                        aria-label={docked ? "恢复 Agent 默认宽度" : "恢复 Agent 默认窗口"}
+                        title={docked ? "恢复默认宽度" : "恢复默认窗口大小和位置"}
+                        className="hidden sm:inline-flex"
+                    />
+                ) : null}
                 <Button
                     type="text"
                     className="agent-header-skills"

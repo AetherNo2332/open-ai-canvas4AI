@@ -37,3 +37,20 @@ export function restoreAgentPanelDock(raw: string | null): AgentPanelDockPrefere
     }
     return fallback;
 }
+
+/** fork 旧版侧栏宽度偏好；只在首次读取停靠偏好时迁移一次，之后由 AGENT_PANEL_DOCK_KEY 接管。 */
+export const LEGACY_AGENT_PANEL_WIDTH_KEY = "canvas-agent-panel-width";
+
+/**
+ * 读取停靠偏好：已有新偏好时原样使用；没有时沿用 fork 旧版的停靠侧栏习惯（默认停靠），
+ * 并把旧版保存的宽度作为初始停靠宽度。宽度在使用时再按视口夹取。
+ */
+export function migrateAgentPanelDock(raw: string | null, legacyWidth: string | null): { preference: AgentPanelDockPreference; migrated: boolean } {
+    if (raw !== null) {
+        const restored = restoreAgentPanelDock(raw);
+        // 损坏的新偏好不回退到旧键：旧键在首次迁移后已被清理。
+        return { preference: restored, migrated: false };
+    }
+    const width = legacyWidth === null ? Number.NaN : Number(legacyWidth);
+    return { preference: { docked: true, width: Number.isFinite(width) && width > 0 ? width : AGENT_DOCK_DEFAULT_WIDTH }, migrated: true };
+}

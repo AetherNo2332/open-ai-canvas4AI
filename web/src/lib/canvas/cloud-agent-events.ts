@@ -142,6 +142,12 @@ export function applyAgentEvent(
         setPrompt?.((current) => (current.trim() ? current : text));
         return;
     }
+    if (event.type === "user_interjection_delivered") {
+        // 已进入模型上下文：后续撤回入口（U8）只对「等待送达」的插话开放。
+        const messageId = String(payload.messageId || "");
+        setMessages((current) => current.map((item) => (item.id === messageId && item.interjection === "sent" ? { ...item, interjection: "delivered" as const } : item)));
+        return;
+    }
     if (event.type === "user_question") {
         const options = Array.isArray(payload.options)
             ? (payload.options as Array<{ label?: unknown; detail?: unknown }>).map((option) => ({ label: String(option?.label || "").trim(), detail: option?.detail === undefined ? undefined : String(option.detail) })).filter((option) => option.label)

@@ -1,6 +1,6 @@
 .canvas-agent-panel,
 .agent-context-popover {
-    /* Canvas theme -> material tokens. 面板与画布同层并行，是实心侧栏，不再悬浮磨砂。 */
+    /* Canvas theme -> material tokens. 实色面板，不做毛玻璃：画布变化时反复模糊会让编辑器变卡。 */
     --agent-material-solid: color-mix(in srgb, var(--agent-ink) 3%, var(--agent-surface-base));
     --agent-surface-soft: color-mix(in srgb, var(--agent-ink) 4%, transparent);
     --agent-surface-hover: color-mix(in srgb, var(--agent-ink) 7%, transparent);
@@ -10,66 +10,158 @@
     --agent-focus-ring: color-mix(in srgb, var(--agent-accent) 65%, var(--agent-ink));
 }
 
+/* 平台唯一的 Agent 面板挂在布局层（user-layout），层级必须高于导演台（--z-toast）：
+   浮动时压在导演台之上；停靠时导演台只铺满让出后的编辑区，二者不重叠。 */
 .canvas-agent-panel {
+    z-index: var(--z-agent-panel);
+    container-type: inline-size;
     overscroll-behavior: contain;
     isolation: isolate;
-    border: 0;
-    border-left: 1px solid color-mix(in srgb, var(--agent-ink) 10%, transparent);
-    border-radius: 0;
+    border: 1px solid color-mix(in srgb, var(--agent-ink) 10%, transparent);
+    border-radius: var(--overlay-radius);
     background: var(--agent-material-solid);
     color: var(--agent-ink);
-    box-shadow: none;
+    box-shadow: 0 16px 48px color-mix(in srgb, var(--agent-shadow-color) 32%, transparent);
 }
 
 .canvas-agent-panel[data-agent-open="false"] {
     pointer-events: none;
 }
 
-/* 窄屏面板展开时覆盖画布底部，主工具栏让位；收起后恢复。 */
-.canvas-editor-shell:has(.canvas-agent-panel[data-agent-compact][data-agent-open="true"]) .canvas-main-toolbar {
+/* 停靠在画布右侧：与画布并排，不压在画布上，只留一条 1px 栏间分隔线。 */
+.canvas-agent-panel.is-docked {
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.canvas-agent-panel[data-agent-compact] {
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+}
+
+.canvas-agent-panel [data-agent-drag-handle] {
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+}
+
+.canvas-agent-panel [data-agent-drag-handle]:active {
+    cursor: grabbing;
+}
+
+.canvas-agent-panel[data-agent-compact] [data-agent-drag-handle] {
+    cursor: default;
+    touch-action: auto;
+    user-select: auto;
+}
+
+.agent-panel-dock-resizer {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    z-index: 2;
+    width: 6px;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+/* 悬停或聚焦时把分隔线本身调亮，提示可以拖动；不额外加粗成竖条。 */
+.agent-panel-dock-resizer::after {
+    position: absolute;
+    inset-block: 0;
+    left: -1px;
+    width: 1px;
+    background: transparent;
+    content: "";
+    transition: background-color var(--motion-dur-fast) var(--motion-ease-out);
+}
+
+.agent-panel-dock-resizer:hover::after,
+.agent-panel-dock-resizer:focus-visible::after {
+    background: color-mix(in srgb, var(--agent-accent) 70%, transparent);
+}
+
+.agent-panel-dock-resizer:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+}
+
+.agent-panel-resize-edge {
+    position: absolute;
+    z-index: 2;
+    touch-action: none;
+}
+
+.agent-panel-resize-edge.is-north {
+    inset-inline: var(--space-5);
+    top: 0;
+    height: var(--space-2);
+    cursor: n-resize;
+}
+
+.agent-panel-resize-edge.is-west {
+    inset-block: var(--space-5);
+    left: 0;
+    width: var(--space-2);
+    cursor: w-resize;
+}
+
+.agent-panel-resize-corner {
+    position: absolute;
+    top: var(--space-2);
+    left: var(--space-2);
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--button-radius);
+    cursor: nw-resize;
+    touch-action: none;
+    opacity: 0.6;
+    transition: opacity var(--motion-dur-fast) var(--motion-ease-out);
+}
+
+.agent-panel-resize-corner:hover,
+.agent-panel-resize-corner:focus-visible {
+    opacity: 1;
+}
+
+.agent-panel-resize-corner:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .agent-panel-dock-resizer::after,
+    .agent-panel-resize-corner {
+        transition: none;
+    }
+}
+
+.canvas-agent-panel-content {
+    min-width: 0;
+}
+
+/* 停靠时导演台（及其加载占位）只铺满让出后的编辑区，不盖住停靠的 Agent 面板。 */
+.app-user-workspace[data-agent-docked] :is([data-canvas-previs-workbench], [data-canvas-previs-loading]) {
+    right: var(--agent-dock-width);
+}
+
+/* 窄屏面板铺满视口时，画布主工具栏让位；收起后恢复。 */
+:root:has(.canvas-agent-panel[data-agent-compact][data-agent-open="true"]) .canvas-main-toolbar {
     visibility: hidden;
     pointer-events: none;
 }
 
-.canvas-agent-width-handle {
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: 6px;
-    z-index: 2;
-    cursor: col-resize;
-    touch-action: none;
-}
-.canvas-agent-width-handle:hover,
-.canvas-agent-width-handle:focus-visible {
-    background: color-mix(in oklab, var(--agent-accent) 40%, transparent);
-    outline: none;
-}
-.canvas-agent-panel-content {
-    /* 查询断点与文字排版使用真实宽度，展开/收起只改变视觉位置。 */
-    container-type: inline-size;
-    width: calc(var(--agent-panel-width) - 1px);
-    min-width: 0;
-    max-width: none;
+.agent-canvas-required {
+    color: var(--agent-caption);
 }
 
 .agent-panel-header {
     min-height: 60px;
     padding: var(--space-3) var(--space-4) var(--space-2) var(--space-5);
-}
-
-.canvas-agent-panel[data-agent-floating] {
-    position: fixed;
-    z-index: var(--z-panel-floating);
-    inset-block: var(--canvas-inset-y);
-    right: var(--canvas-inset-x);
-    max-width: calc(100vw - 2 * var(--canvas-inset-x));
-    border: 1px solid color-mix(in srgb, var(--agent-ink) 10%, transparent);
-    border-radius: var(--agent-radius-surface);
-    box-shadow: 0 16px 48px color-mix(in srgb, var(--agent-shadow-color) 32%, transparent);
-}
-
-.canvas-agent-panel[data-agent-floating] > .canvas-agent-panel-content {
-    width: min(calc(var(--agent-panel-width) - 2px), calc(100vw - 2 * var(--canvas-inset-x) - 2px));
 }
 
 .agent-panel-title {
@@ -505,6 +597,38 @@
     background: var(--agent-surface-raised, var(--background));
 }
 
+/* 有待发消息时外壳托住队列与输入卡片，形成一张整卡（上游 data-has-footer 托盘的同一形态）。 */
+.agent-composer-shell:has(> .agent-message-queue) {
+    border-radius: var(--agent-radius-surface, var(--radius-xl));
+    background: color-mix(in srgb, var(--agent-ink) 3%, var(--agent-material-solid, var(--background)));
+}
+
+.agent-composer-shell:has(> .agent-message-queue) > .agent-composer-surface:focus-within {
+    box-shadow: none;
+}
+
+/* 插话状态标签：等待送达 / 已送达 / 未送达 / 已撤回。 */
+.agent-interjection-tag {
+    display: inline-flex;
+    align-items: center;
+    margin-bottom: var(--space-1);
+    padding: 1px var(--space-2);
+    border-radius: var(--button-radius);
+    background: color-mix(in srgb, var(--agent-ink) 10%, transparent);
+    color: var(--agent-caption);
+    font-size: var(--fs-label);
+    line-height: 1rem;
+}
+
+.agent-interjection-tag[data-status="undelivered"] {
+    background: color-mix(in srgb, var(--status-error) 14%, transparent);
+    color: var(--status-error);
+}
+
+.agent-interjection-tag[data-status="withdrawn"] {
+    text-decoration: line-through;
+}
+
 .agent-composer-surface:focus-within {
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--agent-accent, var(--foreground)) 35%, transparent);
 }
@@ -668,7 +792,7 @@
 
 /* Agent 平行窗口与模型菜单：菜单本身与全站二级选择器同一套，必须叠在对话窗之上。 */
 .agent-model-picker-popover {
-    z-index: var(--z-popover) !important;
+    z-index: var(--z-dialog-popover) !important;
 }
 
 /* Flex 子页可以收缩，但动画内层不能被外层的过渡宽度压窄。 */

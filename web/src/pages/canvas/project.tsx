@@ -108,7 +108,7 @@ import {
     replaceCanvasReferenceMentions,
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
-import { CanvasCloudAgentPanel, type CanvasCloudAgentPanelHandle } from "@/components/canvas/canvas-cloud-agent-panel";
+import { requestAgentPrefill, useGlobalAgentStore } from "@/stores/use-global-agent-store";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
@@ -265,9 +265,6 @@ function CanvasViewportPage() {
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-    // 画布 Agent 面板挂在画布页内（云端 Agent 由独立 Pi worker 执行）；预填只写入输入框，不自动发送。
-    const [agentPrefillPrompt, setAgentPrefillPrompt] = useState("");
-    const agentPanelRef = useRef<CanvasCloudAgentPanelHandle>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
     const [canvasAppearance, setCanvasAppearance] = useState<CanvasAppearance>(() => canvasAppearanceForTheme(colorTheme));
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>(DEFAULT_CANVAS_BACKGROUND_MODE);
@@ -317,7 +314,7 @@ function CanvasViewportPage() {
     const [titleDraft, setTitleDraft] = useState("");
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
     const [cinematicAgentEntry, setCinematicAgentEntry] = useState(false);
-    const { assistantOpen, closeAgent, openAgent: openAssistant } = useCanvasAssistantVisibility();
+    const { closeAgent, openAgent: openAssistant } = useCanvasAssistantVisibility();
     const agentMentionReferences = useMemo(() => buildCanvasAgentMentionReferences(nodes), [nodes]);
 
     const { tasks: activeTasks } = useCanvasActiveTasks(projectId, projectLoaded);
@@ -451,11 +448,12 @@ function CanvasViewportPage() {
                 selectedNodeIdsRef.current = selection;
                 setSelectedNodeIds(selection);
             }
-            setAgentPrefillPrompt(`${references.map(canvasResourceMentionToken).join(" ")} `);
+            // 只写入输入框，不自动发送；面板只接收发给当前画布的请求。
+            void requestAgentPrefill({ canvasId: projectId, userScope: getActiveUserScope(), text: `${references.map(canvasResourceMentionToken).join(" ")} ` });
             openAgent();
             setContextMenu(null);
         },
-        [agentMentionReferences, openAgent],
+        [agentMentionReferences, openAgent, projectId],
     );
 
     // 图片「生成预演台」：让 Agent 识图后用 director 工具复现为可编辑的 3D 场景（需支持图片输入的模型）。
@@ -474,7 +472,7 @@ function CanvasViewportPage() {
             }
             openAgent();
             setContextMenu(null);
-            void agentPanelRef.current?.sendPrompt({ canvasId: projectId, userScope: getActiveUserScope(), prompt: buildImageToPrevisAgentPrompt(reference), focusNodeIds: [node.id], requiresVision: true });
+            void requestAgentPrefill({ canvasId: projectId, userScope: getActiveUserScope(), text: buildImageToPrevisAgentPrompt(reference), autoSubmit: true, focusNodeIds: [node.id], requiresVision: true });
         },
         [agentMentionReferences, message, openAgent, projectId],
     );
@@ -1706,7 +1704,7 @@ function CanvasViewportPage() {
         setPrevisNodeId,
         updateProject,
     });
-    const { onDirectorOpen, directorPreview, onDirectorPreview } = useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsScenes: currentProject?.previsScenes, openPrevisWorkbench });
+    const { directorPreview, onDirectorPreview } = useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsScenes: currentProject?.previsScenes, openPrevisWorkbench });
 
     const {
         activateStep: activateShortDramaStep,
@@ -2627,7 +2625,7 @@ function CanvasViewportPage() {
                     setCinematicAgentEntry(true);
                     // 有输入时直接作为首条消息提交；空输入只打开面板。
                     openAgent();
-                    if (text) void agentPanelRef.current?.sendPrompt({ canvasId: projectId, userScope: getActiveUserScope(), prompt: text });
+                    if (text) void requestAgentPrefill({ canvasId: projectId, userScope: getActiveUserScope(), text, autoSubmit: true });
                 }}
                 onStartFreeform={() => updateProject(projectId, { starterMode: "freeform" })}
                 onUpload={() => handleUploadRequest()}
@@ -2653,6 +2651,28 @@ function CanvasViewportPage() {
         focusCanvasNode(nodeId);
     };
     const handleAgentFocusNode = useCallback((nodeId: string) => agentFocusNodeRef.current(nodeId), []);
+    // 平台唯一的 Agent 面板挂在布局上；画布只发布自己的上下文。画布加载完成前不发布，避免以未保存画布绑定运行。
+    const publishAgentCanvas = useGlobalAgentStore((state) => state.setCanvas);
+    useEffect(() => {
+        if (!projectLoaded || !projectId) return;
+        publishAgentCanvas({
+            canvasId: projectId,
+            domainProjectId: currentProject?.projectId,
+            canvasNodes: nodes,
+            runningNodeId,
+            nodeCount: nodes.length,
+            selectedNodeIds: agentSelectedNodeIds,
+            references: agentMentionReferences,
+            onFocusNode: handleAgentFocusNode,
+        });
+    }, [projectLoaded, projectId, currentProject?.projectId, nodes, runningNodeId, agentSelectedNodeIds, agentMentionReferences, handleAgentFocusNode, publishAgentCanvas]);
+    // 离开画布（卸载或切换到另一个画布）时撤回上下文：之后面板不再以这个画布发送请求。
+    useEffect(() => {
+        return () => {
+            const current = useGlobalAgentStore.getState().canvas;
+            if (current?.canvasId === projectId) useGlobalAgentStore.getState().setCanvas(null);
+        };
+    }, [projectId]);
     const changeCanvasView = useCallback((view: CanvasProjectView) => {
         setSearchParams((current) => {
             const next = new URLSearchParams(current);
@@ -3565,7 +3585,7 @@ function CanvasViewportPage() {
                             {previsNodeId && activePrevisScene ? (
                                 <Suspense
                                     fallback={
-                                        <div className="fixed inset-0 z-[var(--z-toast)] grid place-items-center px-5" style={{ background: theme.canvas.background, color: theme.node.text }}>
+                                        <div data-canvas-previs-loading className="fixed inset-0 z-[var(--z-toast)] grid place-items-center px-5" style={{ background: theme.canvas.background, color: theme.node.text }}>
                                             <WorkspaceState icon="loading" title="正在加载 3D 预演台" description="准备场景、镜头与空间控制。" />
                                         </div>
                                     }
@@ -3669,20 +3689,6 @@ function CanvasViewportPage() {
                                 </div>
                             ) : null}
                         </section>
-                        {/* Agent 侧栏与编辑区并列：编辑区（含顶栏和资产视图）随侧栏收窄，顶栏不会盖住侧栏头部。 */}
-                        <CanvasCloudAgentPanel
-                            ref={agentPanelRef}
-                            canvasId={projectId}
-                            nodeCount={nodes.length}
-                            selectedNodeIds={agentSelectedNodeIds}
-                            references={agentMentionReferences}
-                            prefillPrompt={agentPrefillPrompt}
-                            open={assistantOpen}
-                            onOpen={openAgent}
-                            onCollapse={closeAgent}
-                            onFocusNode={handleAgentFocusNode}
-                            onDirectorOpen={onDirectorOpen}
-                        />
                     </div>
                 </CanvasOverlayLayerProvider>
             </main>

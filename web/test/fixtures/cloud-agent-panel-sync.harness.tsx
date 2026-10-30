@@ -1,7 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { AgentConversationMessageInput, AgentEvent, AgentMessageReceipt, AgentQueuedMessage, AgentRun, AgentSendMode, CreateAgentRunInput } from "@/services/api/agent";
-import type { CanvasCloudAgentPanelHandle } from "@/components/canvas/canvas-cloud-agent-panel";
+import type { AgentPrefillInput, AgentPrefillOutcome } from "@/stores/use-global-agent-store";
 import type { CloudAgentConversation, CloudAgentPendingSubmission } from "@/services/cloud-agent-conversations";
 
 const dom = new Window({ url: "http://localhost/" });
@@ -35,6 +35,7 @@ const chatUI = await import("@/components/canvas/canvas-cloud-agent-chat-ui");
 const { setActiveUserScope } = await import("@/lib/user-scope");
 const { useUserStore } = await import("@/stores/use-user-store");
 const { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } = await import("@/stores/use-config-store");
+const { requestAgentPrefill, useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
 
 let local: CloudAgentConversation[] = [];
 let remote: CloudAgentConversation[] = [];
@@ -236,9 +237,11 @@ async function mount(initial: CloudAgentConversation[] = [], initialPending: Clo
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    const handle = React.createRef<CanvasCloudAgentPanelHandle>();
+    // 面板从全局 store 读画布上下文；外部发送改为 prefillRequest（autoSubmit）投递。
+    useGlobalAgentStore.setState({ open: true, prefillRequest: null, canvas: { canvasId: "canvas", nodeCount: 1, selectedNodeIds: [], references: [] } });
+    const handle = { current: { sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => sendExternal(request) } };
     await act(async () => {
-        root.render(<CanvasCloudAgentPanel ref={handle} canvasId="canvas" nodeCount={1} selectedNodeIds={[]} references={[]} open onOpen={silent} onCollapse={silent} />);
+        root.render(<CanvasCloudAgentPanel />);
         await settle();
     });
     return {
@@ -251,6 +254,13 @@ async function mount(initial: CloudAgentConversation[] = [], initialPending: Clo
     };
 }
 afterAll(() => dom.happyDOM.abort());
+
+/** 旧 ref.sendPrompt 的等价投递：经 store 交给面板并等它回报结果；"prefilled" 不会出现在 autoSubmit 请求上。 */
+function sendExternal(request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }): Promise<AgentPrefillOutcome> {
+    const input: AgentPrefillInput = { canvasId: request.canvasId, userScope: request.userScope, text: request.prompt, focusNodeIds: request.focusNodeIds, autoSubmit: true };
+    return requestAgentPrefill(input);
+}
+type SendOutcome = Awaited<ReturnType<typeof sendExternal>>;
 
 const externalPrompt = { canvasId: "canvas", userScope: "sync-user", prompt: "为目标分镜表提出拆镜方案，先询问确认", focusNodeIds: ["storyboard-target"] };
 
@@ -435,7 +445,7 @@ test("restoring an unknown queue send retains the newer draft separately from it
 test("external storyboard request continues the current chat and preserves its composer draft", async () => {
     const mounted = await mount([conversation("desktop", "local", "原来的 Agent 草稿")]);
     try {
-        let accepted: Awaited<ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>> | undefined;
+        let accepted: SendOutcome | undefined;
         await act(async () => {
             accepted = await mounted.handle.current!.sendPrompt(externalPrompt);
             await settle();
@@ -456,7 +466,7 @@ test("external request interjects into the running Agent without creating anothe
     current.run = { ...current.run!, status: "running" };
     const mounted = await mount([current], null, async () => [current]);
     try {
-        let accepted: Awaited<ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>> | undefined;
+        let accepted: SendOutcome | undefined;
         await act(async () => {
             accepted = await mounted.handle.current!.sendPrompt(externalPrompt);
             await settle();
@@ -526,7 +536,7 @@ test("external send rejects stale scopes and synchronously excludes duplicate cl
             new Promise((resolve) => {
                 release = resolve;
             });
-        let first!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>;
+        let first!: Promise<SendOutcome>;
         await act(async () => {
             first = mounted.handle.current!.sendPrompt(externalPrompt);
             expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(false);
@@ -569,7 +579,7 @@ test("switching chats during an interjection releases only the old send lock", a
             new Promise((resolve) => {
                 releaseNew = resolve;
             });
-        let oldSend!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>, newSend!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>;
+        let oldSend!: Promise<SendOutcome>, newSend!: Promise<SendOutcome>;
         await act(async () => {
             oldSend = mounted.handle.current!.sendPrompt(externalPrompt);
             await settle();
@@ -626,7 +636,7 @@ test("an external POST response from the old account cannot replace the new acco
             new Promise((resolve) => {
                 release = resolve;
             });
-        let sending!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>;
+        let sending!: Promise<SendOutcome>;
         await act(async () => {
             sending = mounted.handle.current!.sendPrompt(externalPrompt);
             await settle();
@@ -854,6 +864,56 @@ test("one unavailable conversation keeps its draft and blocks continuation until
         expect(mounted.host.textContent).not.toContain("暂时无法恢复");
         expect(composer.prompt).toBe("保留草稿");
         expect(composer.disabled).toBe(false);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("a prefill without autoSubmit only appends to the composer draft and sends nothing", async () => {
+    const mounted = await mount([conversation("desktop", "local", "已有草稿")]);
+    try {
+        let outcome: SendOutcome | undefined;
+        await act(async () => {
+            outcome = await requestAgentPrefill({ canvasId: "canvas", userScope: "sync-user", text: "@[node:n1] " });
+            await settle();
+        });
+        expect(outcome).toBe("prefilled");
+        expect(composer.prompt).toBe("已有草稿 @[node:n1]");
+        expect(sentRequests).toHaveLength(0);
+        expect(createdRequests).toHaveLength(0);
+        expect(conversationRequests).toHaveLength(0);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("after leaving the canvas the composer is disabled and no request carries the old canvasId", async () => {
+    const mounted = await mount([conversation("desktop", "local", "离开前的草稿")]);
+    try {
+        await act(async () => {
+            useGlobalAgentStore.getState().setCanvas(null);
+            await settle();
+        });
+        expect(composer.disabled).toBe(true);
+        expect(composer.placeholder).toBe("进入画布后使用 Agent");
+        const readsBefore = reads.length;
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        let outcome: SendOutcome | undefined;
+        await act(async () => {
+            outcome = await requestAgentPrefill({ canvasId: "canvas", userScope: "sync-user", text: "旧画布的请求", autoSubmit: true });
+            await settle();
+        });
+        await focus();
+        expect(outcome).toBe(false);
+        expect(sentRequests).toHaveLength(0);
+        expect(createdRequests).toHaveLength(0);
+        expect(conversationRequests).toHaveLength(0);
+        // 离开画布后不再按旧画布轮询会话目录。
+        expect(reads.length).toBe(readsBefore);
+        expect(mounted.host.textContent).toContain("进入画布后使用 Agent");
     } finally {
         await mounted.close();
     }
