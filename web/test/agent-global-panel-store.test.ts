@@ -93,11 +93,11 @@ describe("prefill requests", () => {
 });
 
 describe("dock preference", () => {
-    test("migrates the fork width once as the initial docked width and retires the legacy key", () => {
+    test("migrates the fork width once as the initial dock width, starts floating and retires the legacy key", () => {
         memory.set(LEGACY_AGENT_PANEL_WIDTH_KEY, "560");
-        expect(readAgentPanelDockPreference()).toEqual({ docked: true, width: 560 });
+        expect(readAgentPanelDockPreference()).toEqual({ docked: false, width: 560 });
         expect(memory.has(LEGACY_AGENT_PANEL_WIDTH_KEY)).toBe(false);
-        expect(JSON.parse(memory.get(AGENT_PANEL_DOCK_KEY)!)).toEqual({ docked: true, width: 560 });
+        expect(JSON.parse(memory.get(AGENT_PANEL_DOCK_KEY)!)).toEqual({ docked: false, width: 560 });
     });
 
     test("an existing upstream preference wins over the legacy width", () => {
@@ -107,8 +107,8 @@ describe("dock preference", () => {
         expect(memory.get(LEGACY_AGENT_PANEL_WIDTH_KEY)).toBe("700");
     });
 
-    test("without any stored value the fork default stays docked at the upstream default width", () => {
-        expect(migrateAgentPanelDock(null, null)).toEqual({ preference: { docked: true, width: AGENT_DOCK_DEFAULT_WIDTH }, migrated: true });
+    test("without any stored value the panel floats at the upstream default width", () => {
+        expect(migrateAgentPanelDock(null, null)).toEqual({ preference: { docked: false, width: AGENT_DOCK_DEFAULT_WIDTH }, migrated: true });
         expect(migrateAgentPanelDock(null, "garbage").preference.width).toBe(AGENT_DOCK_DEFAULT_WIDTH);
     });
 
