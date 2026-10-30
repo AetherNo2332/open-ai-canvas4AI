@@ -3,14 +3,14 @@ name: canvas-tools-guide
 description: "画布工具操作指南：用户要求读取或修改画布、创建节点、维护分镜和批量创作表、声明素材引用与产物归属、绑定角色卡与媒体资产、选择模型或提交生成时使用。指导 Agent 从真实状态选择专用工具，正确填写 ID、引用字段、快照和分镜行身份，核对回执并修正参数错误。"
 metadata:
   skillId: yingce-canvas-tools-guide
-  version: "1.3.0"
+  version: "1.4.0"
   author: "影策"
   owner: yingce-system
   tag: others
   sortWeight: 1000
   source: 3
   createdAt: "2026-10-07T00:00:00Z"
-  updatedAt: "2026-10-23T00:00:00Z"
+  updatedAt: "2026-10-31T00:00:00Z"
 ---
 
 # 画布工具操作指南
@@ -45,6 +45,7 @@ metadata:
 
 ## 按需读取参考
 
+- 每次开始读写画布或提交生成前，先读 [工具使用最佳实践](references/best-practices.md)：读取够用就停、写入一步一个、生成异步提交不轮询、把连续分镜合成一个视频请求，以及剧本和分镜定稿后先出人物、道具、场景三视图。
 - 引用字段、分镜归属、角色卡绑定、批量表：先读 [结构与引用](references/structure-and-connections.md)。
 - 模型、引用、媒体编辑、收费任务：先读 [媒体生成](references/generation.md)。
 - 参数错误、快照冲突、重复提交或卡住：读 [错误修正](references/recovery.md)。

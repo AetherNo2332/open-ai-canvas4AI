@@ -38,7 +38,7 @@ func TestCanvasToolsGuideFrozenPackageReads(t *testing.T) {
 	if err := db.First(&version, "id = ?", skill.CurrentVersionID).Error; err != nil {
 		t.Fatal(err)
 	}
-	files := []string{"SKILL.md", "references/structure-and-connections.md", "references/generation.md", "references/recovery.md"}
+	files := []string{"SKILL.md", "references/best-practices.md", "references/structure-and-connections.md", "references/generation.md", "references/recovery.md"}
 	if skill.FileCount != len(files) {
 		t.Fatalf("guide file count = %d, want %d", skill.FileCount, len(files))
 	}
