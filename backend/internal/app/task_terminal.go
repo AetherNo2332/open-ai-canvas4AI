@@ -149,6 +149,10 @@ func (c *taskTerminalCoordinator) handleExecutionFailure(task *model.Task, err e
 	outcome := taskSubmissionOutcome(task, channelSlotFailedBeforeRequest)
 	if providerSucceeded {
 		outcome = "accepted"
+	} else if outcome == "unknown" && providerRejectedSubmission(err) {
+		// 上游明确拒绝（参数、鉴权、余额、模型不存在等 4xx）：请求已被读取并拒收，没有建立任务，
+		// 不是“接单状态未知”。按未接单处理，不把分镜行或节点长期锁在待核对上。
+		outcome = "rejected"
 	}
 	retryClass := "new_generation_authorization"
 	if outcome == "unknown" {

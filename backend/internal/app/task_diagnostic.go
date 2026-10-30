@@ -3,9 +3,11 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"unicode/utf8"
 
+	"yingce/backend/internal/generation"
 	"yingce/backend/internal/model"
 )
 
@@ -92,6 +94,27 @@ func taskExecutionDiagnostic(task *model.Task) *model.TaskExecutionDiagnostic {
 		diagnostic.SafeMessage = safeTaskDiagnosticMessage(diagnostic.SafeMessage)
 	}
 	return &diagnostic
+}
+
+// providerRejectedSubmission 判断上游是否明确拒收了这次提交。408/425/429 与 5xx、524
+// 不算：前者可能在排队或已部分处理，后者网关超时时上游可能仍在执行并计费。
+func providerRejectedSubmission(err error) bool {
+	status := 0
+	var upstream providerHTTPError
+	var protocol generation.HTTPError
+	switch {
+	case errors.As(err, &upstream):
+		status = upstream.StatusCode
+	case errors.As(err, &protocol):
+		status = protocol.StatusCode
+	default:
+		return false
+	}
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return false
+	}
+	return status >= 400 && status < 500
 }
 
 func taskSubmissionOutcome(task *model.Task, notSent bool) string {
