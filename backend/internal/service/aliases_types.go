@@ -90,6 +90,8 @@ type (
 	CanvasLibraryPage                      = app.CanvasLibraryPage
 	CanvasLibrarySummary                   = app.CanvasLibrarySummary
 	CanvasOperationsRequest                = app.CanvasOperationsRequest
+	CanvasReferenceMigrationPreview        = app.CanvasReferenceMigrationPreview
+	CanvasReferenceMigrationRequest        = app.CanvasReferenceMigrationRequest
 	CanvasEditLeaseRequest                 = app.CanvasEditLeaseRequest
 	CanvasHistoryList                      = app.CanvasHistoryList
 	CanvasShareRequest                     = app.CanvasShareRequest

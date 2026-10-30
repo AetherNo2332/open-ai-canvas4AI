@@ -965,6 +965,53 @@ paths:
           description: 对象并发冲突、同一 mutationId 对应的请求摘要不同或编辑证明失效（reason 为 canvas_edit_lease_conflict）；原事务不会被覆盖
         "428":
           description: 缺少执行所需的对象基线
+  /canvas-projects/{id}/reference-migration:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 预览旧版画布的引用规范化
+      description: 只读，不写文档。required 为 false 表示画布已使用声明式引用；conflicts 列出字段与旧连线不一致、需要用户选择来源的作用域。
+      responses:
+        "200":
+          description: 信封 data 为 { revision, required, conflicts[{ scopeKey, fieldNodeIds, edgeNodeIds }] }
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+    post:
+      tags: [canvas]
+      summary: 执行旧版画布的引用规范化
+      description: 按 revision 做并发校验，冲突作用域必须全部给出来源后才写入；写入前保留一份画布历史快照（reason before_reference_migration），写入后画布带 referenceFieldsVersion 1，其他标签页经画布变更通知更新。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, format: int64, minimum: 0 }
+                choices:
+                  type: object
+                  description: 冲突作用域 scopeKey 到来源的映射，取值 fields 或 connections
+                  additionalProperties: { type: string, enum: [fields, connections] }
+      responses:
+        "200":
+          description: 信封 data.project 返回迁移后的画布摘要
+        "400":
+          description: 来源取值无效，或引用无法解析（reason reference_migration_invalid）
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+        "409":
+          description: 画布已有更新、仍有冲突未选择（reason reference_migration_conflict）或已完成规范化（reason reference_migration_not_required）
+        "428":
+          description: 缺少 revision
   /public/welcome:
     get:
       tags: [meta]

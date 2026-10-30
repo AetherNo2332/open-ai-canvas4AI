@@ -616,6 +616,43 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"project": project, "mutationId": req.MutationID})
 	})
+	// 旧版画布的一次性引用规范化：GET 预览冲突，POST 按选择写入（整份保存并留历史快照）。
+	r.GET("/canvas-projects/:id/reference-migration", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		preview, err := svc.PreviewCanvasReferenceMigration(user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, preview)
+	})
+	r.POST("/canvas-projects/:id/reference-migration", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		var req service.CanvasReferenceMigrationRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, service.BadAuthRequest("引用迁移请求格式错误"))
+			return
+		}
+		project, err := svc.MigrateCanvasReferences(user.ID, c.Param("id"), req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"project": project})
+	})
 	r.DELETE("/canvas-projects/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

@@ -16,19 +16,21 @@ import (
 )
 
 type (
-	CanvasShareRequest      = canvas.CanvasShareRequest
-	CanvasShareStatus       = canvas.CanvasShareStatus
-	PublicCanvasShare       = canvas.PublicCanvasShare
-	AssetsSyncRequest       = canvas.AssetsSyncRequest
-	CanvasHistoryList       = canvas.CanvasHistoryList
-	UserDataSummary         = canvas.UserDataSummary
-	UserDataSnapshot        = canvas.UserDataSnapshot
-	CanvasLibrarySummary    = canvas.CanvasLibrarySummary
-	CanvasLibraryPage       = canvas.CanvasLibraryPage
-	CanvasOperationsRequest = canvas.CanvasOperationsRequest
-	CanvasOperation         = canvas.CanvasOperation
-	CanvasEditLeaseRequest  = canvas.CanvasEditLeaseRequest
-	CanvasSyncStatus        = canvas.CanvasSyncStatus
+	CanvasShareRequest              = canvas.CanvasShareRequest
+	CanvasShareStatus               = canvas.CanvasShareStatus
+	PublicCanvasShare               = canvas.PublicCanvasShare
+	AssetsSyncRequest               = canvas.AssetsSyncRequest
+	CanvasHistoryList               = canvas.CanvasHistoryList
+	UserDataSummary                 = canvas.UserDataSummary
+	UserDataSnapshot                = canvas.UserDataSnapshot
+	CanvasLibrarySummary            = canvas.CanvasLibrarySummary
+	CanvasLibraryPage               = canvas.CanvasLibraryPage
+	CanvasOperationsRequest         = canvas.CanvasOperationsRequest
+	CanvasReferenceMigrationPreview = canvas.CanvasReferenceMigrationPreview
+	CanvasReferenceMigrationRequest = canvas.CanvasReferenceMigrationRequest
+	CanvasOperation                 = canvas.CanvasOperation
+	CanvasEditLeaseRequest          = canvas.CanvasEditLeaseRequest
+	CanvasSyncStatus                = canvas.CanvasSyncStatus
 )
 
 type canvasHost struct {
@@ -256,6 +258,14 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 
 func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasOperationsRequest) (UserDataSummary, error) {
 	return s.canvasDomain().ApplyUserCanvasOperations(userID, canvasID, req)
+}
+
+func (s *Service) PreviewCanvasReferenceMigration(userID, canvasID string) (CanvasReferenceMigrationPreview, error) {
+	return s.canvasDomain().PreviewCanvasReferenceMigration(userID, canvasID)
+}
+
+func (s *Service) MigrateCanvasReferences(userID, canvasID string, req CanvasReferenceMigrationRequest) (UserDataSummary, error) {
+	return s.canvasDomain().MigrateCanvasReferences(userID, canvasID, req)
 }
 
 func (s *Service) RepairUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
