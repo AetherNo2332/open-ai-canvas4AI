@@ -131,7 +131,7 @@ func TestCloudAgentRepairExhaustsWithFingerprint(t *testing.T) {
 	}
 }
 
-// 现场 run ag9e85648：同一批两次看图都把 summary 写成了坏掉的 JSON 字符串，
+// 验收现场：同一批两次看图都把 summary 写成了坏掉的 JSON 字符串，
 // 下一步修好第一张图、第二张又错一次，就以"已尝试 3 次"熔断了。
 // 同一批里重复同一个错误只算一次；看图成功也要结束这个工具的纠错组。
 func TestCloudAgentRepairCountsOneBatchOnceAndInspectionSuccessCloses(t *testing.T) {
