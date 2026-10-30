@@ -6,18 +6,14 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
+	"yingce/backend/internal/agentmemory"
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
 
@@ -25,9 +21,9 @@ import (
 )
 
 const (
-	agentMemoryDefaultCapacity    = 5000
-	agentMemoryEntryMaxRunes      = 400
-	agentMemoryEntriesMax         = 80
+	agentMemoryDefaultCapacity    = agentmemory.DefaultCapacity
+	agentMemoryEntryMaxRunes      = agentmemory.EntryMaxRunes
+	agentMemoryEntriesMax         = agentmemory.EntriesMax
 	agentMemoryOpsMax             = 10
 	agentMemoryCallsPerRun        = 8
 	agentMemoryRevisionKeep       = 100
@@ -38,27 +34,22 @@ const (
 	cloudAgentMemoryContextSource = "agent_memory_doc"
 )
 
+// 条目文本规则与 schema 迁移共用 internal/agentmemory。
+var (
+	agentMemoryNormalizeText = agentmemory.NormalizeText
+	agentMemoryValidateText  = agentmemory.ValidateText
+	agentMemoryCharCount     = agentmemory.CharCount
+	agentMemoryHash          = agentmemory.Hash
+	agentMemoryEntryID       = agentmemory.EntryID
+	agentMemoryDuplicate     = agentmemory.Duplicate
+	cloudAgentTruncateRunes  = agentmemory.TruncateRunes
+)
+
 var agentMemorySectionOrder = []string{model.AgentMemorySectionUser, model.AgentMemorySectionNotes}
 
 var agentMemorySectionLabels = map[string]string{
 	model.AgentMemorySectionUser:  "关于用户",
 	model.AgentMemorySectionNotes: "工作笔记",
-}
-
-// 记忆会进入后续每一轮的上下文，写入时机械拦截：链接、ID、密钥和试图改写规则的话一律拒绝。
-var agentMemoryBlockedPatterns = []struct {
-	label   string
-	pattern *regexp.Regexp
-}{
-	{"链接", regexp.MustCompile(`(?i)\b(https?|ftp)://|\bwww\.[a-z0-9-]+\.[a-z]|\bdata:[a-z]+/`)},
-	{"接口路径或资源键", regexp.MustCompile(`(?i)/api/|\bresource:`)},
-	{"运行或任务 ID", regexp.MustCompile(`\bag[0-9a-f]{12,}\b`)},
-	{"长十六进制 ID", regexp.MustCompile(`(?i)\b[0-9a-f]{24,}\b`)},
-	{"UUID", regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)},
-	{"节点或连线 ID", regexp.MustCompile(`\b(conn-|agent-edge-|MODEL_)[0-9A-Za-z_-]{4,}\b`)},
-	{"密钥或令牌", regexp.MustCompile(`\b(sk|rk|pk)-[A-Za-z0-9_-]{16,}|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abpr]-[A-Za-z0-9-]{10,}|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|(?i)\bbearer\s+[A-Za-z0-9._~+/-]{16,}`)},
-	{"凭据", regexp.MustCompile(`(?i)(api[ _-]?key|secret|password|passwd|cookie|密码|密钥|口令|令牌)\s*[:：=]\s*\S{4,}`)},
-	{"试图改写规则的指令", regexp.MustCompile(`(?i)ignore\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier)\s+(instructions|rules|prompts)|disregard\s+(the\s+)?(system|previous)\b|jailbreak|(忽略|无视|不要遵守|不用遵守)(之前|以上|上面|前面|所有|全部|一切|系统)[^，。,.]{0,8}(指令|规则|要求|设定|提示词)|越狱`)},
 }
 
 // 用户原话里的这些说法常意味着值得长期记住的偏好或纠正；命中时在记忆快照末尾加一句提醒。
@@ -120,76 +111,6 @@ func agentMemoryCapacityOf(doc *model.AgentMemoryDocument) int {
 	return doc.Capacity
 }
 
-func agentMemoryNormalizeText(text string) string {
-	return strings.Join(strings.Fields(text), " ")
-}
-
-func agentMemoryInvisibleRune(r rune) bool {
-	switch {
-	case r >= 0x200B && r <= 0x200F, r >= 0x202A && r <= 0x202E, r >= 0x2060 && r <= 0x2064, r >= 0x2066 && r <= 0x2069, r == 0xFEFF:
-		return true
-	}
-	return unicode.IsControl(r)
-}
-
-// agentMemoryValidateText 规范空白并做长度、隐形字符和泄露检查；label 用于定位是哪一条出错。
-func agentMemoryValidateText(raw, label string) (string, error) {
-	if !utf8.ValidString(raw) {
-		return "", BadAuthRequest(label + " 必须是有效的 UTF-8 文本")
-	}
-	text := agentMemoryNormalizeText(raw)
-	if text == "" {
-		return "", BadAuthRequest(label + " 不能为空")
-	}
-	if count := utf8.RuneCountInString(text); count > agentMemoryEntryMaxRunes {
-		return "", BadAuthRequest(fmt.Sprintf("%s 有 %d 字，超过单条 %d 字上限；请写短一点，或拆成两条", label, count, agentMemoryEntryMaxRunes))
-	}
-	for _, r := range text {
-		if agentMemoryInvisibleRune(r) {
-			return "", BadAuthRequest(label + " 含不可见或控制字符")
-		}
-	}
-	for _, entry := range agentMemoryBlockedPatterns {
-		if entry.pattern.MatchString(text) {
-			return "", BadAuthRequest(fmt.Sprintf("%s 里不能写%s。记忆只保存跨会话仍成立的偏好、约定和做法；链接、资源键、节点或任务 ID、密钥都不要写进去，请改写成通用说法", label, entry.label))
-		}
-	}
-	return text, nil
-}
-
-// agentMemoryFingerprint 忽略大小写、空白和常见标点，用于识别重复条目。
-func agentMemoryFingerprint(text string) string {
-	const dropped = " \t\r\n，。！？；：、,.!?;:-'\"“”‘’（）()【】[]《》<>·…"
-	var b strings.Builder
-	for _, r := range strings.ToLower(text) {
-		if !strings.ContainsRune(dropped, r) {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-func agentMemoryCharCount(entries []model.AgentMemoryEntry) int {
-	total := 0
-	for _, entry := range entries {
-		total += utf8.RuneCountInString(entry.Text)
-	}
-	return total
-}
-
-func agentMemoryHash(raw []byte) string {
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
-}
-
-func agentMemoryEntryID(section string, seq int64) string {
-	prefix := "n"
-	if section == model.AgentMemorySectionUser {
-		prefix = "u"
-	}
-	return prefix + strconv.FormatInt(seq, 10)
-}
-
 func agentMemoryDocumentEntries(doc *model.AgentMemoryDocument) ([]model.AgentMemoryEntry, error) {
 	entries := []model.AgentMemoryEntry{}
 	if doc == nil || strings.TrimSpace(doc.EntriesJSON) == "" {
@@ -215,21 +136,11 @@ func agentMemoryEntriesFromJSON(raw string) []model.AgentMemoryEntry {
 	return entries
 }
 
-// agentMemoryNextSeq 取文档计数与现有 ID 最大序号中较大者，旧数据或手工修复后也不会复用 ID。
 func agentMemoryNextSeq(doc *model.AgentMemoryDocument, entries []model.AgentMemoryEntry) int64 {
-	next := int64(1)
-	if doc != nil && doc.NextEntrySeq > next {
-		next = doc.NextEntrySeq
+	if doc == nil {
+		return agentmemory.NextSeq(0, entries)
 	}
-	for _, entry := range entries {
-		if len(entry.ID) < 2 {
-			continue
-		}
-		if seq, err := strconv.ParseInt(entry.ID[1:], 10, 64); err == nil && seq >= next {
-			next = seq + 1
-		}
-	}
-	return next
+	return agentmemory.NextSeq(doc.NextEntrySeq, entries)
 }
 
 func agentMemoryEntryIndex(entries []model.AgentMemoryEntry, id string) int {
@@ -322,16 +233,6 @@ func applyAgentMemoryOperations(current []model.AgentMemoryEntry, nextSeq int64,
 	return edit, nil
 }
 
-func agentMemoryDuplicate(entries []model.AgentMemoryEntry, text, exceptID string) bool {
-	want := agentMemoryFingerprint(text)
-	for _, entry := range entries {
-		if entry.ID != exceptID && agentMemoryFingerprint(entry.Text) == want {
-			return true
-		}
-	}
-	return false
-}
-
 // agentMemoryDiff 按条目 ID 比较两个版本，供修订展示和撤销使用。
 func agentMemoryDiff(before, after []model.AgentMemoryEntry) []AgentMemoryDocChange {
 	previous := make(map[string]model.AgentMemoryEntry, len(before))
@@ -416,53 +317,13 @@ func agentMemoryNudge(prompt string) bool {
 }
 
 // agentMemorySeedEntries 在用户第一次启用记忆文件时导入旧版经验库里已批准的条目（按命中次数优先），
-// 不超过容量；无法通过新规则校验的条目跳过。导入作为一条可撤销的修订保留。
+// 规则与 schema 迁移 v82 相同（agentmemory.AppendLessons）。导入作为一条可撤销的修订保留。
 func (s *Service) agentMemorySeedEntries(userID string, capacity int, now time.Time) ([]model.AgentMemoryEntry, int64, error) {
-	entries := []model.AgentMemoryEntry{}
 	lessons, err := s.repo.ApprovedAgentLessons(userID, 0)
 	if err != nil {
 		return nil, 1, err
 	}
-	seq := int64(1)
-	used := 0
-	for _, lesson := range lessons {
-		text := strings.TrimSpace(lesson.Situation)
-		body := strings.TrimSpace(lesson.Lesson)
-		if body == "" && strings.TrimSpace(lesson.StepsJSON) != "" {
-			var steps []model.AgentLessonStep
-			if json.Unmarshal([]byte(lesson.StepsJSON), &steps) == nil {
-				actions := make([]string, 0, len(steps))
-				for _, step := range steps {
-					if action := strings.TrimSpace(step.Action); action != "" {
-						actions = append(actions, action)
-					}
-				}
-				body = strings.Join(actions, " → ")
-			}
-		}
-		if body != "" {
-			if text != "" {
-				text += "：" + body
-			} else {
-				text = body
-			}
-		}
-		text, err := agentMemoryValidateText(cloudAgentTruncateRunes(text, agentMemoryEntryMaxRunes-1), "导入的经验")
-		if err != nil || agentMemoryDuplicate(entries, text, "") {
-			continue
-		}
-		size := utf8.RuneCountInString(text)
-		if used+size > capacity || len(entries) >= agentMemoryEntriesMax {
-			continue
-		}
-		section := model.AgentMemorySectionNotes
-		if strings.TrimSpace(lesson.Source) == "user_preference" {
-			section = model.AgentMemorySectionUser
-		}
-		entries = append(entries, model.AgentMemoryEntry{ID: agentMemoryEntryID(section, seq), Section: section, Text: text, Source: "lesson_import", CreatedAt: now, UpdatedAt: now})
-		seq++
-		used += size
-	}
+	entries, seq := agentmemory.AppendLessons(nil, 1, lessons, capacity, now)
 	return entries, seq, nil
 }
 
@@ -524,11 +385,19 @@ func (s *Service) cloudAgentMemorySnapshotForRun(userID, prompt string) (cloudAg
 // 上游把它放在技能目录（cloud_agent_skill_catalog.go）里，fork 移植技能目录前暂放这里。
 var cloudAgentSkillMentionPattern = regexp.MustCompile(`@\[skill:([^\]\s]{1,80})\]`)
 
-func cloudAgentTruncateRunes(text string, limit int) string {
-	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
-	if limit <= 0 || utf8.RuneCountInString(text) <= limit {
-		return text
+// cloudAgentAttachMemorySnapshot 把冻结的记忆快照作为一条有来源的 user 数据消息插在当前用户
+// 消息之前。放在消息里而不是系统提示：系统提示是跨运行的缓存前缀，记忆随用户整理而变。
+// 快照只属于本轮：续轮历史由 TextHistory 重建，不带这条消息（见 cloudAgentContinuationHistory）。
+func cloudAgentAttachMemorySnapshot(canonical *canonicalAgentRequest, memory cloudAgentMemorySnapshot) {
+	if canonical == nil || strings.TrimSpace(memory.Text) == "" || len(canonical.Messages) == 0 {
+		return
 	}
-	runes := []rune(text)
-	return strings.TrimSpace(string(runes[:limit])) + "…"
+	for _, message := range canonical.Messages {
+		if stringField(message, cloudAgentContextSourceKey) == cloudAgentMemoryContextSource {
+			return
+		}
+	}
+	snapshot := map[string]any{"role": "user", "content": memory.Text, cloudAgentContextSourceKey: cloudAgentMemoryContextSource}
+	last := canonical.Messages[len(canonical.Messages)-1]
+	canonical.Messages = append(append(append([]map[string]any{}, canonical.Messages[:len(canonical.Messages)-1]...), snapshot), last)
 }

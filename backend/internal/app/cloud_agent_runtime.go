@@ -119,6 +119,8 @@ type cloudAgentRuntime struct {
 	CreativeAnchor    cloudAgentCreativeAnchor `json:"creativeAnchor,omitempty"`
 	TextHistory       []providerTextMessage    `json:"textHistory,omitempty"`
 	Skills            []cloudAgentSkill        `json:"skills"`
+	// Memory 是建 run 时冻结的长期记忆快照（只读参考数据）；本轮内的修改只体现在工具回执里。
+	Memory            cloudAgentMemorySnapshot `json:"memory,omitempty"`
 	SkillReads        map[string]bool          `json:"skillReads,omitempty"`
 	Canonical         canonicalAgentRequest    `json:"canonical"`
 	DisclosureVersion int                      `json:"disclosureVersion,omitempty"`
@@ -228,6 +230,8 @@ type cloudAgentRuntime struct {
 	// ReadToolCalls 记录本轮会读取运行时只读快照的工具调用次数。除了同参缓存护栏，
 	// 还需要一个跨参数的总上限，防止模型通过不断变化 offset/nodeIds 绕过重复读取保护。
 	ReadToolCalls int `json:"readToolCalls,omitempty"`
+	// MemoryWriteCalls 是本轮 memory_update 的调用次数，上限 agentMemoryCallsPerRun。
+	MemoryWriteCalls int `json:"memoryWriteCalls,omitempty"`
 	// Native Skill pages share the read budget; retries of the same step/page are free.
 	NativeReadBudgetKeys map[string]bool `json:"nativeReadBudgetKeys,omitempty"`
 	// PendingImageInspections 暂存"本批还有工具结果没入历史"的看图结果，等整批 tool
@@ -1874,6 +1878,11 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "model_list") {
 		skillResult, skillErr = cloudAgentReadToolCached(s.repo, run.UserID, state, call, s)
 	}
+	// 长期记忆写的是用户自己的记忆文件（独立的 CAS 与修订事务），不是画布：在检查点事务外执行，
+	// 回执与 memory_updated 事件随下面的检查点一起落库。同一 callID 重放时返回原修订，不重复写入。
+	if allowed && call.Function.Name == "memory_update" {
+		skillResult, skillErr = s.cloudAgentHandleMemoryUpdate(s.repo, run.UserID, run.ID, state, call)
+	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	checkpoint := func(dbRepo *repository.Repository) error {
@@ -1988,7 +1997,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 				}
 				// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
 				result, toolErr = cloudAgentFinishRun(run.ID, state, call)
-			case call.Function.Name == "web_search", call.Function.Name == "model_list":
+			case call.Function.Name == "web_search", call.Function.Name == "model_list", call.Function.Name == "memory_update":
 				result, toolErr = skillResult, skillErr
 			default:
 				result, toolErr = cloudAgentReadToolCached(repo, run.UserID, state, call)
@@ -2335,10 +2344,7 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 					model, channelID := stringValue(config["model"]), stringValue(config["channelId"])
 					signature := cloudAgentRequestSignature(state, requestCanonical, channelID, model)
 					cloudAgentExpireTokenAnchorForRequest(run.ID, state, contextPressure.ContextWindowTokens, signature, model, channelID)
-					// 个人记忆块是编译之后拼上去的，编译器录不到：每一步幂等补登记一次，
-					// 占用分布的分段合计才能与 system 桶对齐。
-					cloudAgentRecordMemorySegment(&state.Policy, requestCanonical.SystemPrompt)
-					// Node 拼在记忆块之后的工作区文件同样要单独登记，否则它们会被
+					// Node 拼在策略之后的工作区文件要单独登记，否则它们会被
 					// 算成"其它"：那是排查时最想看到具体来源的一截。
 					cloudAgentRecordHarnessSegments(&state.Policy, cloudAgentFrozenHarness(state.Snapshot), requestCanonical.SystemPrompt)
 					// requestId 把读数钉在"即将发出的这次请求"上（设计 §4）：没有它，前端只能猜

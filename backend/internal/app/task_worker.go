@@ -51,7 +51,6 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 	s.startTextReplayCleanup(ctx)
 	s.startProviderCancellationReconciliation(ctx)
 	s.startBillingReviewAudit(ctx)
-	s.startAgentMemoryCompactScheduler()
 	s.startAgentToolOperations()
 	s.startAgentMessages()
 	s.startAgentWatchdog()
@@ -225,7 +224,6 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		return terminal.markPreparationFailure(task, "渠道不可用", errors.Join(err, readErr), uncertain, "自定义渠道已关闭，上游请求未发出")
 	}
 
-	s.markAgentMemoryCompactRunning(*task)
 	// 回查已提交的上游任务：领取时保留了上一轮的上游阶段与进度，这里不重置为“作品创作中”。
 	resumedStage, resumedProgress := "", task.Progress
 	if task.ProviderRequestID != "" {
@@ -338,7 +336,6 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 				err = errors.New(taskTimeoutMessage(task.Type))
 			}
 		}
-		s.noteAgentMemoryCompactTask(*task, nil, err)
 		return terminal.handleExecutionFailure(task, err, providerSucceeded, channelSlotFailedBeforeRequest)
 	}
 	latest, err := s.repo.Task(task.ID)
@@ -346,27 +343,22 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		return err
 	}
 	if latest.Status == model.TaskStatusCancelled {
-		s.noteAgentMemoryCompactTask(*task, nil, errors.New("压缩任务已取消"))
 		return terminal.handleCancelledResult(*latest)
 	}
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
-		s.noteAgentMemoryCompactTask(*task, nil, err)
 		_, terminalErr := terminal.handleResultPersistenceFailure(task, fmt.Errorf("序列化任务结果失败：%w", err))
 		return terminalErr
 	}
 	opsJSON, err := json.Marshal(canvasOps)
 	if err != nil {
-		s.noteAgentMemoryCompactTask(*task, nil, err)
 		_, terminalErr := terminal.handleResultPersistenceFailure(task, fmt.Errorf("序列化画布操作失败：%w", err))
 		return terminalErr
 	}
 	if err := s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0); err != nil {
-		s.noteAgentMemoryCompactTask(*task, nil, err)
 		_, terminalErr := terminal.handleResultPersistenceFailure(task, err)
 		return terminalErr
 	}
-	s.noteAgentMemoryCompactTask(*task, result, nil)
 	return terminal.handleSuccess(task)
 }
 

@@ -15,7 +15,7 @@ type AgentLessonStep struct {
 	Note   string `json:"note,omitempty"`
 }
 
-// AgentLesson 是用户私有的 Agent 记忆。只有该用户批准后才会注入自己的会话。
+// AgentLesson 是已退役的 fork 经验库条目：schema v82 把已批准的并入长期记忆文件，表保留只读。
 type AgentLesson struct {
 	ID             string     `json:"id" gorm:"primaryKey;size:36"`
 	Topic          string     `json:"topic" gorm:"size:120;index"`

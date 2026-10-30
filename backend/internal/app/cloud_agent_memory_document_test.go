@@ -8,7 +8,7 @@ import (
 	"yingce/backend/internal/model"
 )
 
-// fork 保留旧版经验接口（cloud_agent_lessons.go），这里只检查上游记忆文件接口的登录校验。
+// 记忆文件接口在 service 层做登录校验：空用户不能读写。
 func TestUserMemoryMutationRequiresAuthenticatedOwner(t *testing.T) {
 	s := &Service{}
 	checks := []func() error{

@@ -500,13 +500,14 @@ func TestCloudAgentContextBreakdownSystemSegmentsFillSystemBucket(t *testing.T) 
 	if len(policy.SystemSegments) == 0 {
 		t.Fatal("编译器必须登记系统提示分段")
 	}
-	// 编译之后拼接的个人记忆块：不登记就会让分段合计小于 system 桶。
+	// 编译之后拼接的 Harness 工作区文件：不登记就会让分段合计小于 system 桶。
+	workspace := "工作区约定"
 	canonical := canonicalAgentRequest{
-		SystemPrompt: system + "\n\n## 个人记忆\n\n- 标题：适用场景\n",
+		SystemPrompt: system + cloudAgentWorkspaceSegmentMarker + "AGENTS.md\n" + workspace,
 		Messages:     []map[string]interface{}{{"role": "user", "content": "分析剧情"}},
 		Tools:        []map[string]interface{}{{"type": "function", "function": map[string]interface{}{"name": "canvas_get_state"}}},
 	}
-	cloudAgentRecordMemorySegment(&policy, canonical.SystemPrompt)
+	cloudAgentRecordHarnessSegments(&policy, &cloudAgentHarnessSnapshot{Context: []cloudAgentHarnessPart{{Name: "AGENTS.md", Text: workspace}}}, canonical.SystemPrompt)
 	state := &cloudAgentRuntime{Canonical: canonical, Policy: policy}
 
 	breakdown := cloudAgentContextBreakdownPayload(state)
@@ -538,8 +539,8 @@ func TestCloudAgentContextBreakdownSystemSegmentsFillSystemBucket(t *testing.T) 
 	if segmentTokens != systemBucket["tokens"] {
 		t.Fatalf("分段 token 合计 %d 与 system 桶 %v 对不上：%+v", segmentTokens, systemBucket["tokens"], keys)
 	}
-	if !strings.Contains(strings.Join(keys, ","), "memory") {
-		t.Fatalf("个人记忆必须登记为分段：%+v", keys)
+	if !strings.Contains(strings.Join(keys, ","), "workspace:AGENTS.md") {
+		t.Fatalf("工作区文件必须登记为分段：%+v", keys)
 	}
 	if buckets[1]["key"] != "tools" || buckets[2]["key"] != "messages" {
 		t.Fatalf("三桶顺序不对：%+v", buckets)
@@ -565,47 +566,27 @@ func TestCloudAgentContextBreakdownSystemSegmentsFillSystemBucket(t *testing.T) 
 	}
 }
 
-// 记忆块之后是 Node 拼接的 Harness 工作区文件（`## Workspace <name>`）：
-// 它们不属于个人记忆，分段必须在这里截断，否则整份提示层都会被算成"记忆"。
-func TestCloudAgentMemorySegmentStopsAtWorkspaceLayer(t *testing.T) {
-	memory := "## 个人记忆\n\n本轮还没有已批准记忆。\n"
-	workspace := "\n\n## Workspace SYSTEM_POLICY.md\n" + strings.Repeat("策略正文\n", 200)
-	system := "策略正文\n\n" + memory + workspace
-	block, ok := cloudAgentMemorySegmentText(system)
-	if !ok {
-		t.Fatal("系统提示里有记忆块，必须能定位")
-	}
-	if want := "\n\n" + memory; block != want {
-		t.Fatalf("记忆分段越界：got %q want %q", block, want)
-	}
-	if strings.Contains(block, "Workspace") {
-		t.Fatalf("工作区文件被算进了个人记忆：%q", block)
-	}
+// Node 拼接的 Harness 工作区文件（`## Workspace <name>`）单独登记为分段；
+// 装配层跳过的文件不能凭空计量。长期记忆不在系统提示里，不再有 memory 分段。
+func TestCloudAgentHarnessSegmentsRecordOnlyAssembledFiles(t *testing.T) {
+	body := strings.Repeat("策略正文\n", 200)
+	workspace := cloudAgentWorkspaceSegmentMarker + "SYSTEM_POLICY.md\n" + body
+	system := "策略正文" + workspace
 	policy := cloudAgentPolicySnapshot{}
-	cloudAgentRecordMemorySegment(&policy, system)
-	// 工作区文件必须单独登记：只截断记忆会让这 800 多字节整块落进"其它"，
-	// 面板上仍然看不出那一截是工作区文件。
 	cloudAgentRecordHarnessSegments(&policy, &cloudAgentHarnessSnapshot{
-		Context: []cloudAgentHarnessPart{{Name: "SYSTEM_POLICY.md", Text: strings.Repeat("策略正文\n", 200)}},
+		Context: []cloudAgentHarnessPart{{Name: "SYSTEM_POLICY.md", Text: body}},
 	}, system)
-	if len(policy.SystemSegments) != 2 {
-		t.Fatalf("记忆与工作区分段都要登记：%+v", policy.SystemSegments)
+	if len(policy.SystemSegments) != 1 {
+		t.Fatalf("工作区分段要登记：%+v", policy.SystemSegments)
 	}
-	if policy.SystemSegments[0].Bytes != len(block) {
-		t.Fatalf("记忆分段字节 %d 与截断结果 %d 不一致", policy.SystemSegments[0].Bytes, len(block))
+	workspaceSegment := policy.SystemSegments[0]
+	if workspaceSegment.Key != "workspace:SYSTEM_POLICY.md" || workspaceSegment.Label != "Workspace SYSTEM_POLICY.md" || workspaceSegment.Bytes != len(workspace) {
+		t.Fatalf("工作区分段不对：%+v", workspaceSegment)
 	}
-	workspaceSegment := policy.SystemSegments[1]
-	if workspaceSegment.Key != "workspace:SYSTEM_POLICY.md" || workspaceSegment.Label != "Workspace SYSTEM_POLICY.md" {
-		t.Fatalf("工作区分段身份不对：%+v", workspaceSegment)
-	}
-	if workspaceSegment.Bytes != len(workspace) {
-		t.Fatalf("工作区分段字节 %d 与实际块 %d 不一致", workspaceSegment.Bytes, len(workspace))
-	}
-	// 装配层跳过的文件（正文不在信封里）不能凭空计量。
 	cloudAgentRecordHarnessSegments(&policy, &cloudAgentHarnessSnapshot{
 		Context: []cloudAgentHarnessPart{{Name: "AGENTS.md", Text: "未出现在提示里的约定"}},
 	}, system)
-	if len(policy.SystemSegments) != 2 {
+	if len(policy.SystemSegments) != 1 {
 		t.Fatalf("未装配的文件不应登记：%+v", policy.SystemSegments)
 	}
 }
