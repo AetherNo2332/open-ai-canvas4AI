@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v17",
+  "schemaVersion": "cloud-agent-tools/v18",
   "tools": [
     {
       "function": {
@@ -800,183 +800,6 @@
     },
     {
       "function": {
-        "description": "读取结构化分镜，默认 creative 返回创作、时长、对白和实际资产名称/版本，媒体输入提供 bindingId 和可复制的 promptHandle。fields 选择创作列，missingAnyFields 筛出任一列缺失或空白的行后分页。summary 默认 rows=[]，指定 fields 也返回所选正文；bindings 排查绑定，full 默认一行。coverage.tableComplete 表示本页覆盖整表，selectionComplete 表示范围已到末尾，正文按 nextReads 原文续读，行按 nextRead 续页。hasImagePromptOverride/hasVideoPromptOverride 仅表示独立覆盖，effectivePromptSource 区分覆盖、创作说明回退或 none，不等于生成就绪。返回 snapshotHash 和 storyboardRevision；operationIds 可查1–20个批次的持久提交目标，历史成功后仍须核对当前字段。不从连线推测绑定。",
-        "name": "canvas_read_storyboard",
-        "parameters": {
-          "additionalProperties": false,
-          "allOf": [
-            {
-              "oneOf": [
-                {
-                  "properties": {
-                    "rows": {
-                      "maximum": 20
-                    },
-                    "view": {
-                      "const": "full"
-                    }
-                  },
-                  "required": [
-                    "view"
-                  ]
-                },
-                {
-                  "properties": {
-                    "view": {
-                      "enum": [
-                        "creative",
-                        "summary",
-                        "bindings"
-                      ]
-                    }
-                  }
-                }
-              ]
-            },
-            {
-              "anyOf": [
-                {
-                  "properties": {
-                    "rowIds": {
-                      "not": {}
-                    }
-                  }
-                },
-                {
-                  "properties": {
-                    "offset": {
-                      "const": 0
-                    }
-                  }
-                }
-              ]
-            }
-          ],
-          "properties": {
-            "fields": {
-              "description": "只投影所选创作字段，保留行标识和引用状态；长文本按 nextReads 读取原文，summary 指定本项也会返回正文",
-              "items": {
-                "enum": [
-                  "durationSeconds",
-                  "plotDescription",
-                  "dialogue",
-                  "videoMotionPrompt",
-                  "imageGenerationPrompt",
-                  "camera",
-                  "motion",
-                  "shotSize",
-                  "emotion",
-                  "lightingAndAtmosphere",
-                  "audioEffects",
-                  "narrativeIntent",
-                  "viewerPOV",
-                  "performanceBlocking",
-                  "timeBeats",
-                  "continuityOut",
-                  "negativePrompt"
-                ],
-                "type": "string"
-              },
-              "maxItems": 17,
-              "minItems": 1,
-              "type": "array",
-              "uniqueItems": true
-            },
-            "missingAnyFields": {
-              "description": "筛出任一指定字段缺失或空白的行，时长缺失或非法也视为缺口；在 rowIds 选择后、分页前筛选，不代表生成被阻塞",
-              "items": {
-                "enum": [
-                  "durationSeconds",
-                  "plotDescription",
-                  "dialogue",
-                  "videoMotionPrompt",
-                  "imageGenerationPrompt",
-                  "camera",
-                  "motion",
-                  "shotSize",
-                  "emotion",
-                  "lightingAndAtmosphere",
-                  "audioEffects",
-                  "narrativeIntent",
-                  "viewerPOV",
-                  "performanceBlocking",
-                  "timeBeats",
-                  "continuityOut",
-                  "negativePrompt"
-                ],
-                "type": "string"
-              },
-              "maxItems": 17,
-              "minItems": 1,
-              "type": "array",
-              "uniqueItems": true
-            },
-            "mode": {
-              "description": "按生成模式解析有效输入；video 遵守关键帧模式",
-              "enum": [
-                "image",
-                "video"
-              ],
-              "type": "string"
-            },
-            "nodeId": {
-              "description": "真实分镜脚本节点ID",
-              "type": "string"
-            },
-            "offset": {
-              "minimum": 0,
-              "type": "integer"
-            },
-            "operationIds": {
-              "description": "中断恢复时查询稳定批次标识，返回已提交目标和待执行标识；实际剩余字段仍用 missingAnyFields 核对",
-              "items": {
-                "maxLength": 128,
-                "minLength": 8,
-                "type": "string"
-              },
-              "maxItems": 20,
-              "minItems": 1,
-              "type": "array",
-              "uniqueItems": true
-            },
-            "rowIds": {
-              "description": "可选真实行ID，与非零offset互斥",
-              "items": {
-                "maxLength": 80,
-                "minLength": 1,
-                "type": "string"
-              },
-              "maxItems": 100,
-              "minItems": 1,
-              "type": "array"
-            },
-            "rows": {
-              "description": "非 full 默认且最多100行；full 最多20行，默认1行；实际分页受字节预算限制",
-              "maximum": 100,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "view": {
-              "description": "默认 creative：镜头创作、资产名称/版本及有效输入；summary 扫描缺口，bindings 排查底层引用，full 高级字段；指定 fields 时各视图均返回所选字段正文",
-              "enum": [
-                "creative",
-                "summary",
-                "bindings",
-                "full"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "nodeId"
-          ],
-          "type": "object"
-        }
-      },
-      "type": "function"
-    },
-    {
-      "function": {
         "description": "查询当前用户、当前画布的生成任务，taskId 使用生成回执的任务 ID，不能传节点 ID。queued/running 表示仍在处理；成功后读取结果，失败时报告错误，不擅自重新提交收费任务。",
         "name": "task_get",
         "parameters": {
@@ -1180,6 +1003,1058 @@
     },
     {
       "function": {
+        "description": "统一分镜：read 读 Markdown、分页与引用；split/resplit 异步调用服务端从剧情、风格和相邻镜头拆镜，不手填整表。写回后在同一运行的下一模型步骤通知，依赖结果用 wait_generations。update 小范围改行，lock/unlock 保护镜头；资产和绑定 action 维护引用。写动作拒绝锁定目标，unlock 除外。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "storyboard",
+        "parameters": {
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "rowIds": {
+                          "not": {}
+                        }
+                      }
+                    },
+                    {
+                      "properties": {
+                        "offset": {
+                          "const": 0
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "view": {
+                          "enum": [
+                            "creative",
+                            "summary",
+                            "bindings"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "properties": {
+                        "rows": {
+                          "maximum": 20
+                        },
+                        "view": {
+                          "const": "full"
+                        }
+                      },
+                      "required": [
+                        "view"
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "read"
+                },
+                "fields": {},
+                "missingAnyFields": {},
+                "mode": {},
+                "nodeId": {},
+                "offset": {},
+                "operationIds": {},
+                "rowIds": {},
+                "rows": {},
+                "view": {}
+              },
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "properties": {
+                    "channelId": {
+                      "not": {}
+                    },
+                    "channelModelKey": {
+                      "not": {}
+                    },
+                    "logicalModelId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "selectionId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "channelId": {
+                      "not": {}
+                    },
+                    "channelModelKey": {
+                      "not": {}
+                    },
+                    "selectionId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "logicalModelId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "logicalModelId": {
+                      "not": {}
+                    },
+                    "selectionId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "channelId",
+                    "channelModelKey"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "split"
+                },
+                "channelId": {},
+                "channelModelKey": {},
+                "logicalModelId": {},
+                "nodeId": {},
+                "request": {},
+                "selectionId": {},
+                "shotCount": {},
+                "shotDurationSeconds": {}
+              },
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "properties": {
+                    "channelId": {
+                      "not": {}
+                    },
+                    "channelModelKey": {
+                      "not": {}
+                    },
+                    "logicalModelId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "selectionId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "channelId": {
+                      "not": {}
+                    },
+                    "channelModelKey": {
+                      "not": {}
+                    },
+                    "selectionId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "logicalModelId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "logicalModelId": {
+                      "not": {}
+                    },
+                    "selectionId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "channelId",
+                    "channelModelKey"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "resplit"
+                },
+                "channelId": {},
+                "channelModelKey": {},
+                "logicalModelId": {},
+                "nodeId": {},
+                "request": {},
+                "rowIds": {},
+                "selectionId": {},
+                "shotCount": {},
+                "shotDurationSeconds": {}
+              },
+              "required": [
+                "rowIds"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "anyOf": [
+                {
+                  "properties": {
+                    "storyboardRevision": {
+                      "not": {}
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "patch": {
+                      "properties": {
+                        "assets": {
+                          "not": {}
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "updates": {
+                      "items": {
+                        "properties": {
+                          "patch": {
+                            "properties": {
+                              "assets": {
+                                "not": {}
+                              }
+                            },
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  }
+                }
+              ],
+              "oneOf": [
+                {
+                  "oneOf": [
+                    {
+                      "properties": {
+                        "rowIds": {
+                          "not": {}
+                        }
+                      },
+                      "required": [
+                        "rowId"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "rowId": {
+                          "not": {}
+                        }
+                      },
+                      "required": [
+                        "rowIds"
+                      ]
+                    }
+                  ],
+                  "properties": {
+                    "updates": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "patch"
+                  ]
+                },
+                {
+                  "properties": {
+                    "patch": {
+                      "not": {}
+                    },
+                    "rowId": {
+                      "not": {}
+                    },
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "updates"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "update"
+                },
+                "nodeId": {},
+                "operationId": {},
+                "patch": {},
+                "rowId": {},
+                "rowIds": {},
+                "snapshotHash": {},
+                "storyboardRevision": {},
+                "updates": {}
+              },
+              "required": [
+                "snapshotHash"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "properties": {
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rowId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "enum": [
+                    "lock",
+                    "unlock"
+                  ]
+                },
+                "nodeId": {},
+                "operationId": {},
+                "rowId": {},
+                "rowIds": {},
+                "snapshotHash": {}
+              },
+              "required": [
+                "snapshotHash"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "properties": {
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rowId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "set_assets"
+                },
+                "assets": {},
+                "nodeId": {},
+                "operationId": {},
+                "rowId": {},
+                "rowIds": {},
+                "snapshotHash": {}
+              },
+              "required": [
+                "snapshotHash",
+                "assets"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "properties": {
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rowId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "enum": [
+                    "add_assets",
+                    "remove_assets",
+                    "upsert_assets"
+                  ]
+                },
+                "assets": {
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "nodeId": {},
+                "operationId": {},
+                "rowId": {},
+                "rowIds": {},
+                "snapshotHash": {}
+              },
+              "required": [
+                "snapshotHash",
+                "assets"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "properties": {
+                    "referenceNodeIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "references"
+                  ]
+                },
+                {
+                  "properties": {
+                    "references": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "referenceNodeIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "set_references"
+                },
+                "nodeId": {},
+                "operationId": {},
+                "referenceNodeIds": {},
+                "references": {},
+                "snapshotHash": {}
+              },
+              "required": [
+                "snapshotHash"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "properties": {
+                    "referenceNodeIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "references"
+                  ]
+                },
+                {
+                  "properties": {
+                    "references": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "referenceNodeIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "enum": [
+                    "add_references",
+                    "remove_references"
+                  ]
+                },
+                "nodeId": {},
+                "operationId": {},
+                "referenceNodeIds": {
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "references": {
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "snapshotHash": {}
+              },
+              "required": [
+                "snapshotHash"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "const": "bind_output"
+                },
+                "nodeId": {},
+                "operationId": {},
+                "outputMode": {},
+                "outputNodeId": {},
+                "rowId": {},
+                "snapshotHash": {}
+              },
+              "required": [
+                "snapshotHash",
+                "rowId",
+                "outputMode",
+                "outputNodeId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "const": "unbind_output"
+                },
+                "nodeId": {},
+                "operationId": {},
+                "outputMode": {},
+                "rowId": {},
+                "snapshotHash": {}
+              },
+              "required": [
+                "snapshotHash",
+                "rowId",
+                "outputMode"
+              ],
+              "type": "object"
+            }
+          ],
+          "properties": {
+            "action": {
+              "enum": [
+                "read",
+                "split",
+                "resplit",
+                "update",
+                "lock",
+                "unlock",
+                "set_assets",
+                "add_assets",
+                "remove_assets",
+                "upsert_assets",
+                "set_references",
+                "add_references",
+                "remove_references",
+                "bind_output",
+                "unbind_output"
+              ],
+              "type": "string"
+            },
+            "assets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ref": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "character",
+                      "environment",
+                      "wardrobe",
+                      "prop",
+                      "weapon",
+                      "style",
+                      "motion",
+                      "audio"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "role"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "channelId": {
+              "description": "系统渠道 ID",
+              "type": "string"
+            },
+            "channelModelKey": {
+              "description": "系统渠道模型键",
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "enum": [
+                  "durationSeconds",
+                  "locked",
+                  "mediaReview",
+                  "plotDescription",
+                  "dialogue",
+                  "videoMotionPrompt",
+                  "imageGenerationPrompt",
+                  "camera",
+                  "motion",
+                  "shotSize",
+                  "emotion",
+                  "lightingAndAtmosphere",
+                  "audioEffects",
+                  "narrativeIntent",
+                  "viewerPOV",
+                  "performanceBlocking",
+                  "timeBeats",
+                  "continuityOut",
+                  "negativePrompt"
+                ],
+                "type": "string"
+              },
+              "maxItems": 19,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "logicalModelId": {
+              "description": "系统逻辑模型 ID",
+              "type": "string"
+            },
+            "missingAnyFields": {
+              "items": {
+                "enum": [
+                  "durationSeconds",
+                  "locked",
+                  "mediaReview",
+                  "plotDescription",
+                  "dialogue",
+                  "videoMotionPrompt",
+                  "imageGenerationPrompt",
+                  "camera",
+                  "motion",
+                  "shotSize",
+                  "emotion",
+                  "lightingAndAtmosphere",
+                  "audioEffects",
+                  "narrativeIntent",
+                  "viewerPOV",
+                  "performanceBlocking",
+                  "timeBeats",
+                  "continuityOut",
+                  "negativePrompt"
+                ],
+                "type": "string"
+              },
+              "maxItems": 19,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "mode": {
+              "enum": [
+                "image",
+                "video"
+              ],
+              "type": "string"
+            },
+            "nodeId": {
+              "description": "分镜节点 ID",
+              "type": "string"
+            },
+            "offset": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operationId": {
+              "maxLength": 128,
+              "minLength": 8,
+              "type": "string"
+            },
+            "operationIds": {
+              "items": {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              "maxItems": 20,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "outputMode": {
+              "enum": [
+                "image",
+                "video"
+              ],
+              "type": "string"
+            },
+            "outputNodeId": {
+              "description": "绑定或解除产物时的节点 ID",
+              "type": "string"
+            },
+            "patch": {
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "assets": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ref": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "character",
+                          "environment",
+                          "wardrobe",
+                          "prop",
+                          "weapon",
+                          "style",
+                          "motion",
+                          "audio"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "ref",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 100,
+                  "type": "array"
+                },
+                "audioEffects": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "camera": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "continuityOut": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "dialogue": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "durationSeconds": {
+                  "maximum": 86400,
+                  "minimum": 5e-324,
+                  "type": "number"
+                },
+                "emotion": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "imageGenerationPrompt": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "lightingAndAtmosphere": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "motion": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "narrativeIntent": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "negativePrompt": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "performanceBlocking": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "plotDescription": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "shotSize": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "timeBeats": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "videoMotionPrompt": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "viewerPOV": {
+                  "maxLength": 20000,
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "referenceNodeIds": {
+              "items": {
+                "description": "画布节点 ID",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "references": {
+              "items": {
+                "description": "画布节点 ID 或唯一名称",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "request": {
+              "description": "resplit 的修改意见，尽量使用用户原话",
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "rowId": {
+              "description": "单个真实 rowId",
+              "type": "string"
+            },
+            "rowIds": {
+              "items": {
+                "description": "真实分镜 rowId",
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "rows": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "selectionId": {
+              "description": "model_list 返回的一次性系统模型选择凭证",
+              "type": "string"
+            },
+            "shotCount": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "shotDurationSeconds": {
+              "maximum": 60,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshotHash": {
+              "description": "update 或资产/绑定写入使用的最新画布快照",
+              "type": "string"
+            },
+            "storyboardRevision": {
+              "description": "read 返回的表级版本",
+              "type": "string"
+            },
+            "updates": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "patch": {
+                    "additionalProperties": false,
+                    "minProperties": 1,
+                    "properties": {
+                      "assets": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "ref": {
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "role": {
+                              "enum": [
+                                "character",
+                                "environment",
+                                "wardrobe",
+                                "prop",
+                                "weapon",
+                                "style",
+                                "motion",
+                                "audio"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "ref",
+                            "role"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 100,
+                        "type": "array"
+                      },
+                      "audioEffects": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "camera": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "continuityOut": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "dialogue": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "durationSeconds": {
+                        "maximum": 86400,
+                        "minimum": 5e-324,
+                        "type": "number"
+                      },
+                      "emotion": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "imageGenerationPrompt": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "lightingAndAtmosphere": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "motion": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "narrativeIntent": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "negativePrompt": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "performanceBlocking": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "plotDescription": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "shotSize": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "timeBeats": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "videoMotionPrompt": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "viewerPOV": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "rowId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "rowId",
+                  "patch"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            "view": {
+              "enum": [
+                "creative",
+                "summary",
+                "bindings",
+                "full"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "nodeId"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
         "description": "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_undo",
         "parameters": {
@@ -1336,1751 +2211,6 @@
             }
           },
           "required": [],
-          "type": "object"
-        }
-      },
-      "type": "function"
-    },
-    {
-      "function": {
-        "description": "创建结构化分镜，自动分配节点/行 ID 和位置，回执 createdRows 返回新行身份。传最新 snapshotHash、title 和 rows；每行用正数 durationSeconds、plotDescription 创作说明及 dialogue，可独立维护 shotSize、motion、lightingAndAtmosphere 等创作列，按需覆盖 imageGenerationPrompt/videoMotionPrompt。assets 用 ref（画布节点 ID 或唯一完整名称）和 role；references 是共享引用列表。同名多版本须用 ID，不猜版本。写入遵循审批模式。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
-        "name": "canvas_create_storyboard",
-        "parameters": {
-          "additionalProperties": false,
-          "anyOf": [
-            {
-              "properties": {
-                "references": {
-                  "not": {}
-                }
-              }
-            },
-            {
-              "properties": {
-                "referenceNodeIds": {
-                  "not": {}
-                }
-              }
-            }
-          ],
-          "properties": {
-            "nodeId": {
-              "description": "可选新分镜节点 ID，省略由系统分配",
-              "type": "string"
-            },
-            "referenceNodeIds": {
-              "description": "可选：所有镜头共享的引用输入节点；服务端据此派生连接，不要另外连线",
-              "items": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "maxItems": 100,
-              "type": "array"
-            },
-            "references": {
-              "description": "全表共享输入：当前画布节点 ID 或唯一名称。逐镜角色和道具用 rows.assets；系统管理实际引用和连线",
-              "items": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "maxItems": 100,
-              "type": "array"
-            },
-            "rows": {
-              "items": {
-                "additionalProperties": false,
-                "anyOf": [
-                  {
-                    "properties": {
-                      "plotDescription": {
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "plotDescription"
-                    ]
-                  },
-                  {
-                    "properties": {
-                      "videoMotionPrompt": {
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "videoMotionPrompt"
-                    ]
-                  }
-                ],
-                "properties": {
-                  "assets": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "ref": {
-                          "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "role": {
-                          "enum": [
-                            "character",
-                            "environment",
-                            "wardrobe",
-                            "prop",
-                            "weapon",
-                            "style",
-                            "motion",
-                            "audio"
-                          ],
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "ref",
-                        "role"
-                      ],
-                      "type": "object"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
-                  },
-                  "audioEffects": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "camera": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "continuityOut": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "dialogue": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "durationSeconds": {
-                    "maximum": 86400,
-                    "minimum": 5e-324,
-                    "type": "number"
-                  },
-                  "emotion": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "imageGenerationPrompt": {
-                    "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "lightingAndAtmosphere": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "motion": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "narrativeIntent": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "negativePrompt": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "performanceBlocking": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "plotDescription": {
-                    "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "shotSize": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "timeBeats": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "videoMotionPrompt": {
-                    "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "viewerPOV": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "durationSeconds"
-                ],
-                "type": "object"
-              },
-              "maxItems": 100,
-              "minItems": 1,
-              "type": "array"
-            },
-            "snapshotHash": {
-              "description": "最近一次画布读取返回的 snapshotHash",
-              "type": "string"
-            },
-            "title": {
-              "description": "分镜脚本标题",
-              "type": "string"
-            },
-            "x": {
-              "type": "number"
-            },
-            "y": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "snapshotHash",
-            "title",
-            "rows"
-          ],
-          "type": "object"
-        }
-      },
-      "type": "function"
-    },
-    {
-      "function": {
-        "description": "读真实 rowId、snapshotHash/storyboardRevision。batch_update 用 updates:[{rowId,patch}] 逐行写不同内容；update 对 rowId/rowIds 共用 patch。append_rows 用 rows、append 用完整 patch 追加，每批及全表最多100行。非法目标、字段或引用使整批拒绝。changedRows 只列实际变化；createdRows/removedRowIds 标识增删。纯创作字段 update/batch_update 可带 storyboardRevision，允许无关布局变化，同表/依赖/世代变化仍冲突；其他动作校验全画布快照。每模型步骤一次写入，下一步可复用成功版本。\n\n行资产增量用 add_assets（保留原角色）、remove_assets（按 ref+role 移除）、upsert_assets（新增或改用途），接受 rowId/rowIds 和非空 assets。set_assets 明确替换并清空旧 characters，[] 不清共享输入。共享增减用 add_references/remove_references，set_references 明确替换或清空。assetChanges/referenceChanges 分别列行级/共享影响及有效绑定。提示词复制输入的 promptHandle，如 {{ref:node:hero:reference}}；生成时才转素材序号，缺失句柄拒绝生成。产物归属用 bind_output/unbind_output，不写任务、状态、URL 或连线；历史引用先迁移。\n\n每批用稳定 operationId（8–128字符）；重试同键同操作返回原结果，不重复执行/审批，同键不同参数拒绝，版本前置条件可刷新。replayed=true 表示历史提交，其版本不代表当前内容；恢复时查询 operationIds 并读取目标字段/missingAnyFields，核对人工修改及缺口。退役世代的旧标识拒绝重发，新批次用新标识。明细省略按 assetChangesNextRead 续读。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
-        "name": "canvas_edit_storyboard",
-        "parameters": {
-          "additionalProperties": false,
-          "oneOf": [
-            {
-              "properties": {
-                "action": {
-                  "const": "append"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "additionalProperties": false,
-                  "anyOf": [
-                    {
-                      "properties": {
-                        "plotDescription": {
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "plotDescription"
-                      ]
-                    },
-                    {
-                      "properties": {
-                        "videoMotionPrompt": {
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "videoMotionPrompt"
-                      ]
-                    }
-                  ],
-                  "properties": {
-                    "assets": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "ref": {
-                            "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
-                            "minLength": 1,
-                            "type": "string"
-                          },
-                          "role": {
-                            "enum": [
-                              "character",
-                              "environment",
-                              "wardrobe",
-                              "prop",
-                              "weapon",
-                              "style",
-                              "motion",
-                              "audio"
-                            ],
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "ref",
-                          "role"
-                        ],
-                        "type": "object"
-                      },
-                      "maxItems": 100,
-                      "type": "array"
-                    },
-                    "audioEffects": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "camera": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "continuityOut": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "dialogue": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "durationSeconds": {
-                      "maximum": 86400,
-                      "minimum": 5e-324,
-                      "type": "number"
-                    },
-                    "emotion": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "imageGenerationPrompt": {
-                      "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "lightingAndAtmosphere": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "motion": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "narrativeIntent": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "negativePrompt": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "performanceBlocking": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "plotDescription": {
-                      "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "shotSize": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "timeBeats": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "videoMotionPrompt": {
-                      "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "viewerPOV": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "durationSeconds"
-                  ],
-                  "type": "object"
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rowId": {
-                  "not": {}
-                },
-                "rowIds": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "patch"
-              ]
-            },
-            {
-              "anyOf": [
-                {
-                  "properties": {
-                    "storyboardRevision": {
-                      "not": {}
-                    }
-                  }
-                },
-                {
-                  "properties": {
-                    "updates": {
-                      "items": {
-                        "properties": {
-                          "patch": {
-                            "properties": {
-                              "assets": {
-                                "not": {}
-                              }
-                            }
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "type": "array"
-                    }
-                  }
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "batch_update"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rowId": {
-                  "not": {}
-                },
-                "rowIds": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "updates"
-              ]
-            },
-            {
-              "properties": {
-                "action": {
-                  "const": "append_rows"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rowId": {
-                  "not": {}
-                },
-                "rowIds": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "rows"
-              ]
-            },
-            {
-              "anyOf": [
-                {
-                  "properties": {
-                    "storyboardRevision": {
-                      "not": {}
-                    }
-                  }
-                },
-                {
-                  "properties": {
-                    "patch": {
-                      "properties": {
-                        "assets": {
-                          "not": {}
-                        }
-                      }
-                    }
-                  }
-                }
-              ],
-              "oneOf": [
-                {
-                  "properties": {
-                    "rowIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowId"
-                  ]
-                },
-                {
-                  "properties": {
-                    "rowId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "update"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "patch"
-              ]
-            },
-            {
-              "oneOf": [
-                {
-                  "properties": {
-                    "rowIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowId"
-                  ]
-                },
-                {
-                  "properties": {
-                    "rowId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "remove"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action"
-              ]
-            },
-            {
-              "oneOf": [
-                {
-                  "properties": {
-                    "rowIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowId"
-                  ]
-                },
-                {
-                  "properties": {
-                    "rowId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "set_assets"
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "assets"
-              ]
-            },
-            {
-              "oneOf": [
-                {
-                  "properties": {
-                    "referenceNodeIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "references"
-                  ]
-                },
-                {
-                  "properties": {
-                    "references": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "referenceNodeIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "set_references"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "rowId": {
-                  "not": {}
-                },
-                "rowIds": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action"
-              ]
-            },
-            {
-              "properties": {
-                "action": {
-                  "const": "bind_output"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rowIds": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "rowId",
-                "outputMode",
-                "outputNodeId"
-              ]
-            },
-            {
-              "properties": {
-                "action": {
-                  "const": "unbind_output"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rowIds": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "rowId",
-                "outputMode"
-              ]
-            },
-            {
-              "oneOf": [
-                {
-                  "properties": {
-                    "rowIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowId"
-                  ]
-                },
-                {
-                  "properties": {
-                    "rowId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "add_assets"
-                },
-                "assets": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "ref": {
-                        "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "role": {
-                        "enum": [
-                          "character",
-                          "environment",
-                          "wardrobe",
-                          "prop",
-                          "weapon",
-                          "style",
-                          "motion",
-                          "audio"
-                        ],
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "ref",
-                      "role"
-                    ],
-                    "type": "object"
-                  },
-                  "maxItems": 100,
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "assets"
-              ]
-            },
-            {
-              "oneOf": [
-                {
-                  "properties": {
-                    "rowIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowId"
-                  ]
-                },
-                {
-                  "properties": {
-                    "rowId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "remove_assets"
-                },
-                "assets": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "ref": {
-                        "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "role": {
-                        "enum": [
-                          "character",
-                          "environment",
-                          "wardrobe",
-                          "prop",
-                          "weapon",
-                          "style",
-                          "motion",
-                          "audio"
-                        ],
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "ref",
-                      "role"
-                    ],
-                    "type": "object"
-                  },
-                  "maxItems": 100,
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "assets"
-              ]
-            },
-            {
-              "oneOf": [
-                {
-                  "properties": {
-                    "rowIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowId"
-                  ]
-                },
-                {
-                  "properties": {
-                    "rowId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "upsert_assets"
-                },
-                "assets": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "ref": {
-                        "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "role": {
-                        "enum": [
-                          "character",
-                          "environment",
-                          "wardrobe",
-                          "prop",
-                          "weapon",
-                          "style",
-                          "motion",
-                          "audio"
-                        ],
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "ref",
-                      "role"
-                    ],
-                    "type": "object"
-                  },
-                  "maxItems": 100,
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "references": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action",
-                "assets"
-              ]
-            },
-            {
-              "oneOf": [
-                {
-                  "properties": {
-                    "referenceNodeIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "references"
-                  ]
-                },
-                {
-                  "properties": {
-                    "references": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "referenceNodeIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "add_references"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "references": {
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "rowId": {
-                  "not": {}
-                },
-                "rowIds": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action"
-              ]
-            },
-            {
-              "oneOf": [
-                {
-                  "properties": {
-                    "referenceNodeIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "references"
-                  ]
-                },
-                {
-                  "properties": {
-                    "references": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "referenceNodeIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "const": "remove_references"
-                },
-                "assets": {
-                  "not": {}
-                },
-                "outputMode": {
-                  "not": {}
-                },
-                "outputNodeId": {
-                  "not": {}
-                },
-                "patch": {
-                  "not": {}
-                },
-                "referenceNodeIds": {
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "references": {
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "rowId": {
-                  "not": {}
-                },
-                "rowIds": {
-                  "not": {}
-                },
-                "rows": {
-                  "not": {}
-                },
-                "storyboardRevision": {
-                  "not": {}
-                },
-                "updates": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "action"
-              ]
-            }
-          ],
-          "properties": {
-            "action": {
-              "description": "append/append_rows 追加；update 同值补丁，batch_update 每行不同补丁；add_assets 增加且保留原资产，remove_assets 按节点及用途移除，upsert_assets 增加或改用途，set_assets 明确替换整行资产；add/remove_references 增减共享输入，set_references 明确替换。整批原子",
-              "enum": [
-                "append",
-                "append_rows",
-                "update",
-                "batch_update",
-                "remove",
-                "set_assets",
-                "add_assets",
-                "remove_assets",
-                "upsert_assets",
-                "set_references",
-                "add_references",
-                "remove_references",
-                "bind_output",
-                "unbind_output"
-              ],
-              "type": "string"
-            },
-            "assets": {
-              "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "ref": {
-                    "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "role": {
-                    "enum": [
-                      "character",
-                      "environment",
-                      "wardrobe",
-                      "prop",
-                      "weapon",
-                      "style",
-                      "motion",
-                      "audio"
-                    ],
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "ref",
-                  "role"
-                ],
-                "type": "object"
-              },
-              "maxItems": 100,
-              "type": "array"
-            },
-            "nodeId": {
-              "description": "真实分镜脚本节点ID",
-              "type": "string"
-            },
-            "operationId": {
-              "description": "可选稳定批次标识；中断重试必须保持相同标识和相同操作参数。相同标识不重复执行，不同参数拒绝；新批次使用新标识",
-              "maxLength": 128,
-              "minLength": 8,
-              "type": "string"
-            },
-            "outputMode": {
-              "description": "绑定或解除产物归属的槽位",
-              "enum": [
-                "image",
-                "video"
-              ],
-              "type": "string"
-            },
-            "outputNodeId": {
-              "description": "bind_output 必填：已有产物节点 ID；所属关系由服务端派生连接，不重写产物内容",
-              "type": "string"
-            },
-            "patch": {
-              "additionalProperties": false,
-              "minProperties": 1,
-              "properties": {
-                "assets": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "ref": {
-                        "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "role": {
-                        "enum": [
-                          "character",
-                          "environment",
-                          "wardrobe",
-                          "prop",
-                          "weapon",
-                          "style",
-                          "motion",
-                          "audio"
-                        ],
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "ref",
-                      "role"
-                    ],
-                    "type": "object"
-                  },
-                  "maxItems": 100,
-                  "type": "array"
-                },
-                "audioEffects": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "camera": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "continuityOut": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "dialogue": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "durationSeconds": {
-                  "maximum": 86400,
-                  "minimum": 5e-324,
-                  "type": "number"
-                },
-                "emotion": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "imageGenerationPrompt": {
-                  "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "lightingAndAtmosphere": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "motion": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "narrativeIntent": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "negativePrompt": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "performanceBlocking": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "plotDescription": {
-                  "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "shotSize": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "timeBeats": {
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "videoMotionPrompt": {
-                  "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "viewerPOV": {
-                  "maxLength": 20000,
-                  "type": "string"
-                }
-              },
-              "type": "object"
-            },
-            "referenceNodeIds": {
-              "description": "set_references 与 references 二选一：整体替换共享列表并重建派生连线，显式行资产保留；[] 清空共享输入",
-              "items": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "maxItems": 100,
-              "type": "array"
-            },
-            "references": {
-              "description": "set_references 整体替换共享输入；各行继承输入随之更新，显式行资产保留。可用唯一完整名称",
-              "items": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "maxItems": 100,
-              "type": "array"
-            },
-            "rowId": {
-              "description": "update/remove 使用 canvas_read_storyboard 返回的真实 rowId；append 留空",
-              "type": "string"
-            },
-            "rowIds": {
-              "description": "update/remove/set_assets 可选多个真实行 ID，整批校验后一次写入；与 rowId 互斥",
-              "items": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "maxItems": 100,
-              "minItems": 1,
-              "type": "array"
-            },
-            "rows": {
-              "description": "append_rows：批量追加不同镜头，服务端分配行 ID；追加后总行数最多100",
-              "items": {
-                "additionalProperties": false,
-                "anyOf": [
-                  {
-                    "properties": {
-                      "plotDescription": {
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "plotDescription"
-                    ]
-                  },
-                  {
-                    "properties": {
-                      "videoMotionPrompt": {
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "videoMotionPrompt"
-                    ]
-                  }
-                ],
-                "properties": {
-                  "assets": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "ref": {
-                          "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "role": {
-                          "enum": [
-                            "character",
-                            "environment",
-                            "wardrobe",
-                            "prop",
-                            "weapon",
-                            "style",
-                            "motion",
-                            "audio"
-                          ],
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "ref",
-                        "role"
-                      ],
-                      "type": "object"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
-                  },
-                  "audioEffects": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "camera": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "continuityOut": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "dialogue": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "durationSeconds": {
-                    "maximum": 86400,
-                    "minimum": 5e-324,
-                    "type": "number"
-                  },
-                  "emotion": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "imageGenerationPrompt": {
-                    "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "lightingAndAtmosphere": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "motion": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "narrativeIntent": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "negativePrompt": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "performanceBlocking": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "plotDescription": {
-                    "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "shotSize": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "timeBeats": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "videoMotionPrompt": {
-                    "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "viewerPOV": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "durationSeconds"
-                ],
-                "type": "object"
-              },
-              "maxItems": 100,
-              "minItems": 1,
-              "type": "array"
-            },
-            "snapshotHash": {
-              "description": "最近一次分镜读取返回的 snapshotHash",
-              "type": "string"
-            },
-            "storyboardRevision": {
-              "description": "可选：复制该表读取/成功编辑回执的版本，仅用于纯创作字段 update/batch_update。包含全表、依赖资产和实体世代；无关布局不阻塞。同表或依赖变化仍冲突，省略沿用全画布 snapshotHash",
-              "maxLength": 96,
-              "minLength": 1,
-              "type": "string"
-            },
-            "updates": {
-              "description": "batch_update：每个真实 rowId 对应自己的 patch；全部校验后一次提交，最多100项",
-              "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "patch": {
-                    "additionalProperties": false,
-                    "minProperties": 1,
-                    "properties": {
-                      "assets": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "ref": {
-                              "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            "role": {
-                              "enum": [
-                                "character",
-                                "environment",
-                                "wardrobe",
-                                "prop",
-                                "weapon",
-                                "style",
-                                "motion",
-                                "audio"
-                              ],
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "ref",
-                            "role"
-                          ],
-                          "type": "object"
-                        },
-                        "maxItems": 100,
-                        "type": "array"
-                      },
-                      "audioEffects": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "camera": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "continuityOut": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "dialogue": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "durationSeconds": {
-                        "maximum": 86400,
-                        "minimum": 5e-324,
-                        "type": "number"
-                      },
-                      "emotion": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "imageGenerationPrompt": {
-                        "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "lightingAndAtmosphere": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "motion": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "narrativeIntent": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "negativePrompt": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "performanceBlocking": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "plotDescription": {
-                        "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "shotSize": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "timeBeats": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "videoMotionPrompt": {
-                        "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "viewerPOV": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      }
-                    },
-                    "type": "object"
-                  },
-                  "rowId": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "rowId",
-                  "patch"
-                ],
-                "type": "object"
-              },
-              "maxItems": 100,
-              "minItems": 1,
-              "type": "array"
-            }
-          },
-          "required": [
-            "snapshotHash",
-            "nodeId",
-            "action"
-          ],
           "type": "object"
         }
       },

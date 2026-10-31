@@ -116,6 +116,8 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 			advertised = cloudAgentPlatformToolNames()[name]
 		}
 		switch {
+		case cloudAgentLegacyStoryboardTool(name):
+			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "tool", "旧分镜工具已退役；使用 storyboard，action=read/split/resplit/update/lock/unlock。新表通过 canvas_apply_ops 创建 script 并写入剧情后调用 split")
 		case !advertised:
 			issue, message := cloudAgentUnadvertisedToolAdmission(state, name)
 			admission = cloudAgentRejectCall(call, issue, "", message)
@@ -156,6 +158,10 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 		admissions[index] = admission
 	}
 	return admissions
+}
+
+func cloudAgentLegacyStoryboardTool(name string) bool {
+	return name == "canvas_read_storyboard" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard"
 }
 
 // A known child may be inactive on the current model request; that is different

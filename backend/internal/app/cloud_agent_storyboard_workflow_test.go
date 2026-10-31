@@ -8,7 +8,7 @@ import (
 
 func workflowTool(t *testing.T, name string) map[string]any {
 	t.Helper()
-	for _, tool := range cloudAgentTools(tierAutoRequest()) {
+	for _, tool := range cloudAgentToolsWithRetired(tierAutoRequest()) {
 		fn := tool["function"].(map[string]any)
 		if fn["name"] == name {
 			return fn["parameters"].(map[string]any)
@@ -199,25 +199,25 @@ func TestStoryboardWorkflowDisclosureOnlyExpandsAtBoundary(t *testing.T) {
 		} else {
 			state.Calls = []cloudAgentCall{{ID: "pending"}}
 		}
-		if containsToolName(cloudAgentNextAdvertisedToolNames(&state, boardInventory), "canvas_edit_storyboard") {
-			t.Fatalf("expanded during %s", guard)
+		if !containsToolName(cloudAgentNextAdvertisedToolNames(&state, boardInventory), "storyboard") {
+			t.Fatalf("unified storyboard loadout disappeared during %s", guard)
 		}
 	}
 	state.ActiveTaskID = ""
 	state.Calls = nil
 	next := cloudAgentNextAdvertisedToolNames(&state, boardInventory)
-	for _, want := range []string{"canvas_read_storyboard", "canvas_edit_storyboard", "canvas_create_character", "canvas_list_assets", "canvas_bind_asset"} {
+	for _, want := range []string{"storyboard", "canvas_create_character", "canvas_list_assets", "canvas_bind_asset"} {
 		if !containsToolName(next, want) {
 			t.Fatalf("incomplete workflow: %s", want)
 		}
 	}
 	state.PendingInterjections = []cloudAgentInterjection{{Text: "分镜"}}
 	state.Canonical.Messages = []map[string]any{{"role": "tool", "content": "分镜"}, {"role": "user", "content": "分镜", cloudAgentContextSourceKey: "subagent_message"}}
-	if containsToolName(cloudAgentNextAdvertisedToolNames(&state, cloudAgentCanvasInventory{}), "canvas_edit_storyboard") {
-		t.Fatal("data/pending text unlocked tools")
+	if !containsToolName(cloudAgentNextAdvertisedToolNames(&state, cloudAgentCanvasInventory{}), "storyboard") {
+		t.Fatal("unified storyboard tool was removed by pending data")
 	}
 	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "user", "content": "写分镜", cloudAgentContextSourceKey: "user_interjection"})
-	if !containsToolName(cloudAgentNextAdvertisedToolNames(&state, cloudAgentCanvasInventory{}), "canvas_edit_storyboard") {
+	if !containsToolName(cloudAgentNextAdvertisedToolNames(&state, cloudAgentCanvasInventory{}), "storyboard") {
 		t.Fatal("delivered user instruction did not unlock tools")
 	}
 	state.AdvertisedToolNames = next
@@ -225,8 +225,8 @@ func TestStoryboardWorkflowDisclosureOnlyExpandsAtBoundary(t *testing.T) {
 		t.Fatal("loadout shrank")
 	}
 	state.Request.PermissionMode = "read_only"
-	if containsToolName(cloudAgentNextAdvertisedToolNames(&state, boardInventory), "canvas_edit_storyboard") {
-		t.Fatal("expansion granted write permission")
+	if !containsToolName(cloudAgentNextAdvertisedToolNames(&state, boardInventory), "storyboard") {
+		t.Fatal("read-only mode removed the unified read-capable storyboard tool")
 	}
 }
 
@@ -283,7 +283,7 @@ func TestStoryboardWorkflowPiDeliveryKeepsToolIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.Canonical.Messages = nil
-	if !containsToolName(cloudAgentNextAdvertisedToolNames(&state, cloudAgentCanvasInventory{}), "canvas_edit_storyboard") {
+	if !containsToolName(cloudAgentNextAdvertisedToolNames(&state, cloudAgentCanvasInventory{}), "storyboard") {
 		t.Fatal("delivered Pi instruction lost after checkpoint/compaction")
 	}
 }

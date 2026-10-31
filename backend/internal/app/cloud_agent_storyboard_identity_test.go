@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"yingce/backend/internal/canvas/capability"
-	"yingce/backend/internal/model"
-	"yingce/backend/internal/repository"
 )
 
 func TestStoryboardAppendIdentitySurvivesRepeatedProviderIDs(t *testing.T) {
@@ -120,86 +118,15 @@ func TestStoryboardAppendIdentitySurvivesRepeatedProviderIDs(t *testing.T) {
 	}
 }
 
-func TestStoryboardAppendIdentityApprovalReplay(t *testing.T) {
-	for _, action := range []string{"append", "append_rows"} {
-		t.Run(action, func(t *testing.T) {
-			s, _, canvas := cloudAgentStoryboardFixture(t)
-			createCloudAgentStoryboardForTest(t, s, canvas)
-			req := agentTestRequest()
-			req.PermissionMode, req.IdempotencyKey = "request_approval", "append-identity-approval"
-			root, err := s.CreateCloudAgentRun("user", req, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			run, initial := startPiAgentFirstStep(t, s, root.ID)
-			doc, _ := creationDocument(canvas.PayloadJSON)
-			args := map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": action}
-			row := map[string]any{"durationSeconds": 4.0, "plotDescription": "approved fresh row"}
-			if action == "append" {
-				args["patch"] = row
-			} else {
-				args["rows"] = []map[string]any{row}
-			}
-			call := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "repeat", args)
-			state := *initial
-			state.ActiveTaskID = ""
-			state.Calls = []cloudAgentCall{call}
-			state.CallIndex = 0
-			state.ActivatedToolCategories = cloudAgentAppendActivatedCategory(state.ActivatedToolCategories, "agent_tools_canvas_edit")
-			state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleToolsForCategories(state.Canonical.Tools, state.ActivatedToolCategories, nil, nil))
-			resolved, err := cloudAgentResolveWorkflowIDs("user", run.ID, &state, call)
-			if err != nil {
-				t.Fatal(err)
-			}
-			preview, err := prepareCloudAgentStoryboardEdit(s.repo, "user", canvas.ID, resolved)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, _, planned, err := storyboardNodeFromDocument(preview.Document, "storyboard-1")
-			if err != nil {
-				t.Fatal(err)
-			}
-			expectedID := planned[len(planned)-1]["id"]
-			if cloudAgentApprovalCallHash(resolved) != cloudAgentApprovalCallHash(call) {
-				t.Fatal("internal identity changed approval contract")
-			}
-			if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-				return cloudAgentSave(current, &state)
-			}); err != nil {
-				t.Fatal(err)
-			}
-			run, state = reloadAgentRun(t, s, run.ID)
-			if err := s.executeCloudAgentToolCall(run, &state); err != nil {
-				t.Fatal(err)
-			}
-			waiting, err := s.CloudAgentRun("user", run.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if waiting.Status != "waiting_approval" || waiting.Approval == nil {
-				t.Fatalf("append missed approval: %+v", waiting)
-			}
-			run, state = reloadAgentRun(t, s, run.ID)
-			if state.Calls[0].Function.Arguments != call.Function.Arguments || state.Calls[0].storyboardMutationID != "" {
-				t.Fatal("checkpoint changed model call or serialized internal identity")
-			}
-			if err := s.DecideCloudAgentApproval("user", run.ID, waiting.Approval.ID, "approve", "approve append"); err != nil {
-				t.Fatal(err)
-			}
-			run, state = reloadAgentRun(t, s, run.ID)
-			if err := s.executeCloudAgentToolCall(run, &state); err != nil {
-				t.Fatal(err)
-			}
-			stored, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
-			doc, _ = creationDocument(stored.PayloadJSON)
-			_, _, rows, err := storyboardNodeFromDocument(doc, "storyboard-1")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(rows) != 3 || rows[2]["id"] != expectedID {
-				t.Fatalf("approved execution identity drift: %v", rows)
-			}
-		})
+func TestStoryboardManualAppendCannotRequestApproval(t *testing.T) {
+	req := tierAutoRequest()
+	for _, action := range []string{"append", "append_rows", "remove"} {
+		call := cloudAgentStoryboardCall(t, "storyboard", "unsupported", map[string]any{"action": action, "nodeId": "board", "snapshotHash": "h", "rowId": "r"})
+		state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: cloudAgentTools(req)}}
+		admission := cloudAgentPreflightBatch(state, []cloudAgentCall{call})
+		if admission[0].Allowed {
+			t.Fatalf("manual %s was admitted", action)
+		}
 	}
 }
 
@@ -289,6 +216,9 @@ func TestStoryboardCreativeFieldPersistenceParity(t *testing.T) {
 	content := func(stage string) map[string]any {
 		row := map[string]any{"durationSeconds": float64(len(stage))}
 		for field, contract := range capability.StoryboardRowFields() {
+			if field == "mediaReview" {
+				continue
+			}
 			if contract.JSONSchema()["type"] == "string" {
 				row[field] = stage + ":" + field
 			}

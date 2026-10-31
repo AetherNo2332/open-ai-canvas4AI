@@ -63,6 +63,6 @@
 
 - 先用 `canvas_get_state` 确认是否已有正文、分镜和相关节点。
 - 文稿成果写入 `text` 或 `markdown` 节点；创建/修改使用 `canvas_apply_ops` 的真实能力字段。
-- 多镜头、需要逐镜维护的内容使用 `canvas_create_storyboard`，每行提供场景、时长、画面、对白、运动、声音和连续性字段。
-- 修改时先 `canvas_read_storyboard` 获取最新 `snapshotHash` 和真实 `rowId`，再调用 `canvas_edit_storyboard`；不复制整表、不猜 ID。
+- 多镜头内容先用 canvas_apply_ops 创建 script 并写入剧情，风格要求写入相连文本节点，再用 storyboard 的 split；服务端读取剧情、素材和前后镜上下文，不手填整表。
+- 修改时先 `storyboard` 的 `read` 获取最新 `snapshotHash` 和真实 `rowId`，再调用 `storyboard`；不复制整表、不猜 ID。
 - Markdown 报告是可读依据，不等于结构化分镜，也不等于视频已生成。

@@ -13,19 +13,25 @@ description: Agent（beta）的当前工具总数、按需披露和执行边界
 
 ## 披露与执行
 
-工具先按能力和权限进入合格目录，再披露 L0 与已解锁 L1。预演和导演的 10 个工具已从画布目录移除，历史场景及用户意图均不能重新开放；历史场景数据保留。参数校验、单次写入、归属、快照冲突、审批、预算、运行租约和回执幂等继续由原有执行路径约束。
+工具先按能力和权限进入合格目录，有画布时直接披露 storyboard、角色卡、素材查询和绑定；批量表保持原条件。预演和导演的 10 个工具已从画布目录移除，历史场景及用户意图均不能重新开放；历史场景数据保留。参数校验、单次写入、归属、快照冲突、审批、预算、运行租约和回执幂等继续由原有执行路径约束。
 
-`canvas_arrange_nodes` 属于 L0，具备画布写权限时从首步披露，无需整理、排版或对齐关键词。当前工具全集为 33 个，L0 并集 25 个、L1 8 个；只读模式不提供节点整理工具。
+`canvas_arrange_nodes` 属于 L0，具备画布写权限时从首步披露，无需整理、排版或对齐关键词。当前工具数量以运行时目录为准；只读模式不提供节点整理工具。
 
 Worker 的首次及后续模型预检只提交当前 `allowed` 的具体工具，与实际模型请求保持一致。服务端保存的完整工具目录包含尚未披露的 L1，不能直接作为预检工具列表；原生技能 `read` 继续随原生技能运行披露。
 
 Worker 直接使用服务端下发的工具定义。启动不读取本地工具制品进行比对，不登记工具快照；心跳和领取不再携带快照身份，也不按快照兼容性筛选执行实例。运行总览中的工具快照管理、检测、告警、诊断导出和按快照排空入口已移除。
 
+## 统一分镜工具
+
+合同 v18、系统策略 v26。新建 script 并写入 composerContent，风格与要求保存为相连文本节点，再 storyboard.split；局部修改用 resplit，连续 rowIds 和用户原话由调用方提供，其余上下文由服务端读取。read 默认附 Markdown 表，保留分页与字段投影；update 仅做少量指定行更新。lock/unlock 管理保护；锁定镜头拒绝所有写动作，unlock 除外，共享引用影响到锁定行也拒绝。
+
+split/resplit 与媒体共用 PendingGenerations、系统通知和 wait_generations。提交、账务预留、任务绑定和 Agent 检查点同事务提交，遵循本轮积分与生成数量上限。当前工具步骤只收到 submitted/taskId，写回完成后在同一运行的下一模型步骤收到结果及新旧行对应关系；依赖结果时挂起，完成后继续。旧三个分镜工具不再注册，冻结会话调用旧名时返回明确退役提示。
+
 ## 参数语义与运行回执
 
-- `canvas_edit_storyboard` 的 `add_assets` 增加且保留原角色/资产，`remove_assets` 按节点及用途移除，`upsert_assets` 增加或改用途；`add_references` / `remove_references` 增减共享输入。增量数组须非空。`set_assets` / `set_references` 是明确替换；清空行资产不会清共享输入。回执分别列出行级与共享影响。
-- `set_references` 整体替换共享引用列表，各行继承输入和派生连线随之更新，显式行级资产保留。`update.patch` 对全部选中行相同；逐行不同内容使用 `batch_update.updates`，批量追加用 `append_rows.rows`，每批最多100项、表内最多100行。任一目标、字段或引用无效则整批拒绝。景别、运镜、光影等创作列与领域字段合同一致。
-- `canvas_read_storyboard` 用 fields 选择创作字段、missingAnyFields 筛选任一列缺失的行。summary 默认 rows=[]，显式 fields 也返回所选正文；长文本按 nextReads 读原文，分页按 nextRead。coverage 分别表达选择范围已到末尾、整表行覆盖和正文截断；提示词覆盖为空不等于生成被阻塞。`canvas_get_state.nodeIds` 精读单次最多8个；整画布目录省略该字段。
+- `storyboard` 的 `add_assets` 增加且保留原角色/资产，`remove_assets` 按节点及用途移除，`upsert_assets` 增加或改用途；`add_references` / `remove_references` 增减共享输入。增量数组须非空。`set_assets` / `set_references` 是明确替换；清空行资产不会清共享输入。回执分别列出行级与共享影响。
+- `set_references` 整体替换共享引用列表，各行继承输入和派生连线随之更新，显式行级资产保留。`update.patch` 对全部选中行相同；逐行不同内容使用 `update.updates`；镜头数量变化用 resplit，每批最多100项、表内最多100行。任一目标、字段或引用无效则整批拒绝。景别、运镜、光影等创作列与领域字段合同一致。
+- `storyboard` 的 `read` 用 fields 选择创作字段、missingAnyFields 筛选任一列缺失的行。summary 默认 rows=[]，显式 fields 也返回所选正文；长文本按 nextReads 读原文，分页按 nextRead。coverage 分别表达选择范围已到末尾、整表行覆盖和正文截断；提示词覆盖为空不等于生成被阻塞。`canvas_get_state.nodeIds` 精读单次最多8个；整画布目录省略该字段。
 - 编辑短回执返回 changed、affectedRows、changedRows 及快照，创建/追加返回 createdRows，删除返回 removedRowIds。callLimits.mutationCallsPerStep 固定为1；下一模型步骤可复用成功回执快照，实际冲突或状态未知时再读取并核对原操作。
 - 批次可用稳定 `operationId` 去重，读取 `operationIds` 查询持久提交目标；同键同参数不重复执行或审批，同键不同参数拒绝。`replayed` 回执属于历史提交，不能替代当前字段查缺。纯创作字段更新可携带 `storyboardRevision`，允许无关布局变化，仍拒绝表内容、依赖资产和实体世代冲突；其余动作继续使用全画布版本。提示词复制有效输入中的 `promptHandle`，生成时才按最终素材顺序转换为序号，原正文不改写。
 - `taskSubmitted` 仅表示曾提交任务，即使为 true 也可能失败；交付以 `status/task_get` 和实际产物为准，不能因此自动重复提交生成。

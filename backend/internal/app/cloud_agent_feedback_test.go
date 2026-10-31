@@ -45,9 +45,9 @@ func TestAgentFeedbackSnapshotRepairPreservesOperation(t *testing.T) {
 func TestAgentFeedbackArgumentHintsAndExamples(t *testing.T) {
 	req := tierAutoRequest()
 	for _, sample := range []struct{ tool, args, field string }{
-		{"canvas_read_storyboard", `{}`, "nodeId"},
+		{"storyboard", `{"action":"read"}`, "nodeId"},
 		{"task_get", `{}`, "taskId"},
-		{"canvas_edit_storyboard", `{"action":"update","patch":{"durationSeconds":5}}`, "rowId"},
+		{"storyboard", `{"action":"update","patch":{"durationSeconds":5}}`, "rowId"},
 		{"canvas_apply_ops", `{"ops":[{"type":"update_node","id":"private-sentinel","patch":{"x":100}}]}`, "ops[0].id"},
 	} {
 		t.Run(sample.tool, func(t *testing.T) {
@@ -70,10 +70,10 @@ func TestAgentFeedbackArgumentHintsAndExamples(t *testing.T) {
 
 func TestAgentFeedbackExamplesKeepSlotsTypesAndFields(t *testing.T) {
 	for _, sample := range []struct{ tool, args string }{
-		{"canvas_edit_storyboard", `{"action":"unbind_output","outputMode":"video"}`},
-		{"canvas_edit_storyboard", `{"action":"bind_output","outputMode":"video"}`},
+		{"storyboard", `{"action":"unbind_output","outputMode":"video"}`},
+		{"storyboard", `{"action":"bind_output","outputMode":"video"}`},
 		{"canvas_apply_ops", `{"ops":[{"type":"add_node","nodeType":"frame"}]}`},
-		{"canvas_edit_storyboard", `{"action":"update","patch":{"durationSeconds":12}}`},
+		{"storyboard", `{"action":"update","patch":{"durationSeconds":12}}`},
 		{"canvas_apply_ops", `{"ops":[{"type":"update_node","patch":{"x":120,"y":340}}]}`},
 	} {
 		t.Run(sample.args, func(t *testing.T) {
@@ -97,11 +97,11 @@ func TestAgentFeedbackExamplesKeepSlotsTypesAndFields(t *testing.T) {
 		})
 	}
 	for _, sample := range []struct{ tool, args string }{
-		{"canvas_edit_storyboard", `{"action":"update"}`},
-		{"canvas_edit_storyboard", `{"action":"unbind_output"}`},
+		{"storyboard", `{"action":"update"}`},
+		{"storyboard", `{"action":"unbind_output"}`},
 		{"canvas_apply_ops", `{"ops":[{"type":"add_node"}]}`},
 		{"canvas_apply_ops", `{"ops":[{"type":"update_node","patch":{"x":"100"}}]}`},
-		{"canvas_edit_storyboard", `{"action":"update","patch":{"durationSeconds":"5"}}`},
+		{"storyboard", `{"action":"update","patch":{"durationSeconds":"5"}}`},
 	} {
 		req := tierAutoRequest()
 		state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: cloudAgentTools(req)}}
@@ -123,7 +123,7 @@ func TestAgentFeedbackStoryboardInvalidRowsAreReportedAtomically(t *testing.T) {
 	}
 	req := tierAutoRequest()
 	state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: cloudAgentTools(req)}}
-	receipt := feedbackResult(t, state, piAgentTestCall("rows", "canvas_edit_storyboard", `{"snapshotHash":"h","nodeId":"board","action":"update","rowIds":["r1","bad-a","r1","bad-b","bad-a"],"patch":{"dialogue":"replace"}}`), nil, err)
+	receipt := feedbackResult(t, state, piAgentTestCall("rows", "storyboard", `{"snapshotHash":"h","nodeId":"board","action":"update","rowIds":["r1","bad-a","r1","bad-b","bad-a"],"patch":{"dialogue":"replace"}}`), nil, err)
 	if !reflect.DeepEqual(receipt["invalidRowIds"], []any{"bad-a", "bad-b"}) || !reflect.DeepEqual(receipt["duplicateRowIds"], []any{"r1", "bad-a"}) || receipt["errorClass"] != "schema_error" {
 		t.Fatalf("lost row diagnostics: %+v", receipt)
 	}
@@ -137,7 +137,7 @@ func TestAgentFeedbackReadBudgetIsCurrentAndDoesNotMutateResult(t *testing.T) {
 	original := map[string]any{"rows": []any{}, "readCallsRemaining": 99}
 	for _, sample := range []struct{ used, limit, remaining int }{{7, 10, 3}, {10, 10, 0}, {11, 10, 0}} {
 		state := &cloudAgentRuntime{ReadToolCalls: sample.used, CallLimits: cloudAgentCallLimits{ReadCallsPerRun: sample.limit}}
-		receipt := feedbackResult(t, state, piAgentTestCall("read", "canvas_read_storyboard", `{}`), original, nil)
+		receipt := feedbackResult(t, state, piAgentTestCall("read", "storyboard", `{"action":"read"}`), original, nil)
 		if receipt["readCallsUsed"] != float64(sample.used) || receipt["readCallsLimit"] != float64(sample.limit) || receipt["readCallsRemaining"] != float64(sample.remaining) {
 			t.Fatalf("wrong remaining budget: %+v", receipt)
 		}
@@ -174,7 +174,7 @@ func TestAgentFeedbackNodeStyleErrorNamesPatch(t *testing.T) {
 func TestAgentFeedbackCachedReadKeepsRowDiagnostics(t *testing.T) {
 	req := tierAutoRequest()
 	state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: cloudAgentTools(req)}}
-	call := piAgentTestCall("cached", "canvas_read_storyboard", `{"nodeId":"board","rowIds":["missing","r1","r1"]}`)
+	call := piAgentTestCall("cached", "storyboard", `{"action":"read","nodeId":"board","rowIds":["missing","r1","r1"]}`)
 	var cached cloudAgentCachedToolResult
 	if err := json.Unmarshal([]byte(`{"error":"分镜行不存在或重复","argumentError":true,"field":"rowIds","issue":"invalid_row_ids","invalidRowIds":["missing"],"duplicateRowIds":["r1"]}`), &cached); err != nil {
 		t.Fatal(err)

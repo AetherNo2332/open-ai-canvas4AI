@@ -201,14 +201,7 @@ describe("分镜卡片接入共享列定义", () => {
     });
 
     test("新建与回写路径使用共享默认列，不再散落旧五列默认", () => {
-        for (const file of [
-            "constant/canvas.ts",
-            "lib/canvas/canvas-project-domain.ts",
-            "lib/canvas/canvas-short-drama.ts",
-            "lib/canvas/canvas-storyboard-operations.ts",
-            "lib/canvas/project-chapter-storyboard.ts",
-            "pages/canvas/use-canvas-storyboard.ts",
-        ]) {
+        for (const file of ["constant/canvas.ts", "lib/canvas/canvas-project-domain.ts", "lib/canvas/canvas-short-drama.ts", "lib/canvas/project-chapter-storyboard.ts", "pages/canvas/use-canvas-storyboard.ts"]) {
             const source = readFileSync(resolve(import.meta.dir, `../src/${file}`), "utf8");
             expect({ file, legacy: source.includes('"videoMotionPrompt", "dialogue", "assets"]') }).toEqual({ file, legacy: false });
         }

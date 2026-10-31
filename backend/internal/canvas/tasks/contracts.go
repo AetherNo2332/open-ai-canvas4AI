@@ -23,6 +23,8 @@ type Consumer struct {
 	ColumnID     string `json:"columnId,omitempty"`
 	Field        string `json:"field,omitempty"`
 	OutputNodeID string `json:"outputNodeId,omitempty"`
+	// RowIDs 只用于 storyboard_document：非空表示局部重拆这几行（必须连续且未锁定），空表示整表拆镜。
+	RowIDs []string `json:"rowIds,omitempty"`
 }
 type SubmitRequest struct {
 	Intent       string           `json:"intent,omitempty"`

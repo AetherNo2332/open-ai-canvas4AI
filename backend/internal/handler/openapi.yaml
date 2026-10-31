@@ -1012,6 +1012,47 @@ paths:
           description: 画布已有更新、仍有冲突未选择（reason reference_migration_conflict）或已完成规范化（reason reference_migration_not_required）
         "428":
           description: 缺少 revision
+  /canvas-projects/{id}/storyboard/split:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [canvas]
+      summary: 用拆镜脚本生成或局部重拆分镜表
+      description: 服务端从画布读取剧情（分镜节点输入框）、连到分镜节点的文本节点（项目风格与用户要求）、角色卡和可引用素材，组装固定提示词后提交文本任务；任务结束由服务端写回分镜行。rowIds 非空表示局部重拆这几行，必须连续且未锁定，脚本会读取前后各一镜衔接。锁定行与范围外的行不改；一对一改写保留行 ID 与媒体并标 mediaReview=pending；行数变化时旧媒体只解绑不删除。quoteOnly 为 true 时只报价，不提交、不改画布。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nodeId]
+              properties:
+                nodeId: { type: string }
+                rowIds: { type: array, maxItems: 100, items: { type: string } }
+                request: { type: string, maxLength: 4000, description: 用户的修改意见或本次要求 }
+                shotCount: { type: integer, minimum: 0, maximum: 100 }
+                shotDurationSeconds: { type: integer, minimum: 0, maximum: 60 }
+                skillContext: { type: string, description: 写作方法上下文，只提供方法，不改变剧情与输出结构 }
+                logicalModelId: { type: string }
+                config: { type: object, additionalProperties: true, description: 文本模型选择（channelId、model 等） }
+                quoteOnly: { type: boolean }
+                quoteHash: { type: string, description: 正式提交必填，原样复制五分钟内且输入和价格未变化的报价回执 }
+                operationId: { type: string }
+                clientId: { type: string }
+      responses:
+        "200":
+          description: 信封 data 为 { taskId, quote, rowIds, partial }；只报价时没有 taskId；quote 包含 quoteHash 和 expiresAt
+        "409":
+          description: 缺少确认报价，报价过期、价格或上下文变化，或同一操作标识用于不同请求
+        "400":
+          description: 分镜节点缺少剧情、范围包含锁定或不连续的行、参数越界或模型选择无效
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
   /public/welcome:
     get:
       tags: [meta]

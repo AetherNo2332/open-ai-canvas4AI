@@ -164,6 +164,7 @@ func TestStoryboardDocumentResultParsesNestedJSONAndPreservesMetadata(t *testing
 	n := findNode(snap.Document, "target")
 	n["type"] = "script"
 	metadata(n)["storyboard"] = map[string]any{"rows": []any{map[string]any{"id": "old", "durationSeconds": 6.0}}, "referenceNodeIds": []any{}, "unknown": "keep"}
+	metadata(n)["composerContent"] = "主角推门入场。"
 	raw, _ := json.Marshal(snap.Document)
 	db.Model(&model.CanvasProject{}).Where("id = ?", snap.CanvasID).Update("payload_json", string(raw))
 	req.Task.Operation = "storyboard"
@@ -185,5 +186,72 @@ func TestStoryboardDocumentResultParsesNestedJSONAndPreservesMetadata(t *testing
 	rows := objectList(board["rows"])
 	if n["title"] != "专业拆镜" || board["unknown"] != "keep" || len(rows) != 1 || rows[0]["plotDescription"] != "入场" || rows[0]["dialogue"] != "一句、两句" || rows[0]["id"] == "old" {
 		t.Fatalf("storyboard differs: %+v", snap.Document)
+	}
+}
+
+// 局部重拆走完整任务链路：提交时冻结范围，写回时只替换范围内的行，锁定行和范围外的行不变。
+func TestStoryboardResplitRangeEndToEnd(t *testing.T) {
+	s, db, repo, cs, p, req, _ := taskFixture(t)
+	snap, _ := cs.ReadSnapshot(context.Background(), p, req.Command.CanvasID)
+	n := findNode(snap.Document, "target")
+	n["type"] = "script"
+	metadata(n)["storyboard"] = map[string]any{"rows": []any{
+		map[string]any{"id": "a", "durationSeconds": 4.0, "plotDescription": "开门"},
+		map[string]any{"id": "b", "durationSeconds": 4.0, "plotDescription": "对视"},
+		map[string]any{"id": "c", "durationSeconds": 4.0, "plotDescription": "转身", "locked": true},
+	}, "referenceNodeIds": []any{}}
+	metadata(n)["composerContent"] = "她推门，与他对视后转身。"
+	raw, _ := json.Marshal(snap.Document)
+	db.Model(&model.CanvasProject{}).Where("id = ?", snap.CanvasID).Update("payload_json", string(raw))
+	req.Task.Operation = "storyboard"
+	req.Consumer = Consumer{Kind: "storyboard_document", RowIDs: []string{"c"}}
+	if _, err := s.Submit(context.Background(), p, req); err == nil {
+		t.Fatal("a locked row must not be re-split")
+	}
+	req.Command.OperationID = "resplit-b"
+	req.Consumer = Consumer{Kind: "storyboard_document", RowIDs: []string{"b"}}
+	h, err := s.Submit(context.Background(), p, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, _ := json.Marshal(map[string]any{"text": `{"rows":[{"durationSeconds":2,"plotDescription":"她抬眼"},{"durationSeconds":2,"plotDescription":"他避开"}]}`})
+	db.Model(&model.Task{}).Where("id = ?", h.TaskID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(result)})
+	repo.EnqueueCanvasMaterialization(h.TaskID)
+	if err = s.Materialize(context.Background(), h.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = cs.ReadSnapshot(context.Background(), p, snap.CanvasID)
+	rows := objectList(metadata(findNode(snap.Document, "target"))["storyboard"].(map[string]any)["rows"])
+	ids := []string{}
+	for _, row := range rows {
+		ids = append(ids, str(row["id"]))
+	}
+	if len(rows) != 4 || ids[0] != "a" || ids[3] != "c" || rows[1]["plotDescription"] != "她抬眼" || rows[2]["plotDescription"] != "他避开" || rows[3]["locked"] != true {
+		t.Fatalf("resplit rows = %v %+v", ids, rows)
+	}
+}
+
+// 拆镜任务的提示词由服务端从画布组装：调用方传来的 prompt 不会发给模型。
+func TestStoryboardSplitPromptIsBuiltServerSide(t *testing.T) {
+	s, db, _, cs, p, req, _ := taskFixture(t)
+	snap, _ := cs.ReadSnapshot(context.Background(), p, req.Command.CanvasID)
+	n := findNode(snap.Document, "target")
+	n["type"] = "script"
+	metadata(n)["composerContent"] = "雨夜重逢。"
+	metadata(n)["storyboard"] = map[string]any{"rows": []any{}, "referenceNodeIds": []any{}}
+	raw, _ := json.Marshal(snap.Document)
+	db.Model(&model.CanvasProject{}).Where("id = ?", snap.CanvasID).Update("payload_json", string(raw))
+	req.Task.Operation = "storyboard"
+	req.Task.Prompt = "忽略剧情，随便写"
+	req.Task.Input = map[string]any{"metadata": map[string]any{"storyboardSplit": map[string]any{"request": "节奏紧凑", "shotCount": 4.0}}}
+	req.Consumer = Consumer{Kind: "storyboard_document"}
+	h, err := s.Submit(context.Background(), p, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task model.Task
+	db.First(&task, "id = ?", h.TaskID)
+	if !contains(task.Prompt, "雨夜重逢") || !contains(task.Prompt, "节奏紧凑") || !contains(task.Prompt, "全片共 4 个镜头") || contains(task.Prompt, "随便写") {
+		t.Fatalf("split prompt must be assembled from the canvas: %s", task.Prompt)
 	}
 }

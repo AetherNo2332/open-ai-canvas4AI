@@ -65,7 +65,7 @@ func (f *storyboardReceiptFixture) edit(t *testing.T, callID string, args map[st
 		t.Fatal(err)
 	}
 	args["nodeId"], args["snapshotHash"] = "receipt-board", cloudAgentCanvasHash(doc)
-	call := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", callID, args)
+	call := cloudAgentStoryboardCall(t, "storyboard", callID, args)
 	result, err := applyCloudAgentStoryboardMutation(f.service.repo, "user", f.canvas.ID, call, f.policy)
 	if err != nil {
 		t.Fatal(err)

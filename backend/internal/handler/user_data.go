@@ -657,6 +657,31 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"project": project})
 	})
+	// 分镜拆镜脚本：服务端从画布组装提示词并提交任务，任务结束后由画布任务写回分镜行。
+	// quoteOnly=true 只报价；rowIds 非空表示局部重拆这几行（必须连续且未锁定）。
+	r.POST("/canvas-projects/:id/storyboard/split", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "canvas-write:"+user.ID, policy.Request.CanvasWritePerMinute, time.Minute) {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256<<10)
+		var req service.CanvasStoryboardSplitRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, service.BadAuthRequest("拆镜请求格式错误"))
+			return
+		}
+		result, err := svc.SplitCanvasStoryboard(user.ID, c.Param("id"), req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
 	r.DELETE("/canvas-projects/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

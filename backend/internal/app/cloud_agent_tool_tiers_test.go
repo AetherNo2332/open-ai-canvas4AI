@@ -37,7 +37,7 @@ func TestCloudAgentToolTierEmptyCanvasKeepsL0AndHidesHeavyL1(t *testing.T) {
 			t.Fatalf("empty canvas Q&A missing L0 tool %q: %v", want, names)
 		}
 	}
-	for _, hidden := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table"} {
+	for _, hidden := range []string{"canvas_edit_batch_table"} {
 		if containsToolName(names, hidden) {
 			t.Fatalf("empty canvas Q&A advertised heavy L1 tool %q: %v", hidden, names)
 		}
@@ -51,9 +51,9 @@ func TestCloudAgentToolTierInventoryUnlocksMatchingL1(t *testing.T) {
 		payload string
 		want    []string
 	}{
-		{"script", tierPayload(tierNode("board", "script", map[string]any{"workflowKind": "script"})), []string{"canvas_read_storyboard", "canvas_create_storyboard", "canvas_edit_storyboard"}},
+		{"script", tierPayload(tierNode("board", "script", map[string]any{"workflowKind": "script"})), []string{"storyboard"}},
 		{"batch-table", tierPayload(tierNode("table", "batch-table", nil)), []string{"canvas_read_batch_table", "canvas_edit_batch_table"}},
-		{"character", tierPayload(tierNode("hero", "text", map[string]any{"workflowKind": "character"})), []string{"canvas_create_character"}},
+		{"character", tierPayload(tierNode("hero", "text", map[string]any{"workflowKind": "character"})), []string{"storyboard", "canvas_create_character"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,7 +72,7 @@ func TestCloudAgentToolTierPromptIntentUnlocksStoryboardOnEmptyCanvas(t *testing
 	req := tierAutoRequest()
 	inventory := cloudAgentScanCanvasInventory(tierPayload())
 	names := cloudAgentAdvertisedToolNames(req, inventory, "帮我写分镜")
-	for _, want := range []string{"canvas_read_storyboard", "canvas_create_storyboard", "canvas_edit_storyboard"} {
+	for _, want := range []string{"storyboard"} {
 		if !containsToolName(names, want) {
 			t.Fatalf("storyboard intent missing %q: %v", want, names)
 		}
@@ -84,12 +84,12 @@ func TestCloudAgentToolTierReadOnlyHidesWritesAndKeepsStoryboardRead(t *testing.
 	req.PermissionMode = "read_only"
 	inventory := cloudAgentScanCanvasInventory(tierPayload(tierNode("board", "script", nil)))
 	names := cloudAgentAdvertisedToolNames(req, inventory, "请分析这份分镜")
-	for _, hidden := range []string{"canvas_apply_ops", "canvas_arrange_nodes", "generate_media", "canvas_create_storyboard", "canvas_edit_storyboard"} {
+	for _, hidden := range []string{"canvas_apply_ops", "canvas_arrange_nodes", "generate_media"} {
 		if containsToolName(names, hidden) {
 			t.Fatalf("read_only advertised write/generate tool %q: %v", hidden, names)
 		}
 	}
-	if !containsToolName(names, "canvas_read_storyboard") {
+	if !containsToolName(names, "storyboard") {
 		t.Fatalf("read_only with script node missing canvas_read_storyboard: %v", names)
 	}
 }
@@ -109,7 +109,7 @@ func TestCloudAgentToolTierInventoryScansFullPayloadPastCatalogTruncation(t *tes
 		t.Fatalf("truncated catalog must not hide trailing script node: %+v", inventory)
 	}
 	names := cloudAgentAdvertisedToolNames(tierAutoRequest(), inventory, "现在画布有几个节点")
-	if !containsToolName(names, "canvas_read_storyboard") {
+	if !containsToolName(names, "storyboard") {
 		t.Fatalf("script past catalog limit did not unlock storyboard read: %v", names)
 	}
 }
@@ -117,7 +117,7 @@ func TestCloudAgentToolTierInventoryScansFullPayloadPastCatalogTruncation(t *tes
 func TestCloudAgentToolTierAdvertisedIsSubsetOfEligibleCatalog(t *testing.T) {
 	req := tierAutoRequest()
 	eligible := cloudAgentToolNames(cloudAgentTools(req))
-	for _, want := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table"} {
+	for _, want := range []string{"storyboard", "canvas_edit_batch_table"} {
 		if !containsToolName(eligible, want) {
 			t.Fatalf("eligible catalog missing L1 tool %q: %v", want, eligible)
 		}
@@ -145,6 +145,9 @@ func TestCloudAgentPromptIntentFlagsUseClosedLexicon(t *testing.T) {
 	storyboard := cloudAgentPromptIntentFlags("帮我写分镜")
 	if !storyboard.Storyboard {
 		t.Fatal("「帮我写分镜」must set storyboard intent")
+	}
+	if !cloudAgentPromptIntentFlags("把这段剧情拆镜").Storyboard {
+		t.Fatal("「拆镜」must set storyboard intent")
 	}
 }
 

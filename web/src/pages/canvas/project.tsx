@@ -112,7 +112,15 @@ import { requestAgentPrefill, useGlobalAgentStore } from "@/stores/use-global-ag
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
-import { CanvasDramaEmptyState, CanvasFreeformEmptyState, CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortDramaGuide, CanvasStoryInputNodeContent, CanvasStylePlaceholderNodeContent } from "@/components/canvas/canvas-short-drama-entry";
+import {
+    CanvasDramaEmptyState,
+    CanvasFreeformEmptyState,
+    CanvasLinkedProjectEmptyState,
+    CanvasShortDramaEmptyState,
+    CanvasShortDramaGuide,
+    CanvasStoryInputNodeContent,
+    CanvasStylePlaceholderNodeContent,
+} from "@/components/canvas/canvas-short-drama-entry";
 import { resolveCanvasEmptyStateKind } from "@/lib/canvas/canvas-starter";
 import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
 import { createCanvasNode, getInputSummary, isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
@@ -406,7 +414,7 @@ function CanvasViewportPage() {
         [cleanupAssetImages, getHistoryCleanupContext],
     );
 
-    const { loadError, retryLoad, addedSkills, agentFocus, clearCanvasFiles, createAndOpenProject, currentProject, deleteCurrentProject, renameCurrentProject, saveCanvasProject, updateProject } = useCanvasProjectLifecycle({
+    const { loadError, retryLoad, addedSkills, agentFocus, clearCanvasFiles, createAndOpenProject, currentProject, deleteCurrentProject, renameCurrentProject, saveCanvasProject, prepareCanvasForServerAction, updateProject } = useCanvasProjectLifecycle({
         projectId,
         projectLoaded,
         nodes,
@@ -571,14 +579,15 @@ function CanvasViewportPage() {
     // 每帧新对象会让所有节点跟着重渲染，错题本里多条崩溃都出在画布高频更新。
     const nodeGraphContext = useMemo<CanvasNodeGraphContextValue>(() => ({ getUpstreamNodes: (nodeId: string) => getContextResourceNodes(nodeId, nodes, connections) }), [connections, nodes]);
 
-    const { applyGenerationTaskResult, bindGenerationTask, finishGenerationRequest, openNodeTaskDetails, resyncGenerationTaskNode, runningNodeId, setRunningNodeId, setTaskDetail, startGenerationRequest, taskDetail, taskDetailLoading, taskDetailLogs } = useCanvasGeneration({
-        projectId,
-        domainProjectId: linkedProjectId,
-        projectLoaded,
-        nodes,
-        nodesRef,
-        setNodes,
-    });
+    const { applyGenerationTaskResult, bindGenerationTask, finishGenerationRequest, openNodeTaskDetails, resyncGenerationTaskNode, runningNodeId, setRunningNodeId, setTaskDetail, startGenerationRequest, taskDetail, taskDetailLoading, taskDetailLogs } =
+        useCanvasGeneration({
+            projectId,
+            domainProjectId: linkedProjectId,
+            projectLoaded,
+            nodes,
+            nodesRef,
+            setNodes,
+        });
 
     const cancelCanvasTask = useCallback(
         (task: import("@/services/api/task-center").GenerationTask) => {
@@ -1655,7 +1664,21 @@ function CanvasViewportPage() {
             dramaStaleNodeIds: drama.staleNodeIds,
             refreshFromDrama: drama.active ? drama.refreshNode : undefined,
         }),
-        [addPanoramaCaptureNode, deleteNodeFromContent, downloadNodeImage, drama.active, drama.refreshNode, drama.staleNodeIds, duplicateNodeFromContent, extractLayerMaterials, openArtCritique, replaceCanvasNodeMedia, updateMediaNodeFromContent, updateNodeFromContent, updateNodeMetadataFromContent],
+        [
+            addPanoramaCaptureNode,
+            deleteNodeFromContent,
+            downloadNodeImage,
+            drama.active,
+            drama.refreshNode,
+            drama.staleNodeIds,
+            duplicateNodeFromContent,
+            extractLayerMaterials,
+            openArtCritique,
+            replaceCanvasNodeMedia,
+            updateMediaNodeFromContent,
+            updateNodeFromContent,
+            updateNodeMetadataFromContent,
+        ],
     );
     const { dismissLastAgentChange, lastAgentChange, undoAgentOps, viewLastAgentChange } = useCanvasOperationHistory({
         projectId,
@@ -2053,6 +2076,7 @@ function CanvasViewportPage() {
     const { addScriptRow, createAndGenerateScriptVideos, createScriptActionBoards, createScriptImageNodes, createScriptVideoNodes, generateScriptImages, generateScriptRows, generateScriptVideos, removeScriptRow, replaceScriptRows, updateScriptRow } =
         useCanvasStoryboard({
             projectId,
+            prepareCanvasForServerAction,
             addedSkills,
             nodesRef,
             connectionsRef,
@@ -2674,29 +2698,38 @@ function CanvasViewportPage() {
             if (current?.canvasId === projectId) useGlobalAgentStore.getState().setCanvas(null);
         };
     }, [projectId]);
-    const changeCanvasView = useCallback((view: CanvasProjectView) => {
-        setSearchParams((current) => {
-            const next = new URLSearchParams(current);
-            if (view === "assets") next.set("view", "assets");
-            else next.delete("view");
-            return next;
-        }, { replace: true });
-        if (view !== "assets") return;
-        // 资产视图覆盖画布，节点浮层和菜单不能悬在它上面。
-        setContextMenu(null);
-        setDialogNodeId(null);
-        setToolbarNodeId(null);
-        setHoveredNodeId(null);
-    }, [setDialogNodeId, setSearchParams]);
+    const changeCanvasView = useCallback(
+        (view: CanvasProjectView) => {
+            setSearchParams(
+                (current) => {
+                    const next = new URLSearchParams(current);
+                    if (view === "assets") next.set("view", "assets");
+                    else next.delete("view");
+                    return next;
+                },
+                { replace: true },
+            );
+            if (view !== "assets") return;
+            // 资产视图覆盖画布，节点浮层和菜单不能悬在它上面。
+            setContextMenu(null);
+            setDialogNodeId(null);
+            setToolbarNodeId(null);
+            setHoveredNodeId(null);
+        },
+        [setDialogNodeId, setSearchParams],
+    );
     const referenceMigration = useCanvasReferenceMigration(projectId, { enabled: projectLoaded, legacy: currentProject?.referenceFieldsVersion !== 1 });
-    const locateAssetNode = useCallback((nodeId: string) => {
-        changeCanvasView("canvas");
-        const selection = new Set([nodeId]);
-        selectedNodeIdsRef.current = selection;
-        setSelectedNodeIds(selection);
-        setSelectedConnectionId(null);
-        agentFocusNodeRef.current(nodeId);
-    }, [changeCanvasView]);
+    const locateAssetNode = useCallback(
+        (nodeId: string) => {
+            changeCanvasView("canvas");
+            const selection = new Set([nodeId]);
+            selectedNodeIdsRef.current = selection;
+            setSelectedNodeIds(selection);
+            setSelectedConnectionId(null);
+            agentFocusNodeRef.current(nodeId);
+        },
+        [changeCanvasView],
+    );
     // 短剧投送或定位后：切回画布视图，选中这些节点并把视口移过去。
     dramaFocusRef.current = (nodeIds: string[]) => {
         const ids = nodeIds.filter((id) => nodesRef.current.some((node) => node.id === id));
@@ -2721,24 +2754,30 @@ function CanvasViewportPage() {
         },
         [currentProject?.projectId, currentProject?.title, message, navigate, projectId],
     );
-    const renameAssetNodes = useCallback((updates: Array<{ nodeId: string; title: string }>) => {
-        updates.forEach(({ nodeId, title }) => handleNodeTitleChange(nodeId, title));
-    }, [handleNodeTitleChange]);
-    const promoteAssetVersion = useCallback((version: CanvasAssetVersion) => {
-        const node = nodesRef.current.find((item) => item.id === version.nodeId);
-        if (!node) {
-            message.info("该节点已删除或尚未同步到画布");
-            return;
-        }
-        if (version.source === "batch") {
-            setBatchPrimary(node);
-            message.success(`已将${version.label}设为主图`);
-            return;
-        }
-        if (version.mediaVersionId && !adoptNodeMediaVersion(node.id, version.mediaVersionId)) return;
-        // 跨节点版本组里，节点内历史版本成为主版本时，承载节点也要成为组内主版本。
-        if (node.metadata?.versionOfNodeId && !node.metadata.versionPrimary) setPrimaryVersion(node.id);
-    }, [adoptNodeMediaVersion, message, nodesRef, setBatchPrimary, setPrimaryVersion]);
+    const renameAssetNodes = useCallback(
+        (updates: Array<{ nodeId: string; title: string }>) => {
+            updates.forEach(({ nodeId, title }) => handleNodeTitleChange(nodeId, title));
+        },
+        [handleNodeTitleChange],
+    );
+    const promoteAssetVersion = useCallback(
+        (version: CanvasAssetVersion) => {
+            const node = nodesRef.current.find((item) => item.id === version.nodeId);
+            if (!node) {
+                message.info("该节点已删除或尚未同步到画布");
+                return;
+            }
+            if (version.source === "batch") {
+                setBatchPrimary(node);
+                message.success(`已将${version.label}设为主图`);
+                return;
+            }
+            if (version.mediaVersionId && !adoptNodeMediaVersion(node.id, version.mediaVersionId)) return;
+            // 跨节点版本组里，节点内历史版本成为主版本时，承载节点也要成为组内主版本。
+            if (node.metadata?.versionOfNodeId && !node.metadata.versionPrimary) setPrimaryVersion(node.id);
+        },
+        [adoptNodeMediaVersion, message, nodesRef, setBatchPrimary, setPrimaryVersion],
+    );
     if (!projectLoaded && loadError)
         return (
             <main className="flex h-full flex-col items-center justify-center gap-4">
@@ -3396,13 +3435,7 @@ function CanvasViewportPage() {
                             ) : null}
 
                             {enhanceNode ? (
-                                <CanvasVideoEnhanceDialog
-                                    node={enhanceNode}
-                                    open={Boolean(enhanceNode)}
-                                    config={effectiveConfig}
-                                    onClose={() => setEnhanceDialogNodeId(null)}
-                                    onConfirm={(params) => void enhanceVideoNode(enhanceNode, params)}
-                                />
+                                <CanvasVideoEnhanceDialog node={enhanceNode} open={Boolean(enhanceNode)} config={effectiveConfig} onClose={() => setEnhanceDialogNodeId(null)} onConfirm={(params) => void enhanceVideoNode(enhanceNode, params)} />
                             ) : null}
 
                             {timelineNode ? (
@@ -3591,6 +3624,7 @@ function CanvasViewportPage() {
                                     );
                                 }}
                                 onGenerateImages={(rowIds) => activeScriptNode && void generateScriptImages(activeScriptNode.id, rowIds)}
+                                onResplitRows={(rowIds, request) => activeScriptNode && void generateScriptRows(activeScriptNode.id, activeScriptNode.metadata?.composerContent || "", undefined, rowIds, request)}
                                 onGenerateVideos={(rowIds) => {
                                     if (!activeScriptNode) return;
                                     if (activeScriptNode.metadata?.storyboardVideoInputMode === "keyframe") void generateScriptVideos(activeScriptNode.id, rowIds);

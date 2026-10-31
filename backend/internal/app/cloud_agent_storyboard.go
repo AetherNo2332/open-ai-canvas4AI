@@ -84,6 +84,9 @@ func cloudAgentStoryboardRowSchema() map[string]any {
 }
 func cloudAgentStoryboardPatchSchema() map[string]any {
 	schema := cloudAgentStoryboardRowSchema()
+	properties := schema["properties"].(map[string]any)
+	delete(properties, "locked")
+	delete(properties, "mediaReview")
 	delete(schema, "required")
 	delete(schema, "anyOf")
 	schema["minProperties"] = 1
@@ -261,6 +264,9 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	var args cloudAgentStoryboardEditArgs
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
 		return nil, storyboardArgumentError("编辑")
+	}
+	if args.Action == "update" && len(args.Updates) > 0 {
+		args.Action = "batch_update"
 	}
 	if args.SnapshotHash == "" || args.NodeID == "" {
 		return nil, BadAuthRequest("编辑分镜需要快照和节点ID")

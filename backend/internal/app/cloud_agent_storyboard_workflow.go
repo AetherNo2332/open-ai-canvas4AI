@@ -204,6 +204,15 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 		selected[id] = true
 	}
 	patch := args.Patch
+	for _, row := range next {
+		if !selected[stringValue(row["id"])] || row["locked"] != true {
+			continue
+		}
+		unlockOnly := args.Action == "update" && len(args.Patch) == 1 && args.Patch["locked"] == false
+		if !unlockOnly {
+			return nil, nil, BadAuthRequest(fmt.Sprintf("镜头 %v 已锁定，请先请用户解锁或跳过", row["shotNumber"]))
+		}
+	}
 	if args.Action == "set_assets" {
 		if len(patch) > 0 || args.Assets == nil {
 			return nil, nil, BadAuthRequest("set_assets 需要 assets，不接受 patch；[] 表示清空")

@@ -351,20 +351,19 @@ func TestCloudAgentSnapshotHashTracksContentNotBrowserBookkeeping(t *testing.T) 
 
 func TestCloudAgentApprovedWriteSurvivesBrowserAutosave(t *testing.T) {
 	s, db, canvas := cloudAgentStoryboardFixture(t)
+	rows := createCloudAgentStoryboardForTest(t, s, canvas)
 	req := agentTestRequest()
 	req.PermissionMode = "request_approval"
 	req.IdempotencyKey = "storyboard-autosave-race"
-	req.Prompt = "为这场戏创建分镜" // 分层工具表：分镜意图解锁 canvas_create_storyboard
+	req.Prompt = "修改分镜台词"
 	root, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc, _ := creationDocument(canvas.PayloadJSON)
-	call := cloudAgentStoryboardCall(t, "canvas_create_storyboard", "autosave-race-call", map[string]any{
+	call := cloudAgentStoryboardCall(t, "storyboard", "autosave-race-call", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc),
-		"nodeId":       "race-storyboard",
-		"title":        "自动保存竞态分镜",
-		"rows":         []map[string]any{{"durationSeconds": 3.0, "plotDescription": "镜头"}},
+		"nodeId":       "storyboard-1", "action": "update", "rowId": rows[0]["id"], "patch": map[string]any{"dialogue": "已通过竞态测试"},
 	})
 	_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call})
 	if err := agentPiExecuteCallForTest(t, s, root.ID, call.ID); err != nil {
@@ -400,7 +399,7 @@ func TestCloudAgentApprovedWriteSurvivesBrowserAutosave(t *testing.T) {
 		t.Fatalf("browser autosave failed the approved write: %s", final.FailureMessage)
 	}
 	stored, _ = s.repo.CanvasProjectForUser("user", canvas.ID)
-	if !strings.Contains(stored.PayloadJSON, "race-storyboard") {
+	if !strings.Contains(stored.PayloadJSON, "已通过竞态测试") {
 		t.Fatal("approved storyboard was not written after autosave")
 	}
 }
@@ -409,20 +408,19 @@ func TestCloudAgentApprovedWriteSurvivesBrowserAutosave(t *testing.T) {
 
 func TestCloudAgentStaleSnapshotIsRecoverableToolFailure(t *testing.T) {
 	s, db, canvas := cloudAgentStoryboardFixture(t)
+	rows := createCloudAgentStoryboardForTest(t, s, canvas)
 	req := agentTestRequest()
 	req.PermissionMode = "request_approval"
 	req.IdempotencyKey = "storyboard-stale-snapshot"
-	req.Prompt = "为这场戏创建分镜" // 分层工具表：分镜意图解锁 canvas_create_storyboard
+	req.Prompt = "修改分镜台词"
 	root, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc, _ := creationDocument(canvas.PayloadJSON)
-	call := cloudAgentStoryboardCall(t, "canvas_create_storyboard", "stale-snapshot-call", map[string]any{
+	call := cloudAgentStoryboardCall(t, "storyboard", "stale-snapshot-call", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc),
-		"nodeId":       "stale-storyboard",
-		"title":        "过期快照分镜",
-		"rows":         []map[string]any{{"durationSeconds": 3.0, "plotDescription": "镜头"}},
+		"nodeId":       "storyboard-1", "action": "update", "rowId": rows[0]["id"], "patch": map[string]any{"dialogue": "镜头"},
 	})
 	run, _ := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call})
 	if err := agentPiExecuteCallForTest(t, s, root.ID, call.ID); err != nil {
@@ -481,7 +479,7 @@ func TestCloudAgentSequentialWritesRebaseSnapshot(t *testing.T) {
 	}
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	seen := cloudAgentCanvasHash(doc)
-	firstCall := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "batch-write-1", map[string]any{
+	firstCall := cloudAgentStoryboardCall(t, "storyboard", "batch-write-1", map[string]any{
 		"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": firstID,
 		"patch": map[string]any{"dialogue": "第一批第一处"}})
 	_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{firstCall})
@@ -497,7 +495,7 @@ func TestCloudAgentSequentialWritesRebaseSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondCall := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "batch-write-2", map[string]any{
+	secondCall := cloudAgentStoryboardCall(t, "storyboard", "batch-write-2", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(currentDoc), "nodeId": "storyboard-1", "action": "update", "rowId": secondID,
 		"patch": map[string]any{"dialogue": "第一批第二处"}})
 	_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{secondCall})
@@ -536,10 +534,10 @@ func TestCloudAgentSequentialRebaseStillRejectsThirdPartyEdit(t *testing.T) {
 	}
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	seen := cloudAgentCanvasHash(doc)
-	firstCall := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "third-party-1", map[string]any{
+	firstCall := cloudAgentStoryboardCall(t, "storyboard", "third-party-1", map[string]any{
 		"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": firstID,
 		"patch": map[string]any{"dialogue": "Agent 写入"}})
-	secondCall := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "third-party-2", map[string]any{
+	secondCall := cloudAgentStoryboardCall(t, "storyboard", "third-party-2", map[string]any{
 		"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": secondID,
 		"patch": map[string]any{"dialogue": "Agent 第二处"}})
 	_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{firstCall})
@@ -582,7 +580,7 @@ func TestCloudAgentWriteReceiptStatesApplied(t *testing.T) {
 			Description: "Agent 准备修改分镜脚本。批准后才会写入画布。",
 			Items:       []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: "script-1", Summary: "修改分镜脚本《示例》"}}},
 	}
-	receipt := cloudAgentModelToolResult("canvas_edit_storyboard", result).(map[string]any)
+	receipt := cloudAgentModelToolResult("storyboard", result).(map[string]any)
 	if receipt["applied"] != true || stringValue(receipt["outcome"]) == "" {
 		t.Fatalf("write receipt does not state the outcome: %+v", receipt)
 	}

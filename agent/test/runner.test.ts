@@ -295,7 +295,7 @@ test("preflight and model requests exclude undisclosed L1 tools from the full ca
     ], { receiptText: "Tool completed" });
     snapshot.tools = [
       ...tools,
-      { name: "canvas_edit_storyboard", description: "Edit storyboard", parameters: objectSchema, allowed: false },
+      { name: "storyboard", description: "Edit storyboard", parameters: objectSchema, allowed: false },
       { name: "director_design_shot", description: "Design shot", parameters: objectSchema, allowed: false },
     ];
     if (native) {
@@ -330,11 +330,11 @@ test("preflight and model requests exclude undisclosed L1 tools from the full ca
 test("a new model boundary registers newly advertised L1 tools before the next provider request", async () => {
   const {bridge,state,snapshot}=fakeBridge([
     {toolCalls:[{id:"read-1",function:{name:"canvas_get_state",arguments:"{}"}}]},
-    {toolCalls:[{id:"edit-2",function:{name:"canvas_edit_storyboard",arguments:"{}"}}]},
+    {toolCalls:[{id:"edit-2",function:{name:"storyboard",arguments:"{}"}}]},
     {text:"完成"},
   ]);
   snapshot.tools=[{name:"canvas_get_state",description:"Get state",parameters:objectSchema,allowed:true},
-    {name:"canvas_edit_storyboard",description:"Edit storyboard",parameters:objectSchema,allowed:false}];
+    {name:"storyboard",description:"Edit storyboard",parameters:objectSchema,allowed:false}];
   const execute=bridge.executeTool.bind(bridge);
   bridge.executeTool=async (...args) => {const receipt=await execute(...args); snapshot.tools=snapshot.tools.map(tool=>({...tool,allowed:true}));return receipt;};
   const preflights: PiCanonical[]=[];
@@ -343,8 +343,8 @@ test("a new model boundary registers newly advertised L1 tools before the next p
   assert.deepEqual(state.executions,["read-1","edit-2"]);
   const names=(request:PiCanonical)=>request.tools.map(tool=>(tool.function as {name:string}).name);
   assert.deepEqual(names(state.canonical[0]!),["canvas_get_state"]);
-  assert.deepEqual(names(state.canonical[1]!),["canvas_get_state","canvas_edit_storyboard"]);
-  assert.ok(preflights.some(request=>names(request).includes("canvas_edit_storyboard")));
+  assert.deepEqual(names(state.canonical[1]!),["canvas_get_state","storyboard"]);
+  assert.ok(preflights.some(request=>names(request).includes("storyboard")));
 });
 
 test("tool definitions stay stable across different calls and continuation while receipts remain in messages", async () => {

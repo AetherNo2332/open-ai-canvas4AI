@@ -18,7 +18,7 @@ import (
 
 // Task 8：模型可见合同不再包含画布连线操作。连线改由服务端按引用字段派生，
 // Agent 只能写 generationSpec.referenceBindings、metadata.inputBindings、
-// 行 assetBindings 或 canvas_edit_storyboard 的语义动作。
+// 行 assetBindings 或 storyboard 的语义动作。
 var agentReferenceContractLegacyOps = []string{"connect_nodes", "update_connection", "delete_connection"}
 
 func TestAgentStoryboardCharacterReferencesRequireMigration(t *testing.T) {
@@ -99,7 +99,7 @@ func TestAgentReferencesApplyAfterWebMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "associate-hero", map[string]any{
+	call := cloudAgentStoryboardCall(t, "storyboard", "associate-hero", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "update", "rowId": rows[0]["id"],
 		"patch": map[string]any{
 			"assetBindings": []any{map[string]any{"nodeId": "hero", "role": "character", "priority": 100}},
@@ -243,7 +243,7 @@ func agentActionEnum(t *testing.T, parameters map[string]any) []string {
 		}
 	}
 	if len(values) == 0 {
-		t.Fatal("canvas_edit_storyboard 缺少 action 枚举")
+		t.Fatal("storyboard 缺少 action 枚举")
 	}
 	return values
 }
@@ -269,9 +269,9 @@ func TestAgentReferenceOnlyContract(t *testing.T) {
 	}
 
 	// 语义替代动作必须在模型可见合同里，否则关闭连线等于把分镜输出归属砍掉。
-	edit, ok := parameters["canvas_edit_storyboard"]
+	edit, ok := parameters["storyboard"]
 	if !ok {
-		t.Fatal("canvas_edit_storyboard 未暴露")
+		t.Fatal("storyboard 未暴露")
 	}
 	actions := map[string]bool{}
 	for _, action := range agentActionEnum(t, edit) {
@@ -279,22 +279,19 @@ func TestAgentReferenceOnlyContract(t *testing.T) {
 	}
 	for _, action := range []string{"set_references", "bind_output", "unbind_output"} {
 		if !actions[action] {
-			t.Fatalf("canvas_edit_storyboard 未发布语义动作 %s：%v", action, actions)
+			t.Fatalf("storyboard 未发布语义动作 %s：%v", action, actions)
 		}
 	}
 	editProperties, _ := edit["properties"].(map[string]any)
 	for _, field := range []string{"referenceNodeIds", "outputMode", "outputNodeId"} {
 		if _, exists := editProperties[field]; !exists {
-			t.Fatalf("canvas_edit_storyboard 未发布 %s", field)
+			t.Fatalf("storyboard 未发布 %s", field)
 		}
 	}
-	create, ok := parameters["canvas_create_storyboard"]
-	if !ok {
-		t.Fatal("canvas_create_storyboard 未暴露")
-	}
-	createProperties, _ := create["properties"].(map[string]any)
-	if _, exists := createProperties["referenceNodeIds"]; !exists {
-		t.Fatal("canvas_create_storyboard 未发布共享引用字段 referenceNodeIds")
+	for _, name := range []string{"canvas_create_storyboard", "canvas_read_storyboard", "canvas_edit_storyboard"} {
+		if _, exists := parameters[name]; exists {
+			t.Fatalf("retired tool %s is still exposed", name)
+		}
 	}
 
 	// 共用 schema 制品与工具说明是同一次发布的镜像：漏同步时这里必须失败。
@@ -666,7 +663,7 @@ func TestAgentLegacyStoryboardReferencesRequireMigration(t *testing.T) {
 	}
 	legacy := agentCanvasPayload(t, s, canvas.ID)
 
-	setReferences := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "legacy-refs", map[string]any{
+	setReferences := cloudAgentStoryboardCall(t, "storyboard", "legacy-refs", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "set_references", "referenceNodeIds": []any{"asset"},
 	})
 	if _, err := prepareCloudAgentStoryboardEdit(s.repo, "user", canvas.ID, setReferences); err != nil {
@@ -680,7 +677,7 @@ func TestAgentLegacyStoryboardReferencesRequireMigration(t *testing.T) {
 		t.Fatal("真实执行接受了历史画布上的共享引用声明")
 	}
 
-	rowAssets := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "legacy-rows", map[string]any{
+	rowAssets := cloudAgentStoryboardCall(t, "storyboard", "legacy-rows", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "update", "rowId": rows[0]["id"],
 		"patch": map[string]any{"assetBindings": []any{map[string]any{"nodeId": "asset", "role": "style", "priority": 80}}},
 	})
@@ -703,7 +700,7 @@ func TestAgentLegacyStoryboardReferencesRequireMigration(t *testing.T) {
 	if err = db.Model(canvas).Update("payload_json", string(encoded)).Error; err != nil {
 		t.Fatal(err)
 	}
-	migrated := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "v1-refs", map[string]any{
+	migrated := cloudAgentStoryboardCall(t, "storyboard", "v1-refs", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "set_references", "referenceNodeIds": []any{"asset"},
 	})
 	plan, err := prepareCloudAgentStoryboardEdit(s.repo, "user", canvas.ID, migrated)

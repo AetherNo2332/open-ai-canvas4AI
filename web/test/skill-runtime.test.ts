@@ -66,13 +66,7 @@ describe("skill runtime", () => {
     });
 
     test("普通生成只加载入口和与当前任务最相关的直接引用文本", async () => {
-        const entry = [
-            "# AI导演",
-            "视频提示词读取 `references/prompt_templates.md`。",
-            "角色资产读取 [角色规则](references/character_assets.md)。",
-            "维护脚本见 `scripts/audit_skill.py`。",
-            "项目模板见 `assets/project-ledger-template.md`。",
-        ].join("\n");
+        const entry = ["# AI导演", "视频提示词读取 `references/prompt_templates.md`。", "角色资产读取 [角色规则](references/character_assets.md)。", "维护脚本见 `scripts/audit_skill.py`。", "项目模板见 `assets/project-ledger-template.md`。"].join("\n");
         const files: SkillPackageFile[] = [
             file("SKILL.md", entry).file,
             file("references/prompt_templates.md", "视频提示词模板正文").file,
@@ -98,6 +92,8 @@ describe("skill runtime", () => {
         expect(readPaths).not.toContain("scripts/audit_skill.py");
         expect(readPaths).not.toContain("assets/project-ledger-template.md");
         expect(result.prompt).toContain("【用户任务】\n@AI导演 帮我生成视频提示词");
+        expect(result.skillContext).toContain("<skill-file");
+        expect(result.skillContext).not.toContain("【用户任务】");
         expect(result.metadata.skillIds).toEqual(["director"]);
     });
 

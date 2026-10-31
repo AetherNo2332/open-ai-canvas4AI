@@ -36,7 +36,7 @@ func TestStoryboardWriteContinuationFeedback(t *testing.T) {
 				"changedRows": changedRows, "snapshotHash": "new-snapshot",
 				"preview": cloudAgentApprovalPreview{},
 			}
-			receipt := feedbackResult(t, &cloudAgentRuntime{}, piAgentTestCall("write", "canvas_edit_storyboard", `{}`), original, nil)
+			receipt := feedbackResult(t, &cloudAgentRuntime{}, piAgentTestCall("write", "storyboard", `{}`), original, nil)
 			if receipt["applied"] != true || receipt["changed"] != changed || receipt["affectedRows"] != float64(1) || !reflect.DeepEqual(receipt["changedRows"], changedRows) || receipt["snapshotHash"] != "new-snapshot" {
 				t.Fatalf("continuation lost mutation facts: %+v", receipt)
 			}
@@ -53,8 +53,8 @@ func TestStoryboardWriteContinuationFeedback(t *testing.T) {
 		req := tierAutoRequest()
 		state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: cloudAgentTools(req)}}
 		calls := []cloudAgentCall{
-			cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "first", map[string]any{"snapshotHash": "old", "nodeId": "board", "action": "update", "rowId": "r1", "patch": map[string]any{"dialogue": "one"}}),
-			cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "second", map[string]any{"snapshotHash": "old", "nodeId": "board", "action": "update", "rowId": "r2", "patch": map[string]any{"dialogue": "two"}}),
+			cloudAgentStoryboardCall(t, "storyboard", "first", map[string]any{"snapshotHash": "old", "nodeId": "board", "action": "update", "rowId": "r1", "patch": map[string]any{"dialogue": "one"}}),
+			cloudAgentStoryboardCall(t, "storyboard", "second", map[string]any{"snapshotHash": "old", "nodeId": "board", "action": "update", "rowId": "r2", "patch": map[string]any{"dialogue": "two"}}),
 		}
 		admissions := cloudAgentPreflightBatch(state, calls)
 		if !admissions[0].Allowed || admissions[1].Allowed || admissions[1].Issue != cloudAgentAdmissionSingleWrite {
@@ -88,7 +88,7 @@ func TestStoryboardReturnedSnapshotContinuesNextModelStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "continue-first", map[string]any{
+	first := cloudAgentStoryboardCall(t, "storyboard", "continue-first", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "update", "rowId": stringValue(rows[0]["id"]), "patch": map[string]any{"dialogue": "first step"},
 	})
 	agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{first})
@@ -104,7 +104,7 @@ func TestStoryboardReturnedSnapshotContinuesNextModelStep(t *testing.T) {
 	if stringValue(receipt["snapshotHash"]) == "" {
 		t.Fatalf("first step did not return a usable snapshot: %+v", receipt)
 	}
-	second := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "continue-second", map[string]any{
+	second := cloudAgentStoryboardCall(t, "storyboard", "continue-second", map[string]any{
 		"snapshotHash": receipt["snapshotHash"], "nodeId": "storyboard-1", "action": "update", "rowId": stringValue(rows[1]["id"]), "patch": map[string]any{"dialogue": "second step"},
 	})
 	agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{second})

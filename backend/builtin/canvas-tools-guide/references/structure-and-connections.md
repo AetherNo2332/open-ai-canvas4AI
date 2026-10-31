@@ -4,7 +4,7 @@
 
 `canvas_get_state` 的 `nodeIds` 是字符串数组，单次最多8个，和 `focusNodeIds` 互斥；整画布目录省略 `nodeIds`。默认目录用 `view=catalog`；指定节点默认 `detail`；关系检查用 `references`；准备编辑时才用 `edit` 读取富文本与编辑字段。`connections` 默认 `none`，需要时用 `selected` 或 `incident`；连线只是只读结果，不能据此判断正文来源已被正确改编。正文截断时复制 `nextRead.arguments` 继续读取，不拼富文本树。
 
-分镜用 `canvas_read_storyboard`：默认 `creative` 查看创作说明、时长、对白、资产名称/版本和有效输入；`summary` 检查缺口，`rows=[]` 属预期，检查 `summary` 和 `coverage`；`bindings` 返回逐行绑定与解析结果，不含创作正文。`coverage.complete=false` 只能说明已检查的行，不能外推整表。`full` 通读最多20行、单行精读用 `rows=1`；可用 `rowIds` 定位。只使用返回的 `rowId`，不从边反推绑定。行绑定为空不等于有效输入为空，也不等于资源不可用。批量表仍用 `canvas_read_batch_table`。
+分镜用 `storyboard` 的 `read`：默认 `creative` 查看创作说明、时长、对白、资产名称/版本和有效输入；`summary` 检查缺口，`rows=[]` 属预期，检查 `summary` 和 `coverage`；`bindings` 返回逐行绑定与解析结果，不含创作正文。`coverage.complete=false` 只能说明已检查的行，不能外推整表。`full` 通读最多20行、单行精读用 `rows=1`；可用 `rowIds` 定位。只使用返回的 `rowId`，不从边反推绑定。行绑定为空不等于有效输入为空，也不等于资源不可用。批量表仍用 `canvas_read_batch_table`。
 
 ## 普通节点
 
@@ -22,9 +22,9 @@ Agent 不连接、不改接、不断开连线：`canvas_apply_ops` 没有边操�
 | --- | --- |
 | 普通媒体草稿（image/video/audio） | `update_node` 的 `patch.generationSpec.referenceBindings`，元素是现有 `ReferenceBinding` |
 | compare、panorama、config 等无生成合同的输入节点 | `update_node` 的 `patch.inputBindings`，同一个 `ReferenceBinding` 结构 |
-| 分镜所有镜头共享的引用 | 创建时 `references`，编辑时 `set_references` 的 `references`（真实节点 ID 或唯一完整名称） |
-| 某些镜头的素材 | `canvas_edit_storyboard` 的 `set_assets`，用 `rowId` 或 `rowIds` 选择 |
-| 某镜头的已有产物归属 | `canvas_edit_storyboard` 的 `bind_output`／`unbind_output` |
+| 分镜所有镜头共享的引用 | 使用 storyboard 的 `set_references` 的 `references`（真实节点 ID 或唯一完整名称） |
+| 某些镜头的素材 | `storyboard` 的 `set_assets`，用 `rowId` 或 `rowIds` 选择 |
+| 某镜头的已有产物归属 | `storyboard` 的 `bind_output`／`unbind_output` |
 
 `referenceBindings`／`inputBindings` 的每个元素必须有真实 `nodeId`、该媒体类型允许的 `role` 和 `order`；显式 `[]` 表示清空当前作用域，字段缺失表示不改。清空后服务端不会再从旧关系把素材并回来，也不要手工重建那条关系。声明的素材必须真实存在、类型匹配且有容量；服务端仍会核对节点类型、输入数量和模型容量，不把某个节点的限制类推为所有节点。
 
@@ -32,14 +32,14 @@ Agent 不连接、不改接、不断开连线：`canvas_apply_ops` 没有边操�
 
 ## 分镜：以创作和资产选择为中心
 
-创建时省略 nodeId 和坐标，系统分配节点/行身份并落位。每行主要维护 durationSeconds、plotDescription（镜头创作说明）、dialogue；构图、表演、运镜、光影、节拍和连续性可自行组织在创作说明中。必要时用 imageGenerationPrompt/videoMotionPrompt 覆盖生成提示词。已有覆盖优先于创作说明，修改说明时核对覆盖是否也要更新或清空。旧细分列仍保存在行中供界面和高级编辑使用，不要求模型逐列填写。
+新建时用 canvas_apply_ops 创建 script 并写入 composerContent；风格与用户要求写入相连文本节点，再调用 storyboard 的 split，行由服务端生成，不让 Agent 手填整表。生成后用 read 检查。需要小范围手工校正时才维护 durationSeconds、plotDescription（镜头创作说明）、dialogue；构图、表演、运镜、光影、节拍和连续性可自行组织在创作说明中。必要时用 imageGenerationPrompt/videoMotionPrompt 覆盖生成提示词。已有覆盖优先于创作说明，修改说明时核对覆盖是否也要更新或清空。旧细分列仍保存在行中供界面和高级编辑使用，不要求模型逐列填写。
 
 | 意图 | 写入方式 |
 | --- | --- |
-| 给多个镜头统一改台词或时长 | update：rowIds 内所有行共用同一 patch；逐行不同内容必须分别调用 |
+| 给多个镜头统一改台词或时长 | update：rowIds 共用 patch；逐行不同用 updates:[{rowId,patch}] |
 | 替换选定镜头的资产集合 | set_assets：rowId 或 rowIds + 完整 assets |
 | 替换所有镜头共享上下文 | set_references：references 整体覆盖；[] 清空共享输入，显式行资产保留 |
-| 新增/删除镜头 | append 单次新增一行，给完整创作行 patch；批量新建用 canvas_create_storyboard.rows（1–100）；remove 给 rowId 或 rowIds |
+| 重拆一段镜头或调整数量 | resplit：nodeId、连续未锁定 rowIds、用户修改意见；上下文由服务端读取 |
 | 指定已有图片/视频为产物 | bind_output：rowId + outputMode + outputNodeId |
 | 解除已有产物归属 | unbind_output：rowId + outputMode；媒体资源保留 |
 

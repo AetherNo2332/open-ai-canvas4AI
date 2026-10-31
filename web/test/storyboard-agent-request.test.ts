@@ -17,8 +17,8 @@ describe("storyboard Agent request", () => {
         const prompt = buildStoryboardAgentPrompt(board(), "清晨，两人在篮球馆重逢。");
         expect(prompt).toContain('"nodeId": "board-current"');
         expect(prompt).toContain("清晨，两人在篮球馆重逢。");
-        expect(prompt).toContain("canvas_read_storyboard");
-        expect(prompt).toContain("canvas_edit_storyboard");
+        expect(prompt).toContain("storyboard");
+        expect(prompt).toContain("action=split");
         expect(prompt).toContain("ask_user");
         expect(prompt).toContain("确认前不要修改分镜行");
         expect(prompt).toContain("不要生成图片或视频");

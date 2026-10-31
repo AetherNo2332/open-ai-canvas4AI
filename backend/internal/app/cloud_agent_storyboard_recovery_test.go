@@ -20,7 +20,7 @@ func TestStoryboardChunkRetiredEpochCannotReplay(t *testing.T) {
 	before, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
 	doc, _ := creationDocument(before.PayloadJSON)
 	args := map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "append_rows", "operationId": "old-epoch/chunk-1", "rows": []map[string]any{{"durationSeconds": 5.0, "plotDescription": "one historical append"}}}
-	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "old-op", args), policy); err != nil {
+	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "old-op", args), policy); err != nil {
 		t.Fatal(err)
 	}
 	current, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
@@ -29,7 +29,7 @@ func TestStoryboardChunkRetiredEpochCannotReplay(t *testing.T) {
 	if err := s.repo.SaveCanvasWithSnapshot(current, snapshot, nil, nil, time.Now().Add(-time.Hour), 20, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "stale-retry", args), policy); err == nil {
+	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "stale-retry", args), policy); err == nil {
 		t.Fatal("retired epoch operation silently executed again after restore")
 	}
 	stored, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
@@ -38,7 +38,7 @@ func TestStoryboardChunkRetiredEpochCannotReplay(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatal("retired operation changed restored rows")
 	}
-	status, err := cloudAgentReadStoryboard(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_read_storyboard", "retired-status", map[string]any{"nodeId": "storyboard-1", "view": "summary", "operationIds": []string{"old-epoch/chunk-1"}}))
+	status, err := cloudAgentReadStoryboard(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "retired-status", map[string]any{"nodeId": "storyboard-1", "view": "summary", "operationIds": []string{"old-epoch/chunk-1"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestStoryboardChunkRecoveryPersistsAndDeduplicates(t *testing.T) {
 		current, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
 		doc, _ := creationDocument(current.PayloadJSON)
 		lastArgs = map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "append_rows", "operationId": fmt.Sprintf("fill-task/chunk-%d", chunk), "rows": []map[string]any{{"durationSeconds": 5.0, "plotDescription": fmt.Sprintf("chunk %d", chunk)}}}
-		result, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "reused-provider-id", lastArgs), policy)
+		result, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "reused-provider-id", lastArgs), policy)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,7 +65,7 @@ func TestStoryboardChunkRecoveryPersistsAndDeduplicates(t *testing.T) {
 	}
 	// A new repository has no runtime state from the interrupted worker.
 	restarted := repository.New(db)
-	result, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "another-step-id", lastArgs), policy)
+	result, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "another-step-id", lastArgs), policy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,10 +82,10 @@ func TestStoryboardChunkRecoveryPersistsAndDeduplicates(t *testing.T) {
 		t.Fatalf("duplicate append on recovery: %d", len(rows))
 	}
 	lastArgs["rows"] = []map[string]any{{"durationSeconds": 5.0, "plotDescription": "different request"}}
-	if _, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "mismatch", lastArgs), policy); err == nil {
+	if _, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "mismatch", lastArgs), policy); err == nil {
 		t.Fatal("same operationId accepted different arguments")
 	}
-	status, err := cloudAgentReadStoryboard(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_read_storyboard", "progress", map[string]any{"nodeId": "storyboard-1", "view": "summary", "operationIds": []string{"fill-task/chunk-1", "fill-task/chunk-2", "fill-task/chunk-3", "fill-task/chunk-4"}}))
+	status, err := cloudAgentReadStoryboard(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "progress", map[string]any{"nodeId": "storyboard-1", "view": "summary", "operationIds": []string{"fill-task/chunk-1", "fill-task/chunk-2", "fill-task/chunk-3", "fill-task/chunk-4"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestStoryboardChunkRecoveryPersistsAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	lastArgs["rows"] = []map[string]any{{"durationSeconds": 5.0, "plotDescription": "chunk 3"}}
-	if _, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "replay-after-human", lastArgs), policy); err != nil {
+	if _, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "replay-after-human", lastArgs), policy); err != nil {
 		t.Fatal(err)
 	}
 	afterHuman, _ := restarted.CanvasProjectForUser("user", canvas.ID)
@@ -108,12 +108,12 @@ func TestStoryboardChunkRecoveryPersistsAndDeduplicates(t *testing.T) {
 		t.Fatal("replay overwrote human edit")
 	}
 	lastArgs["operationId"] = "fill-task/chunk-4"
-	if _, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "stale-new-chunk", lastArgs), policy); err == nil {
+	if _, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "stale-new-chunk", lastArgs), policy); err == nil {
 		t.Fatal("fresh chunk bypassed conflict protection")
 	}
 	lastArgs["snapshotHash"] = cloudAgentCanvasHash(doc)
 	lastArgs["rows"] = []map[string]any{{"durationSeconds": 5.0, "plotDescription": "chunk 4"}}
-	if _, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "remaining-chunk", lastArgs), policy); err != nil {
+	if _, err := applyCloudAgentStoryboardMutation(restarted, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "remaining-chunk", lastArgs), policy); err != nil {
 		t.Fatal(err)
 	}
 	finished, _ := restarted.CanvasProjectForUser("user", canvas.ID)
@@ -127,11 +127,11 @@ func TestStoryboardChunkRecoveryPersistsAndDeduplicates(t *testing.T) {
 func TestStoryboardReplayIsNotANewWriteSnapshot(t *testing.T) {
 	state := cloudAgentRuntime{CanvasBatchHashes: []string{"current"}}
 	result := map[string]any{"preview": cloudAgentApprovalPreview{}, "replayed": true, "snapshotHash": "historical", "beforeSnapshotHash": "older", "currentSnapshotHash": "current"}
-	state.recordCanvasBatchHash(result, "canvas_edit_storyboard")
+	state.recordCanvasBatchHash(result, "storyboard")
 	if !reflect.DeepEqual(state.CanvasBatchHashes, []string{"current"}) {
 		t.Fatalf("replay introduced a historical write version: %v", state.CanvasBatchHashes)
 	}
-	receipt := cloudAgentModelToolResult("canvas_edit_storyboard", result).(map[string]any)
+	receipt := cloudAgentModelToolResult("storyboard", result).(map[string]any)
 	if receipt["outcome"] == nil || receipt["outcome"] == "" {
 		t.Fatal("replay needs explicit historical-result guidance")
 	}
@@ -145,8 +145,9 @@ func TestStoryboardReplayDoesNotRequestApprovalAgain(t *testing.T) {
 	createCloudAgentStoryboardForTest(t, s, canvas)
 	policy, _ := s.RuntimePolicy()
 	doc, _ := creationDocument(canvas.PayloadJSON)
-	args := map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "append_rows", "operationId": "approval/chunk-1", "rows": []map[string]any{{"durationSeconds": 5.0, "plotDescription": "once"}}}
-	call := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "first", args)
+	_, _, existing, _ := storyboardNodeFromDocument(doc, "storyboard-1")
+	args := map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "update", "operationId": "approval/chunk-1", "rowId": existing[0]["id"], "patch": map[string]any{"dialogue": "once"}}
+	call := cloudAgentStoryboardCall(t, "storyboard", "first", args)
 	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, call, policy); err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ func TestStoryboardChunkReceiptFailureRollsBackRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Callback().Create().Remove("test_receipt_failure") })
-	_, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "rollback", map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "append_rows", "operationId": "fill-task/rollback", "rows": []map[string]any{{"durationSeconds": 5.0, "plotDescription": "must roll back"}}}), policy)
+	_, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "rollback", map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "append_rows", "operationId": "fill-task/rollback", "rows": []map[string]any{{"durationSeconds": 5.0, "plotDescription": "must roll back"}}}), policy)
 	if err == nil {
 		t.Fatal("receipt failure reported success")
 	}

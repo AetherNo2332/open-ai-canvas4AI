@@ -159,6 +159,27 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 			taskMetadata = map[string]any{}
 			input["metadata"] = taskMetadata
 		}
+		if req.Consumer.Kind == "storyboard_document" {
+			// 拆镜提示词一律由服务端从画布组装；调用方只能给出修改意见、镜头数和单镜时长。
+			split, _ := taskMetadata["storyboardSplit"].(map[string]any)
+			scope, err := commands.PlanStoryboardSplitScope(doc, req.TargetNodeID, req.Consumer.RowIDs)
+			if err != nil {
+				return nil, nil, err
+			}
+			prompt, err := commands.BuildStoryboardSplitPrompt(doc, req.TargetNodeID, scope, commands.StoryboardSplitPromptInput{
+				Request:             str(split["request"]),
+				ShotCount:           intValue(split["shotCount"]),
+				ShotDurationSeconds: intValue(split["shotDurationSeconds"]),
+				SkillContext:        str(split["skillContext"]),
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+			serverTask.Prompt = prompt
+			input["prompt"] = prompt
+			delete(taskMetadata, "storyboardSplit")
+			taskMetadata["canvasConsumer"] = "storyboard_document"
+		}
 		taskMetadata["canvasId"], taskMetadata["nodeId"], taskMetadata["documentEpoch"] = req.Command.CanvasID, req.TargetNodeID, req.Command.DocumentEpoch
 		prepared, err := s.submitter.Prepare(ctx, p, serverTask)
 		if err != nil {
@@ -183,6 +204,16 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 				return nil, nil, err
 			}
 			binding.OriginalContent = string(raw)
+			// 重拆范围在提交时冻结：校验行存在、未锁定且连续；写回只按冻结的范围替换。
+			scope, err := commands.PlanStoryboardSplitScope(doc, req.TargetNodeID, req.Consumer.RowIDs)
+			if err != nil {
+				return nil, nil, err
+			}
+			contextJSON, err := json.Marshal(commands.StoryboardTaskContext{Scope: scope})
+			if err != nil {
+				return nil, nil, err
+			}
+			binding.ResultContextJSON = string(contextJSON)
 		}
 		versioned := mediaversions.Supported(req.Task.Mode)
 		var target map[string]any
@@ -288,5 +319,14 @@ func objectList(v any) []map[string]any {
 	}
 	return result
 }
-func str(v any) string          { s, _ := v.(string); return s }
+func str(v any) string { s, _ := v.(string); return s }
+
+// intValue 读取 JSON 数字字段；缺失、非数字或越界时返回 0（表示由脚本自行决定）。
+func intValue(v any) int {
+	number, ok := v.(float64)
+	if !ok || number < 0 || number > 1000 {
+		return 0
+	}
+	return int(number)
+}
 func contains(a, b string) bool { return strings.Contains(a, b) }

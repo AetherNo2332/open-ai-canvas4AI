@@ -17,14 +17,16 @@ metadata:
 
 把用户的目标落到真实画布操作。只在操作画布时使用；创作方法、风格和提示词质量交给相应创作技能。
 
+拆镜与媒体生成都异步执行：工具当前步骤只返回 submitted/taskId；写回结果在同一运行的下一模型步骤通知，不另起用户轮次。依赖结果时 wait_generations，恢复后 read。用户只对某一段不满意时，用 storyboard 的 resplit 并带真实连续 rowIds 和用户原话；满意且资产绑定完成的镜头可 lock。所有写 action 拒绝锁定目标，只有 unlock 例外。一对一重拆保留 ID 和媒体并标待复核，拆分/合并保留旧媒体节点而只解绑。
+
 ## 从目标选工具
 
 | 用户目标 | 路径 |
 | --- | --- |
 | 看有哪些节点、查已有关系或任务 | `canvas_get_state`；分镜或批量表继续用专用 read 工具 |
 | 创建空白节点、改普通节点文本、声明输入引用 | `canvas_list_node_types` → `canvas_apply_ops`（引用写 `generationSpec.referenceBindings`／`inputBindings`） |
-| 创建多镜头分镜 | `canvas_create_storyboard`，维护紧凑创作 `rows`，系统分配 ID 与位置 |
-| 改镜头台词、时长、关联资产或共享引用 | `canvas_read_storyboard` → `canvas_edit_storyboard`；多行用 `rowIds`，资产用 `set_assets` |
+| 创建多镜头分镜 | `canvas_apply_ops` 建 script，剧情写 composerContent，风格与要求写相连文本节点，再 `storyboard` 的 `split` |
+| 改镜头台词、时长、关联资产或共享引用 | `storyboard` 的 `read` → `storyboard`；多行用 `rowIds`，资产用 `set_assets` |
 | 改批量表行、参考列、并发或全局提示词 | `canvas_read_batch_table` → `canvas_edit_batch_table` |
 | 用已有形象图建角色卡 | 精读原图 → `canvas_create_character` |
 | 生成或编辑媒体 | 读节点 → `model_list` → `generate_media` |

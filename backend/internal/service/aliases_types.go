@@ -92,6 +92,8 @@ type (
 	CanvasOperationsRequest                = app.CanvasOperationsRequest
 	CanvasReferenceMigrationPreview        = app.CanvasReferenceMigrationPreview
 	CanvasReferenceMigrationRequest        = app.CanvasReferenceMigrationRequest
+	CanvasStoryboardSplitRequest           = app.CanvasStoryboardSplitRequest
+	CanvasStoryboardSplitResult            = app.CanvasStoryboardSplitResult
 	CanvasEditLeaseRequest                 = app.CanvasEditLeaseRequest
 	CanvasHistoryList                      = app.CanvasHistoryList
 	CanvasShareRequest                     = app.CanvasShareRequest

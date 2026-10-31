@@ -13,7 +13,7 @@ func repairToolParameters(t *testing.T, name string) map[string]any {
 	t.Helper()
 	req := agentTestRequest()
 	req.PermissionMode, req.VisionEnabled = "auto", true
-	for _, tool := range cloudAgentTools(req) {
+	for _, tool := range cloudAgentToolsWithRetired(req) {
 		f := tool["function"].(map[string]any)
 		if f["name"] == name {
 			return f["parameters"].(map[string]any)

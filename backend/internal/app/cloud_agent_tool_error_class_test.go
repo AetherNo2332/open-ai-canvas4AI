@@ -60,7 +60,7 @@ func TestCloudAgentToolErrorClass(t *testing.T) {
 func TestAgentReferenceMigrationIsNotAnArgumentRepair(t *testing.T) {
 	state := &cloudAgentRuntime{Request: CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}}}
 	call := cloudAgentCall{ID: "needs-migration"}
-	call.Function.Name = "canvas_edit_storyboard"
+	call.Function.Name = "storyboard"
 	call.Function.Arguments = `{"nodeId":"board","snapshotHash":"snapshot","action":"set_references","referenceNodeIds":["hero"]}`
 	cloudAgentToolResult("run", state, call, nil, cloudAgentReferenceMigrationRequired())
 	event := state.Events[len(state.Events)-1]
@@ -100,12 +100,12 @@ func TestCloudAgentToolResultCarriesErrorClass(t *testing.T) {
 	}
 }
 
-// 真机踩到的场景：canvas_read_storyboard 缺 nodeId 时，业务校验抛的是普通 AppError
+// 真机踩到的场景：storyboard 缺 nodeId 时，业务校验抛的是普通 AppError
 // （"分镜节点ID、分页参数或每页行数无效"）。按 schema 的 required 判定后必须归成
 // schema_error，并给出字段修正提示，而不是落到兜底的 tool_error。
 func TestCloudAgentToolResultClassifiesMissingRequiredArguments(t *testing.T) {
 	schema := []map[string]any{{"type": "function", "function": map[string]any{
-		"name": "canvas_read_storyboard",
+		"name": "storyboard",
 		"parameters": map[string]any{
 			"type":     "object",
 			"required": []any{"nodeId"},
@@ -117,7 +117,7 @@ func TestCloudAgentToolResultClassifiesMissingRequiredArguments(t *testing.T) {
 	state := &cloudAgentRuntime{Request: CloudAgentRequest{PermissionMode: "read_only", ContextScope: []string{"canvas"}}, Canonical: canonicalAgentRequest{Tools: schema}, Events: []CloudAgentEvent{}}
 	var call cloudAgentCall
 	call.ID = "call-1"
-	call.Function.Name = "canvas_read_storyboard"
+	call.Function.Name = "storyboard"
 	call.Function.Arguments = `{}`
 	if missing := cloudAgentMissingRequiredArguments(state.Canonical.Tools, call); len(missing) != 1 || missing[0] != "nodeId" {
 		t.Fatalf("必填字段检测 = %v，期望 [nodeId]", missing)

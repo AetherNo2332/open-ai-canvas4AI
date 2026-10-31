@@ -52,7 +52,7 @@ func cloudAgentIsEnvironmentConflict(err error) bool {
 // cloudAgentEnvironmentRereadTool 是能让模型看到最新画布的读取工具。
 func cloudAgentEnvironmentRereadTool(call cloudAgentCall) bool {
 	switch call.Function.Name {
-	case "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_read_content":
+	case "canvas_get_state", "storyboard", "canvas_read_batch_table", "canvas_read_content":
 		return true
 	case cloudAgentDirectorTool:
 		return !cloudAgentWriteCall(call)
@@ -247,7 +247,7 @@ func cloudAgentTrackToolRepair(runID string, state *cloudAgentRuntime, call clou
 // 出错的那个工具本身，加上读画布 / 读模型目录 / 问用户这三个出口。
 func cloudAgentRepairToolScope(call cloudAgentCall) []string {
 	scope := []string{call.Function.Name}
-	for _, name := range []string{"canvas_get_state", "model_list", "canvas_read_storyboard", "canvas_read_batch_table", "ask_user"} {
+	for _, name := range []string{"canvas_get_state", "model_list", "storyboard", "canvas_read_batch_table", "ask_user"} {
 		if name != call.Function.Name {
 			scope = append(scope, name)
 		}

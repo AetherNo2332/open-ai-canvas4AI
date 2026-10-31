@@ -13,7 +13,10 @@ import (
 	"yingce/backend/internal/repository"
 )
 
-type canvasTaskSubmitter struct{ s *Service }
+type canvasTaskSubmitter struct {
+	s         *Service
+	admission *taskAdmission
+}
 
 func (s *Service) CanvasTaskSubmitter() tasks.TaskSubmitter { return &canvasTaskSubmitter{s: s} }
 func (d *canvasTaskSubmitter) Prepare(ctx context.Context, p identity.Principal, req tasks.TaskRequest) (tasks.PreparedTask, error) {
@@ -44,7 +47,7 @@ func (d *canvasTaskSubmitter) Prepare(ctx context.Context, p identity.Principal,
 		return tasks.PreparedTask{}, BadAuthRequest("不支持内置 Agent 任务")
 	}
 	preparation := &creationTaskPreparation{}
-	task, err := d.s.CreateTask(p.OwnerID, CreateTaskRequest{Type: typ, Operation: req.Operation, Prompt: req.Prompt, LogicalModelID: req.LogicalModelID, Input: input, creationPrepare: preparation})
+	task, err := d.s.CreateTask(p.OwnerID, CreateTaskRequest{Type: typ, Operation: req.Operation, Prompt: req.Prompt, LogicalModelID: req.LogicalModelID, Input: input, admission: d.admission, creationPrepare: preparation})
 	if err != nil {
 		return tasks.PreparedTask{}, err
 	}

@@ -49,16 +49,21 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 		}
 		task = &transformed
 	}
-	outputs, err := s.materializeOutputs(ctx, *task)
-	if err != nil {
+	var consumer Consumer
+	if err := json.Unmarshal([]byte(binding.ConsumerJSON), &consumer); err != nil {
 		return err
+	}
+	var outputs []model.CanvasTaskOutput
+	// Whole-table splitting consumes structured JSON directly and creates no
+	// resource asset. Invalid model JSON must reach terminal writeback handling.
+	if consumer.Kind != "storyboard_document" {
+		outputs, err = s.materializeOutputs(ctx, *task)
+		if err != nil {
+			return err
+		}
 	}
 	base, versioned, err := mediaversions.BindingBase(binding)
 	if err != nil {
-		return err
-	}
-	var consumer Consumer
-	if err := json.Unmarshal([]byte(binding.ConsumerJSON), &consumer); err != nil {
 		return err
 	}
 	p := identity.Principal{ID: binding.OwnerID, OwnerID: binding.OwnerID, ClientID: binding.ClientID, Role: "owner", Scopes: identity.OwnerScopes()}
@@ -203,13 +208,40 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 				}
 				if string(current) != binding.OriginalContent {
 					outcome = "storyboard_edited"
-					m["taskStatus"], m["status"] = string(task.Status), "idle"
+					m["taskStatus"], m["status"] = string(task.Status), "error"
+					m["errorDetails"] = "拆镜期间分镜表被修改，结果未写入；请重新拆镜"
 					return doc, nil, nil
 				}
 				if task.Status == model.TaskStatusSucceeded {
-					updated, applyErr := commands.ApplyGeneratedStoryboard(doc, binding.TargetNodeID, taskID, task.ResultJSON)
+					var context commands.StoryboardTaskContext
+					if strings.TrimSpace(binding.ResultContextJSON) != "" {
+						if err := json.Unmarshal([]byte(binding.ResultContextJSON), &context); err != nil {
+							return nil, nil, err
+						}
+					}
+					updated, splitResult, applyErr := commands.ApplyStoryboardSplit(doc, binding.TargetNodeID, taskID, task.ResultJSON, context.Scope)
 					if applyErr != nil {
-						return nil, nil, applyErr
+						var validation *commands.Error
+						if !errors.As(applyErr, &validation) {
+							return nil, nil, applyErr
+						}
+						if repaired, repairErr := commands.RepairStoryboardSplitPayload(task.ResultJSON); repairErr == nil {
+							updated, splitResult, applyErr = commands.ApplyStoryboardSplit(doc, binding.TargetNodeID, taskID, repaired, context.Scope)
+						}
+					}
+					if applyErr != nil {
+						outcome = "storyboard_apply_failed"
+						m["taskStatus"], m["status"] = string(task.Status), "error"
+						m["errorDetails"] = applyErr.Error()
+						return doc, nil, nil
+					}
+					context.Result = &splitResult
+					encodedContext, encodeErr := json.Marshal(context)
+					if encodeErr != nil {
+						return nil, nil, encodeErr
+					}
+					if err := tx.UpdateCanvasTaskBindingResultContext(taskID, binding.OwnerID, string(encodedContext)); err != nil {
+						return nil, nil, err
 					}
 					m = metadata(findNode(updated, binding.TargetNodeID))
 					m["taskStatus"], m["status"], m["taskProgress"] = string(task.Status), "success", 100
