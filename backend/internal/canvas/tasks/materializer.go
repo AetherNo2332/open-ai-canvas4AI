@@ -207,7 +207,13 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 					return doc, nil, nil
 				}
 				if task.Status == model.TaskStatusSucceeded {
-					updated, applyErr := commands.ApplyGeneratedStoryboard(doc, binding.TargetNodeID, taskID, task.ResultJSON)
+					var scope commands.StoryboardSplitScope
+					if strings.TrimSpace(binding.ResultContextJSON) != "" {
+						if err := json.Unmarshal([]byte(binding.ResultContextJSON), &scope); err != nil {
+							return nil, nil, err
+						}
+					}
+					updated, _, applyErr := commands.ApplyStoryboardSplit(doc, binding.TargetNodeID, taskID, task.ResultJSON, scope)
 					if applyErr != nil {
 						return nil, nil, applyErr
 					}

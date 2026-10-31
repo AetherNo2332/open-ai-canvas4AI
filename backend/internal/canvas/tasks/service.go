@@ -183,6 +183,16 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 				return nil, nil, err
 			}
 			binding.OriginalContent = string(raw)
+			// 重拆范围在提交时冻结：校验行存在、未锁定且连续；写回只按冻结的范围替换。
+			scope, err := commands.PlanStoryboardSplitScope(doc, req.TargetNodeID, req.Consumer.RowIDs)
+			if err != nil {
+				return nil, nil, err
+			}
+			scopeJSON, err := json.Marshal(scope)
+			if err != nil {
+				return nil, nil, err
+			}
+			binding.ResultContextJSON = string(scopeJSON)
 		}
 		versioned := mediaversions.Supported(req.Task.Mode)
 		var target map[string]any

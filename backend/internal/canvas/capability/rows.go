@@ -23,6 +23,9 @@ func StoryboardRowFields() map[string]PatchField {
 	for _, key := range []string{"sourceStartMs", "sourceEndMs", "keyframeTimeMs"} {
 		fields[key] = boundedNumber(0, 1e12)
 	}
+	// locked：用户锁定的镜头不参与拆镜或局部重拆。mediaReview=pending：镜头文字已改，已生成的媒体待复核。
+	fields["locked"] = PatchField{Kind: patchKindBoolean}
+	fields["mediaReview"] = enumString("pending")
 	return fields
 }
 
