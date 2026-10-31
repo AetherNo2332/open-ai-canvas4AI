@@ -300,6 +300,7 @@ function DockSwitch({ entry, compact, showLabel, nativeTitle, motionEnabled }: {
                                 <motion.span
                                     aria-hidden
                                     layoutId={`dock-switch-thumb-${entry.id}`}
+                                    layoutDependency={entry.value}
                                     className="aceternity-dock-switch-thumb pointer-events-none absolute inset-0 rounded-[var(--dock-item-radius)]"
                                     transition={motionEnabled ? aceternityMotion.spring.dock : { duration: 0 }}
                                 />

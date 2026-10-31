@@ -6,12 +6,10 @@ import type { MenuProps } from "antd";
 import { Camera, Check, ChevronDown, ChevronRight, Ellipsis, Grid3x3, Palette, Plus, SlidersHorizontal, Wrench } from "lucide-react";
 
 import { canvasDockStyle } from "@/lib/canvas/canvas-aceternity-style";
-import { avoidCanvasNodePanels, canvasNodePanelBounds, canvasOverlayBounds, canvasToolbarLayoutLevel, observeCanvasOverlayBounds, subscribeCanvasNodePanelBounds } from "@/lib/canvas/canvas-overlay-layout";
 import { ASSET_CATEGORY_OPTIONS } from "@/lib/asset-category";
 import { canvasOverlayRightEdge } from "@/lib/canvas/overlay-viewport";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { resolveNodeToolbarPlacement, resolveToolbarTools, type NodeToolbarGroup, type ToolContext, type ToolbarHandlers } from "@/lib/canvas/tool-registry";
-import { subscribeCanvasGraphicsViewportPreview, subscribeCanvasNodeDragPreview } from "@/lib/canvas/canvas-live-viewport";
 import { canvasNodeAssetCategory } from "@/lib/canvas/canvas-node-asset";
 import type { ImageSplitParams } from "@/lib/canvas/canvas-image-data";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
@@ -21,10 +19,10 @@ import { producedModelLabel } from "@/lib/canvas/produced-model";
 import { nodeGenerationPrompt } from "@/lib/canvas/generation-contract";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useEffectiveConfig } from "@/stores/use-config-store";
-import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode, type Position, type ViewportTransform } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode, type ViewportTransform } from "@/types/canvas";
 import { buildImageToolbarTools } from "./canvas-image-toolbar-tools";
 import { CanvasGridSplitPicker } from "./canvas-grid-split-picker";
-import { useCanvasNodeResizeMotion } from "./canvas-node-resize-motion";
+import { useCanvasNodeToolbarPosition } from "./use-canvas-node-toolbar-position";
 
 type CanvasNodeToolbarProps = {
     node: CanvasNodeData | null;
@@ -156,116 +154,17 @@ export function CanvasNodeToolbar({
     workspaceMode = "professional",
 }: CanvasNodeToolbarProps) {
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-    const [containerWidth, setContainerWidth] = useState(1000);
-    const [layoutLevel, setLayoutLevel] = useState(0);
-    const measuredToolbarWidths = useRef<number[]>([0, 0, 0]);
-    const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
     const toolbarRef = useRef<HTMLDivElement>(null);
     const { message } = App.useApp();
     const copyText = useCopyText();
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
     const simpleMode = workspaceMode === "simple";
-    const resizeMotion = useCanvasNodeResizeMotion();
+    const { anchor, containerWidth, layoutLevel } = useCanvasNodeToolbarPosition(node, viewport, containerRef, toolbarRef, workspaceMode);
 
     useEffect(() => {
         setOpenMenuId(null);
     }, [node?.id]);
-
-    useEffect(() => {
-        measuredToolbarWidths.current = [0, 0, 0];
-        setLayoutLevel(0);
-    }, [node?.id, workspaceMode]);
-
-    useLayoutEffect(() => {
-        const container = containerRef.current;
-        if (!node || !container) {
-            setAnchor(null);
-            return;
-        }
-        const element = container.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(node.id)}"]`);
-        if (!element) {
-            setAnchor(null);
-            return;
-        }
-        let disposed = false;
-        let queued = false;
-        let liveViewport = viewport;
-        let liveDragOffset: Position | null = null;
-        let containerRect = container.getBoundingClientRect();
-        let availableBounds = canvasOverlayBounds(containerRect);
-        let toolbarWidth = toolbarRef.current?.offsetWidth || 0;
-        let toolbarHeight = toolbarRef.current?.offsetHeight || 44;
-        const update = () => {
-            // 视口预览帧已经修改了世界层 transform；直接用节点世界坐标计算，
-            // 避免随后读取 getBoundingClientRect() 强制同步布局。
-            const scale = Math.max(liveViewport.k, 0.05);
-            const offsetX = liveDragOffset?.x || 0;
-            const offsetY = liveDragOffset?.y || 0;
-            const visualNode = resizeMotion?.resolveNode(node) || node;
-            const nodeLeft = liveViewport.x + (visualNode.position.x + offsetX) * scale;
-            const nodeTop = liveViewport.y + (visualNode.position.y + offsetY) * scale;
-            const nodeWidth = visualNode.width * scale;
-            const preferredLeft = nodeLeft + nodeWidth / 2;
-            const halfToolbar = toolbarWidth / 2;
-            const preferredAnchorLeft = Math.min(Math.max(preferredLeft, availableBounds.left + halfToolbar), Math.max(availableBounds.left + halfToolbar, availableBounds.right - halfToolbar));
-            const above = nodeTop - 30;
-            const preferredAnchorTop = Math.max(availableBounds.top + toolbarHeight, Math.min(above, availableBounds.bottom));
-            // 面板在定位时发布矩形；这里不读取 DOM，可在实时平移和尺寸收敛后继续避让。
-            const { left, top } = avoidCanvasNodePanels({ left: preferredAnchorLeft, top: preferredAnchorTop }, { width: toolbarWidth, height: toolbarHeight }, availableBounds, canvasNodePanelBounds(container));
-            if (toolbarRef.current) {
-                toolbarRef.current.style.transform = `translate3d(${left}px, ${top}px, 0)`;
-                return;
-            }
-            setAnchor((current) => current?.left === left && current.top === top ? current : { left, top });
-        };
-        const scheduleUpdate = (nextViewport?: ViewportTransform) => {
-            if (nextViewport) liveViewport = nextViewport;
-            if (queued || disposed) return;
-            queued = true;
-            queueMicrotask(() => {
-                queued = false;
-                if (!disposed) update();
-            });
-        };
-        const measure = () => {
-            containerRect = container.getBoundingClientRect();
-            toolbarWidth = toolbarRef.current?.offsetWidth || 0;
-            toolbarHeight = toolbarRef.current?.offsetHeight || 44;
-            const availableWidth = Math.max(0, availableBounds.right - availableBounds.left);
-            const dock = toolbarRef.current?.firstElementChild as HTMLElement | null;
-            if (dock) {
-                measuredToolbarWidths.current[layoutLevel] = dock.scrollWidth;
-                setLayoutLevel(canvasToolbarLayoutLevel(availableWidth, measuredToolbarWidths.current, layoutLevel));
-            }
-            setContainerWidth(availableWidth);
-            scheduleUpdate();
-        };
-        measure();
-        const resizeObserver = new ResizeObserver(measure);
-        resizeObserver.observe(element);
-        resizeObserver.observe(container);
-        if (toolbarRef.current) resizeObserver.observe(toolbarRef.current);
-        const stopBounds = observeCanvasOverlayBounds(container, (bounds) => { availableBounds = bounds; measure(); });
-        const unsubscribePanels = subscribeCanvasNodePanelBounds(container, () => scheduleUpdate());
-        const unsubscribeViewport = subscribeCanvasGraphicsViewportPreview(container, scheduleUpdate);
-        const unsubscribeResize = resizeMotion?.subscribeNode(node.id, () => scheduleUpdate());
-        const unsubscribeDrag = subscribeCanvasNodeDragPreview(container, (preview) => {
-            liveDragOffset = preview?.nodeIds.has(node.id) ? { x: preview.x, y: preview.y } : null;
-            scheduleUpdate();
-        });
-        window.addEventListener("resize", measure);
-        return () => {
-            disposed = true;
-            resizeObserver.disconnect();
-            stopBounds();
-            unsubscribePanels();
-            unsubscribeViewport();
-            unsubscribeResize?.();
-            unsubscribeDrag();
-            window.removeEventListener("resize", measure);
-        };
-    }, [anchor === null, containerRef, layoutLevel, node, resizeMotion, viewport.k, viewport.x, viewport.y]);
 
     if (!node || !anchor) return null;
 

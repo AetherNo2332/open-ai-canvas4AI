@@ -18,6 +18,7 @@ export const ConnectionPath = React.memo(function ConnectionPath({
     fromBatchScroll,
     toBatchScroll,
     active,
+    animateBeam = false,
     visualMode = "full",
     hideVisual = false,
     onSelect,
@@ -31,6 +32,7 @@ export const ConnectionPath = React.memo(function ConnectionPath({
     fromBatchScroll?: BatchScroll;
     toBatchScroll?: BatchScroll;
     active: boolean;
+    animateBeam?: boolean;
     visualMode?: "full" | "hover-only";
     hideVisual?: boolean;
     onSelect: () => void;
@@ -43,8 +45,8 @@ export const ConnectionPath = React.memo(function ConnectionPath({
     const { pathD, startX, startY, endX, endY } = canvasConnectionPath(connection, from, to, fromScrollTop, toScrollTop, fromBatchScroll, toBatchScroll);
     const targetCell = batchCellAnchor(to, connection.toHandleId, toBatchScroll);
     const emphasized = active || hovered;
-    const showVisual = !hideVisual && (visualMode === "full" || hovered);
-    const showEmphasis = !hideVisual && emphasized;
+    const showVisual = !hideVisual && (visualMode === "full" || emphasized);
+    const showBeam = !hideVisual && (animateBeam || hovered);
     if (!pathD) return null;
 
     return (
@@ -73,7 +75,7 @@ export const ConnectionPath = React.memo(function ConnectionPath({
             />
             {showVisual ? <path
                 d={pathD}
-                stroke={theme.connection.stroke}
+                stroke={emphasized ? theme.connection.beam : theme.connection.stroke}
                 strokeWidth={CANVAS_CONNECTION_STROKE_WIDTH}
                 vectorEffect="non-scaling-stroke"
                 strokeOpacity={0.8}
@@ -86,17 +88,16 @@ export const ConnectionPath = React.memo(function ConnectionPath({
                 <circle cx={startX} cy={startY} r={2.5} fill={emphasized ? theme.connection.beam : theme.connection.stroke} fillOpacity={0.8} vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }} />
                 <circle cx={endX} cy={endY} r={2.5} fill={emphasized ? theme.connection.beam : theme.connection.stroke} fillOpacity={0.8} vectorEffect="non-scaling-stroke" style={{ pointerEvents: "none" }} />
             </> : null}
-            {showEmphasis ? <CanvasConnectionBeam pathD={pathD} color={theme.connection.beam} /> : null}
+            {showBeam ? <CanvasConnectionBeam pathD={pathD} color={theme.connection.beam} /> : null}
         </g>
     );
-}, (previous, next) => previous.connection === next.connection && previous.from === next.from && previous.to === next.to && previous.active === next.active && previous.visualMode === next.visualMode && previous.hideVisual === next.hideVisual && previous.fromScrollTop === next.fromScrollTop && previous.toScrollTop === next.toScrollTop && previous.fromBatchScroll?.top === next.fromBatchScroll?.top && previous.fromBatchScroll?.left === next.fromBatchScroll?.left && previous.toBatchScroll?.top === next.toBatchScroll?.top && previous.toBatchScroll?.left === next.toBatchScroll?.left);
+}, (previous, next) => previous.connection === next.connection && previous.from === next.from && previous.to === next.to && previous.active === next.active && previous.animateBeam === next.animateBeam && previous.visualMode === next.visualMode && previous.hideVisual === next.hideVisual && previous.fromScrollTop === next.fromScrollTop && previous.toScrollTop === next.toScrollTop && previous.fromBatchScroll?.top === next.fromBatchScroll?.top && previous.fromBatchScroll?.left === next.fromBatchScroll?.left && previous.toBatchScroll?.top === next.toBatchScroll?.top && previous.toBatchScroll?.left === next.toBatchScroll?.left);
 
-const BEAM_LAYERS = [0.35, 0.6, 0.9, 1.2, CANVAS_CONNECTION_STROKE_WIDTH, 1.65, 1.9, 2.1].map((width, index) => ({
-    length: 36 - index * 4,
-    offset: -index * 4,
-    width,
-    opacity: 0.14 + index * 0.07,
-}));
+// SVG dash 动画不能交给合成线程；只在直接交互的连线上保留两层水滴。
+const BEAM_LAYERS = [
+    { length: 36, offset: 0, width: 0.6, opacity: 0.35 },
+    { length: 20, offset: -16, width: CANVAS_CONNECTION_STROKE_WIDTH, opacity: 0.7 },
+];
 
 export function CanvasConnectionBeam({ pathD, color }: { pathD: string; color: string }) {
     // 前缘对齐，靠近头部的短层逐渐加宽、加深，形成圆头细尾的水滴轮廓。
