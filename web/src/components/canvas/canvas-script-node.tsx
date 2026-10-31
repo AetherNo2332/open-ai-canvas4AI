@@ -6,7 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { CheckboxGroup } from "@/components/ui/base/checkbox";
 import type { MenuProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Check, ChevronDown, ChevronUp, Clapperboard, Columns3, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Merge, MoreHorizontal, Plus, RefreshCw, Send, Square, Trash2, Video } from "lucide-react";
+import { AlertCircle, Check, ChevronDown, ChevronUp, Clapperboard, Columns3, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Lock, Merge, MoreHorizontal, Plus, RefreshCw, Send, Square, Trash2, Unlock, Video } from "lucide-react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import { StoryboardAssetsCell } from "@/components/canvas/storyboard-assets-cell";
@@ -541,6 +541,7 @@ export function CanvasScriptEditor({
     onVisibleColumnsChange,
     onGenerateImages,
     onGenerateVideos,
+    onResplitRows,
     onVideoInputModeChange,
 }: {
     node: CanvasNodeData | null;
@@ -552,6 +553,7 @@ export function CanvasScriptEditor({
     onVisibleColumnsChange: (columns: StoryboardColumn[]) => void;
     onGenerateImages: (rowIds: string[]) => void;
     onGenerateVideos: (rowIds: string[]) => void;
+    onResplitRows?: (rowIds: string[]) => void;
     onVideoInputModeChange: (mode: StoryboardVideoInputMode) => void;
 }) {
     const [query, setQuery] = useState("");
@@ -590,22 +592,29 @@ export function CanvasScriptEditor({
             return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
         });
     }, [rows]);
-    const updateRow = (rowId: string, patch: Partial<StoryboardRow>) => onUpdateRows(rows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
+    const updateRow = (rowId: string, patch: Partial<StoryboardRow>) => onUpdateRows(rows.map((row) => {
+        if (row.id !== rowId || (row.locked && patch.locked === undefined)) return row;
+        return { ...row, ...patch };
+    }));
     const moveRow = (rowId: string, direction: -1 | 1) => {
         const index = rows.findIndex((row) => row.id === rowId);
         const nextIndex = index + direction;
-        if (index < 0 || nextIndex < 0 || nextIndex >= rows.length) return;
+        if (index < 0 || nextIndex < 0 || nextIndex >= rows.length || rows[index].locked || rows[nextIndex].locked) return;
         const next = [...rows];
         [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
         onUpdateRows(next.map((row, rowIndex) => ({ ...row, shotNumber: rowIndex + 1 })));
     };
     const duplicateRow = (row: StoryboardRow) => {
+        if (row.locked) return;
         const index = rows.findIndex((item) => item.id === row.id);
         const next = [...rows];
         next.splice(index + 1, 0, { ...row, id: `shot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, imageNodeId: undefined, videoNodeId: undefined, status: "idle" });
         onUpdateRows(next.map((item, rowIndex) => ({ ...item, shotNumber: rowIndex + 1 })));
     };
-    const removeRow = (rowId: string) => onUpdateRows(rows.filter((row) => row.id !== rowId).map((row, index) => ({ ...row, shotNumber: index + 1 })));
+    const removeRow = (rowId: string) => {
+        if (rows.find((row) => row.id === rowId)?.locked) return;
+        onUpdateRows(rows.filter((row) => row.id !== rowId).map((row, index) => ({ ...row, shotNumber: index + 1 })));
+    };
 
     const visibleColumnOptions = STORYBOARD_COLUMN_OPTIONS.filter((option) => visibleColumns.includes(option.value));
     const columnWidths = storyboardEditorColumnWidths(
@@ -620,19 +629,24 @@ export function CanvasScriptEditor({
         fixed: option.value === "shotNumber" ? ("left" as const) : undefined,
         render: (_: unknown, row: StoryboardRow) =>
             option.value === "shotNumber" ? (
-                <span className="font-semibold tabular-nums">{row.shotNumber}</span>
+                <span className="flex items-center justify-center gap-1 font-semibold tabular-nums">
+                    {row.locked ? <Lock className="size-3" aria-label="镜头已锁定" /> : null}
+                    {row.mediaReview === "pending" ? <AlertCircle className="size-3 text-amber-500" aria-label="媒体待复核" /> : null}
+                    {row.shotNumber}
+                </span>
             ) : option.value === "durationSeconds" ? (
-                <InputNumber min={1} max={60} value={row.durationSeconds} suffix="s" aria-label="时长（秒）" className="tabular-nums" style={{ width: "100%" }} onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
+                <InputNumber min={1} max={60} value={row.durationSeconds} suffix="s" aria-label="时长（秒）" className="tabular-nums" style={{ width: "100%" }} disabled={row.locked} onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
             ) : option.value === "assets" ? (
-                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} onEdit={() => onEditAssets(row.id)} disabled={node?.metadata?.locked} />
+                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} onEdit={() => onEditAssets(row.id)} disabled={Boolean(node?.metadata?.locked || row.locked)} />
             ) : option.value === "shotSize" ? (
-                <Select className="w-full" value={row.shotSize || undefined} placeholder="选择景别" ariaLabel="景别" options={STORYBOARD_SHOT_SIZES.map((value) => ({ value, label: value }))} onChange={(shotSize) => updateRow(row.id, { shotSize })} />
+                <Select className="w-full" value={row.shotSize || undefined} placeholder="选择景别" ariaLabel="景别" options={STORYBOARD_SHOT_SIZES.map((value) => ({ value, label: value }))} disabled={row.locked} onChange={(shotSize) => updateRow(row.id, { shotSize })} />
             ) : (
                 <Input.TextArea
                     autoSize={{ minRows: 1, maxRows: 6 }}
                     value={String(row[option.value] || "")}
                     placeholder={`填写${option.label}`}
                     aria-label={option.label}
+                    disabled={row.locked}
                     onChange={(event) => updateRow(row.id, { [option.value]: event.target.value } as Partial<StoryboardRow>)}
                 />
             ),
@@ -651,10 +665,13 @@ export function CanvasScriptEditor({
                 <SmallButton title="下移" onClick={() => moveRow(row.id, 1)}>
                     <ChevronDown className="size-3.5" />
                 </SmallButton>
-                <SmallButton title="复制" onClick={() => duplicateRow(row)}>
+                <SmallButton title={row.locked ? "解锁镜头" : "锁定镜头"} onClick={() => updateRow(row.id, { locked: !row.locked })}>
+                    {row.locked ? <Unlock className="size-3.5" /> : <Lock className="size-3.5" />}
+                </SmallButton>
+                <SmallButton title="复制" disabled={row.locked} onClick={() => duplicateRow(row)}>
                     <Copy className="size-3.5" />
                 </SmallButton>
-                <SmallButton title="删除" onClick={() => removeRow(row.id)}>
+                <SmallButton title="删除" disabled={row.locked} onClick={() => removeRow(row.id)}>
                     <Trash2 className="size-3.5" />
                 </SmallButton>
             </div>
@@ -730,6 +747,13 @@ export function CanvasScriptEditor({
                         <Button icon={<ImageIcon className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateImages(selectedIds)}>
                             生成{videoInputMode === "keyframe" ? "首帧" : "分镜图"}
                         </Button>
+                        <Button
+                            icon={<RefreshCw className="size-4" />}
+                            disabled={!onResplitRows || selectedIds.length === 0 || !isContiguousUnlockedSelection(rows, selectedIds)}
+                            onClick={() => onResplitRows?.(selectedIds)}
+                        >
+                            局部重拆
+                        </Button>
                         <Segmented<StoryboardVideoInputMode>
                             value={videoInputMode}
                             options={[
@@ -791,8 +815,13 @@ function ScriptCardCell({
         return (
             <div className="flex flex-col items-center justify-center gap-0.5 border-r tabular-nums" style={{ color: mutedColor, borderColor }}>
                 <div className="flex items-center gap-0.5">
+                    {row.locked ? <Lock className="size-3" aria-label="镜头已锁定" /> : null}
+                    {row.mediaReview === "pending" ? <AlertCircle className="size-3 text-amber-500" aria-label="媒体待复核" /> : null}
                     <span className="text-sm">{row.shotNumber}</span>
-                    <Dropdown trigger={["click"]} menu={{ items: [{ key: "delete", label: "删除镜头", icon: <Trash2 className="size-3.5" />, danger: true, disabled: !canRemove, onClick: () => onRemoveRow(row.id) }] }}>
+                    <Dropdown trigger={["click"]} menu={{ items: [
+                        { key: "lock", label: row.locked ? "解锁镜头" : "锁定镜头", icon: row.locked ? <Unlock className="size-3.5" /> : <Lock className="size-3.5" />, onClick: () => onUpdateRow(row.id, { locked: !row.locked }) },
+                        { key: "delete", label: "删除镜头", icon: <Trash2 className="size-3.5" />, danger: true, disabled: !canRemove || row.locked, onClick: () => onRemoveRow(row.id) },
+                    ] }}>
                         <button
                             type="button"
                             className="grid size-5 place-items-center rounded outline-none opacity-45 transition hover:bg-black/5 hover:opacity-100 focus-visible:ring-2 dark:hover:bg-white/10"
@@ -814,12 +843,12 @@ function ScriptCardCell({
         );
     }
     if (column === "durationSeconds") {
-        return <CompactDurationInput value={row.durationSeconds} borderColor={borderColor} onChange={(durationSeconds) => onUpdateRow(row.id, { durationSeconds })} />;
+        return <CompactDurationInput value={row.durationSeconds} borderColor={borderColor} disabled={row.locked} onChange={(durationSeconds) => onUpdateRow(row.id, { durationSeconds })} />;
     }
     if (column === "assets") {
         return (
             <div className="flex h-full min-w-0 items-center border-r px-2.5" style={{ borderColor }}>
-                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} onEdit={() => onEditAssets(row.id)} disabled={Boolean(scriptNode.metadata?.locked)} />
+                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} onEdit={() => onEditAssets(row.id)} disabled={Boolean(scriptNode.metadata?.locked || row.locked)} />
             </div>
         );
     }
@@ -834,6 +863,7 @@ function ScriptCardCell({
                     placeholder="选择景别"
                     ariaLabel="景别"
                     options={STORYBOARD_SHOT_SIZES.map((value) => ({ value, label: value }))}
+                    disabled={row.locked}
                     popupMatchSelectWidth={false}
                     onChange={(shotSize) => onUpdateRow(row.id, { shotSize })}
                     onMouseDown={(event) => event.stopPropagation()}
@@ -846,18 +876,20 @@ function ScriptCardCell({
             value={String(row[column] ?? "")}
             placeholder={STORYBOARD_CARD_PLACEHOLDERS[column] ?? `填写${storyboardColumnLabel(column)}`}
             borderColor={borderColor}
+            disabled={row.locked}
             onChange={(value) => onUpdateRow(row.id, { [column]: value } as Partial<StoryboardRow>)}
         />
     );
 }
 
-function CompactInput({ value, placeholder, borderColor, onChange }: { value: string; placeholder: string; borderColor: string; onChange: (value: string) => void }) {
+function CompactInput({ value, placeholder, borderColor, disabled, onChange }: { value: string; placeholder: string; borderColor: string; disabled?: boolean; onChange: (value: string) => void }) {
     return (
         <textarea
             className="thin-scrollbar h-full w-full resize-none overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words border-r bg-transparent px-4 py-2 text-xs leading-5 outline-none transition placeholder:opacity-35 focus:bg-black/[0.02] dark:focus:bg-white/[0.025]"
             style={{ borderColor }}
             value={value}
             placeholder={placeholder}
+            disabled={disabled}
             onChange={(event) => onChange(event.target.value)}
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
@@ -865,7 +897,7 @@ function CompactInput({ value, placeholder, borderColor, onChange }: { value: st
     );
 }
 
-function CompactDurationInput({ value, borderColor, onChange }: { value: number; borderColor: string; onChange: (value: number) => void }) {
+function CompactDurationInput({ value, borderColor, disabled, onChange }: { value: number; borderColor: string; disabled?: boolean; onChange: (value: number) => void }) {
     return (
         <label className="flex h-full items-center justify-center gap-1 border-r text-xs tabular-nums text-foreground/60" style={{ borderColor }}>
             <input
@@ -873,6 +905,7 @@ function CompactDurationInput({ value, borderColor, onChange }: { value: number;
                 min={1}
                 max={60}
                 value={value}
+                disabled={disabled}
                 className="w-9 bg-transparent text-right outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
                 aria-label="镜头时长（秒）"
                 onChange={(event) => onChange(Math.max(1, Math.min(60, Number(event.target.value) || 1)))}
@@ -937,6 +970,12 @@ function editorRow(shotNumber: number): StoryboardRow {
         assetBindings: [],
         status: "idle",
     };
+}
+
+function isContiguousUnlockedSelection(rows: StoryboardRow[], selectedIds: string[]) {
+    const selected = selectedIds.map((id) => rows.findIndex((row) => row.id === id)).sort((a, b) => a - b);
+    if (!selected.length || selected.some((index) => index < 0 || rows[index].locked)) return false;
+    return selected.every((index, position) => position === 0 || index === selected[position - 1] + 1);
 }
 
 function RowHandle({

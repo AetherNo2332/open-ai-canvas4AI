@@ -3591,6 +3591,7 @@ function CanvasViewportPage() {
                                     );
                                 }}
                                 onGenerateImages={(rowIds) => activeScriptNode && void generateScriptImages(activeScriptNode.id, rowIds)}
+                                onResplitRows={(rowIds) => activeScriptNode && void generateScriptRows(activeScriptNode.id, activeScriptNode.metadata?.composerContent || "", undefined, rowIds)}
                                 onGenerateVideos={(rowIds) => {
                                     if (!activeScriptNode) return;
                                     if (activeScriptNode.metadata?.storyboardVideoInputMode === "keyframe") void generateScriptVideos(activeScriptNode.id, rowIds);

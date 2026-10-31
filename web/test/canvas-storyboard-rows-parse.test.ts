@@ -44,6 +44,13 @@ describe("storyboardRowsFromTask", () => {
         expect(storyboardRowsFromTask(task).rows).toHaveLength(1);
     });
 
+    test("保留服务端写回的锁定和媒体待复核状态", () => {
+        const task = storyboardTask(JSON.stringify({ rows: [{ shotNumber: 1, plotDescription: "锁定镜头", locked: true, mediaReview: "pending" }] }));
+        const row = storyboardRowsFromTask(task).rows[0];
+        expect(row.locked).toBe(true);
+        expect(row.mediaReview).toBe("pending");
+    });
+
     test("title 不是字符串时仍可恢复任务结果", () => {
         const task = storyboardTask(JSON.stringify({ title: { value: "章节" }, rows: [{ shotNumber: 1, plotDescription: "单镜头" }] }));
         expect(storyboardRowsFromTask(task).title).toBeUndefined();

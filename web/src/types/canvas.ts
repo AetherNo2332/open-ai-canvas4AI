@@ -131,6 +131,10 @@ export type StoryboardRow = {
     continuityOut: string;
     negativePrompt: string;
     assetBindings: StoryboardAssetBinding[];
+    /** 用户锁定的镜头不会参与服务端整表拆镜或局部重拆。 */
+    locked?: boolean;
+    /** 镜头文字变化但沿用了原媒体时，等待用户复核画面是否仍匹配。 */
+    mediaReview?: "pending";
     /** 原视频拆解时的时间范围，用于自动抽取关键帧。 */
     sourceStartMs?: number;
     sourceEndMs?: number;

@@ -114,7 +114,7 @@ export async function recoverCanvasGenerationTaskNode(input: {
             throw new Error(input.completed.error || (input.completed.status === "cancelled" ? "任务已取消" : "任务失败"));
         }
         if (!input.continuationOnly) {
-            if (input.node.type === CanvasNodeType.Script && input.completed.type === "canvas_text" && input.completed.operation === "storyboard") {
+            if (input.node.type === CanvasNodeType.Script && input.completed.type === "canvas_text" && input.completed.operation === "storyboard" && !isServerStoryboardSplitTask(input.completed)) {
                 const result = storyboardRowsFromTask(input.completed);
                 const recoveredNodes = input.nodesRef.current.map((item) =>
                     item.id === input.node.id
@@ -132,6 +132,15 @@ export async function recoverCanvasGenerationTaskNode(input: {
                                   storyboard: { rows: result.rows, visibleColumns: resolveStoryboardVisibleColumns(item.metadata?.storyboard?.visibleColumns), referenceNodeIds: item.metadata?.storyboard?.referenceNodeIds || [] },
                               },
                           }
+                        : item,
+                );
+                if (!isCurrentProject()) return;
+                input.nodesRef.current = recoveredNodes;
+                input.setNodes(recoveredNodes);
+            } else if (isServerStoryboardSplitTask(input.completed)) {
+                const recoveredNodes = input.nodesRef.current.map((item) =>
+                    item.id === input.node.id
+                        ? { ...item, metadata: { ...item.metadata, ...generationTaskMetadata(input.completed), status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined } }
                         : item,
                 );
                 if (!isCurrentProject()) return;
@@ -199,6 +208,16 @@ export async function recoverCanvasGenerationTaskNode(input: {
                     : item,
             ),
         );
+    }
+}
+
+function isServerStoryboardSplitTask(task: GenerationTask) {
+    if (task.operation !== "storyboard" || !task.inputJson) return false;
+    try {
+        const input = JSON.parse(task.inputJson) as { metadata?: { storyboardSplit?: unknown } };
+        return Boolean(input.metadata && Object.prototype.hasOwnProperty.call(input.metadata, "storyboardSplit"));
+    } catch {
+        return false;
     }
 }
 

@@ -146,6 +146,9 @@ func TestCloudAgentPromptIntentFlagsUseClosedLexicon(t *testing.T) {
 	if !storyboard.Storyboard {
 		t.Fatal("「帮我写分镜」must set storyboard intent")
 	}
+	if !cloudAgentPromptIntentFlags("把这段剧情拆镜").Storyboard {
+		t.Fatal("「拆镜」must set storyboard intent")
+	}
 }
 
 func TestCloudAgentScanCanvasInventoryCharacterAndTypes(t *testing.T) {

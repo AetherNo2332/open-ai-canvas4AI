@@ -79,7 +79,7 @@ func cloudAgentPromptHasAny(prompt string, keywords ...string) bool {
 
 func cloudAgentPromptIntentFlags(prompt string) cloudAgentToolIntent {
 	return cloudAgentToolIntent{
-		Storyboard: cloudAgentPromptHasAny(prompt, "分镜", "逐镜", "storyboard"),
+		Storyboard: cloudAgentPromptHasAny(prompt, "分镜", "拆镜", "逐镜", "镜头表", "storyboard"),
 		BatchTable: cloudAgentPromptHasAny(prompt, "批次", "批量创作"),
 		Assets:     cloudAgentPromptHasAny(prompt, "素材库", "替换素材", "绑定素材"),
 		Character:  cloudAgentPromptHasAny(prompt, "角色卡"),
