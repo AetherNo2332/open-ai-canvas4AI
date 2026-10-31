@@ -41,6 +41,7 @@ func TestCloudAgentToolErrorClass(t *testing.T) {
 		{"上游 5xx", canvasRequest, call("task_get"), providerHTTPError{StatusCode: 503}, true, cloudAgentToolErrorUpstream, true, "report_to_user"},
 		{"上游 4xx", canvasRequest, call("task_get"), providerHTTPError{StatusCode: 400}, true, cloudAgentToolErrorUpstream, false, "report_to_user"},
 		{"超时", canvasRequest, call("task_get"), context.DeadlineExceeded, true, cloudAgentToolErrorUpstream, true, "report_to_user"},
+		{"账号活动任务已满", canvasRequest, call("generate_media"), BadAuthRequest("同时排队或运行的任务最多 5 个，请等待已有任务完成"), true, cloudAgentToolErrorStateConflict, true, "wait_for_generations"},
 		{"其它", canvasRequest, call("task_get"), errors.New("说不清"), true, cloudAgentToolErrorUnknown, true, ""},
 	}
 	for _, tc := range cases {

@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // 首步合同（路线图 C2）专项：冻结 Harness 正文、原子换单、重复投递、退款门槛。
@@ -344,10 +345,11 @@ func TestPiFirstStepAdmissionFailureRefundsPlaceholder(t *testing.T) {
 	}
 	for index := 0; index < policy.Task.ActiveTaskLimit; index++ {
 		// 克隆占位行只为了拿到合法的非空字段，避免临时拼一条缺列的任务。
+		// 占满额度的必须是真正的产出任务：Agent 自身的占位、模型步和压缩任务不计入账号活动任务上限。
 		filler := *placeholder
 		filler.ID = fmt.Sprintf("pi-admission-filler-%d", index)
 		filler.Status = model.TaskStatusQueued
-		filler.Operation = cloudAgentStepOperation
+		filler.Operation = "text_to_image"
 		filler.AgentRunID = ""
 		filler.BillingOrderID = ""
 		if err := db.Create(&filler).Error; err != nil {
@@ -479,5 +481,53 @@ func TestContextCompactionTaskKeepsFirstStepReservation(t *testing.T) {
 	}
 	if after.Snapshot == nil || after.Snapshot.AssembledPromptHash != "" {
 		t.Fatalf("首步前不应出现已冻结合同: %+v", after.Snapshot)
+	}
+}
+
+// 现场：Agent 连续提交 5 张图后，下一个模型步因「同时排队或运行的任务最多 5 个」整轮失败。
+// Agent 自身的占位、模型步与压缩任务不计入账号活动任务上限；真正的产出任务照常计数。
+func TestAgentInternalTasksDoNotCountTowardActiveTaskLimit(t *testing.T) {
+	for _, operation := range []string{cloudAgentHoldingOperation, cloudAgentStepOperation, cloudAgentContextCompactionOperation} {
+		if !containsString(repository.AgentInternalTaskOperations, operation) {
+			t.Fatalf("Agent 内部任务 %s 不在豁免名单里，会占用账号活动任务额度", operation)
+		}
+	}
+	s, db, run, state := piFirstStepFixture(t)
+	placeholder, err := s.repo.TaskForUser("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 留一个空位给生成：额度减一个产出任务，再放一堆 Agent 内部任务。
+	for index := 0; index < policy.Task.ActiveTaskLimit-1; index++ {
+		filler := *placeholder
+		filler.ID = fmt.Sprintf("limit-output-%d", index)
+		filler.Status, filler.Operation, filler.AgentRunID, filler.BillingOrderID = model.TaskStatusRunning, "text_to_image", "", ""
+		if err := db.Create(&filler).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index := 0; index < policy.Task.ActiveTaskLimit; index++ {
+		filler := *placeholder
+		filler.ID = fmt.Sprintf("limit-step-%d", index)
+		filler.Status, filler.Operation, filler.AgentRunID, filler.BillingOrderID = model.TaskStatusRunning, cloudAgentStepOperation, "", ""
+		if err := db.Create(&filler).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	count, err := s.repo.ActiveTaskCountForUser("user")
+	if err != nil || count != int64(policy.Task.ActiveTaskLimit-1) {
+		t.Fatalf("活动任务只应统计产出任务：count=%d err=%v", count, err)
+	}
+	req, _ := piFirstStepRequest(state)
+	if _, err := s.PiModelStep("user", run.ID, run.LeaseOwner, req); err != nil {
+		t.Fatalf("其他 Agent 的模型步占着队列时，本轮模型步不应被活动任务上限拒绝: %v", err)
+	}
+	latest, _ := reloadPiRun(t, s, run.ID)
+	if latest.Status == "failed" {
+		t.Fatalf("模型步不应因活动任务上限让整轮失败: %s", latest.FailureMessage)
 	}
 }

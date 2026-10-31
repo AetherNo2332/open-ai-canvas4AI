@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -157,4 +158,42 @@ func cloudAgentToolMessageForTest(t *testing.T, state cloudAgentRuntime, callID 
 
 func cloudAgentCompletionBlockersForTest(state *cloudAgentRuntime) []cloudAgentCompletionBlocker {
 	return cloudAgentCompletionBlockers(state)
+}
+
+// 现场：账号活动任务已满时 generate_media 被拒。生成没有提交，结果必须作为可纠正的工具回执交给 Agent
+// （等已有生成结束再重发），而不是让整轮失败。
+func TestCloudAgentGenerationActiveTaskLimitReturnsToAgent(t *testing.T) {
+	s, db, args := agentMediaFixture(t)
+	req := agentTestRequest()
+	req.PermissionMode = "auto"
+	req.Budget.MaxGenerationTasks, req.Budget.MaxVideoSeconds = 2, 24
+	root, err := s.CreateCloudAgentRun("user", req, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _ := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{agentMediaCall(args)})
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < policy.Task.ActiveTaskLimit; index++ {
+		filler := model.Task{ID: fmt.Sprintf("full-%d", index), UserID: "user", Type: "canvas_image", Operation: "text_to_image", Status: model.TaskStatusRunning}
+		if err := db.Create(&filler).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
+		t.Fatalf("活动任务已满不应作为运行错误抛出: %v", err)
+	}
+	latest, state := agentInterjectionState(t, s, run.ID)
+	if latest.Status == "failed" {
+		t.Fatalf("活动任务已满不应让整轮失败: %s", latest.FailureMessage)
+	}
+	if len(state.PendingGenerations) != 0 {
+		t.Fatal("被拒的生成不应登记为待回写")
+	}
+	message := cloudAgentToolMessageForTest(t, state, "media-call")
+	if !strings.Contains(message, "同时排队或运行的任务") || !strings.Contains(message, "wait_for_generations") {
+		t.Fatalf("工具回执应说明额度已满并指引等待：%s", message)
+	}
 }
