@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { waitForStoryboardWriteback, storyboardWritebackSummary, confirmStoryboardQuote } from "@/services/storyboard-writeback";
+import { waitForStoryboardWriteback, storyboardWritebackSummary, confirmStoryboardQuote, applyStoryboardTaskProgress } from "@/services/storyboard-writeback";
 import { CanvasNodeType, type CanvasNodeData, type StoryboardRow } from "@/types/canvas";
 
 const row = (id: string, extra: Partial<StoryboardRow> = {}) => ({ id, shotNumber: 1, durationSeconds: 5, plotDescription: id, ...extra }) as StoryboardRow;
@@ -96,4 +96,16 @@ test("an expired confirmation re-quotes and requires fresh approval", async () =
     expect(quotes).toBe(2);
     expect(approvals).toBe(2);
     expect(result?.quote.quoteHash).toBe("2");
+});
+
+test("a late task response preserves the server writeback success or error", () => {
+    const task = { id: "task", type: "canvas_text", status: "succeeded" as const, prompt: "剧情" };
+    for (const status of ["success", "error"] as const) {
+        const current = node(status, status === "error" ? "表已编辑，未写回" : undefined);
+        const nodes = applyStoryboardTaskProgress([current], "board", task);
+        expect(nodes[0]).toBe(current);
+        expect(nodes[0].metadata?.status).toBe(status);
+        expect(nodes[0].metadata?.storyboard?.rows[0].id).toBe("new");
+    }
+    expect(applyStoryboardTaskProgress([node("loading")], "board", task)[0].metadata?.status).toBe("loading");
 });

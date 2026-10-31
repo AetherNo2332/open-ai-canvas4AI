@@ -1,3 +1,5 @@
+import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
+import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasStoryboardSplitResult } from "@/services/api/canvas-storyboard-split";
 import type { CanvasNodeData, StoryboardRow } from "@/types/canvas";
 
@@ -40,4 +42,11 @@ export async function confirmStoryboardQuote(input: { quote: () => Promise<Canva
         if (expires > now()) return quote;
     }
     throw new Error("拆镜报价已过期，请重新获取报价并确认费用");
+}
+
+export function applyStoryboardTaskProgress(nodes: CanvasNodeData[], nodeId: string, task: GenerationTask) {
+    return nodes.map((node) => {
+        if (node.id !== nodeId || (node.metadata?.taskId === task.id && (node.metadata.status === "success" || node.metadata.status === "error"))) return node;
+        return { ...node, metadata: { ...node.metadata, ...generationTaskMetadata(task), status: "loading" as const } };
+    });
 }

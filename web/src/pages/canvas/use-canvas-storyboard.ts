@@ -3,7 +3,7 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { backendProviderConfig, buildGenerationConfig, generationTaskMetadata, logicalModelIDForConfig, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
+import { backendProviderConfig, buildGenerationConfig, logicalModelIDForConfig, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { createCanvasNode, createStoryboardRow, storyboardPromptTemplateMetadata, stripProjectStyleExecutionBlocks } from "@/lib/canvas/canvas-project-domain";
 import { DEFAULT_STORYBOARD_COLUMNS, resolveStoryboardVisibleColumns } from "@/lib/canvas/canvas-storyboard-columns";
 import { reconcileStoryboardTargetConnections, storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
@@ -13,7 +13,7 @@ import type { Skill } from "@/services/api/skills";
 import { splitCanvasStoryboard } from "@/services/api/canvas-storyboard-split";
 import { queryGenerationTask, waitForGenerationTask } from "@/services/api/task-center";
 import { refreshCanvasAfterAgent } from "@/services/user-data-sync";
-import { waitForStoryboardWriteback, storyboardWritebackSummary, confirmStoryboardQuote } from "@/services/storyboard-writeback";
+import { waitForStoryboardWriteback, storyboardWritebackSummary, confirmStoryboardQuote, applyStoryboardTaskProgress } from "@/services/storyboard-writeback";
 import { skillRuntime } from "@/services/skill-runtime";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { modelDisplayName, resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -33,7 +33,6 @@ type UseCanvasStoryboardOptions = {
 
 const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
-const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 
 export function useCanvasStoryboard({ projectId, prepareCanvasForServerAction, addedSkills, nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds, enqueueGenerationBatch }: UseCanvasStoryboardOptions) {
@@ -223,19 +222,14 @@ export function useCanvasStoryboard({ projectId, prepareCanvasForServerAction, a
                 const taskReceipt = await splitCanvasStoryboard(projectId, { ...splitInput, quoteHash: quote.quote.quoteHash, operationId: `storyboard-split:${nanoid()}` }, undefined, signal);
                 if (!taskReceipt.taskId) throw new Error("服务端未返回拆镜任务");
                 const task = await queryGenerationTask(taskReceipt.taskId, { signal });
-                setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...generationTaskMetadata(task), status: NODE_STATUS_LOADING } } : node)));
+                signal.throwIfAborted();
+                if (scope !== getActiveUserScope()) throw new Error("账号已切换");
+                setNodes((current) => applyStoryboardTaskProgress(current, nodeId, task));
                 await waitForGenerationTask(task.id, {
                     initialTask: task,
                     signal,
                     onTaskUpdate: (next) => {
-                        if (!signal.aborted && scope === getActiveUserScope())
-                            setNodes((current) =>
-                                current.map((node) =>
-                                    node.id === nodeId && !(node.metadata?.taskId === task.id && (node.metadata.status === NODE_STATUS_SUCCESS || node.metadata.status === NODE_STATUS_ERROR))
-                                        ? { ...node, metadata: { ...node.metadata, ...generationTaskMetadata(next), status: NODE_STATUS_LOADING } }
-                                        : node,
-                                ),
-                            );
+                        if (!signal.aborted && scope === getActiveUserScope()) setNodes((current) => applyStoryboardTaskProgress(current, nodeId, next));
                     },
                 });
                 const writtenRows = await waitForStoryboardWriteback({
