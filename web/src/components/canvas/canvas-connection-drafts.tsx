@@ -47,7 +47,7 @@ export function CanvasConnectionDrafts(props: CanvasConnectionDraftsProps) {
                             return pathD ? (
                                 <g key={handle.nodeId}>
                                     <path d={pathD} fill="none" stroke={stroke} strokeWidth={CANVAS_CONNECTION_STROKE_WIDTH} strokeOpacity={0.72} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-                                    <CanvasConnectionBeam pathD={pathD} color={props.theme.connection.beam} />
+                                    {handles.length === 1 ? <CanvasConnectionBeam pathD={pathD} color={props.theme.connection.beam} /> : null}
                                 </g>
                             ) : null;
                         })}
