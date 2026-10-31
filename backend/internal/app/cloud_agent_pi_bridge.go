@@ -1271,6 +1271,11 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 			state.EmptyOutputEscalated++
 			state.ForceThinkingOff, state.BoostStepOutputBudget = true, true
 			nudge, reason = "上游连续返回空内容；已关闭思考并放大输出预算。请继续处理原请求并返回有效正文或工具调用。", "empty_output_escalated"
+		case cloudAgentStreamStalled(task) && state.StreamStallRetried < cloudAgentMaxStreamStallRetries:
+			// 中转在生成长工具参数时断流：本步没有任何工具调用落地，告诉模型把大写入拆小后重发这一步。
+			state.StreamStallRetried++
+			nudge = piAssistantText(cloudAgentRuntimeMessage(cloudAgentRuntimeContext{Kind: cloudAgentContextStreamStalled})["content"])
+			reason = "stream_stalled_retried"
 		}
 		state.PiModelFailureTaskID, state.PiModelFailureNudge = taskID, nudge
 		if nudge != "" || reason == "context_overflow" {

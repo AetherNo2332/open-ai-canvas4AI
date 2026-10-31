@@ -16,6 +16,7 @@ const (
 	cloudAgentContextEmptyOutput        cloudAgentRuntimeContextKind = "empty_output"
 	cloudAgentContextInvalidOutput      cloudAgentRuntimeContextKind = "invalid_output"
 	cloudAgentContextTruncatedArguments cloudAgentRuntimeContextKind = "truncated_tool_arguments"
+	cloudAgentContextStreamStalled      cloudAgentRuntimeContextKind = "stream_stalled"
 	cloudAgentRuntimeCallLimits         cloudAgentRuntimeContextKind = "call_limits"
 )
 
