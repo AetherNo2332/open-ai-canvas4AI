@@ -32,7 +32,7 @@ Agent 不连接、不改接、不断开连线：`canvas_apply_ops` 没有边操�
 
 ## 分镜：以创作和资产选择为中心
 
-新建时用 canvas_apply_ops 创建 script 并写入 composerContent；风格与用户要求写入相连文本节点，再调用 storyboard 的 split，行由服务端生成，不让 Agent 手填整表。生成后用 read 检查。需要小范围手工校正时才维护 durationSeconds、plotDescription（镜头创作说明）、dialogue；构图、表演、运镜、光影、节拍和连续性可自行组织在创作说明中。必要时用 imageGenerationPrompt/videoMotionPrompt 覆盖生成提示词。已有覆盖优先于创作说明，修改说明时核对覆盖是否也要更新或清空。旧细分列仍保存在行中供界面和高级编辑使用，不要求模型逐列填写。
+新建时用 canvas_apply_ops 的 add_node 创建 script，用 content 传剧情，服务端保存为 metadata.composerContent。更新用 update_node.patch.composerContent（content 是同一正文的别名）；精读用 canvas_read_content，局部修改用 replace_text。风格与用户要求写入相连文本节点，再调用 storyboard 的 split，行由服务端生成，不让 Agent 手填整表。生成后用 read 检查。需要小范围手工校正时才维护 durationSeconds、plotDescription（镜头创作说明）、dialogue；构图、表演、运镜、光影、节拍和连续性可自行组织在创作说明中。必要时用 imageGenerationPrompt/videoMotionPrompt 覆盖生成提示词。已有覆盖优先于创作说明，修改说明时核对覆盖是否也要更新或清空。旧细分列仍保存在行中供界面和高级编辑使用，不要求模型逐列填写。
 
 | 意图 | 写入方式 |
 | --- | --- |

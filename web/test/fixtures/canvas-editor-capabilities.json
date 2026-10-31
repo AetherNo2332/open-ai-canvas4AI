@@ -953,6 +953,12 @@
                 "chapterTitle": {
                     "path": "metadata.chapterTitle"
                 },
+                "composerContent": {
+                    "path": "metadata.composerContent"
+                },
+                "content": {
+                    "path": "metadata.composerContent"
+                },
                 "fontSize": {
                     "path": "metadata.fontSize"
                 },

@@ -23,7 +23,7 @@ Worker 直接使用服务端下发的工具定义。启动不读取本地工具�
 
 ## 统一分镜工具
 
-合同 v18、系统策略 v26。新建 script 并写入 composerContent，风格与要求保存为相连文本节点，再 storyboard.split；局部修改用 resplit，连续 rowIds 和用户原话由调用方提供，其余上下文由服务端读取。read 默认附 Markdown 表，保留分页与字段投影；update 仅做少量指定行更新。lock/unlock 管理保护；锁定镜头拒绝所有写动作，unlock 除外，共享引用影响到锁定行也拒绝。
+合同 v18、系统策略 v26。通过 canvas_apply_ops 的 add_node 创建 script，用 content 传入剧情，保存为 metadata.composerContent；update_node.patch.composerContent 或 patch.content 更新同一正文，canvas_read_content 支持这两个字段名，replace_text 可局部改剧情。同时提供两个别名时值必须一致，任务状态等未声明字段仍拒绝写入。风格与要求保存为相连文本节点，再 storyboard.split；局部修改用 resplit，连续 rowIds 和用户原话由调用方提供，其余上下文由服务端读取。read 默认附 Markdown 表，保留分页与字段投影；update 仅做少量指定行更新。lock/unlock 管理保护；锁定镜头拒绝所有写动作，unlock 除外，共享引用影响到锁定行也拒绝。
 
 split/resplit 与媒体共用 PendingGenerations、系统通知和 wait_generations。提交、账务预留、任务绑定和 Agent 检查点同事务提交，遵循本轮积分与生成数量上限。当前工具步骤只收到 submitted/taskId，写回完成后在同一运行的下一模型步骤收到结果及新旧行对应关系；依赖结果时挂起，完成后继续。旧三个分镜工具不再注册，冻结会话调用旧名时返回明确退役提示。
 
