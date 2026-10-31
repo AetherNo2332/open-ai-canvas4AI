@@ -123,7 +123,19 @@ func cloudAgentToolErrorClass(req CloudAgentRequest, call cloudAgentCall, err er
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return cloudAgentToolErrorUpstream, true, "report_to_user"
 	}
+	// 账号活动任务已满：生成没有提交，不是参数错。等已提交的生成结束（wait_generations）再重发。
+	if cloudAgentActiveTaskLimitError(err) {
+		return cloudAgentToolErrorStateConflict, true, "wait_for_generations"
+	}
 	return cloudAgentToolErrorUnknown, true, ""
+}
+
+func cloudAgentActiveTaskLimitError(err error) bool {
+	if errors.Is(err, repository.ErrActiveTaskLimit) {
+		return true
+	}
+	var appErr *AppError
+	return errors.As(err, &appErr) && appErr != nil && strings.Contains(appErr.Message, "同时排队或运行的任务")
 }
 
 // cloudAgentPlatformToolNames 是平台支持的工具全集（含只在特定条件下暴露的工具）。

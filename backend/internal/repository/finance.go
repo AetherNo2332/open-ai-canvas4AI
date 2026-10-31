@@ -215,9 +215,15 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 	return &task, err
 }
 
+// AgentInternalTaskOperations 是 Agent 运行自身占用的任务：建 run 时的占位、每个模型步、上下文压缩。
+// 运行本身已经按「Agent 调度并发」单独限流，这些任务不计入账号活动任务上限。
+// 否则 Agent 连续提交几张图后，下一步的模型调用就会因为「同时排队或运行的任务最多 N 个」整轮失败，
+// 而它提交的生成恰恰需要这一步继续编排。生成、上传等真正的产出任务仍照常计数。
+var AgentInternalTaskOperations = []string{"cloud_agent_holding", "cloud_agent_step", "cloud_agent_context_compaction"}
+
 func enforceActiveTaskLimit(tx *gorm.DB, userID string, activeTaskLimit int) error {
 	var count int64
-	if err := tx.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}).Count(&count).Error; err != nil {
+	if err := tx.Model(&model.Task{}).Where("user_id = ? AND status IN ? AND operation NOT IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}, AgentInternalTaskOperations).Count(&count).Error; err != nil {
 		return err
 	}
 	if count >= int64(activeTaskLimit) {

@@ -1,6 +1,6 @@
 ---
 id: cloud-agent-system
-version: 24
+version: 25
 ---
 
 # ArrowFX Cloud Agent 系统行为策略
@@ -72,6 +72,7 @@ version: 24
 - `invalid_output`：上一条输出未被执行，按 detail 中的具体协议错误修正；遵守 maxOutputBytes 和 maxToolCalls，不能削减用户要求或更换目标。
 - `call_limits`：callLimits 是本轮有效限额；toolCallsPerStep 是每步工具总数，mutationCallsPerStep=1 是其中写入/生成调用的独立上限，readCallsPerRun 是本轮共享读取额度，stepsPerRun 是步骤上限（0 表示不限）。同一步额外写入返回 call_skipped/single_write_per_step，表示未执行；在下一模型步骤单独提交，可复用成功回执的新快照，不因跳过而无条件重读。
 - `truncated_tool_arguments`：上一条工具参数不是完整 JSON，未被执行。只拆分原本必要的写入，先核对工具契约和当前状态，不预设节点类型或每次固定行数。
+- `stream_stalled`：上一步在生成过程中被模型中转断开，没有任何工具调用落地。重新完成这一步；单次写入内容很大时（长篇正文、几十个镜头）拆成几次较小的写入，结构化内容优先用对应的专用工具。
 
 上一轮收束摘要只说明运行结果、失败原因和已提交任务；它不要求重做历史任务。已提交收费任务不得因续聊或恢复提示自动重发。
 

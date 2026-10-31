@@ -176,6 +176,8 @@ type cloudAgentRuntime struct {
 	EmptyOutputNudged      int                                      `json:"emptyOutputNudged,omitempty"`
 	// EmptyOutputEscalated 记录"空输出已经升级重试过几次"（关思考 + 放大输出预算）。
 	EmptyOutputEscalated int `json:"emptyOutputEscalated,omitempty"`
+	// StreamStallRetried 记录"中转在流中途断开后已经重试过几次"。
+	StreamStallRetried int `json:"streamStallRetried,omitempty"`
 	// TruncatedStepEscalated 记录"输出被输出上限截断后已经升级重试过几次"。
 	// 空输出恢复会关思考并放大输出预算，重发同一步。
 	TruncatedStepEscalated int `json:"truncatedStepEscalated,omitempty"`
@@ -1143,6 +1145,9 @@ func cloudAgentModelFailure(task *model.Task) (string, string) {
 		detail, reason = "上游连续返回空内容（通常是思考占满输出预算）；已自动关思考并放大预算重试仍失败，建议换用非思考模型或调小上下文", "model_empty_output"
 	case strings.Contains(task.Error, cloudAgentStepTimeoutError):
 		detail, reason = "Agent 超时失败：单步模型调用超过执行时限", "model_step_timeout"
+	case cloudAgentStreamStalled(task):
+		// 中转在流内回报的空闲断流，不是本服务的超时；已自动重试过一次。
+		detail, reason = "模型中转在生成中途断开（长时间没有输出，超过中转的空闲时限）；已自动重试一次仍失败，可调大中转空闲超时，或让 Agent 把大写入拆小", "model_stream_stalled"
 	case strings.Contains(raw, "connection reset by peer"):
 		detail, reason = "模型连接被对端或中间网络设备重置", "model_connection_reset"
 	case strings.Contains(raw, "timeout"), strings.Contains(raw, "deadline exceeded"):

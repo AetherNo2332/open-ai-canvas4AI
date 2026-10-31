@@ -21,6 +21,19 @@ func cloudAgentEmptyModelOutput(task *model.Task) bool {
 	return strings.Contains(task.Error, "没有返回内容")
 }
 
+// cloudAgentMaxStreamStallRetries 是中转断流后的重试次数：再断一次就如实失败，不无限重发收费请求。
+const cloudAgentMaxStreamStallRetries = 1
+
+// cloudAgentStreamStalled 判断模型步是不是被中转在流中途掐断：中转以 200 开流，模型在生成长工具参数时
+// 长时间没有输出，中转超过空闲时限后在流内回一条错误。请求已发出且无工具调用落地，重发同一步是安全的。
+func cloudAgentStreamStalled(task *model.Task) bool {
+	if task == nil || task.Status == model.TaskStatusSucceeded {
+		return false
+	}
+	raw := strings.ToLower(task.Error)
+	return strings.Contains(raw, "upstream stalled") || strings.Contains(raw, "no response data within")
+}
+
 func (s *Service) correctCloudAgentEmptyOutput(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
 	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		state.EmptyOutputNudged++

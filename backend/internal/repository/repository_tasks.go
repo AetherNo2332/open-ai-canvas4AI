@@ -32,9 +32,10 @@ func (r *Repository) TaskForUser(userID string, id string) (*model.Task, error) 
 	return &task, nil
 }
 
+// ActiveTaskCountForUser 与 enforceActiveTaskLimit 同口径：Agent 运行自身的占位、模型步和压缩任务不计入。
 func (r *Repository) ActiveTaskCountForUser(userID string) (int64, error) {
 	var count int64
-	err := r.db.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}).Count(&count).Error
+	err := r.db.Model(&model.Task{}).Where("user_id = ? AND status IN ? AND operation NOT IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}, AgentInternalTaskOperations).Count(&count).Error
 	return count, err
 }
 

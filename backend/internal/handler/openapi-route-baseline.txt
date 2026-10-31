@@ -181,6 +181,8 @@ GET /api/voice-profiles
 GET /api/wallet
 HEAD /api/ai/custom
 HEAD /api/ai/system/{channelId}/{path}
+HEAD /api/public/resources/{id}/file
+HEAD /api/public/resources/{id}/file/{filename}
 OPTIONS /api/ai/custom
 OPTIONS /api/ai/system/{channelId}/{path}
 PATCH /api/admin/announcements/{id}

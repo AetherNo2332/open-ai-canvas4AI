@@ -1393,3 +1393,46 @@ func TestPiFailRunMarksRunFailedWithReason(t *testing.T) {
 		t.Fatal("错误 owner 的上报被接受")
 	}
 }
+
+// 现场：中转在模型生成长工具参数时 60 秒没数据就在流内回「Upstream stalled」，原先被当成「模型请求超时」整轮失败。
+// 第一次断流给模型一条运行状态提示并重发这一步；再断一次才如实失败，并且不再说成超时。
+func TestPiFailModelStepRetriesRelayStallOnce(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	stall := "模型服务返回失败，请检查请求内容或渠道配置；上游：Upstream stalled: no response data within the proxy timeout"
+	assign := func(taskID string) {
+		t.Helper()
+		if err := db.Create(&model.Task{ID: taskID, UserID: "user", ProjectID: run.CanvasID, Type: "canvas_text", Status: model.TaskStatusFailed, Error: stall}).Error; err != nil {
+			t.Fatal(err)
+		}
+		latest, _ := reloadPiRun(t, s, run.ID)
+		if err := s.repo.MutateCloudAgent("user", run.ID, latest.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			state, err := cloudAgentDecode(current)
+			if err != nil {
+				return err
+			}
+			state.ActiveTaskID = taskID
+			state.TaskIDs = append(state.TaskIDs, taskID)
+			return cloudAgentSave(current, &state)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assign("pi-stall-1")
+	decision, err := s.PiFailModelStepResult("user", run.ID, run.LeaseOwner, "pi-stall-1")
+	if err != nil || decision.Status != "continue" || decision.Reason != "stream_stalled_retried" || !strings.Contains(decision.Nudge, string(cloudAgentContextStreamStalled)) {
+		t.Fatalf("first relay stall must retry with a runtime hint: %+v %v", decision, err)
+	}
+	after, _ := reloadPiRun(t, s, run.ID)
+	if after.Status != "running" {
+		t.Fatalf("first relay stall ended the run: %s", after.FailureMessage)
+	}
+	assign("pi-stall-2")
+	decision, err = s.PiFailModelStepResult("user", run.ID, run.LeaseOwner, "pi-stall-2")
+	if err != nil || decision.Status != "failed" {
+		t.Fatalf("a second relay stall must fail the run: %+v %v", decision, err)
+	}
+	after, _ = reloadPiRun(t, s, run.ID)
+	if !strings.Contains(after.FailureMessage, "中转在生成中途断开") || strings.Contains(after.FailureMessage, "模型请求超时") {
+		t.Fatalf("relay stall must not be reported as a request timeout: %s", after.FailureMessage)
+	}
+}

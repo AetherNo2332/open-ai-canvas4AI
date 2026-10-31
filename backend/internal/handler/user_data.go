@@ -321,6 +321,10 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 	}
 	r.GET("/public/resources/:id/file", publicResourceHandler)
 	r.GET("/public/resources/:id/file/:filename", publicResourceHandler)
+	// 部分模型服务先用 HEAD 探测参考素材的类型和大小，再 GET 拉取；HEAD 走同一套签名校验，
+	// http.ServeContent 对 HEAD 只回响应头，不传正文。
+	r.HEAD("/public/resources/:id/file", publicResourceHandler)
+	r.HEAD("/public/resources/:id/file/:filename", publicResourceHandler)
 	r.GET("/assets", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/goccy/go-yaml"
 
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
@@ -295,38 +298,25 @@ func encodeSkillArchive(files map[string][]byte) ([]byte, error) {
 }
 
 func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
-	text := string(data)
+	// 编辑器常给文件加 UTF-8 BOM；不去掉的话首行不是 "---"，整段 frontmatter 会被当成正文。
+	text := strings.TrimPrefix(string(data), "\uFEFF")
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	metadata := skillPackageMetadata{}
 	bodyStart := 0
 	if len(lines) > 2 && strings.TrimSpace(lines[0]) == "---" {
-		metadataIndent := -1
+		closing := -1
 		for index := 1; index < len(lines); index++ {
-			line := lines[index]
-			if strings.TrimSpace(line) == "---" {
-				bodyStart = index + 1
+			if strings.TrimSpace(lines[index]) == "---" {
+				closing = index
 				break
 			}
-			trimmed := strings.TrimSpace(line)
-			indent := len(line) - len(strings.TrimLeft(line, " \t"))
-			if indent == 0 {
-				metadataIndent = -1
-			}
-			key, value, ok := strings.Cut(trimmed, ":")
-			if !ok {
-				continue
-			}
-			key = strings.TrimSpace(key)
-			value = yamlScalar(value)
-			switch {
-			case indent == 0 && key == "name":
-				metadata.Name = value
-			case indent == 0 && key == "description":
-				metadata.Description = value
-			case indent == 0 && key == "metadata":
-				metadataIndent = indent
-			case metadataIndent >= 0 && indent > metadataIndent && key == "version":
-				metadata.Version = value
+		}
+		if closing > 0 {
+			bodyStart = closing + 1
+			if parsed, ok := parseSkillFrontmatterYAML(strings.Join(lines[1:closing], "\n")); ok {
+				metadata = parsed
+			} else {
+				metadata = parseSkillFrontmatterLines(lines[1:closing])
 			}
 		}
 	}
@@ -359,6 +349,69 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 	metadata.Name = truncateSkillMetadata(metadata.Name, 80)
 	metadata.Description = truncateSkillMetadata(metadata.Description, 500)
 	metadata.Version = truncateSkillMetadata(metadata.Version, 64)
+	return metadata
+}
+
+// parseSkillFrontmatterYAML 按标准 YAML 读取 frontmatter。Agent Skills 规范允许折叠或多行
+// 的 description（`>`、`|`、跨行引号）、行尾注释和任意额外字段，逐行切分读不对这些写法。
+// 只取 name、description 与 metadata.version；值不是字符串（数字、布尔）时按 YAML 原文转成字符串。
+func parseSkillFrontmatterYAML(frontmatter string) (skillPackageMetadata, bool) {
+	var document map[string]any
+	if err := yaml.Unmarshal([]byte(frontmatter), &document); err != nil || document == nil {
+		return skillPackageMetadata{}, false
+	}
+	metadata := skillPackageMetadata{
+		Name:        skillFrontmatterString(document["name"]),
+		Description: skillFrontmatterString(document["description"]),
+	}
+	if nested, ok := document["metadata"].(map[string]any); ok {
+		metadata.Version = skillFrontmatterString(nested["version"])
+	}
+	return metadata, true
+}
+
+func skillFrontmatterString(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		// 折叠块会把行尾换行带进值里；简介和名称都是单行展示，压成单个空格。
+		return strings.Join(strings.Fields(typed), " ")
+	case bool, int, int64, uint64, float64:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	default:
+		return ""
+	}
+}
+
+// parseSkillFrontmatterLines 是 YAML 解析失败时的兜底：保留原先的逐行读法，
+// 不规范但以前能导入的旧技能包不会因为改用 YAML 解析而突然导入失败。
+func parseSkillFrontmatterLines(lines []string) skillPackageMetadata {
+	metadata := skillPackageMetadata{}
+	metadataIndent := -1
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if indent == 0 {
+			metadataIndent = -1
+		}
+		key, value, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = yamlScalar(value)
+		switch {
+		case indent == 0 && key == "name":
+			metadata.Name = value
+		case indent == 0 && key == "description":
+			metadata.Description = value
+		case indent == 0 && key == "metadata":
+			metadataIndent = indent
+		case metadataIndent >= 0 && indent > metadataIndent && key == "version":
+			metadata.Version = value
+		}
+	}
 	return metadata
 }
 

@@ -11,7 +11,7 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 版本号是策略文件的公开合同：工具披露规则改变时一同更新。
-	if system.ID != "cloud-agent-system" || system.Version != 24 || media.ID != "cloud-agent-media" || media.Version != 6 {
+	if system.ID != "cloud-agent-system" || system.Version != 25 || media.ID != "cloud-agent-media" || media.Version != 6 {
 		t.Fatalf("unexpected policy metadata: system=%s@%d media=%s@%d", system.ID, system.Version, media.ID, media.Version)
 	}
 	if strings.Contains(system.Text, "id: cloud-agent-system") || !strings.HasPrefix(system.Text, "# ArrowFX Cloud Agent") ||
