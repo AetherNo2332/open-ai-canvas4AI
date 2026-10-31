@@ -31,7 +31,18 @@ test("dragging hides static beams while preserving the connection hit target", (
 
 test("bulk connection drafts retain every path without multiplying animated beams", () => {
     const sources = Array.from({ length: 78 }, (_, i) => ({ ...from, id: `source-${i}` }));
-    const markup = renderToStaticMarkup(<CanvasConnectionDrafts containerRef={createRef<HTMLDivElement>()} viewport={{ x: 0, y: 0, k: 1 }} theme={canvasThemes.light} connectingParams={null} batchConnectionPreview={{ sourceNodeIds: sources.map((node) => node.id), targetNodeId: to.id, mouseWorld: to.position, status: "valid" }} mouseWorld={to.position} nodeById={new Map(sources.map((node) => [node.id, node]))} scriptScrollTopById={{}} />);
+    const markup = renderToStaticMarkup(
+        <CanvasConnectionDrafts
+            containerRef={createRef<HTMLDivElement>()}
+            viewport={{ x: 0, y: 0, k: 1 }}
+            theme={canvasThemes.light}
+            connectingParams={null}
+            batchConnectionPreview={{ sourceNodeIds: sources.map((node) => node.id), targetNodeId: to.id, mouseWorld: to.position, status: "valid" }}
+            mouseWorld={to.position}
+            nodeById={new Map(sources.map((node) => [node.id, node]))}
+            scriptScrollTopById={{}}
+        />,
+    );
     expect(markup.includes("data-connection-beam")).toBe(false);
     expect(markup.match(/<path /g)).toHaveLength(78);
 });

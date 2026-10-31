@@ -16,32 +16,36 @@ export function StoryboardTextCell({ value, label, disabled, onChange }: { value
         }
     }, [editing]);
     if (editing && !disabled) {
-        return <Input.TextArea
-            autoFocus
-            autoSize={{ minRows: 1, maxRows: 6 }}
-            value={value}
-            placeholder={`填写${label}`}
-            aria-label={label}
-            onChange={(event) => onChange(event.target.value)}
-            onBlur={() => setEditing(false)}
-            onKeyDown={(event) => {
-                if (event.key === "Escape" && !event.nativeEvent.isComposing) {
-                    event.stopPropagation();
-                    restoreFocus.current = true;
-                    setEditing(false);
-                }
-            }}
-        />;
+        return (
+            <Input.TextArea
+                autoFocus
+                autoSize={{ minRows: 1, maxRows: 6 }}
+                value={value}
+                placeholder={`填写${label}`}
+                aria-label={label}
+                onChange={(event) => onChange(event.target.value)}
+                onBlur={() => setEditing(false)}
+                onKeyDown={(event) => {
+                    if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+                        event.stopPropagation();
+                        restoreFocus.current = true;
+                        setEditing(false);
+                    }
+                }}
+            />
+        );
     }
-    return <button
-        type="button"
-        ref={buttonRef}
-        aria-label={`编辑${label}`}
-        title={value || `点击填写${label}`}
-        disabled={disabled}
-        className="block min-h-11 w-full rounded-[var(--input-radius)] px-1 py-1 text-left outline-none hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-        onClick={() => setEditing(true)}
-    >
-        <span className={`line-clamp-3 whitespace-pre-wrap break-words ${value ? "" : "text-foreground/40"}`}>{value || `点击填写${label}`}</span>
-    </button>;
+    return (
+        <button
+            type="button"
+            ref={buttonRef}
+            aria-label={`编辑${label}`}
+            title={value || `点击填写${label}`}
+            disabled={disabled}
+            className="block min-h-11 w-full rounded-[var(--input-radius)] px-1 py-1 text-left outline-none hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+            onClick={() => setEditing(true)}
+        >
+            <span className={`line-clamp-3 whitespace-pre-wrap break-words ${value ? "" : "text-foreground/40"}`}>{value || `点击填写${label}`}</span>
+        </button>
+    );
 }

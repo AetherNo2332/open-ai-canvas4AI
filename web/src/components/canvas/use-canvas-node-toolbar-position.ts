@@ -48,10 +48,15 @@ export function useCanvasNodeToolbarPosition(node: CanvasNodeData | null, viewpo
             const center = liveViewport.x + (visual.position.x + (dragOffset?.x || 0) + visual.width / 2) * scale;
             const top = liveViewport.y + (visual.position.y + (dragOffset?.y || 0)) * scale - 30;
             const halfWidth = toolbarWidth / 2;
-            const position = avoidCanvasNodePanels({
-                left: Math.min(Math.max(center, bounds.left + halfWidth), Math.max(bounds.left + halfWidth, bounds.right - halfWidth)),
-                top: Math.max(bounds.top + toolbarHeight, Math.min(top, bounds.bottom)),
-            }, { width: toolbarWidth, height: toolbarHeight }, bounds, canvasNodePanelBounds(container));
+            const position = avoidCanvasNodePanels(
+                {
+                    left: Math.min(Math.max(center, bounds.left + halfWidth), Math.max(bounds.left + halfWidth, bounds.right - halfWidth)),
+                    top: Math.max(bounds.top + toolbarHeight, Math.min(top, bounds.bottom)),
+                },
+                { width: toolbarWidth, height: toolbarHeight },
+                bounds,
+                canvasNodePanelBounds(container),
+            );
             if (toolbarRef.current) toolbarRef.current.style.transform = `translate3d(${position.left}px, ${position.top}px, 0)`;
             else setAnchor(position);
         };

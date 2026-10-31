@@ -669,12 +669,7 @@ export function CanvasScriptEditor({
                     onChange={(shotSize) => updateRow(row.id, { shotSize })}
                 />
             ) : (
-                <StoryboardTextCell
-                    value={String(row[option.value] || "")}
-                    label={option.label}
-                    disabled={row.locked}
-                    onChange={(value) => updateRow(row.id, { [option.value]: value } as Partial<StoryboardRow>)}
-                />
+                <StoryboardTextCell value={String(row[option.value] || "")} label={option.label} disabled={row.locked} onChange={(value) => updateRow(row.id, { [option.value]: value } as Partial<StoryboardRow>)} />
             ),
     }));
     columns.push({

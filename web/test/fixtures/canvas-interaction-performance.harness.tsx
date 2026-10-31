@@ -7,12 +7,35 @@ const observers: TestResizeObserver[] = [];
 class TestResizeObserver {
     targets = new Set<Element>();
     disconnected = false;
-    constructor(readonly callback: () => void) { observers.push(this); }
-    observe(target: Element) { this.targets.add(target); }
-    unobserve(target: Element) { this.targets.delete(target); }
-    disconnect() { this.disconnected = true; this.targets.clear(); }
+    constructor(readonly callback: () => void) {
+        observers.push(this);
+    }
+    observe(target: Element) {
+        this.targets.add(target);
+    }
+    unobserve(target: Element) {
+        this.targets.delete(target);
+    }
+    disconnect() {
+        this.disconnected = true;
+        this.targets.clear();
+    }
 }
-for (const [key, value] of Object.entries({ window: dom, document: dom.document, navigator: dom.navigator, localStorage: dom.localStorage, Element: dom.Element, Node: dom.Node, HTMLElement: dom.HTMLElement, SVGElement: dom.SVGElement, ShadowRoot: dom.ShadowRoot, MutationObserver: dom.MutationObserver, ResizeObserver: TestResizeObserver, getComputedStyle: dom.getComputedStyle.bind(dom), IS_REACT_ACT_ENVIRONMENT: true })) {
+for (const [key, value] of Object.entries({
+    window: dom,
+    document: dom.document,
+    navigator: dom.navigator,
+    localStorage: dom.localStorage,
+    Element: dom.Element,
+    Node: dom.Node,
+    HTMLElement: dom.HTMLElement,
+    SVGElement: dom.SVGElement,
+    ShadowRoot: dom.ShadowRoot,
+    MutationObserver: dom.MutationObserver,
+    ResizeObserver: TestResizeObserver,
+    getComputedStyle: dom.getComputedStyle.bind(dom),
+    IS_REACT_ACT_ENVIRONMENT: true,
+})) {
     originals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 }
@@ -41,12 +64,32 @@ test("node and viewport commits reuse measurements; resize, previews and unmount
     document.body.append(container);
     let reads = 0;
     let width = 1000;
-    container.getBoundingClientRect = () => { reads++; return { left: 0, top: 0, width, height: 800, right: width, bottom: 800 } as DOMRect; };
-    Object.defineProperty(toolbar, "offsetWidth", { get: () => { reads++; return 200; } });
-    Object.defineProperty(toolbar, "offsetHeight", { get: () => { reads++; return 44; } });
-    Object.defineProperty(dock, "scrollWidth", { get: () => { reads++; return 200; } });
-    const containerRef = createRef<HTMLDivElement>(); containerRef.current = container;
-    const toolbarRef = createRef<HTMLDivElement>(); toolbarRef.current = toolbar;
+    container.getBoundingClientRect = () => {
+        reads++;
+        return { left: 0, top: 0, width, height: 800, right: width, bottom: 800 } as DOMRect;
+    };
+    Object.defineProperty(toolbar, "offsetWidth", {
+        get: () => {
+            reads++;
+            return 200;
+        },
+    });
+    Object.defineProperty(toolbar, "offsetHeight", {
+        get: () => {
+            reads++;
+            return 44;
+        },
+    });
+    Object.defineProperty(dock, "scrollWidth", {
+        get: () => {
+            reads++;
+            return 200;
+        },
+    });
+    const containerRef = createRef<HTMLDivElement>();
+    containerRef.current = container;
+    const toolbarRef = createRef<HTMLDivElement>();
+    toolbarRef.current = toolbar;
     const root = createRoot(host);
     let state: ReturnType<typeof useCanvasNodeToolbarPosition>;
     const node: CanvasNodeData = { id: "n", type: CanvasNodeType.Image, title: "image", position: { x: 100, y: 200 }, width: 200, height: 100 };
@@ -82,23 +125,57 @@ test("node and viewport commits reuse measurements; resize, previews and unmount
         await Promise.resolve();
         expect(toolbar.style.transform).toBe(finalTransform);
         expect(observers.every((item) => item.disconnected)).toBe(true);
-    } finally { container.remove(); }
+    } finally {
+        container.remove();
+    }
 });
 
 test("fullscreen mounts a window of a 500-shot storyboard and creates text editors only on demand", async () => {
     const { App, ConfigProvider } = await import("antd");
     const { CanvasScriptEditor } = await import("../../src/components/canvas/canvas-script-node");
-    const host = document.createElement("div"); document.body.append(host);
+    const host = document.createElement("div");
+    document.body.append(host);
     const root = createRoot(host);
     const dimensionDescriptors = new Map<string, PropertyDescriptor | undefined>();
-    for (const [key, size] of [["clientWidth", 1000], ["clientHeight", 600]] as const) {
+    for (const [key, size] of [
+        ["clientWidth", 1000],
+        ["clientHeight", 600],
+    ] as const) {
         dimensionDescriptors.set(key, Object.getOwnPropertyDescriptor(dom.HTMLElement.prototype, key));
-        Object.defineProperty(dom.HTMLElement.prototype, key, { configurable: true, get() { return this.className === "h-full min-h-0 pt-2" ? size : 0; } });
+        Object.defineProperty(dom.HTMLElement.prototype, key, {
+            configurable: true,
+            get() {
+                return this.className === "h-full min-h-0 pt-2" ? size : 0;
+            },
+        });
     }
     const rows = Array.from({ length: 500 }, (_, i): StoryboardRow => ({ id: `s-${i}`, shotNumber: i + 1, durationSeconds: 5, plotDescription: `剧情${i}`, dialogue: `台词${i}` }));
     let node: CanvasNodeData = { id: "script", title: "分镜", type: CanvasNodeType.Script, position: { x: 0, y: 0 }, width: 800, height: 600, metadata: { storyboard: { rows, visibleColumns: ["shotNumber", "plotDescription", "dialogue"] } } };
     let saved = "";
-    const render = async (open = true) => act(async () => root.render(<ConfigProvider theme={{ token: { motion: false } }}><App><CanvasScriptEditor node={node} nodes={[node]} open={open} onClose={() => {}} onUpdateRows={(next) => { saved = next[0].plotDescription || ""; node = { ...node, metadata: { ...node.metadata, storyboard: { ...node.metadata!.storyboard!, rows: next } } }; }} onEditAssets={() => {}} onVisibleColumnsChange={() => {}} onGenerateImages={() => {}} onGenerateVideos={() => {}} onVideoInputModeChange={() => {}} /></App></ConfigProvider>));
+    const render = async (open = true) =>
+        act(async () =>
+            root.render(
+                <ConfigProvider theme={{ token: { motion: false } }}>
+                    <App>
+                        <CanvasScriptEditor
+                            node={node}
+                            nodes={[node]}
+                            open={open}
+                            onClose={() => {}}
+                            onUpdateRows={(next) => {
+                                saved = next[0].plotDescription || "";
+                                node = { ...node, metadata: { ...node.metadata, storyboard: { ...node.metadata!.storyboard!, rows: next } } };
+                            }}
+                            onEditAssets={() => {}}
+                            onVisibleColumnsChange={() => {}}
+                            onGenerateImages={() => {}}
+                            onGenerateVideos={() => {}}
+                            onVideoInputModeChange={() => {}}
+                        />
+                    </App>
+                </ConfigProvider>,
+            ),
+        );
     try {
         await render();
         const dialog = document.querySelector('[role="dialog"]')!;
@@ -136,7 +213,8 @@ test("fullscreen mounts a window of a 500-shot storyboard and creates text edito
         expect(reopened.textContent).toContain("剧情499");
         expect(reopened.querySelectorAll("textarea:not([aria-hidden])")).toHaveLength(0);
     } finally {
-        await act(async () => root.unmount()); host.remove();
+        await act(async () => root.unmount());
+        host.remove();
         for (const [key, descriptor] of dimensionDescriptors) {
             if (descriptor) Object.defineProperty(dom.HTMLElement.prototype, key, descriptor);
             else Reflect.deleteProperty(dom.HTMLElement.prototype, key);
@@ -146,7 +224,8 @@ test("fullscreen mounts a window of a 500-shot storyboard and creates text edito
 
 test("task clocks live in visible labels and clean up on unmount", async () => {
     const { CanvasActiveTaskPanel } = await import("../../src/components/canvas/canvas-active-task-panel");
-    const host = document.createElement("div"); document.body.append(host);
+    const host = document.createElement("div");
+    document.body.append(host);
     const root = createRoot(host);
     const callbacks = new Map<number, () => void>();
     const originalSetInterval = window.setInterval;
@@ -155,8 +234,13 @@ test("task clocks live in visible labels and clean up on unmount", async () => {
     let now = 100000;
     let nextTimer = 0;
     Date.now = () => now;
-    window.setInterval = ((callback: () => void) => { callbacks.set(++nextTimer, callback); return nextTimer; }) as typeof window.setInterval;
-    window.clearInterval = ((id: number) => { callbacks.delete(id); }) as typeof window.clearInterval;
+    window.setInterval = ((callback: () => void) => {
+        callbacks.set(++nextTimer, callback);
+        return nextTimer;
+    }) as typeof window.setInterval;
+    window.clearInterval = ((id: number) => {
+        callbacks.delete(id);
+    }) as typeof window.clearInterval;
     const tasks = ["one", "two"].map((id) => ({ id, type: "canvas_image", mode: "image", status: "running", operation: "image", createdAt: new Date(now).toISOString() }));
     try {
         await act(async () => root.render(<CanvasActiveTaskPanel tasks={tasks as never} />));
@@ -164,7 +248,10 @@ test("task clocks live in visible labels and clean up on unmount", async () => {
         const toggle = host.querySelector<HTMLButtonElement>('[aria-controls="canvas-active-task-list"]')!;
         await act(async () => toggle.click());
         expect(callbacks.size).toBe(2);
-        await act(async () => { now += 2000; for (const callback of callbacks.values()) callback(); });
+        await act(async () => {
+            now += 2000;
+            for (const callback of callbacks.values()) callback();
+        });
         expect(host.textContent).toContain("已运行 00:02");
         await act(async () => toggle.click());
         await act(async () => root.render(<CanvasActiveTaskPanel tasks={[]} />));
