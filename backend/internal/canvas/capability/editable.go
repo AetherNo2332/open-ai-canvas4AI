@@ -98,6 +98,8 @@ func completeBuiltinEditableFields(d *Descriptor) {
 		add("folderAssetFolderId", "metadata.folder.assetFolderId", "项目素材文件夹", stringField(128))
 		d.DetailFields = append(d.DetailFields, "frame", "folder")
 	case "script":
+		add("composerContent", "metadata.composerContent", "剧情/大纲", stringField(maxAgentDocumentRunes))
+		add("content", "metadata.composerContent", "剧情/大纲", stringField(maxAgentDocumentRunes))
 		add("workflowKind", "metadata.workflowKind", "分镜类型", enumString("script", "storyboard"))
 		add("workflowTitle", "metadata.workflowTitle", "分镜标题", stringField(240))
 		add("workflowDescription", "metadata.workflowDescription", "分镜说明", stringField(2000))

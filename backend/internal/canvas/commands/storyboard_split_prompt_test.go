@@ -15,11 +15,13 @@ func splitPromptDoc(t *testing.T) Document {
 			{"id":"r4","durationSeconds":4,"plotDescription":"她转身离开"}
 		],"referenceNodeIds":[]}}},
 		{"id":"style","type":"text","title":"项目风格","metadata":{"content":"水墨质感，冷色调"}},
+		{"id":"requirements","type":"text","title":"用户要求","metadata":{"content":"全程没有旁白"}},
 		{"id":"note","type":"text","title":"无关笔记","metadata":{"content":"不要出现在提示词里"}},
 		{"id":"card","type":"text","title":"林黛玉","metadata":{"workflowKind":"character","characterAssetId":"asset-1","characterName":"林黛玉","characterPrompt":"白衣长发"}},
 		{"id":"scene","type":"image","title":"雨夜小巷","metadata":{"storageKey":"resource:scene","assetCategory":"environment"}}
 	],"connections":[
-		{"id":"e1","fromNodeId":"style","toNodeId":"board"}
+		{"id":"e1","fromNodeId":"style","toNodeId":"board"},
+		{"id":"e2","fromNodeId":"requirements","toNodeId":"board"}
 	]}`)
 }
 
@@ -29,7 +31,7 @@ func TestStoryboardSplitPromptReadsCanvasContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"林黛玉在雨夜遇见鲁智深", "水墨质感，冷色调", "林黛玉（assetId=asset-1）", "nodeId=scene", "【已锁定的镜头】", "镜头3：对视", "全片共 6 个镜头", "节奏紧凑", "【受保护输出契约】"} {
+	for _, want := range []string{"林黛玉在雨夜遇见鲁智深", "水墨质感，冷色调", "全程没有旁白", "林黛玉（assetId=asset-1）", "nodeId=scene", "【已锁定的镜头】", "镜头3：对视", "全片共 6 个镜头", "节奏紧凑", "【受保护输出契约】"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt is missing %q:\n%s", want, prompt)
 		}
