@@ -13,9 +13,8 @@ export const AGENT_TOOL_NAMES = [
     "ask_user",
     "canvas_apply_ops",
     "canvas_arrange_nodes",
-    "canvas_create_storyboard",
+    "storyboard",
     "canvas_edit_batch_table",
-    "canvas_edit_storyboard",
     "canvas_get_state",
     "canvas_read_content",
     "canvas_search_nodes",
@@ -27,7 +26,6 @@ export const AGENT_TOOL_NAMES = [
     "canvas_inspect_image",
     "canvas_list_node_types",
     "canvas_read_batch_table",
-    "canvas_read_storyboard",
     "director",
     "finish_run",
     "generate_media",
@@ -103,6 +101,17 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
     task_get: { summary: "已查询任务状态", failureMessage: "查询任务状态失败" },
     canvas_apply_ops: { summary: ({ pending }) => (pending ? "准备更新画布内容" : "画布内容已保存至服务端"), failureMessage: "更新画布内容失败" },
     // 导演台唯一工具：文案按 action 区分，读取与写入不能共用一句"已完成"。
+    storyboard: {
+        summary: ({ pending, detail }) => {
+            const action = directorAction(detail);
+            if (action === "read") return pending ? "正在读取分镜" : "已读取分镜";
+            if (action === "split" || action === "resplit") return pending ? "准备提交拆镜任务" : "拆镜已提交，等待服务端写回";
+            if (action === "lock") return pending ? "准备锁定镜头" : "镜头已锁定";
+            if (action === "unlock") return pending ? "准备解锁镜头" : "镜头已解锁";
+            return pending ? "准备修改分镜" : "分镜修改已保存";
+        },
+        failureMessage: "分镜操作失败",
+    },
     director: {
         summary: ({ pending, detail }) => {
             const action = directorAction(detail);
@@ -149,12 +158,12 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
 };
 
 /** 画布上"读到清单"的只读工具：无像素，chip 必须是存在式。 */
-const AGENT_CANVAS_READ_TOOLS = new Set(["canvas_get_state", "canvas_list_node_types", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_read_content", "canvas_search_nodes", "canvas_read_drawing"]);
+const AGENT_CANVAS_READ_TOOLS = new Set(["canvas_get_state", "canvas_list_node_types", "canvas_read_batch_table", "canvas_read_content", "canvas_search_nodes", "canvas_read_drawing"]);
 /** 非画布信息的只读工具（模型、任务、技能、偏好）。`skills_load` 是历史事件名，保留兼容。 */
 const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "read", "native_skill_enabled", "canvas_list_assets"]);
 const AGENT_VISION_TOOLS = new Set(["canvas_inspect_image"]);
-const AGENT_CREATE_TOOLS = new Set(["generate_media", "canvas_create_storyboard", "image_annotation_render", "canvas_create_character"]);
-const AGENT_OPERATE_TOOLS = new Set(["canvas_apply_ops", "canvas_arrange_nodes", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_edit_drawing", "canvas_bind_asset", "canvas_undo", "canvas_redo", "image_layer_split", "image_text_detect"]);
+const AGENT_CREATE_TOOLS = new Set(["generate_media", "image_annotation_render", "canvas_create_character"]);
+const AGENT_OPERATE_TOOLS = new Set(["canvas_apply_ops", "canvas_arrange_nodes", "canvas_edit_batch_table", "canvas_edit_drawing", "canvas_bind_asset", "canvas_undo", "canvas_redo", "image_layer_split", "image_text_detect"]);
 
 export type AgentToolCategory = "read" | "vision" | "create" | "operate" | "other";
 
@@ -205,6 +214,10 @@ export function isAgentCanvasReadTool(toolName: string): boolean {
 
 export function agentToolCategory(toolName: string, detail?: unknown): AgentToolCategory {
     if (AGENT_VISION_TOOLS.has(toolName)) return "vision";
+    if (toolName === "storyboard") {
+        const action = directorAction(detail);
+        return action === "read" ? "read" : "operate";
+    }
     if (toolName === "director") {
         // 与后端 cloudAgentWriteCall 一致：只有 action=read 是只读，参数缺失按写处理。
         const action = directorAction(detail);

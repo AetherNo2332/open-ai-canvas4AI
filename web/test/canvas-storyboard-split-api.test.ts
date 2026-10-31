@@ -18,7 +18,7 @@ describe("canvas storyboard split API", () => {
             },
             async (path, body, signal) => {
                 received = { path, body, signal };
-                return { taskId: "", partial: true, rowIds: ["row-2", "row-3"], quote: { amountMicrocredits: 12 } };
+                return { taskId: "", partial: true, rowIds: ["row-2", "row-3"], quote: { amountMicrocredits: 12, quoteHash: "quote", expiresAt: "2099-01-01T00:00:00Z" } };
             },
         );
 

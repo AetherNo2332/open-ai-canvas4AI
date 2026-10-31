@@ -10,6 +10,7 @@ export type CanvasStoryboardSplitInput = {
     logicalModelId?: string;
     config?: Record<string, unknown>;
     quoteOnly?: boolean;
+    quoteHash?: string;
     operationId?: string;
     clientId?: string;
 };
@@ -18,7 +19,8 @@ export type CanvasStoryboardSplitQuote = {
     amountMicrocredits: number;
     model?: string;
     estimated?: boolean;
-    expiresAt?: string;
+    expiresAt: string;
+    quoteHash: string;
 };
 
 export type CanvasStoryboardSplitResult = {
@@ -44,6 +46,7 @@ export async function splitCanvasStoryboard(projectId: string, input: CanvasStor
     if (input.logicalModelId?.trim()) body.logicalModelId = input.logicalModelId.trim();
     if (input.config && Object.keys(input.config).length) body.config = input.config;
     if (input.quoteOnly) body.quoteOnly = true;
+    if (input.quoteHash?.trim()) body.quoteHash = input.quoteHash.trim();
     if (input.operationId?.trim()) body.operationId = input.operationId.trim();
     if (input.clientId?.trim()) body.clientId = input.clientId.trim();
     return request(`/canvas-projects/${encodeURIComponent(projectId)}/storyboard/split`, body, signal);

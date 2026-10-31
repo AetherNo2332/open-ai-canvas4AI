@@ -11,8 +11,6 @@ import { consumeGenerationTaskNode, ensureCanvasNodeAsset, retryCanvasAssetSyncA
 import { listGenerationTasks, listTaskLogs, queryGenerationTask, subscribeGenerationTasks, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { storyboardRowsFromTask } from "@/lib/canvas/canvas-project-domain";
-import { resolveStoryboardVisibleColumns } from "@/lib/canvas/canvas-storyboard-columns";
 import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { nodeGenerationPrompt } from "@/lib/canvas/generation-contract";
 import { generationFailureMetadata } from "@/lib/generation-error";
@@ -114,38 +112,11 @@ export async function recoverCanvasGenerationTaskNode(input: {
             throw new Error(input.completed.error || (input.completed.status === "cancelled" ? "任务已取消" : "任务失败"));
         }
         if (!input.continuationOnly) {
-            if (input.node.type === CanvasNodeType.Script && input.completed.type === "canvas_text" && input.completed.operation === "storyboard" && !isServerStoryboardSplitTask(input.completed)) {
-                const result = storyboardRowsFromTask(input.completed);
-                const recoveredNodes = input.nodesRef.current.map((item) =>
-                    item.id === input.node.id
-                        ? {
-                              ...item,
-                              title: result.title || item.title,
-                              metadata: {
-                                  ...item.metadata,
-                                  ...generationTaskMetadata(input.completed),
-                                  status: NODE_STATUS_SUCCESS,
-                                  errorDetails: undefined,
-                                  generationErrorCode: undefined,
-                                  resourceReloadAvailable: undefined,
-                                  failedPromptFingerprint: undefined,
-                                  storyboard: { rows: result.rows, visibleColumns: resolveStoryboardVisibleColumns(item.metadata?.storyboard?.visibleColumns), referenceNodeIds: item.metadata?.storyboard?.referenceNodeIds || [] },
-                              },
-                          }
-                        : item,
-                );
-                if (!isCurrentProject()) return;
-                input.nodesRef.current = recoveredNodes;
-                input.setNodes(recoveredNodes);
-            } else if (isServerStoryboardSplitTask(input.completed)) {
-                const recoveredNodes = input.nodesRef.current.map((item) =>
-                    item.id === input.node.id
-                        ? { ...item, metadata: { ...item.metadata, ...generationTaskMetadata(input.completed), status: NODE_STATUS_SUCCESS, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined } }
-                        : item,
-                );
-                if (!isCurrentProject()) return;
-                input.nodesRef.current = recoveredNodes;
-                input.setNodes(recoveredNodes);
+            if (input.node.type === CanvasNodeType.Script && input.completed.type === "canvas_text" && input.completed.operation === "storyboard") {
+                // Only the server materializer can replace storyboard rows or mark
+                // writeback successful. A terminal model task is not that receipt.
+                const current = input.nodesRef.current.find((item) => item.id === input.node.id);
+                if (current?.metadata?.taskId !== input.completed.id || current.metadata.status !== NODE_STATUS_SUCCESS) return;
             } else {
                 if (!isCurrentProject()) return;
                 await input.applyGenerationTaskResult(input.node.id, input.completed);
@@ -208,16 +179,6 @@ export async function recoverCanvasGenerationTaskNode(input: {
                     : item,
             ),
         );
-    }
-}
-
-function isServerStoryboardSplitTask(task: GenerationTask) {
-    if (task.operation !== "storyboard" || !task.inputJson) return false;
-    try {
-        const input = JSON.parse(task.inputJson) as { metadata?: { storyboardSplit?: unknown } };
-        return Boolean(input.metadata && Object.prototype.hasOwnProperty.call(input.metadata, "storyboardSplit"));
-    } catch {
-        return false;
     }
 }
 
