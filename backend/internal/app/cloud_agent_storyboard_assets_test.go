@@ -51,7 +51,7 @@ func TestStoryboardAssetReceiptBudget(t *testing.T) {
 	if err := db.Model(canvas).Update("payload_json", string(raw)).Error; err != nil {
 		t.Fatal(err)
 	}
-	call := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "budget", map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "board", "action": "add_assets", "rowIds": ids, "assets": []map[string]any{{"ref": "image-30", "role": "prop"}}})
+	call := cloudAgentStoryboardCall(t, "storyboard", "budget", map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "board", "action": "add_assets", "rowIds": ids, "assets": []map[string]any{{"ref": "image-30", "role": "prop"}}})
 	result, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, call, policy)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestStoryboardAssetReceiptBudget(t *testing.T) {
 		t.Fatalf("asset impact response is unbounded: %d bytes", len(raw))
 	}
 	read := receipt["assetChangesNextRead"].(map[string]any)
-	if _, err := cloudAgentReadStoryboard(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_read_storyboard", "asset-impact-followup", read["arguments"])); err != nil {
+	if _, err := cloudAgentReadStoryboard(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "asset-impact-followup", read["arguments"])); err != nil {
 		t.Fatalf("impact followup is not actionable: %v", err)
 	}
 	t.Logf("bounded impact receipt: %d bytes", len(raw))
@@ -117,7 +117,7 @@ func TestStoryboardIncrementalSharedReferencesAndReceipt(t *testing.T) {
 	for _, action := range []string{"add_references", "remove_references"} {
 		current, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
 		doc, _ = creationDocument(current.PayloadJSON)
-		call := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", action, map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "board", "action": action, "references": []string{"scene"}})
+		call := cloudAgentStoryboardCall(t, "storyboard", action, map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "board", "action": action, "references": []string{"scene"}})
 		result, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, call, policy)
 		if err != nil {
 			t.Fatal(err)
@@ -136,7 +136,7 @@ func TestStoryboardIncrementalSharedReferencesAndReceipt(t *testing.T) {
 	for _, action := range []string{"add_assets", "remove_assets"} {
 		current, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
 		doc, _ = creationDocument(current.PayloadJSON)
-		result, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_edit_storyboard", action, map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "board", "action": action, "rowId": "r1", "assets": []map[string]any{{"ref": "scene", "role": "environment"}}}), policy)
+		result, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", action, map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "board", "action": action, "rowId": "r1", "assets": []map[string]any{{"ref": "scene", "role": "environment"}}}), policy)
 		if err != nil {
 			t.Fatal(err)
 		}

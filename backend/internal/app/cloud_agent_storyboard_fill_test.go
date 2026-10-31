@@ -11,7 +11,7 @@ func TestStoryboardFill89RowsInChunks(t *testing.T) {
 	read := func(args map[string]any) map[string]any {
 		t.Helper()
 		args["nodeId"] = "receipt-board"
-		call := cloudAgentStoryboardCall(t, "canvas_read_storyboard", "fill-read", args)
+		call := cloudAgentStoryboardCall(t, "storyboard", "fill-read", args)
 		if err := validateCloudAgentToolArguments(workflowTool(t, call.Function.Name), call.Function.Arguments); err != nil {
 			t.Fatal(err)
 		}
@@ -38,8 +38,8 @@ func TestStoryboardFill89RowsInChunks(t *testing.T) {
 				"videoMotionPrompt":     fmt.Sprintf("第 %02d 镜运动", index+1),
 			}})
 		}
-		call := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", fmt.Sprintf("fill-chunk-%d", offset/15), map[string]any{
-			"snapshotHash": snapshot, "nodeId": "receipt-board", "action": "batch_update", "updates": updates,
+		call := cloudAgentStoryboardCall(t, "storyboard", fmt.Sprintf("fill-chunk-%d", offset/15), map[string]any{
+			"snapshotHash": snapshot, "nodeId": "receipt-board", "action": "update", "updates": updates,
 		})
 		if err := validateCloudAgentToolArguments(workflowTool(t, call.Function.Name), call.Function.Arguments); err != nil {
 			t.Fatal(err)

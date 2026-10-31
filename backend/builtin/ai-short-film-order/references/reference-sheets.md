@@ -4,7 +4,7 @@
 
 ## 1. 列资产清单
 
-用 `canvas_read_storyboard` 逐行读分镜，列出每行要用的资产：
+用 `storyboard` 的 `read` 逐行读分镜，列出每行要用的资产：
 
 | 资产 | 类型 | 用到的镜头 | 绑定用途 |
 | --- | --- | --- | --- |
@@ -50,8 +50,8 @@
 
 ## 5. 绑定到分镜行
 
-1. 用 `canvas_read_storyboard` 取最新的 `rowId` 和 `snapshotHash`；要看现有绑定时用 bindings 视图。
-2. 用 `canvas_edit_storyboard` 按清单绑定：角色卡用 `character`，场景图用 `environment`，道具图用 `prop`；服装、武器另有 `wardrobe`、`weapon`。
+1. 用 `storyboard` 的 `read` 取最新的 `rowId` 和 `snapshotHash`；要看现有绑定时用 bindings 视图。
+2. 用 `storyboard` 按清单绑定：角色卡用 `character`，场景图用 `environment`，道具图用 `prop`；服装、武器另有 `wardrobe`、`weapon`。
    - 在已有绑定上追加用 `add_assets`，它会保留原有角色。
    - 要整组替换才用 `set_assets`。它会清掉旧的资产和角色，提交前先把要保留的项合并进去。
    - 整部片都在同一场景时，可以用 `add_references` 设为共享引用。

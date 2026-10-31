@@ -11,6 +11,7 @@ import (
 )
 
 type cloudAgentStoryboardReadArgs struct {
+	Action           string   `json:"action,omitempty"`
 	OperationIDs     []string `json:"operationIds,omitempty"`
 	NodeID           string   `json:"nodeId"`
 	View             string   `json:"view"`
@@ -26,6 +27,9 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 	var args cloudAgentStoryboardReadArgs
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
 		return nil, cloudAgentJSONArgumentError(err)
+	}
+	if args.Action != "" && args.Action != "read" {
+		return nil, BadAuthRequest("此路径只允许读取分镜")
 	}
 	if err := validateCloudAgentID(args.NodeID, "分镜节点ID", 80); err != nil {
 		return nil, err
@@ -49,7 +53,7 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 		}
 		seen := map[string]bool{}
 		for _, field := range fields {
-			if (field != "durationSeconds" && !cloudAgentStoryboardTextField(field)) || seen[field] {
+			if (field != "durationSeconds" && field != "locked" && field != "mediaReview" && !cloudAgentStoryboardTextField(field)) || seen[field] {
 				return nil, cloudAgentFieldError(key, "invalid_value", key+" 含有未知或重复的创作字段: "+field)
 			}
 			seen[field] = true
@@ -153,6 +157,7 @@ func cloudAgentReadStoryboardSnapshot(repo *repository.Repository, userID, canva
 		if args.View == "creative" {
 			item = cloudAgentStoryboardCreativeRow(args.NodeID, row, resolved)
 		}
+		item["locked"], item["mediaReview"], item["shotSize"] = row["locked"], row["mediaReview"], row["shotSize"]
 		cloudAgentStoryboardPromptMetadata(item, row)
 		if len(args.Fields) > 0 {
 			for field := range capability.StoryboardRowFields() {
@@ -237,7 +242,7 @@ func cloudAgentReadStoryboardSnapshot(repo *repository.Repository, userID, canva
 	resultBoard := map[string]any{"referenceNodeIds": cloudAgentStrings(board["referenceNodeIds"]), "rows": rows, "visibleColumns": cloudAgentStoryboardVisibleColumns(board), "totalRows": len(all), "nextOffset": next, "hasMore": next > 0,
 		"videoInputMode": firstNonEmpty(stringValue(cloudAgentNodeMetadata(node)["storyboardVideoInputMode"]), "direct")}
 	if next > 0 {
-		nextArgs := map[string]any{"nodeId": args.NodeID, "view": args.View, "offset": next, "rows": limit}
+		nextArgs := map[string]any{"action": "read", "nodeId": args.NodeID, "view": args.View, "offset": next, "rows": limit}
 		if args.Mode != "" {
 			nextArgs["mode"] = args.Mode
 		}
@@ -255,7 +260,7 @@ func cloudAgentReadStoryboardSnapshot(repo *repository.Repository, userID, canva
 		if len(args.MissingAnyFields) > 0 {
 			nextArgs["missingAnyFields"] = args.MissingAnyFields
 		}
-		resultBoard["nextRead"] = map[string]any{"tool": "canvas_read_storyboard", "arguments": nextArgs}
+		resultBoard["nextRead"] = map[string]any{"tool": "storyboard", "arguments": nextArgs}
 	}
 	result := map[string]any{"nodeId": args.NodeID, "title": truncateRunes(stringValue(node["title"]), 300), "snapshotHash": cloudAgentCanvasHash(doc), "view": args.View, "mode": firstNonEmpty(args.Mode, "declared"), "storyboard": resultBoard, "coverage": coverage, "pageByteBudget": cloudAgentReadPageBytes,
 		"referenceMigration": map[string]any{"required": !references.Enabled(doc)}, "summary": map[string]any{"scope": "inspected_rows", "rowsWithoutMediaInputs": missingMedia, "rowsWithInvalidReferences": invalid, "rowsWithUnavailableInputs": unavailable, "rowsWithUnknownInputs": unknown, "rowsRequiringMigration": migration, "rowsWithoutImageOutput": missingImage, "rowsWithoutVideoOutput": missingVideo}}

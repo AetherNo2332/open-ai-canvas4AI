@@ -8,14 +8,12 @@ import (
 // L1 是 schema 重或依赖特定节点/意图的具体工具。过滤器只对合格目录做减法：
 // 未解锁的 L1 不下发；其余合格工具（控制、子代理、技能、L0 画布/生成）保持原样。
 var cloudAgentTierL1Tools = map[string]bool{
-	"canvas_read_storyboard":   true,
-	"canvas_create_storyboard": true,
-	"canvas_edit_storyboard":   true,
-	"canvas_read_batch_table":  true,
-	"canvas_edit_batch_table":  true,
-	"canvas_list_assets":       true,
-	"canvas_bind_asset":        true,
-	"canvas_create_character":  true,
+	"storyboard":              true,
+	"canvas_read_batch_table": true,
+	"canvas_edit_batch_table": true,
+	"canvas_list_assets":      true,
+	"canvas_bind_asset":       true,
+	"canvas_create_character": true,
 }
 
 type cloudAgentCanvasInventory struct {
@@ -93,17 +91,12 @@ func cloudAgentUnlockedL1Tools(inventory cloudAgentCanvasInventory, intent cloud
 			unlocked[name] = true
 		}
 	}
-	if cloudAgentInventoryHasType(inventory, "script") || intent.Storyboard {
-		enable("canvas_read_storyboard", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_create_character", "canvas_list_assets", "canvas_bind_asset")
-	}
+	// These canvas tools are part of the canvas contract. Once a canvas context
+	// exists they are advertised together; the model must not guess a keyword to
+	// unlock the workflow.
+	enable("storyboard", "canvas_create_character", "canvas_list_assets", "canvas_bind_asset")
 	if cloudAgentInventoryHasType(inventory, "batch-table") || intent.BatchTable {
 		enable("canvas_read_batch_table", "canvas_edit_batch_table")
-	}
-	if intent.Assets {
-		enable("canvas_list_assets", "canvas_bind_asset")
-	}
-	if inventory.HasCharacter || intent.Character {
-		enable("canvas_create_character")
 	}
 	return unlocked
 }

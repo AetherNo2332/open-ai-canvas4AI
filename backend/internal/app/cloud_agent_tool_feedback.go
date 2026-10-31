@@ -82,7 +82,7 @@ func cloudAgentArgumentExample(call cloudAgentCall, field string) map[string]any
 	switch call.Function.Name {
 	case "canvas_get_state", "canvas_list_node_types", "canvas_list_assets", "model_list":
 		return map[string]any{}
-	case "canvas_read_storyboard", "canvas_read_batch_table":
+	case "canvas_read_batch_table":
 		return map[string]any{"nodeId": "<nodeId>"}
 	case "canvas_read_content":
 		return map[string]any{"nodeId": "<nodeId>", "field": "content"}
@@ -99,9 +99,14 @@ func cloudAgentArgumentExample(call cloudAgentCall, field string) map[string]any
 			"short":    "<一句话画面内容>",
 			"detailed": map[string]any{"subjects": []string{"<主体与外观>"}, "composition": "<构图>", "uncertainties": []string{}},
 		}}
-	case "canvas_edit_storyboard":
+	case "storyboard":
 		example := map[string]any{"snapshotHash": snapshot, "nodeId": "<nodeId>", "action": args["action"]}
 		switch args["action"] {
+		case "read":
+			return map[string]any{"action": "read", "nodeId": "<nodeId>"}
+		case "lock", "unlock":
+			example["rowId"] = "<rowId>"
+			return example
 		case "append":
 			patch := cloudAgentPatchExample(args["patch"], cloudAgentStoryboardRowSchema())
 			if patch == nil {
@@ -237,11 +242,11 @@ func cloudAgentSnapshotFeedback(state *cloudAgentRuntime, call cloudAgentCall, d
 	detail["retryArgumentsPatch"] = map[string]any{"snapshotHash": "<canvas_get_state.snapshotHash>"}
 	var arguments map[string]any
 	_ = json.Unmarshal([]byte(call.Function.Arguments), &arguments)
-	if call.Function.Name == "canvas_edit_storyboard" && stringValue(arguments["storyboardRevision"]) != "" {
+	if call.Function.Name == "storyboard" && stringValue(arguments["storyboardRevision"]) != "" {
 		detail["field"] = "storyboardRevision"
 		detail["guidance"] = "本次未写入；先读取目标分镜和依赖，核对原补丁及人工修改后刷新 snapshotHash 与 storyboardRevision；保持 operationId 和原操作，不自动覆盖冲突内容"
-		detail["nextRead"] = map[string]any{"tool": "canvas_read_storyboard", "arguments": map[string]any{"nodeId": arguments["nodeId"], "view": "creative"}}
-		detail["retryArgumentsPatch"] = map[string]any{"snapshotHash": "<canvas_read_storyboard.snapshotHash>", "storyboardRevision": "<canvas_read_storyboard.storyboardRevision>"}
+		detail["nextRead"] = map[string]any{"tool": "storyboard", "arguments": map[string]any{"action": "read", "nodeId": arguments["nodeId"], "view": "creative"}}
+		detail["retryArgumentsPatch"] = map[string]any{"snapshotHash": "<storyboard.snapshotHash>", "storyboardRevision": "<storyboard.storyboardRevision>"}
 	}
 	// Large operations stay in the existing call; only the replacement hash is needed.
 	if len(call.Function.Arguments) > 1600 {

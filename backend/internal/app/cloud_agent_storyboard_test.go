@@ -14,6 +14,11 @@ import (
 
 func cloudAgentStoryboardCall(t *testing.T, name, callID string, args any) cloudAgentCall {
 	t.Helper()
+	if name == "storyboard" {
+		if fields, ok := args.(map[string]any); ok && fields["action"] == nil {
+			fields["action"] = "read"
+		}
+	}
 	raw, err := json.Marshal(args)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +140,7 @@ func TestCloudAgentStoryboardToolsAreScopedAndStructured(t *testing.T) {
 		name := tool["function"].(map[string]any)["name"].(string)
 		readNames[name] = true
 	}
-	if !readNames["canvas_read_storyboard"] || readNames["canvas_create_storyboard"] || readNames["canvas_edit_storyboard"] {
+	if !readNames["storyboard"] {
 		t.Fatalf("read-only storyboard tool scope is wrong: %+v", readNames)
 	}
 
@@ -146,17 +151,16 @@ func TestCloudAgentStoryboardToolsAreScopedAndStructured(t *testing.T) {
 		function := tool["function"].(map[string]any)
 		functions[function["name"].(string)] = function
 	}
-	for _, name := range []string{"canvas_read_storyboard", "canvas_create_storyboard", "canvas_edit_storyboard"} {
-		if functions[name] == nil {
-			t.Fatalf("missing storyboard tool %s", name)
+	if functions["storyboard"] == nil {
+		t.Fatal("missing storyboard tool")
+	}
+	actions := functions["storyboard"]["parameters"].(map[string]any)["properties"].(map[string]any)["action"].(map[string]any)["enum"].([]string)
+	for _, want := range []string{"read", "split", "resplit", "update", "lock", "unlock"} {
+		if !containsString(actions, want) {
+			t.Fatalf("storyboard action missing %s: %v", want, actions)
 		}
 	}
-	createRows := functions["canvas_create_storyboard"]["parameters"].(map[string]any)["properties"].(map[string]any)["rows"].(map[string]any)
-	rowProperties := createRows["items"].(map[string]any)["properties"].(map[string]any)
-	if _, leaksID := rowProperties["id"]; leaksID {
-		t.Fatal("create storyboard schema lets the model forge row IDs")
-	}
-	editPatch := functions["canvas_edit_storyboard"]["parameters"].(map[string]any)["properties"].(map[string]any)["patch"].(map[string]any)["properties"].(map[string]any)
+	editPatch := functions["storyboard"]["parameters"].(map[string]any)["properties"].(map[string]any)["patch"].(map[string]any)["properties"].(map[string]any)
 	// Typed asset bindings are editable, while generated outputs and status
 	// remain service-owned. Reference ownership is checked against the canvas.
 	for _, protected := range []string{"imageNodeId", "videoNodeId", "status"} {
@@ -164,11 +168,11 @@ func TestCloudAgentStoryboardToolsAreScopedAndStructured(t *testing.T) {
 			t.Fatalf("protected field %s leaked into edit schema", protected)
 		}
 	}
-	if !cloudAgentWrite("canvas_create_storyboard") || !cloudAgentWrite("canvas_edit_storyboard") {
+	if !cloudAgentWrite("storyboard") {
 		t.Fatal("storyboard mutations are not classified as writes")
 	}
 	supported := strings.Join(CloudAgentSupportedToolNames(), ",")
-	if !strings.Contains(supported, "canvas_create_storyboard") || !strings.Contains(supported, "canvas_edit_storyboard") {
+	if !strings.Contains(supported, "storyboard") || strings.Contains(supported, "canvas_create_storyboard") || strings.Contains(supported, "canvas_edit_storyboard") {
 		t.Fatalf("supported tool list is stale: %s", supported)
 	}
 }
@@ -202,7 +206,7 @@ func TestCloudAgentCreatesAndReadsStructuredStoryboard(t *testing.T) {
 	}
 
 	state := &cloudAgentRuntime{Request: agentTestRequest()}
-	readCall := cloudAgentStoryboardCall(t, "canvas_read_storyboard", "read-storyboard", map[string]any{"nodeId": "storyboard-1", "view": "full", "rows": 1, "offset": 0})
+	readCall := cloudAgentStoryboardCall(t, "storyboard", "read-storyboard", map[string]any{"nodeId": "storyboard-1", "view": "full", "rows": 1, "offset": 0})
 	result, err := cloudAgentReadTool(s.repo, "user", state, readCall)
 	if err != nil {
 		t.Fatal(err)
@@ -332,7 +336,7 @@ func TestCloudAgentStoryboardRejectsUnsafeOrStaleMutations(t *testing.T) {
 	}
 }
 
-func TestCloudAgentStoryboardCreateUsesRuntimeApprovalPath(t *testing.T) {
+func TestCloudAgentRetiredStoryboardCreateIsRejected(t *testing.T) {
 	s, _, canvas := cloudAgentStoryboardFixture(t)
 	req := agentTestRequest()
 	req.PermissionMode = "request_approval"
@@ -369,22 +373,15 @@ func TestCloudAgentStoryboardCreateUsesRuntimeApprovalPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if waiting.Status != "waiting_approval" || waiting.Approval == nil || waiting.Approval.Preview.Items[0].Operation != "create_storyboard" {
-		t.Fatalf("storyboard write bypassed or lost approval preview: %+v", waiting)
+	if waiting.Status == "waiting_approval" || waiting.Approval != nil {
+		t.Fatal("retired creation requested approval")
 	}
 	stored, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
 	if strings.Contains(stored.PayloadJSON, "approved-storyboard") {
-		t.Fatal("storyboard was written before approval")
+		t.Fatal("retired tool wrote canvas")
 	}
-	if err := s.DecideCloudAgentApproval("user", run.ID, waiting.Approval.ID, "approve", "确认创建"); err != nil {
-		t.Fatal(err)
-	}
-	run, state = reloadAgentRun(t, s, run.ID)
-	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
-		t.Fatal(err)
-	}
-	stored, _ = s.repo.CanvasProjectForUser("user", canvas.ID)
-	if !strings.Contains(stored.PayloadJSON, "approved-storyboard") || !strings.Contains(stored.PayloadJSON, "审批后写入的镜头") {
-		t.Fatalf("approved storyboard was not written: %s", stored.PayloadJSON)
+	_, saved := reloadAgentRun(t, s, run.ID)
+	if !strings.Contains(cloudAgentToolMessageForTest(t, saved, call.ID), "已退役") {
+		t.Fatal("retired tool gave no correction")
 	}
 }

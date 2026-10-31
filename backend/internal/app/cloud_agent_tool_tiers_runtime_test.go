@@ -39,11 +39,11 @@ func TestCloudAgentRunFreezesAdvertisedL0OnEmptyCanvas(t *testing.T) {
 	if !containsToolName(state.AdvertisedToolNames, "canvas_get_state") || !containsToolName(state.AdvertisedToolNames, "canvas_apply_ops") {
 		t.Fatalf("empty canvas run missing L0 advertised tools: %v", state.AdvertisedToolNames)
 	}
-	if containsToolName(state.AdvertisedToolNames, "canvas_edit_storyboard") {
-		t.Fatalf("empty canvas run advertised storyboard edit: %v", state.AdvertisedToolNames)
+	if !containsToolName(state.AdvertisedToolNames, "storyboard") {
+		t.Fatalf("canvas run missing unified storyboard tool: %v", state.AdvertisedToolNames)
 	}
-	if !containsToolName(cloudAgentToolNames(state.Canonical.Tools), "canvas_edit_storyboard") {
-		t.Fatal("eligible catalog must still contain L1 storyboard edit")
+	if !containsToolName(cloudAgentToolNames(state.Canonical.Tools), "storyboard") {
+		t.Fatal("eligible catalog must still contain storyboard")
 	}
 }
 
@@ -65,7 +65,7 @@ func TestCloudAgentRunAdvertisesStoryboardWhenScriptNodeExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsToolName(state.AdvertisedToolNames, "canvas_read_storyboard") || !containsToolName(state.AdvertisedToolNames, "canvas_edit_storyboard") {
+	if !containsToolName(state.AdvertisedToolNames, "storyboard") {
 		t.Fatalf("script node run missing storyboard tools: %v", state.AdvertisedToolNames)
 	}
 }
@@ -92,9 +92,9 @@ func TestCloudAgentPreflightRejectsEligibleButUnadvertisedStoryboardEdit(t *test
 	req := tierAutoRequest()
 	all := cloudAgentTools(req)
 	state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: all}, DisclosureVersion: cloudAgentToolDisclosureVersion}
-	state.AdvertisedToolNames = cloudAgentAdvertisedToolNames(req, cloudAgentScanCanvasInventory(tierPayload()), "现在画布有几个节点")
-	call := categoryCall("canvas_edit_storyboard")
-	call.Function.Arguments = `{"snapshotHash":"h","nodeId":"board","action":"append"}`
+	state.AdvertisedToolNames = []string{"canvas_get_state"}
+	call := categoryCall("storyboard")
+	call.Function.Arguments = `{"action":"update","snapshotHash":"h","nodeId":"board","rowIds":["row"],"patch":{"dialogue":"x"}}`
 	admission := cloudAgentPreflightBatch(state, []cloudAgentCall{call})[0]
 	if admission.Allowed {
 		t.Fatal("unadvertised storyboard edit admitted")
@@ -105,11 +105,11 @@ func TestCloudAgentEmptyAdvertisedNamesFallBackToEligibleCatalog(t *testing.T) {
 	req := tierAutoRequest()
 	all := cloudAgentTools(req)
 	state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: all}, DisclosureVersion: cloudAgentToolDisclosureVersion}
-	if _, ok := cloudAgentAdvertisedTool(state, "canvas_edit_storyboard"); !ok {
+	if _, ok := cloudAgentAdvertisedTool(state, "storyboard"); !ok {
 		t.Fatal("empty advertised names must fall back to eligible catalog")
 	}
 	state.AdvertisedToolNames = []string{"canvas_get_state"}
-	if _, ok := cloudAgentAdvertisedTool(state, "canvas_edit_storyboard"); ok {
+	if _, ok := cloudAgentAdvertisedTool(state, "storyboard"); ok {
 		t.Fatal("frozen L0 advertised set admitted L1 write")
 	}
 }
@@ -145,11 +145,11 @@ func TestAgentStoryboardBoundaryLoadoutPersistsBeforeInventoryUndo(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsToolName(state.AdvertisedToolNames, "canvas_edit_storyboard") {
+	if !containsToolName(state.AdvertisedToolNames, "storyboard") {
 		t.Fatal("Worker would receive an uncommitted loadout")
 	}
 	names, err := cloudAgentNextToolLoadout(s.repo, "user", &state)
-	if err != nil || !containsToolName(names, "canvas_edit_storyboard") {
+	if err != nil || !containsToolName(names, "storyboard") {
 		t.Fatalf("loadout retracted after undo: %v %v", names, err)
 	}
 }

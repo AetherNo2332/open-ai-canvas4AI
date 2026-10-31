@@ -864,7 +864,7 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, mode cloud
 	}
 	state := map[string]any{"visibleColumns": visibleColumns, "referenceNodeIds": cloudAgentStrings(storyboard["referenceNodeIds"]), "rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0}
 	if mode != cloudAgentProjectionDetail {
-		state["rowIdSource"] = "本页不含 rowId；用 canvas_read_storyboard(nodeId, view=bindings) 读取行标识和绑定，需要正文时指定 view=full"
+		state["rowIdSource"] = "本页不含 rowId；用 storyboard(action=read, nodeId, view=bindings) 读取行标识和绑定，需要正文时指定 view=full"
 	}
 	return state
 }
@@ -888,7 +888,7 @@ func cloudAgentStoryboardIndex(all []map[string]any, visibleColumns []any) map[s
 		summary["lastShotNumber"] = last
 	}
 	summary["rowFields"] = []string{"shotNumber", "durationSeconds", "plotDescription", "imageNodeId", "videoNodeId"}
-	summary["readRowsWith"] = "引用检查用 canvas_read_storyboard(nodeId, view=summary/bindings)，默认最多100行；正文用 view=full、offset/rows，默认1行最多20行，按 nextRead 续读"
+	summary["readRowsWith"] = "引用检查用 storyboard(nodeId, view=summary/bindings)，默认最多100行；正文用 view=full、offset/rows，默认1行最多20行，按 nextRead 续读"
 	return summary
 }
 

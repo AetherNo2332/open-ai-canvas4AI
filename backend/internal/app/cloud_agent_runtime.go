@@ -104,6 +104,7 @@ type cloudAgentApproval struct {
 	Preview   cloudAgentApprovalPreview `json:"preview"`
 	Decision  string                    `json:"decision,omitempty"`
 	Reason    string                    `json:"reason,omitempty"`
+	QuoteHash string                    `json:"quoteHash,omitempty"`
 }
 type cloudAgentRuntime struct {
 	ToolSchemaVersion string                   `json:"toolSchemaVersion,omitempty"`
@@ -1598,7 +1599,7 @@ func cloudAgentInvalidateReadCache(state *cloudAgentRuntime) {
 	// Canvas writes invalidate only canvas projections. Skill documents and
 	// the model catalog remain valid, avoiding unrelated repeated reads.
 	for key := range state.ToolReadResults {
-		if strings.HasPrefix(key, "canvas_get_state:") || strings.HasPrefix(key, "canvas_read_storyboard:") || strings.HasPrefix(key, cloudAgentDirectorTool+":") {
+		if strings.HasPrefix(key, "canvas_get_state:") || strings.HasPrefix(key, "storyboard:") || strings.HasPrefix(key, cloudAgentDirectorTool+":") {
 			delete(state.ToolReadResults, key)
 			delete(state.ToolReadReplays, key)
 		}
@@ -1661,19 +1662,13 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 			return cloudAgentSave(current, state)
 		})
 	}
-	mediaTool := call.Function.Name == "generate_media"
-	if allowed && call.Function.Name == "canvas_edit_storyboard" {
-		result, replayed, err := cloudAgentStoryboardReplay(s.repo, run.UserID, state.Request.CanvasID, call)
-		if replayed || err != nil {
-			return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-				if err != nil && !cloudAgentToolErrorIsBusiness(err) {
-					return err
-				}
-				cloudAgentRecordToolResult(current, state, call, result, err)
-				return cloudAgentSave(current, state)
-			})
-		}
+	if cloudAgentLegacyStoryboardTool(call.Function.Name) {
+		return s.recordStoryboardResult(run, state, call, nil, cloudAgentFieldError("tool", "retired", "旧分镜工具已退役；请使用 storyboard 的 read/split/resplit/update 等 action。新分镜先用 canvas_apply_ops 创建 script 并写入剧情。"))
 	}
+	if allowed && call.Function.Name == "storyboard" {
+		return s.executeCloudAgentStoryboard(run, state, call)
+	}
+	mediaTool := call.Function.Name == "generate_media"
 	if allowed && cloudAgentWriteCall(call) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
 		var plan *cloudAgentMediaPlan
 		var modelName string
@@ -1827,18 +1822,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 					if err == nil {
 						preview = plan.Preview
 					}
-				case "canvas_create_storyboard":
-					storyboardPlan, err := prepareCloudAgentStoryboardCreate(repo, run.UserID, state.Request.CanvasID, call)
-					mutationErr = err
-					if err == nil {
-						preview = storyboardPlan.Preview
-					}
-				case "canvas_edit_storyboard":
-					storyboardPlan, err := prepareCloudAgentStoryboardEdit(repo, run.UserID, state.Request.CanvasID, call)
-					mutationErr = err
-					if err == nil {
-						preview = storyboardPlan.Preview
-					}
+
 				case "canvas_edit_batch_table":
 					batchPlan, err := prepareCloudAgentBatchTableEdit(repo, run.UserID, state.Request.CanvasID, call)
 					mutationErr = err
@@ -2032,8 +2016,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 				}
 			case call.Function.Name == "canvas_arrange_nodes":
 				result, toolErr = applyCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-			case call.Function.Name == "canvas_create_storyboard", call.Function.Name == "canvas_edit_storyboard":
-				result, toolErr = applyCloudAgentStoryboardMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+
 			case call.Function.Name == "canvas_edit_batch_table":
 				result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 			case call.Function.Name == "canvas_create_character":

@@ -135,7 +135,7 @@ func cloudAgentNodeReferenceView(repo *repository.Repository, userID, canvasID s
 	if scope.Kind == "storyboard-context" {
 		board, _ := meta["storyboard"].(map[string]any)
 		view["referenceNodeIds"] = cloudAgentStrings(board["referenceNodeIds"])
-		view["nextRead"] = map[string]any{"tool": "canvas_read_storyboard", "arguments": map[string]any{"nodeId": node["id"], "view": "bindings"}}
+		view["nextRead"] = map[string]any{"tool": "storyboard", "arguments": map[string]any{"action": "read", "nodeId": node["id"], "view": "bindings"}}
 	}
 	return view
 }

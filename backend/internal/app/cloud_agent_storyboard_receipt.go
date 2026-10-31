@@ -62,6 +62,9 @@ func cloudAgentStoryboardMutationReceipt(plan *cloudAgentStoryboardMutationPlan,
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return nil, cloudAgentJSONArgumentError(err)
 		}
+		if args.Action == "update" && len(args.Updates) > 0 {
+			args.Action = "batch_update"
+		}
 		switch args.Action {
 		case "append", "append_rows":
 			affected = len(created)
@@ -102,10 +105,10 @@ func cloudAgentStoryboardMutationReceipt(plan *cloudAgentStoryboardMutationPlan,
 			}
 		}
 		if len(remaining) > 0 {
-			receipt["assetChangesNextRead"] = map[string]any{"tool": "canvas_read_storyboard", "arguments": map[string]any{"nodeId": nodeID, "rowIds": remaining, "view": "bindings"}}
+			receipt["assetChangesNextRead"] = map[string]any{"tool": "storyboard", "arguments": map[string]any{"action": "read", "nodeId": nodeID, "rowIds": remaining, "view": "bindings"}}
 		}
 	}
-	if call.Function.Name == "canvas_edit_storyboard" {
+	if call.Function.Name == "canvas_edit_storyboard" || call.Function.Name == "storyboard" {
 		var args cloudAgentStoryboardEditArgs
 		_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
 		if cloudAgentStoryboardSharedAction(args.Action) {

@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"yingce/backend/internal/canvas/commands"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
@@ -37,13 +38,14 @@ type cloudAgentPendingGeneration struct {
 
 // cloudAgentGenerationOutcome 是一次生成结束后的回写结果，供通知文本与 wait_generations 回执使用。
 type cloudAgentGenerationOutcome struct {
-	TaskID  string `json:"taskId"`
-	NodeID  string `json:"nodeId"`
-	Mode    string `json:"mode,omitempty"`
-	Title   string `json:"title,omitempty"`
-	Status  string `json:"status"`
-	Summary string `json:"summary"`
-	Error   string `json:"error,omitempty"`
+	TaskID      string `json:"taskId"`
+	NodeID      string `json:"nodeId"`
+	Mode        string `json:"mode,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Status      string `json:"status"`
+	Summary     string `json:"summary"`
+	Error       string `json:"error,omitempty"`
+	SplitResult any    `json:"splitResult,omitempty"`
 	// VersionID/Adopted 只在原位生成新版本时出现：新版本 ID 与是否已自动采用。
 	VersionID string `json:"versionId,omitempty"`
 	Adopted   *bool  `json:"adopted,omitempty"`
@@ -83,6 +85,10 @@ func cloudAgentGenerationNoticeText(outcomes []cloudAgentGenerationOutcome, rema
 			label = outcome.Mode
 		}
 		fmt.Fprintf(&b, "%s（nodeId %s）%s", label, outcome.NodeID, outcome.Summary)
+		if outcome.SplitResult != nil {
+			raw, _ := json.Marshal(outcome.SplitResult)
+			b.WriteString("；行对应关系：" + string(raw))
+		}
 		if outcome.Error != "" {
 			b.WriteString("：" + outcome.Error)
 		}
@@ -144,6 +150,15 @@ func (s *Service) settleCloudAgentPendingGenerations(run *model.CloudAgentExecut
 			if err := s.materializeCloudAgentStoryboardTask(task); err != nil {
 				return false, err
 			}
+			if item.Mode == "storyboard" {
+				job, err := s.repo.CanvasMaterialization(task.ID)
+				if err != nil {
+					return false, err
+				}
+				if job.State != "done" {
+					continue
+				}
+			}
 			finished[item.TaskID] = task
 		}
 	}
@@ -184,6 +199,9 @@ func (s *Service) settleCloudAgentPendingGenerations(run *model.CloudAgentExecut
 // settleCloudAgentGeneration 回写一次已结束的生成并给出结果摘要。
 // 回写失败不再判死整轮：生成已计费，结果留在任务中心，由通知如实告诉 Agent。
 func settleCloudAgentGeneration(repo *repository.Repository, run *model.CloudAgentExecution, state *cloudAgentRuntime, item cloudAgentPendingGeneration, task *model.Task, policy RuntimePolicySetting) (cloudAgentGenerationOutcome, error) {
+	if item.Mode == "storyboard" {
+		return settleCloudAgentStoryboardGeneration(repo, run, state, item, task)
+	}
 	outcome := cloudAgentGenerationOutcome{TaskID: item.TaskID, NodeID: item.NodeID, Mode: item.Mode, Title: item.Title}
 	if task == nil {
 		outcome.Status, outcome.Summary = "missing", "生成任务不存在或已失去归属，结果未回写画布"
@@ -256,6 +274,50 @@ func settleCloudAgentGeneration(repo *repository.Repository, run *model.CloudAge
 	}
 	if outcome.Adopted != nil {
 		settled["adopted"] = *outcome.Adopted
+	}
+	state.event(run.ID, "generation_settled", settled)
+	return outcome, nil
+}
+
+func settleCloudAgentStoryboardGeneration(repo *repository.Repository, run *model.CloudAgentExecution, state *cloudAgentRuntime, item cloudAgentPendingGeneration, task *model.Task) (cloudAgentGenerationOutcome, error) {
+	outcome := cloudAgentGenerationOutcome{TaskID: item.TaskID, NodeID: item.NodeID, Mode: item.Mode, Title: item.Title}
+	if task == nil {
+		outcome.Status, outcome.Summary = "missing", "拆镜任务不存在或已失去归属，结果未写回画布"
+		return outcome, nil
+	}
+	outcome.Status = string(task.Status)
+	job, jobErr := repo.CanvasMaterialization(task.ID)
+	if jobErr != nil && !repo.IsMissing(jobErr) {
+		return outcome, jobErr
+	}
+	switch {
+	case task.Status != model.TaskStatusSucceeded:
+		message := truncateRunes(cloudAgentSafeMediaTaskError(task), 120)
+		if !cloudAgentSafeUserMessage(message) {
+			message = "拆镜任务未成功"
+		}
+		outcome.Summary, outcome.Error = "拆镜未成功，任务记录保留在任务中心", message
+	case job == nil || job.State != "done" || job.Outcome != "applied":
+		outcome.Status = "writeback_failed"
+		outcome.Summary = "拆镜任务完成，但结果未写入画布"
+		outcome.Error = "请读取分镜节点状态并重新拆镜"
+	default:
+		cloudAgentInvalidateReadCache(state)
+		outcome.Summary = "已拆镜并写入画布"
+		if binding, bindingErr := repo.CanvasTaskBinding(task.ID); bindingErr == nil {
+			var context commands.StoryboardTaskContext
+			if json.Unmarshal([]byte(binding.ResultContextJSON), &context) == nil && context.Result != nil {
+				outcome.SplitResult = context.Result
+				outcome.Summary = fmt.Sprintf("已写回分镜：替换 %d 行，写入 %d 行，%d 行画面待复核", context.Result.ReplacedCount, len(context.Result.Rows), len(context.Result.ReviewRowIDs))
+			}
+		}
+	}
+	settled := map[string]any{
+		"taskId": task.ID, "nodeId": item.NodeID, "callId": item.CallID, "mode": item.Mode,
+		"status": outcome.Status, "summary": outcome.Summary, "error": outcome.Error,
+	}
+	if outcome.SplitResult != nil {
+		settled["splitResult"] = outcome.SplitResult
 	}
 	state.event(run.ID, "generation_settled", settled)
 	return outcome, nil

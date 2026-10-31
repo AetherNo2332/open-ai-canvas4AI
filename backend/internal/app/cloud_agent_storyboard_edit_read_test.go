@@ -28,7 +28,7 @@ func storyboardFieldReadFixture(t *testing.T, rows []map[string]any) (*Service, 
 func storyboardFieldRead(t *testing.T, s *Service, canvas *model.CanvasProject, args map[string]any) map[string]any {
 	t.Helper()
 	args["nodeId"] = "board"
-	result, err := cloudAgentReadStoryboard(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_read_storyboard", "read", args))
+	result, err := cloudAgentReadStoryboard(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "read", args))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestStoryboardReadMissingFields(t *testing.T) {
 	}
 	for _, key := range []string{"fields", "missingAnyFields"} {
 		for _, value := range []any{[]string{}, nil, []string{"status"}, []string{"imageGenerationPrompt", "imageGenerationPrompt"}} {
-			_, err := cloudAgentReadStoryboard(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "canvas_read_storyboard", "bad", map[string]any{"nodeId": "board", key: value}))
+			_, err := cloudAgentReadStoryboard(s.repo, "user", canvas.ID, cloudAgentStoryboardCall(t, "storyboard", "bad", map[string]any{"nodeId": "board", key: value}))
 			if err == nil {
 				t.Fatalf("accepted %s=%v", key, value)
 			}

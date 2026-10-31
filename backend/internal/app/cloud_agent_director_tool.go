@@ -102,7 +102,7 @@ func cloudAgentDirectorDecode(call cloudAgentCall) (cloudAgentDirectorArgs, erro
 // cloudAgentWriteCall 按 action 判定 director 是否为写：read 只读，其余为写。
 // 参数无法解析时按写处理（fail closed），审批与只读拦截都不会因此放松。
 func cloudAgentWriteCall(call cloudAgentCall) bool {
-	if call.Function.Name != cloudAgentDirectorTool {
+	if call.Function.Name != cloudAgentDirectorTool && call.Function.Name != "storyboard" {
 		return cloudAgentWrite(call.Function.Name)
 	}
 	var args struct {

@@ -13,7 +13,7 @@ import (
 const cloudAgentStoryboardOperationClient = "agent:storyboard"
 
 func cloudAgentStoryboardOperationArguments(call cloudAgentCall) (string, string, error) {
-	if call.Function.Name != "canvas_edit_storyboard" {
+	if call.Function.Name != "storyboard" && call.Function.Name != "canvas_edit_storyboard" {
 		return "", "", nil
 	}
 	var args map[string]any

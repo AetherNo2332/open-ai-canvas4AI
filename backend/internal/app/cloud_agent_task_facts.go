@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"strings"
+	"yingce/backend/internal/canvas/commands"
 	"yingce/backend/internal/canvas/mediaversions"
 
 	"yingce/backend/internal/model"
@@ -111,6 +112,13 @@ func cloudAgentTaskDiagnostic(repo *repository.Repository, task *model.Task) map
 	if repo != nil {
 		// 节点版本任务：写回后回执给出新版本 ID 与是否已自动采用（决定 3）。
 		if binding, err := repo.CanvasTaskBinding(task.ID); err == nil && binding.OwnerID == task.UserID {
+			var context commands.StoryboardTaskContext
+			if json.Unmarshal([]byte(binding.ResultContextJSON), &context) == nil && context.Result != nil {
+				result["splitResult"] = context.Result
+			}
+			if job, err := repo.CanvasMaterialization(task.ID); err == nil {
+				result["canvasWriteback"] = map[string]any{"state": job.State, "outcome": job.Outcome}
+			}
 			if base, versioned, err := mediaversions.BindingBase(binding); err == nil && versioned {
 				result["targetNodeId"] = base.NodeID
 				if base.Settled {

@@ -98,7 +98,7 @@ test("malformed tool arguments remain lossless and recoverable instead of failin
   for (const raw of ['{"rows":[{"dialogue":"bad "quote""}]}', "", "[]", "null", "true", '"text"']) {
     const failures: unknown[] = [];
     const fn = createCanvasStreamFn(async () => ({ toolCalls: [
-      { id: "bad-call", function: { name: "canvas_edit_storyboard", arguments: raw } },
+      { id: "bad-call", function: { name: "storyboard", arguments: raw } },
     ] }), error => failures.push(error));
     const stream = await fn(model, { messages: [] } as never);
     for await (const _ of stream) { /* drain the real SDK stream */ }

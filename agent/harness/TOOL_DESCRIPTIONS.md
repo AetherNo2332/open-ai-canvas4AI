@@ -26,9 +26,9 @@ summary 必填，内容为给用户的最终答复全文。通过后持久化回
 
 分页读取任务类型、并发数、参考列、任务行和就绪预览，每页最多20行，返回真实rowId/snapshotHash。参考列 mentionToken（如 @参考图1）可写提示词；后续编辑使用最新ID。
 
-## canvas_read_storyboard
+## storyboard
 
-读取结构化分镜，默认 creative 返回创作、时长、对白和实际资产名称/版本，媒体输入提供 bindingId 和可复制的 promptHandle。fields 选择创作列，missingAnyFields 筛出任一列缺失或空白的行后分页。summary 默认 rows=[]，指定 fields 也返回所选正文；bindings 排查绑定，full 默认一行。coverage.tableComplete 表示本页覆盖整表，selectionComplete 表示范围已到末尾，正文按 nextReads 原文续读，行按 nextRead 续页。hasImagePromptOverride/hasVideoPromptOverride 仅表示独立覆盖，effectivePromptSource 区分覆盖、创作说明回退或 none，不等于生成就绪。返回 snapshotHash 和 storyboardRevision；operationIds 可查1–20个批次的持久提交目标，历史成功后仍须核对当前字段。不从连线推测绑定。
+统一分镜工具。read 默认返回 Markdown 分镜表，同时保留 view、rows、offset、rowIds、fields 和 missingAnyFields 的结构化读取能力。split 整表提交服务端拆镜任务；resplit 只重拆连续且未锁定的 rowIds，request 尽量使用用户原话。服务端自己读取剧情、风格要求、角色、画布素材和前后镜头，不要手填分镜行。split/resplit 返回 submitted/taskId，任务完成后在下一步以系统通知告知写回结果；需要结果才能继续时调用 wait_generations，恢复后重新 read。update 和资产/产物 action 使用真实 rowId 与 snapshotHash；lock/unlock 管理镜头保护，锁定镜头不能被其他写 action 修改。模型选择优先原样复制 model_list 的 selectionId，或 logicalModelId，或系统 channelId+channelModelKey，不能混用。update 可用 updates:[{rowId,patch}] 做逐行不同的少量修改。所有写动作拒绝锁定行，只有 unlock 例外；共享引用涉及锁定行也拒绝。完成通知和 task_get 返回新行←旧行对应关系。拆镜和媒体都在同一运行的下一模型步骤通知，不另起用户轮次、不打断流式响应。
 
 ## task_get
 
@@ -53,18 +53,6 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 ## canvas_create_character
 
 把就绪图片打包为角色卡，按权限审批。imageNodeId 为单图复用模式；或分别给 primaryImageNodeId/turnaroundImageNodeId，缺一时明确复用，不能混两种模式。保存各自来源，同名卡先核对版本。读取 character.resolvedImage/representations 确认实际图片、复用和来源；未记录来源不可猜。definition 只填有依据的设定。
-
-## canvas_create_storyboard
-
-创建结构化分镜，自动分配节点/行 ID 和位置，回执 createdRows 返回新行身份。传最新 snapshotHash、title 和 rows；每行用正数 durationSeconds、plotDescription 创作说明及 dialogue，可独立维护 shotSize、motion、lightingAndAtmosphere 等创作列，按需覆盖 imageGenerationPrompt/videoMotionPrompt。assets 用 ref（画布节点 ID 或唯一完整名称）和 role；references 是共享引用列表。同名多版本须用 ID，不猜版本。写入遵循审批模式。
-
-## canvas_edit_storyboard
-
-读真实 rowId、snapshotHash/storyboardRevision。batch_update 用 updates:[{rowId,patch}] 逐行写不同内容；update 对 rowId/rowIds 共用 patch。append_rows 用 rows、append 用完整 patch 追加，每批及全表最多100行。非法目标、字段或引用使整批拒绝。changedRows 只列实际变化；createdRows/removedRowIds 标识增删。纯创作字段 update/batch_update 可带 storyboardRevision，允许无关布局变化，同表/依赖/世代变化仍冲突；其他动作校验全画布快照。每模型步骤一次写入，下一步可复用成功版本。
-
-行资产增量用 add_assets（保留原角色）、remove_assets（按 ref+role 移除）、upsert_assets（新增或改用途），接受 rowId/rowIds 和非空 assets。set_assets 明确替换并清空旧 characters，[] 不清共享输入。共享增减用 add_references/remove_references，set_references 明确替换或清空。assetChanges/referenceChanges 分别列行级/共享影响及有效绑定。提示词复制输入的 promptHandle，如 {{ref:node:hero:reference}}；生成时才转素材序号，缺失句柄拒绝生成。产物归属用 bind_output/unbind_output，不写任务、状态、URL 或连线；历史引用先迁移。
-
-每批用稳定 operationId（8–128字符）；重试同键同操作返回原结果，不重复执行/审批，同键不同参数拒绝，版本前置条件可刷新。replayed=true 表示历史提交，其版本不代表当前内容；恢复时查询 operationIds 并读取目标字段/missingAnyFields，核对人工修改及缺口。退役世代的旧标识拒绝重发，新批次用新标识。明细省略按 assetChangesNextRead 续读。
 
 ## canvas_edit_batch_table
 
