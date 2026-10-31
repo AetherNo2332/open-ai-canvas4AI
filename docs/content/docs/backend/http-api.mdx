@@ -509,7 +509,7 @@ Agent 的聊天列表缓存只负责 UI 恢复；运行、技能快照、审批�
 
 Worker 内部读取为 `GET /internal-agent/runs/:id/skills/:nativeName/file?path=SKILL.md&offset=0&limit=12000`，不经公网 `/api` 代理。除内部 bearer 和协议版本头，还检查用户、worker owner、lease epoch、运行状态、冻结版本与包完整性。`offset` / `limit` 以 Unicode 字符计，默认每页 12000、最大 12000；响应带 `content`、`offset`、`limit`、`totalRunes`、`hasMore` 及版本/摘要。仅白名单内的 UTF-8 `.md`、`.txt`、`.json` 文件可读，路径穿越、越权、二进制和损坏包明确拒绝。Pi loader 使用 `noSkills: true` + `additionalSkillPaths` 隔离宿主机技能，并严格核对发现集合；详见 [原生 Skill 运行时](./agent-native-skills)。
 
-模型任务失败的 `run_failed` 事件保留 `taskId`，并提供安全分类 `reason`：`model_connection_reset`、`model_request_timeout`、`model_connection_refused` 或 `model_task_failed`。`text` 不透传原始上游错误，避免泄露地址和凭证；前端用事件类型而非摘要关键词判断工具成功 / 失败。失败不会触发自动付费重试。
+模型任务失败的 `run_failed` 事件保留 `taskId`，并提供安全分类 `reason`：`model_connection_reset`、`model_request_timeout`、`model_stream_stalled`、`model_connection_refused` 或 `model_task_failed`。中转在流内回报空闲断流（`Upstream stalled`）时先以 `model_failure_recovered`（`reason=stream_stalled_retried`）重试一次，再断才以 `model_stream_stalled` 结束，不再归为请求超时。账号活动任务上限只统计生成、上传等产出任务，Agent 运行自身的占位、模型步和上下文压缩任务不计入；生成因上限被拒时作为 `state_conflict` 工具回执（`requiredAction=wait_for_generations`）交给 Agent，不结束本轮。`text` 不透传原始上游错误，避免泄露地址和凭证；前端用事件类型而非摘要关键词判断工具成功 / 失败。失败不会触发自动付费重试。
 
 ## Agent 会话队列与默认发送方式
 
