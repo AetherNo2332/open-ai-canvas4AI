@@ -16,6 +16,25 @@ import (
 
 func RegisterSkillRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerSkillCurationRoutes(r, svc)
+
+	r.POST("/skills/install/preview", func(c *gin.Context) {
+		if _, err := currentUser(c, svc); err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, service.SkillPackageUploadMaxBytes)
+		file, err := c.FormFile("file")
+		if err != nil {
+			failService(c, service.BadAuthRequest("请选择 Markdown 或 ZIP 技能文件"))
+			return
+		}
+		result, err := svc.PreviewSkillUpload(c.PostForm("sourceType"), file)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
 	r.POST("/skills/install", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -42,14 +61,14 @@ func RegisterSkillRoutes(r *gin.RouterGroup, svc *service.Service) {
 				sourceType = "zip"
 			}
 		}
-		skill, err := svc.InstallSkillUpload(user.ID, sourceType, file, service.SkillInstallRequest{
+		result, err := svc.InstallSkillUploadCollection(user.ID, sourceType, file, service.SkillInstallRequest{
 			Name: c.PostForm("name"), Description: c.PostForm("description"), Tag: c.PostForm("tag"), IsPrivate: isPrivate,
 		})
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"skill": skill})
+		ok(c, result)
 	})
 
 	r.POST("/skills/install/github", func(c *gin.Context) {

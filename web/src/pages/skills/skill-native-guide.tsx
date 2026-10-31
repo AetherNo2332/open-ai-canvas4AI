@@ -11,7 +11,7 @@ const conversionPrompt = `请把我提供的技能转换为“影策云端 Agent
 先检查原包的 SKILL.md、references、scripts 和工具依赖，在新目录输出适配版，保留原包。不要执行来源包的安装器或脚本，也不要把技能安装到我本机的 Codex 配置目录。
 
 目标格式：
-1. 每个技能独立成包，根目录为 UTF-8 编码的 SKILL.md。用 YAML frontmatter 提供 name 和 description；name 使用简短英文小写及连字符，description 说明适用任务。版本如需填写，使用 metadata.version。保留原有专业方法与必要参考文件。
+1. 每个技能保留自己的目录与 UTF-8 编码的 SKILL.md；合集可以包含多个技能目录。用 YAML frontmatter 提供 name 和 description；name 使用简短英文小写及连字符，description 说明适用任务。版本如需填写，使用 metadata.version。保留原有专业方法与必要参考文件。
 2. 入口只写适用范围、工作步骤和必要约束，长篇方法放入 references 并说明何时读取。不要只改文件名或 frontmatter 就宣称适配完成。
 
 影策云端运行边界：
@@ -23,7 +23,7 @@ const conversionPrompt = `请把我提供的技能转换为“影策云端 Agent
 8. 只在用户要求的范围内创作或生成，保留报价、预算和审批要求；声明 allowed-tools 或把工具名写进 SKILL.md 不会增加云端权限。所需工具不存在时如实说明，不能编造替代执行。
 
 交付与验证：
-9. 每个技能输出一个独立 ZIP，ZIP 根目录包含 SKILL.md，单包不超过 20MB；多个技能分别打包。检查 YAML、入口引用、相对路径、缺失依赖与原有方法是否保留。
+9. 多个技能保留为各自含 SKILL.md 的目录，整体压成一个 ZIP 合集即可；不要先把各目录分别压成 ZIP 再套一层。合集最多 64 个技能、512 个文件，压缩与解压后均不超过 20MB。单技能也可独立打包。检查 YAML、入口引用、相对路径、缺失依赖与原有方法是否保留。
 10. 在安装包之外给出转换说明：保留了什么、替换了什么、哪些外部能力尚不可用、需要在影策实际验收哪些步骤。静态结构检查不能写成真实云端运行通过。`;
 
 const packageExample = `my-skill.zip
@@ -118,7 +118,8 @@ export function SkillNativeGuideModal({ open, onClose }: { open: boolean; onClos
                     <h3 id="native-guide-install">3. 导入并验证</h3>
                     <ol>
                         <li>
-                            在“安装技能”中选择“ZIP 技能包”，上传根目录包含 <code>SKILL.md</code> 的独立 ZIP，单包不超过 20MB。多个技能分别打包导入；单文件技能也可通过 Markdown 导入。
+                            在“安装技能”中选择“ZIP 技能包”，可以直接上传含多个技能目录的 ZIP 合集，预览识别到的名称和数量后统一安装。每个技能目录各有 <code>SKILL.md</code>；合集最多 64 个技能、512 个文件，整体不超过 20MB。单文件技能也可通过 Markdown
+                            导入。
                         </li>
                         <li>确认名称、简介和公开状态。安装后在 Agent 技能选择中加入所需技能及依赖；旧对话更新技能后需重新选择，再启动新一轮。</li>
                         <li>先用小任务验证：是否读到参考资料、是否保存到真实画布节点、异步结果回来后是否继续。静态检查或安装成功都不能代替实际运行验收。</li>

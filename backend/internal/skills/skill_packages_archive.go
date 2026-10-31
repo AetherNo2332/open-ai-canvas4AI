@@ -112,55 +112,9 @@ func archiveFromMarkdown(data []byte, fallbackName string, fallbackDescription s
 }
 
 func archiveFromZip(data []byte, subdir string) (skillPackageArchive, error) {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	raw, err := readSkillZipFiles(data)
 	if err != nil {
-		return skillPackageArchive{}, kernel.BadAuthRequest("ZIP 文件无法解析")
-	}
-	if len(reader.File) > maxSkillPackageFiles+64 {
-		return skillPackageArchive{}, kernel.BadAuthRequest("技能包文件数量不能超过 512 个")
-	}
-	raw := make(map[string][]byte)
-	var total int64
-	for _, entry := range reader.File {
-		if entry.FileInfo().IsDir() {
-			continue
-		}
-		if entry.Mode()&os.ModeSymlink != 0 || !entry.Mode().IsRegular() {
-			return skillPackageArchive{}, kernel.BadAuthRequest("技能包不能包含软链接或特殊文件")
-		}
-		entryPath, err := normalizeSkillPath(entry.Name)
-		if err != nil {
-			return skillPackageArchive{}, err
-		}
-		if strings.HasPrefix(entryPath, "__MACOSX/") || path.Base(entryPath) == ".DS_Store" {
-			continue
-		}
-		if _, exists := raw[entryPath]; exists {
-			return skillPackageArchive{}, kernel.BadAuthRequest("技能包包含重复文件路径")
-		}
-		if entry.UncompressedSize64 > maxSkillFileBytes {
-			return skillPackageArchive{}, kernel.BadAuthRequest("技能包中单个文件不能超过 8MB")
-		}
-		file, err := entry.Open()
-		if err != nil {
-			return skillPackageArchive{}, err
-		}
-		content, readErr := io.ReadAll(io.LimitReader(file, maxSkillFileBytes+1))
-		closeErr := file.Close()
-		if readErr != nil {
-			return skillPackageArchive{}, readErr
-		}
-		if closeErr != nil {
-			return skillPackageArchive{}, closeErr
-		}
-		if len(content) > maxSkillFileBytes {
-			return skillPackageArchive{}, kernel.BadAuthRequest("技能包中单个文件不能超过 8MB")
-		}
-		total += int64(len(content))
-		if total > maxSkillPackageBytes {
-			return skillPackageArchive{}, kernel.BadAuthRequest("技能包解压后不能超过 20MB")
-		}
-		raw[entryPath] = content
+		return skillPackageArchive{}, err
 	}
 	files, err := normalizeSkillArchiveRoot(raw, subdir)
 	if err != nil {
@@ -168,6 +122,65 @@ func archiveFromZip(data []byte, subdir string) (skillPackageArchive, error) {
 	}
 	metadata := parseSkillPackageMetadata(files["SKILL.md"])
 	return finalizeSkillArchive(files, metadata)
+}
+
+func readSkillZipFiles(data []byte) (map[string][]byte, error) {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, kernel.BadAuthRequest("ZIP 文件无法解析")
+	}
+	if len(reader.File) > (maxSkillPackageFiles+64)*9 {
+		return nil, kernel.BadAuthRequest("技能包目录或文件条目过多")
+	}
+	raw := make(map[string][]byte)
+	var total int64
+	fileCount := 0
+	for _, entry := range reader.File {
+		if entry.FileInfo().IsDir() {
+			continue
+		}
+		fileCount++
+		if fileCount > maxSkillPackageFiles+64 {
+			return nil, kernel.BadAuthRequest("技能包文件数量不能超过 512 个")
+		}
+		if entry.Mode()&os.ModeSymlink != 0 || !entry.Mode().IsRegular() {
+			return nil, kernel.BadAuthRequest("技能包不能包含软链接或特殊文件")
+		}
+		entryPath, err := normalizeSkillPath(entry.Name)
+		if err != nil {
+			return nil, err
+		}
+		if strings.HasPrefix(entryPath, "__MACOSX/") || path.Base(entryPath) == ".DS_Store" {
+			continue
+		}
+		if _, exists := raw[entryPath]; exists {
+			return nil, kernel.BadAuthRequest("技能包包含重复文件路径")
+		}
+		if entry.UncompressedSize64 > maxSkillFileBytes {
+			return nil, kernel.BadAuthRequest("技能包中单个文件不能超过 8MB")
+		}
+		file, err := entry.Open()
+		if err != nil {
+			return nil, err
+		}
+		content, readErr := io.ReadAll(io.LimitReader(file, maxSkillFileBytes+1))
+		closeErr := file.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		if len(content) > maxSkillFileBytes {
+			return nil, kernel.BadAuthRequest("技能包中单个文件不能超过 8MB")
+		}
+		total += int64(len(content))
+		if total > maxSkillPackageBytes {
+			return nil, kernel.BadAuthRequest("技能包解压后不能超过 20MB")
+		}
+		raw[entryPath] = content
+	}
+	return raw, nil
 }
 
 func normalizeSkillArchiveRoot(raw map[string][]byte, subdir string) (map[string][]byte, error) {
@@ -262,6 +275,9 @@ func contentHashAndSize(files map[string][]byte) (string, int64) {
 func finalizeSkillArchive(files map[string][]byte, metadata skillPackageMetadata) (skillPackageArchive, error) {
 	if _, ok := files["SKILL.md"]; !ok {
 		return skillPackageArchive{}, kernel.BadAuthRequest("技能包入口必须是 SKILL.md")
+	}
+	if len(files["SKILL.md"]) == 0 || !utf8.Valid(files["SKILL.md"]) {
+		return skillPackageArchive{}, kernel.BadAuthRequest("SKILL.md 必须是非空的 UTF-8 文本")
 	}
 	if metadata.Name == "" {
 		return skillPackageArchive{}, kernel.BadAuthRequest("SKILL.md 缺少 name，且无法从标题推断")

@@ -735,6 +735,14 @@ fork 云端 Agent 尚未接入已安装技能的自动发现目录（随后续 A
 
 ## 技能包文件 API
 
+### 上传预览与合集安装
+
+- `POST /api/skills/install/preview`：登录后以 multipart 提交 `file` 与可选 `sourceType=markdown|zip`。只解析文件，不创建技能或版本。返回 `data={skills, ignoredFileCount, totalBytes}`；每项为 `entryPath/name/description/version/fileCount/totalBytes`。
+- `POST /api/skills/install`：相同文件字段，另可提交 `tag/isPrivate`；单技能可用 `name/description` 覆盖名称及简介。返回 `data={skills, ignoredFileCount}`，仅一项时另外返回 `skill`。合集不得统一覆盖名称或简介，使用各入口自己的元数据。
+- ZIP 可包含多层目录下的多个 `SKILL.md`，最多 64 个技能；归档所有文件合计最多 512 个、压缩和解压后均不超过 20MB，单文件最多 8MB。路径、重复条目及软链接/特殊文件沿用强校验。ZIP 内直接保留技能目录，不展开嵌套 ZIP。
+- 每个文件归属最近的技能根目录，父技能不吸收子技能文件；没有技能根目录的文件计入 `ignoredFileCount`，不会执行或存入某个技能包。合集内名称重复或任一入口无效时拒绝整包；全部技能记录在同一事务创建，保留各自版本和原入口路径，不覆盖已有同名技能。事务失败仅清理确认未提交的新包，提交状态不明时保留文件避免破坏可读性。
+- `POST /api/skills/install/github` 仍为指定仓库/子目录的单技能安装，不扩展 GitHub 同步合同。前端 ZIP 识别失败时可重新识别；安装会重新校验原上传文件，不信任预览结果。
+
 以下接口需要登录。读取接口沿用技能可见性（私有技能仅作者可读）；写入只允许作者。
 
 | 方法 | 路径 | 行为 |

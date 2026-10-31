@@ -554,7 +554,7 @@ export default function SkillsPage() {
                 </div>
             </AppModal>
             <SkillDetailModal skill={activeSkill} loading={detailLoading} mutating={Boolean(activeSkill && mutatingID === activeSkill.skillId)} categories={categories} onClose={() => setActiveSkill(null)} onAdd={(skill) => void toggleAdded(skill)} onLike={(skill) => void toggleLiked(skill)} onEdit={(skill) => void openEditor(skill)} onOpenWorkbench={openWorkbench} onSync={(skill) => void synchronizeSkill(skill)} />
-            <SkillInstallModal open={installOpen} onClose={() => setInstallOpen(false)} onInstalled={(skill) => { setInstallOpen(false); setActiveSkill(skill); reload(); }} onManualCreate={() => { setInstallOpen(false); void openEditor(); }} onOpenGuide={() => setNativeGuideOpen(true)} />
+            <SkillInstallModal open={installOpen} onClose={() => setInstallOpen(false)} onInstalled={(installed) => { setInstallOpen(false); setActiveSkill(installed.length === 1 ? installed[0] : null); reload(); }} onManualCreate={() => { setInstallOpen(false); void openEditor(); }} onOpenGuide={() => setNativeGuideOpen(true)} />
             <SkillNativeGuideModal open={nativeGuideOpen} onClose={() => setNativeGuideOpen(false)} />
             <SkillRecommendationsModal open={recommendationsOpen} onClose={() => setRecommendationsOpen(false)} onInstalled={(installed) => { if (installed.length) { reload(); refreshCounts(); } }} />
             <SkillEditorDrawer open={editorOpen} skill={editingSkill} onClose={() => setEditorOpen(false)} onSaved={(skill) => { setEditorOpen(false); setEditingSkill(null); setActiveSkill(skill); reload(); }} />
