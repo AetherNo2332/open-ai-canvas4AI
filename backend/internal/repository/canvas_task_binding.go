@@ -63,6 +63,10 @@ func (r *Repository) CanvasTaskBinding(taskID string) (*model.CanvasTaskBinding,
 	err := r.db.Where("task_id = ?", taskID).First(&b).Error
 	return &b, err
 }
+
+func (r *Repository) UpdateCanvasTaskBindingResultContext(taskID, owner, value string) error {
+	return r.db.Model(&model.CanvasTaskBinding{}).Where("task_id = ? AND owner_id = ?", taskID, owner).Update("result_context_json", value).Error
+}
 func (r *Repository) CanvasTaskBindingForOperation(owner, canvas, epoch, actor, client, op string) (*model.CanvasTaskBinding, error) {
 	var b model.CanvasTaskBinding
 	err := r.db.Where("owner_id = ? AND canvas_id = ? AND epoch = ? AND actor_id = ? AND client_id = ? AND operation_id = ?", owner, canvas, epoch, actor, client, op).First(&b).Error

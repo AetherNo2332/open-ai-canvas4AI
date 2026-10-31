@@ -178,6 +178,7 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 			serverTask.Prompt = prompt
 			input["prompt"] = prompt
 			delete(taskMetadata, "storyboardSplit")
+			taskMetadata["canvasConsumer"] = "storyboard_document"
 		}
 		taskMetadata["canvasId"], taskMetadata["nodeId"], taskMetadata["documentEpoch"] = req.Command.CanvasID, req.TargetNodeID, req.Command.DocumentEpoch
 		prepared, err := s.submitter.Prepare(ctx, p, serverTask)
@@ -208,11 +209,11 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 			if err != nil {
 				return nil, nil, err
 			}
-			scopeJSON, err := json.Marshal(scope)
+			contextJSON, err := json.Marshal(commands.StoryboardTaskContext{Scope: scope})
 			if err != nil {
 				return nil, nil, err
 			}
-			binding.ResultContextJSON = string(scopeJSON)
+			binding.ResultContextJSON = string(contextJSON)
 		}
 		versioned := mediaversions.Supported(req.Task.Mode)
 		var target map[string]any

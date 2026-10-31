@@ -1039,11 +1039,14 @@ paths:
                 logicalModelId: { type: string }
                 config: { type: object, additionalProperties: true, description: 文本模型选择（channelId、model 等） }
                 quoteOnly: { type: boolean }
+                quoteHash: { type: string, description: 正式提交必填，原样复制五分钟内且输入和价格未变化的报价回执 }
                 operationId: { type: string }
                 clientId: { type: string }
       responses:
         "200":
-          description: 信封 data 为 { taskId, quote, rowIds, partial }；只报价时没有 taskId
+          description: 信封 data 为 { taskId, quote, rowIds, partial }；只报价时没有 taskId；quote 包含 quoteHash 和 expiresAt
+        "409":
+          description: 缺少确认报价，报价过期、价格或上下文变化，或同一操作标识用于不同请求
         "400":
           description: 分镜节点缺少剧情、范围包含锁定或不连续的行、参数越界或模型选择无效
         "401":

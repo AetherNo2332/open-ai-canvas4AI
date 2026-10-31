@@ -323,6 +323,16 @@ func (s *Service) ChangeCreationRun(userID, id, action string, req CreationReque
 	return out, creationError(err)
 }
 
+func creationSafeConfig(config map[string]any) map[string]any {
+	safe := map[string]any{}
+	for _, key := range []string{"channelId", "channelModelKey", "model", "priceTierId", "apiFormat", "interfaceType", "size", "quality", "transparentBackground", "count", "videoSeconds", "vquality", "videoGenerateAudio", "videoWatermark", "videoArkPrivateAssetUpload", "systemPrompt"} {
+		if value, ok := config[key]; ok {
+			safe[key] = value
+		}
+	}
+	return safe
+}
+
 func (s *Service) prepareCreationTask(userID string, req CreateTaskRequest) (*model.Task, *model.BillingOrder, string, error) {
 	config, _ := req.Input["config"].(map[string]any)
 	if req.LogicalModelID == "" && strings.TrimSpace(stringValue(config["channelId"])) == "" {
@@ -332,12 +342,7 @@ func (s *Service) prepareCreationTask(userID string, req CreateTaskRequest) (*mo
 		return nil, nil, "", BadAuthRequest("智能创作不支持本机、工作流或文本回放任务")
 	}
 	// System selectors are the only authority; discard frontend sentinel credentials.
-	safeConfig := map[string]any{}
-	for _, key := range []string{"channelId", "channelModelKey", "model", "priceTierId", "apiFormat", "interfaceType", "size", "quality", "transparentBackground", "count", "videoSeconds", "vquality", "videoGenerateAudio", "videoWatermark", "videoArkPrivateAssetUpload", "systemPrompt"} {
-		if value, ok := config[key]; ok {
-			safeConfig[key] = value
-		}
-	}
+	safeConfig := creationSafeConfig(config)
 	config = safeConfig
 	req.Input["config"] = safeConfig
 	if err := validateCreationJSON(req); err != nil {

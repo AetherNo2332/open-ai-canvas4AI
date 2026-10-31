@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -64,6 +65,25 @@ func TestStoryboardSplitWholeKeepsLockedRows(t *testing.T) {
 	}
 	if entity(next, "node:board")["title"] != "新分镜" {
 		t.Fatal("whole split updates the title")
+	}
+}
+
+func TestStoryboardSplitDeterministicRepair(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{"data": map[string]any{"rows": []any{map[string]any{"plotDescription": strings.Repeat("镜", 20001), "durationSeconds": "5", "locked": true}}}})
+	repaired, err := RepairStoryboardSplitPayload("模型输出：\n" + string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := ApplyStoryboardSplit(splitBoardDoc(t), "board", "repair-task", repaired, StoryboardSplitScope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := splitRows(t, next)[0]
+	if len([]rune(text(row["plotDescription"]))) != 20000 || row["durationSeconds"] != float64(5) || row["locked"] == true {
+		t.Fatalf("repair changed unsupported state or failed normalization: %+v", row)
+	}
+	if _, err := RepairStoryboardSplitPayload("没有结构化镜头"); err == nil {
+		t.Fatal("repair fabricated missing rows")
 	}
 }
 
@@ -141,5 +161,22 @@ func TestStoryboardSplitScopeRejectsLockedOrGappedRows(t *testing.T) {
 	scope, err := PlanStoryboardSplitScope(doc, "board", []string{"r2", "r1"})
 	if err != nil || !reflect.DeepEqual(scope.RowIDs, []string{"r1", "r2"}) {
 		t.Fatalf("scope = %+v %v", scope, err)
+	}
+}
+
+func TestStoryboardSplitIgnoresModelManagedRowState(t *testing.T) {
+	doc := splitBoardDoc(t)
+	next, _, err := ApplyStoryboardSplit(doc, "board", "task-state", `{"rows":[{"durationSeconds":4,"plotDescription":"新镜头","locked":true,"mediaReview":"pending","imageNodeId":"forged","status":"success"}]}`, StoryboardSplitScope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := splitRows(t, next)[0]
+	for _, key := range []string{"locked", "mediaReview", "imageNodeId"} {
+		if _, exists := row[key]; exists {
+			t.Fatalf("model-managed field %s was accepted: %+v", key, row)
+		}
+	}
+	if row["status"] != "idle" {
+		t.Fatalf("model status was accepted: %+v", row)
 	}
 }

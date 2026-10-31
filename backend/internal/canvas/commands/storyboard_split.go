@@ -32,6 +32,13 @@ type StoryboardSplitResult struct {
 	ReplacedCount int                    `json:"replacedCount"`
 }
 
+// StoryboardTaskContext is frozen at submit time and optionally enriched by
+// materialization with the old→new row mapping used by Agent follow-up steps.
+type StoryboardTaskContext struct {
+	Scope  StoryboardSplitScope   `json:"scope"`
+	Result *StoryboardSplitResult `json:"result,omitempty"`
+}
+
 const storyboardMediaReviewPending = "pending"
 
 // storyboardRowMediaFields 是分镜行上指向已生成媒体的字段；拆镜改写行时按这些字段保留或解绑媒体。
@@ -188,10 +195,18 @@ func (p *planner) storyboardRowsFromPayload(doc Document, payload map[string]any
 		return nil, BadAuthRequest("分镜任务必须返回 1 至 100 个真实镜头")
 	}
 	fields := capability.StoryboardRowFields()
+	modelManaged := map[string]bool{
+		"locked": true, "mediaReview": true, "imageNodeId": true, "videoNodeId": true,
+		"taskId": true, "taskStatus": true, "status": true, "errorDetails": true,
+		"previsSceneId": true, "previsSnapshotUrl": true,
+	}
 	rows := make([]map[string]any, 0, len(source))
 	for index, row := range source {
 		patch := map[string]any{"durationSeconds": float64(6)}
 		for key, field := range fields {
+			if modelManaged[key] {
+				continue
+			}
 			if value, ok := row[key]; ok {
 				if field.Kind == "string" {
 					patch[key] = normalizeStoryboardText(value, 0)
