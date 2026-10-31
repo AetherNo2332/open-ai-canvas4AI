@@ -26,8 +26,8 @@ func ClientAssetPayload(asset model.Asset) json.RawMessage {
 		if asset.Category != "" {
 			payload["category"] = asset.Category
 		}
-		if asset.Status != "" {
-			payload["status"] = asset.Status
+		if status := clientAssetStatus(asset.Status); status != "" {
+			payload["status"] = status
 		}
 		if asset.FolderID != "" {
 			payload["folderId"] = asset.FolderID
@@ -75,6 +75,12 @@ func ClientAssetPayload(asset model.Asset) json.RawMessage {
 		case "image", "video":
 			ensurePositiveAssetDimension(data, "width")
 			ensurePositiveAssetDimension(data, "height")
+		}
+		// 早期生成结果把缺失的 hasAudio 写成了 null；素材合同只接受布尔值或不出现。
+		if value, exists := data["hasAudio"]; exists {
+			if _, isBool := value.(bool); !isBool {
+				delete(data, "hasAudio")
+			}
 		}
 	}
 	encoded, err := json.Marshal(payload)
@@ -188,4 +194,17 @@ func formatClientAssetTime(value time.Time) string {
 		return time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	return value.UTC().Format(time.RFC3339Nano)
+}
+
+// clientAssetStatus 只下发素材合同内的状态。早期生成结果写成了 "ready"，按已确认素材下发，
+// 否则浏览器会拒收整张素材列表（“素材 status 无效”）。
+func clientAssetStatus(status model.AssetVersionStatus) model.AssetVersionStatus {
+	switch status {
+	case model.AssetVersionStatusDraft, model.AssetVersionStatusReview, model.AssetVersionStatusConfirmed, model.AssetVersionStatusArchived:
+		return status
+	case "ready":
+		return model.AssetVersionStatusConfirmed
+	default:
+		return ""
+	}
 }

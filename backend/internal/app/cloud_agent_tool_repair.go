@@ -99,6 +99,8 @@ type cloudAgentToolRepair struct {
 	GroupID     string `json:"groupId"`
 	Attempt     int    `json:"attempt"`
 	Fingerprint string `json:"fingerprint,omitempty"`
+	// Batch 是最近一次计数所在的 Pi 工具批次（模型步）；同一批里并行调用重复同一个错误只算一次。
+	Batch string `json:"batch,omitempty"`
 }
 
 // cloudAgentToolErrorFingerprint 是"同一个错误"的判据：工具 + 字段级问题 + 目标 + 参数外形。
@@ -155,8 +157,9 @@ func cloudAgentArgumentValueShape(value any) string {
 }
 
 // Count per tool and per fingerprint, not per model step: intervening reads must not
-// reset a failed write's allowance. Only explicitly typed, pre-execution errors are
-// repairable.
+// reset a failed write's allowance. Parallel calls in one batch were written before the
+// model saw any feedback, so one batch repeating the same error counts as one attempt.
+// Only explicitly typed, pre-execution errors are repairable.
 func cloudAgentTrackToolRepair(runID string, state *cloudAgentRuntime, call cloudAgentCall, result any, err error, payload map[string]any) bool {
 	previous, exists := state.ToolRepairs[call.Function.Name]
 	if err == nil {
@@ -203,6 +206,7 @@ func cloudAgentTrackToolRepair(runID string, state *cloudAgentRuntime, call clou
 		state.ToolRepairs = map[string]cloudAgentToolRepair{}
 	}
 	fingerprint := cloudAgentToolErrorFingerprint(call, err)
+	sameBatch := exists && state.PiToolBatchTaskID != "" && previous.Batch == state.PiToolBatchTaskID && previous.Fingerprint == fingerprint
 	if !exists {
 		previous.GroupID = runID + ":repair:" + call.ID
 		if environment {
@@ -213,7 +217,10 @@ func cloudAgentTrackToolRepair(runID string, state *cloudAgentRuntime, call clou
 		previous.Attempt = 0
 	}
 	previous.Fingerprint = fingerprint
-	previous.Attempt++
+	if !sameBatch {
+		previous.Attempt++
+	}
+	previous.Batch = state.PiToolBatchTaskID
 	state.ToolRepairs[call.Function.Name] = previous
 	exhausted := previous.Attempt >= cloudAgentToolAttemptLimit
 	status := "retrying"

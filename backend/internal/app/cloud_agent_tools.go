@@ -433,6 +433,7 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 			"durationSeconds": map[string]any{"type": "integer", "minimum": 0}, "size": str(cloudAgentToolText("parameter_074")), "quality": str(cloudAgentToolText("parameter_075")), "videoGenerateAudio": map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_076")},
 			"snapshotHash": str(cloudAgentToolText("parameter_077")), "nodeId": str(cloudAgentToolText("parameter_078")), "title": str(cloudAgentToolText("parameter_079")), "sourceNodeId": str(cloudAgentToolText("parameter_080")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_081"))}, "referenceTransientIds": map[string]any{"type": "array", "maxItems": 4, "items": str(cloudAgentToolText("parameter_082"))},
 		}, "mode")
+		add("wait_generations", cloudAgentToolText("wait_generations"), map[string]any{})
 	}
 	if req.SubagentEnabled && req.subagent == nil {
 		add("spawn_subagent", "Create one independent child Agent with a name, role label and concrete objective.", map[string]any{

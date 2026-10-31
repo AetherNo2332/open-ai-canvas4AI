@@ -21,7 +21,7 @@ func cloudAgentToolCategory(name string) string {
 		return "agent_tools_image"
 	case "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_apply_ops", "canvas_bind_asset", "canvas_undo", "canvas_redo", "canvas_arrange_nodes", "canvas_create_character", "director":
 		return "agent_tools_canvas_edit"
-	case "model_list", "generate_media":
+	case "model_list", "generate_media", cloudAgentWaitGenerationsTool:
 		return "agent_tools_generation"
 	default:
 		return ""

@@ -88,6 +88,17 @@ func cloudAgentArgumentExample(call cloudAgentCall, field string) map[string]any
 		return map[string]any{"nodeId": "<nodeId>", "field": "content"}
 	case "task_get":
 		return map[string]any{"taskId": "<taskId>"}
+	case "canvas_inspect_image":
+		// 保存摘要是最容易写坏的一种调用：给出完整的对象结构，nodeId/sha256 原样沿用本次调用。
+		nodeID, _ := args["nodeId"].(string)
+		sha, _ := args["sha256"].(string)
+		if !strings.HasPrefix(field, "summary") || nodeID == "" || len(sha) != 64 {
+			return nil
+		}
+		return map[string]any{"nodeId": nodeID, "sha256": sha, "summary": map[string]any{
+			"short":    "<一句话画面内容>",
+			"detailed": map[string]any{"subjects": []string{"<主体与外观>"}, "composition": "<构图>", "uncertainties": []string{}},
+		}}
 	case "canvas_edit_storyboard":
 		example := map[string]any{"snapshotHash": snapshot, "nodeId": "<nodeId>", "action": args["action"]}
 		switch args["action"] {

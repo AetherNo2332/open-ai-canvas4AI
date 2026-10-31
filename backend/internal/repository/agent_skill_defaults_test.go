@@ -64,6 +64,39 @@ func TestReviewSkillDefaultsCASAcrossIndependentConnections(t *testing.T) {
 	}
 }
 
+// 平台补种的写入原语：唯一索引冲突不报错，版本改指只命中旧版本行，标记可往返。
+func TestAgentSkillDefaultSeedPrimitives(t *testing.T) {
+	r := newAgentSkillDefaultsTestDB(t)
+	if _, err := r.ReplaceAgentSkillDefaults(0, []model.AgentSkillDefault{{ID: "admin-row", SkillID: "guide", SkillVersionID: "v1", Position: 3, Enabled: false}}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	created, err := r.CreateAgentSkillDefaultIfMissing(&model.AgentSkillDefault{ID: "dup", SkillID: "guide", SkillVersionID: "v2", Enabled: true})
+	if err != nil || created {
+		t.Fatalf("duplicate (scope, skill_id) must be a no-op: created=%v err=%v", created, err)
+	}
+	if moved, err := r.UpdateAgentSkillDefaultVersion("guide", "stale", "v2", 2, "system"); err != nil || moved {
+		t.Fatalf("stale source version must not match: moved=%v err=%v", moved, err)
+	}
+	if moved, err := r.UpdateAgentSkillDefaultVersion("guide", "v1", "v2", 2, "system"); err != nil || !moved {
+		t.Fatalf("version follow failed: moved=%v err=%v", moved, err)
+	}
+	rows, err := r.AgentSkillDefaultRows()
+	if err != nil || len(rows) != 1 || rows[0].ID != "admin-row" || rows[0].SkillVersionID != "v2" || rows[0].Enabled || rows[0].Position != 3 || rows[0].Revision != 2 {
+		t.Fatalf("unexpected rows after seed primitives: %+v %v", rows, err)
+	}
+	if seeded, err := r.AgentSkillDefaultsSeeded(); err != nil || seeded != nil {
+		t.Fatalf("absent marker: %v %v", seeded, err)
+	}
+	for _, ids := range [][]string{{"guide"}, {"guide", "next"}} {
+		if err := r.SaveAgentSkillDefaultsSeeded(ids, "system"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if seeded, err := r.AgentSkillDefaultsSeeded(); err != nil || len(seeded) != 2 || seeded[1] != "next" {
+		t.Fatalf("marker round trip: %v %v", seeded, err)
+	}
+}
+
 func newAgentSkillDefaultsTestDB(t *testing.T) *Repository {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+kernel.NewID()+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})

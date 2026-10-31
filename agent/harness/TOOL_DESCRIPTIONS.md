@@ -80,7 +80,10 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 ## generate_media
 
-提交图片、视频或音频任务，审批、价格、预算与资源校验仍生效。默认 intent=create；更新已有成品明确传 intent=new_version，复用原 nodeId 和分镜输出绑定，期间旧版可用，成功自动采用。生成期间手动选择版本后，结果只进历史。原任务执行中、接单未知或媒体待保存时，先 task_get 核对并恢复原任务，不新付费生成。new_version 的 referenceNodeIds 可含自身，服务端冻结旧资源且不建自连线。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，可省略 nodeId 续用原输出；普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds。生成前按实际输入查 model_list。taskSubmitted 只表示入队，必须看 status、versionStatus 和 adoption；失败后新收费生成需用户明确要求及当前审批流程。
+提交图片、视频或音频任务，审批、价格、预算与资源校验仍生效。默认 intent=create；更新已有成品明确传 intent=new_version，复用原 nodeId 和分镜输出绑定，期间旧版可用，成功自动采用。生成期间手动选择版本后，结果只进历史。原任务执行中、接单未知或媒体待保存时，先 task_get 核对并恢复原任务，不新付费生成。new_version 的 referenceNodeIds 可含自身，服务端冻结旧资源且不建自连线。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，可省略 nodeId 续用原输出；普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds。生成前按实际输入查 model_list。taskSubmitted 只表示入队：提交后立即返回 status=submitted，生成在后台进行，结束时会以「[系统通知] 生成结果」告诉你成功、失败或回写情况；期间可以继续其他工作，需要结果才能继续时调用 wait_generations，不要用 task_get 轮询。失败后新收费生成需用户明确要求及当前审批流程。
+## wait_generations
+
+等待本轮已提交、尚未结束的生成，结束后返回每个生成的结果（节点、状态、摘要、错误）；没有进行中的生成时立即返回。只在需要结果才能决定下一步时调用，例如要查看生成的图片；等待期间运行让出 Worker，不计入步骤。
 ## parameter_001
 
 短标识，如 1

@@ -112,3 +112,33 @@ func TestClientAssetListPayloadDropsVerboseMetadata(t *testing.T) {
 		t.Fatalf("duplicate cover URL was not removed: %#v", payload["coverUrl"])
 	}
 }
+
+// 早期生成结果以 "ready" 入库；下发给浏览器时必须落在素材合同的状态里，否则整张素材列表被拒收。
+func TestClientAssetPayloadMapsLegacyReadyStatus(t *testing.T) {
+	for stored, want := range map[model.AssetVersionStatus]any{"ready": "confirmed", "confirmed": "confirmed", "bogus": nil} {
+		raw := ClientAssetPayload(model.Asset{ID: "task-output-x-0", Kind: "image", Title: "图", Status: stored, PayloadJSON: `{"id":"task-output-x-0","kind":"image","data":{"url":"/a.png"}}`})
+		var payload map[string]any
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if got := payload["status"]; (want == nil && got != nil) || (want != nil && got != model.AssetVersionStatus(want.(string)) && got != want) {
+			t.Fatalf("stored %q -> status %#v, want %#v", stored, got, want)
+		}
+	}
+}
+
+// 早期视频生成结果把缺失的 hasAudio 写成 null，浏览器会拒收整张素材列表（“hasAudio 必须是布尔值”）。
+func TestClientAssetPayloadDropsNullHasAudio(t *testing.T) {
+	for raw, want := range map[string]any{`null`: nil, `true`: true, `false`: false, `"yes"`: nil} {
+		payload := ClientAssetPayload(model.Asset{ID: "task-output-v-0", Kind: "video", Title: "视频", Status: "confirmed", PayloadJSON: `{"id":"task-output-v-0","kind":"video","data":{"url":"/v.mp4","storageKey":"resource:v","width":720,"height":1280,"mimeType":"video/mp4","hasAudio":` + raw + `}}`})
+		var decoded map[string]any
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		data := decoded["data"].(map[string]any)
+		got, present := data["hasAudio"]
+		if (want == nil && present) || (want != nil && got != want) {
+			t.Fatalf("hasAudio %s -> %#v (present=%v), want %#v", raw, got, present, want)
+		}
+	}
+}

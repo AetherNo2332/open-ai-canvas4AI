@@ -163,21 +163,20 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 			if generation, _ := newest["generation"].(map[string]any); generation["taskId"] != task.ID || newest["source"] != "generate" {
 				t.Fatalf("agent version not traceable by generation.taskId: %+v", newest)
 			}
-			if err = advancePiAgentForTest(t, s, run.ID); err != nil {
+			if _, err = s.SettlePendingCloudAgentGenerations(); err != nil {
 				t.Fatal(err)
 			}
 			_, completed := agentInterjectionState(t, s, run.ID)
 			found := false
 			for _, event := range completed.Events {
-				result, ok := event.Payload["result"].(map[string]any)
-				if !ok || result["taskId"] != task.ID || result["phase"] != "completion" {
+				if event.Type != "generation_settled" || event.Payload["taskId"] != task.ID {
 					continue
 				}
-				expected := "生成结果已回写画布节点"
+				expected := "已生成并写入画布"
 				if manual {
-					expected = "新版本已加入节点版本历史，保留手动选择的当前版本"
+					expected = "已生成，新版本已加入节点版本历史，保留手动选择的当前版本"
 				}
-				found = event.Type == "tool_completed" && result["summary"] == expected && result["adopted"] == !manual && result["versionId"] == newest["id"]
+				found = event.Payload["summary"] == expected && event.Payload["adopted"] == !manual && event.Payload["versionId"] == newest["id"]
 			}
 			if !found {
 				t.Fatal("completion did not report the persisted adoption decision")

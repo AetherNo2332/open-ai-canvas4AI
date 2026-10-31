@@ -103,20 +103,18 @@ func TestCloudAgentMediaReceiptMarksUncertainNotRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, state = agentInterjectionState(t, s, run.ID)
-	var result map[string]any
+	// 异步生成：接单状态待核对以 generation_settled 与系统通知送达，通知要求先核对原任务、不得重新生成。
+	var settled map[string]any
 	for index := len(state.Events) - 1; index >= 0; index-- {
-		if state.Events[index].Type == "tool_failed" {
-			result, _ = state.Events[index].Payload["result"].(map[string]any)
+		if state.Events[index].Type == "generation_settled" && state.Events[index].Payload["taskId"] == taskID {
+			settled = state.Events[index].Payload
 			break
 		}
 	}
-	if result == nil {
-		t.Fatal("uncertain submission must produce a tool receipt")
+	if settled == nil || settled["status"] != string(model.TaskStatusSubmissionUncertain) {
+		t.Fatalf("uncertain submission must be settled with its status: %+v", settled)
 	}
-	if result["status"] != "submission_uncertain" || result["retryable"] != false || result["taskId"] != taskID {
-		t.Fatalf("receipt must mark the uncertain submission as not retryable: %+v", result)
-	}
-	if result["requiredAction"] != "verify_original_submission" {
-		t.Fatalf("receipt must ask to verify the original submission: %+v", result)
+	if len(state.PendingInterjections) != 1 || !strings.Contains(state.PendingInterjections[0].Text, "上游接单状态待核对") || !strings.Contains(state.PendingInterjections[0].Text, "不要重新生成") {
+		t.Fatalf("notice must ask to verify the original submission instead of regenerating: %+v", state.PendingInterjections)
 	}
 }

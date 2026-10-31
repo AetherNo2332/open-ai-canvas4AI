@@ -4935,7 +4935,7 @@
     },
     {
       "function": {
-        "description": "提交图片、视频或音频任务，审批、价格、预算与资源校验仍生效。默认 intent=create；更新已有成品明确传 intent=new_version，复用原 nodeId 和分镜输出绑定，期间旧版可用，成功自动采用。生成期间手动选择版本后，结果只进历史。原任务执行中、接单未知或媒体待保存时，先 task_get 核对并恢复原任务，不新付费生成。new_version 的 referenceNodeIds 可含自身，服务端冻结旧资源且不建自连线。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，可省略 nodeId 续用原输出；普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds。生成前按实际输入查 model_list。taskSubmitted 只表示入队，必须看 status、versionStatus 和 adoption；失败后新收费生成需用户明确要求及当前审批流程。 优先原样复制 model_list 返回的 selectionId（服务端签发的一次性凭证，不要修改其中任何字符）。兼容期也接受展开字段：非空 logicalModelId，或同时提供非空 channelId 和 channelModelKey。若 selectionId 与展开字段都完全省略，服务端仅在当前项目已配置该能力的可用默认模型时使用它；没有可用默认模型时拒绝提交，不会随机选模。selectionId 与展开字段互斥；未使用的选择字段省略或传空字符串，不得传 null 或仅含空白字符串。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "提交图片、视频或音频任务，审批、价格、预算与资源校验仍生效。默认 intent=create；更新已有成品明确传 intent=new_version，复用原 nodeId 和分镜输出绑定，期间旧版可用，成功自动采用。生成期间手动选择版本后，结果只进历史。原任务执行中、接单未知或媒体待保存时，先 task_get 核对并恢复原任务，不新付费生成。new_version 的 referenceNodeIds 可含自身，服务端冻结旧资源且不建自连线。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，可省略 nodeId 续用原输出；普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds。生成前按实际输入查 model_list。taskSubmitted 只表示入队：提交后立即返回 status=submitted，生成在后台进行，结束时会以「[系统通知] 生成结果」告诉你成功、失败或回写情况；期间可以继续其他工作，需要结果才能继续时调用 wait_generations，不要用 task_get 轮询。失败后新收费生成需用户明确要求及当前审批流程。 优先原样复制 model_list 返回的 selectionId（服务端签发的一次性凭证，不要修改其中任何字符）。兼容期也接受展开字段：非空 logicalModelId，或同时提供非空 channelId 和 channelModelKey。若 selectionId 与展开字段都完全省略，服务端仅在当前项目已配置该能力的可用默认模型时使用它；没有可用默认模型时拒绝提交，不会随机选模。selectionId 与展开字段互斥；未使用的选择字段省略或传空字符串，不得传 null 或仅含空白字符串。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "generate_media",
         "parameters": {
           "additionalProperties": false,
@@ -5149,6 +5149,19 @@
           "required": [
             "mode"
           ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "等待本轮已提交、尚未结束的生成，结束后返回每个生成的结果（节点、状态、摘要、错误）；没有进行中的生成时立即返回。只在需要结果才能决定下一步时调用，例如要查看生成的图片；等待期间运行让出 Worker，不计入步骤。",
+        "name": "wait_generations",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {},
+          "required": [],
           "type": "object"
         }
       },

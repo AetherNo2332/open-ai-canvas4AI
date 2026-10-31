@@ -104,6 +104,9 @@ func run(ctx context.Context) error {
 	if err := svc.EnsureBuiltinSkills(); err != nil {
 		return err
 	}
+	if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+		return err
+	}
 	if err := svc.EnsureSkillPackages(); err != nil {
 		return err
 	}

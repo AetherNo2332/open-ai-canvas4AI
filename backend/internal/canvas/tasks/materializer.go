@@ -361,7 +361,11 @@ func (s *Service) materializeOutputs(ctx context.Context, task model.Task) ([]mo
 				if err != nil || r.Status != model.ResourceStatusReady || !strings.HasPrefix(r.MimeType, outputMode+"/") {
 					return &commands.Error{Reason: "result_resource_unavailable", Message: "生成资源未就绪或类型不匹配，请恢复原任务"}
 				}
-				data = map[string]any{"storageKey": "resource:" + id, "dataUrl": assets.FileURL(id), "url": assets.FileURL(id), "width": r.Width, "height": r.Height, "durationMs": r.DurationMs, "bytes": r.Size, "mimeType": r.MimeType, "hasAudio": value["hasAudio"]}
+				data = map[string]any{"storageKey": "resource:" + id, "dataUrl": assets.FileURL(id), "url": assets.FileURL(id), "width": r.Width, "height": r.Height, "durationMs": r.DurationMs, "bytes": r.Size, "mimeType": r.MimeType}
+				// 素材合同里 hasAudio 只能是布尔值或不出现；上游没给时不写，避免写成 null 让浏览器拒收素材列表。
+				if hasAudio, ok := value["hasAudio"].(bool); ok {
+					data["hasAudio"] = hasAudio
+				}
 				if preview, ok := value["preview"].(map[string]any); ok && binding.Mode == "video" {
 					previewID := str(preview["resourceId"])
 					if previewID == "" {
@@ -386,7 +390,8 @@ func (s *Service) materializeOutputs(ctx context.Context, task model.Task) ([]mo
 				}
 			}
 			now := time.Now()
-			asset := model.Asset{ID: assetID, UserID: task.UserID, Kind: outputMode, Status: "ready", Title: truncate(task.Prompt, 240), PayloadJSON: string(raw), CreatedAt: now, UpdatedAt: now}
+			// 生成结果即为可用素材：状态取素材合同里的 confirmed（前端只接受 draft/review/confirmed/archived）。
+			asset := model.Asset{ID: assetID, UserID: task.UserID, Kind: outputMode, Status: model.AssetVersionStatusConfirmed, Title: truncate(task.Prompt, 240), PayloadJSON: string(raw), CreatedAt: now, UpdatedAt: now}
 			if err = tx.InsertCanvasOutputAsset(&asset); err != nil {
 				return err
 			}
@@ -471,7 +476,12 @@ func applyOutput(node map[string]any, task model.Task, o model.CanvasTaskOutput)
 		if data["videoPreview"] != nil {
 			m["videoPreview"] = data["videoPreview"]
 		}
-		m["naturalWidth"], m["naturalHeight"], m["bytes"], m["mimeType"], m["durationMs"], m["hasAudio"] = data["width"], data["height"], data["bytes"], data["mimeType"], data["durationMs"], data["hasAudio"]
+		m["naturalWidth"], m["naturalHeight"], m["bytes"], m["mimeType"], m["durationMs"] = data["width"], data["height"], data["bytes"], data["mimeType"], data["durationMs"]
+		if hasAudio, ok := data["hasAudio"].(bool); ok {
+			m["hasAudio"] = hasAudio
+		} else {
+			delete(m, "hasAudio")
+		}
 		if m["locked"] != true && o.Kind != "audio" {
 			fitMedia(node, data, o.Kind)
 		}

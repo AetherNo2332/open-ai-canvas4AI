@@ -89,7 +89,7 @@ func (r *Repository) WorkerRecoveryRuns(after string, limit int) ([]model.CloudA
 func (r *Repository) WorkerRecoveryProtectedWait(run model.CloudAgentExecution) (bool, error) {
 	// Approvals, subagents and director previews wait on people or a browser,
 	// not on this worker; a lease lapse there must not spend recovery budget.
-	if run.Status == "waiting_approval" || run.WaitKind == "subagents" || run.WaitKind == "director_preview" {
+	if run.Status == "waiting_approval" || run.WaitKind == "subagents" || run.WaitKind == "director_preview" || run.WaitKind == "generations" {
 		return true, nil
 	}
 	resourceTask := run.RuntimePhase == "waiting_resource" && (run.WaitKind == "model" || run.WaitKind == "tool" || run.WaitKind == "compaction")
@@ -114,7 +114,7 @@ func workerRecoveryClaimUpdates(run model.CloudAgentExecution, now time.Time, pr
 		return updates
 	}
 	if run.LeaseOwner != "" && run.LeaseExpiresAt != nil && !run.LeaseExpiresAt.After(now) &&
-		run.ProgressVersion == run.ClaimProgressVersion && run.Status != "waiting_approval" && run.WaitKind != "subagents" {
+		run.ProgressVersion == run.ClaimProgressVersion && run.Status != "waiting_approval" && run.WaitKind != "subagents" && run.WaitKind != "generations" {
 		updates["recovery_attempts"] = run.RecoveryAttempts + 1
 		updates["recovery_status"] = "reconciling"
 		updates["recovery_class"] = "worker_lost"

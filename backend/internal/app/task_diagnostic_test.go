@@ -3,11 +3,13 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"strings"
 	"testing"
 
+	"yingce/backend/internal/generation"
 	"yingce/backend/internal/model"
 )
 
@@ -92,6 +94,31 @@ func TestCloudAgentDNSDiagnosticSurvivesTransportWrapping(t *testing.T) {
 		raw, _ := json.Marshal(facts)
 		if strings.Contains(string(raw)+message, "private-sentinel") {
 			t.Fatal("raw DNS/transport details leaked")
+		}
+	}
+}
+
+// 上游明确拒收（4xx）不是“接单状态未知”：否则画布任务会停在 submission_uncertain，
+// 把分镜行或节点长期锁成“已有活动任务”。超时与 5xx 仍可能已在上游执行，保持未知。
+func TestProviderRejectedSubmission(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{providerHTTPError{StatusCode: 400}, true},
+		{providerHTTPError{StatusCode: 422}, true},
+		{providerHTTPError{StatusCode: 401}, true},
+		{providerHTTPError{StatusCode: 402}, true},
+		{fmt.Errorf("wrapped: %w", providerHTTPError{StatusCode: 400}), true},
+		{generation.HTTPError{StatusCode: 400}, true},
+		{providerHTTPError{StatusCode: 408}, false},
+		{providerHTTPError{StatusCode: 429}, false},
+		{providerHTTPError{StatusCode: 500}, false},
+		{providerHTTPError{StatusCode: 524}, false},
+		{errors.New("connection reset"), false},
+	} {
+		if got := providerRejectedSubmission(tc.err); got != tc.want {
+			t.Fatalf("%v: got %v want %v", tc.err, got, tc.want)
 		}
 	}
 }

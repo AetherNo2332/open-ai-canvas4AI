@@ -166,29 +166,37 @@ func TestCloudAgentMediaCompletionKeepsGenerationAndWritebackFailures(t *testing
 				t.Fatal(err)
 			}
 			run, state = agentInterjectionState(t, s, run.ID)
-			last := state.Events[len(state.Events)-1]
-			result, _ := last.Payload["result"].(map[string]any)
-			if last.Type != "tool_failed" || result["status"] != string(test.status) || result["writebackReason"] != test.reason || result["targetNodeId"] != args.NodeID || result["taskId"] != taskID || result["taskSubmitted"] != true {
-				t.Fatalf("completion lost distinct outcome or target: %+v", result)
-			}
-			message := stringValue(result["error"])
-			if run.Status != "failed" || run.FailureMessage != message || message == "工具执行失败，请检查输入或稍后重试" || state.MediaTaskID != "" {
-				t.Fatalf("terminal failure was not checkpointed with its diagnostic: status=%s message=%q", run.Status, run.FailureMessage)
-			}
-			if test.status == model.TaskStatusFailed {
-				if stringValue(result["generationError"]) == "" || !strings.Contains(message, stringValue(result["generationError"])) || strings.Contains(message, "任务已成功") {
-					t.Fatal("writeback masked generation failure")
+			// 异步生成：结果（含生成失败与回写失败）以 generation_settled 事件和一条系统通知送达，
+			// 回写失败不再判死整轮——生成已计费，作品保留在资源库，由 Agent 如实告诉用户。
+			var settled *CloudAgentEvent
+			for index := range state.Events {
+				if state.Events[index].Type == "generation_settled" && state.Events[index].Payload["taskId"] == taskID {
+					settled = &state.Events[index]
 				}
-			} else if result["generationError"] != nil || !strings.Contains(message, "媒体任务已成功") {
-				t.Fatal("successful generation reported as failed")
 			}
-			serialized, _ := json.Marshal(last.Payload)
-			if strings.Contains(string(serialized), "private-value") || strings.Contains(string(serialized), "private.invalid") {
+			if settled == nil || settled.Payload["status"] != string(test.status) || settled.Payload["callId"] == "" {
+				t.Fatalf("completion lost distinct outcome or target: %+v", settled)
+			}
+			if run.Status == "failed" || len(state.PendingGenerations) != 0 {
+				t.Fatalf("writeback failure must not fail the run: status=%s pending=%d", run.Status, len(state.PendingGenerations))
+			}
+			if len(state.PendingInterjections) != 1 || state.PendingInterjections[0].Source != cloudAgentGenerationSource {
+				t.Fatalf("outcome must be queued as one generation notice: %+v", state.PendingInterjections)
+			}
+			notice := state.PendingInterjections[0].Text
+			if test.status == model.TaskStatusFailed {
+				if !strings.Contains(notice, "生成未成功") || strings.Contains(notice, "生成成功") {
+					t.Fatalf("writeback masked generation failure: %s", notice)
+				}
+			} else if !strings.Contains(notice, "生成成功，但画布回写未完成") {
+				t.Fatalf("successful generation with failed writeback reported wrongly: %s", notice)
+			}
+			serialized, _ := json.Marshal(settled.Payload)
+			if strings.Contains(string(serialized)+notice, "private-value") || strings.Contains(string(serialized)+notice, "private.invalid") {
 				t.Fatal("provider credentials leaked into Agent events")
 			}
-			failure := state.Events[len(state.Events)-2]
-			if failure.Type != "run_failed" || failure.Payload["reason"] != test.reason || failure.Payload["generationStatus"] != string(test.status) {
-				t.Fatal("run failure lost structured causes")
+			if diagnostic := taskExecutionDiagnosticForTest(t, s, taskID); diagnostic.WritebackReason != test.reason {
+				t.Fatalf("writeback reason = %q, want %q", diagnostic.WritebackReason, test.reason)
 			}
 			if test.change != "" {
 				after, err := s.repo.CanvasProjectForUser("user", canvas.ID)
@@ -242,4 +250,17 @@ func TestCloudAgentCapabilityGuidePublishesConnectionContracts(t *testing.T) {
 			t.Fatalf("node %s missing from guide", nodeType)
 		}
 	}
+}
+
+func taskExecutionDiagnosticForTest(t *testing.T, s *Service, taskID string) model.TaskExecutionDiagnostic {
+	t.Helper()
+	task, err := s.repo.TaskForUser("user", taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostic := taskExecutionDiagnostic(task)
+	if diagnostic == nil {
+		t.Fatal("task has no execution diagnostic")
+	}
+	return *diagnostic
 }

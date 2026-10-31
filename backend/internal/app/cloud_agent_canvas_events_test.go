@@ -43,7 +43,14 @@ func TestCloudAgentCanvasPatchesPersistDraftSubmissionAndAllTerminalStates(t *te
 				t.Fatalf("approved task missing: %+v", state.Events[max(0, len(state.Events)-3):])
 			}
 			if status == model.TaskStatusCancelled {
+				// 取消运行不再取消生成；这里模拟生成本身被取消（例如用户在节点上取消）。
 				if err := s.CancelCloudAgent(context.Background(), "user", run.ID); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": status, "error": "已取消"}).Error; err != nil {
+					t.Fatal(err)
+				}
+				if _, err := s.SettlePendingCloudAgentGenerations(); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -57,7 +64,7 @@ func TestCloudAgentCanvasPatchesPersistDraftSubmissionAndAllTerminalStates(t *te
 				if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": status, "result_json": result, "error": "上游拒绝"}).Error; err != nil {
 					t.Fatal(err)
 				}
-				if err := advancePiAgentForTest(t, s, run.ID); err != nil {
+				if _, err := s.SettlePendingCloudAgentGenerations(); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -275,13 +282,14 @@ func TestCloudAgentMissingCanvasStillCheckpointsMediaFailure(t *testing.T) {
 	if err := db.Where("id = ?", "agent-canvas").Delete(&model.CanvasProject{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := advancePiAgentForTest(t, s, run.ID); err != nil {
+	// 画布被删：回写不到画布也不能卡住生成记录，结果以通知送达，运行保持可继续。
+	if _, err := s.SettlePendingCloudAgentGenerations(); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
 	state, _ = cloudAgentDecode(run)
-	if run.Status != "failed" || state.MediaTaskID != "" || state.Events[len(state.Events)-1].Type != "tool_failed" {
-		t.Fatal("deleted canvas left the media checkpoint running")
+	if len(state.PendingGenerations) != 0 || run.MediaTaskID != "" || len(state.PendingInterjections) != 1 {
+		t.Fatalf("deleted canvas left the generation pending: pending=%d notices=%+v", len(state.PendingGenerations), state.PendingInterjections)
 	}
 	for _, event := range state.Events {
 		if event.Type == "canvas_updated" && event.Payload["operation"] == "generate_media_complete" {

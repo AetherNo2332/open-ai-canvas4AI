@@ -2,6 +2,8 @@ package app
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
 
 	"yingce/backend/internal/model"
@@ -126,5 +128,54 @@ func TestCloudAgentRepairExhaustsWithFingerprint(t *testing.T) {
 	}
 	if runsJSON, err := json.Marshal(state.ToolRepairs); err != nil || string(runsJSON) == "" {
 		t.Fatalf("纠错记录应可序列化：%v", err)
+	}
+}
+
+// 验收现场：同一批两次看图都把 summary 写成了坏掉的 JSON 字符串，
+// 下一步修好第一张图、第二张又错一次，就以"已尝试 3 次"熔断了。
+// 同一批里重复同一个错误只算一次；看图成功也要结束这个工具的纠错组。
+func TestCloudAgentRepairCountsOneBatchOnceAndInspectionSuccessCloses(t *testing.T) {
+	state := &cloudAgentRuntime{PiToolBatchTaskID: "step-1"}
+	run := &model.CloudAgentExecution{ID: "run", Status: "running"}
+	inspect := func(id, summary string) cloudAgentCall {
+		call := cloudAgentCall{ID: id}
+		call.Function.Name = "canvas_inspect_image"
+		call.Function.Arguments = `{"nodeId":"n1","sha256":"` + strings.Repeat("a", 64) + `","summary":` + summary + `}`
+		return call
+	}
+	broken := strconv.Quote(`{"short":"海报","detailed":{"subjects":["僧人"]，"composition":"竖幅"}}`)
+	schema := map[string]any{"type": "object", "properties": map[string]any{"nodeId": map[string]any{"type": "string"}}, "required": []string{"nodeId"}}
+	cloudAgentToolParameterContracts("canvas_inspect_image", schema)
+	err := validateCloudAgentToolArguments(schema, inspect("x", broken).Function.Arguments)
+	if err == nil || !strings.Contains(err.Error(), "传成了字符串") || !strings.Contains(err.Error(), "不是合法 JSON") {
+		t.Fatalf("summary 传成坏 JSON 字符串时应点明原因：%v", err)
+	}
+	example := cloudAgentArgumentExample(inspect("x", broken), "summary")
+	body, _ := json.Marshal(example)
+	if example == nil || validateCloudAgentToolArguments(schema, string(body)) != nil {
+		t.Fatalf("summary 出错时应给出可直接照抄结构的合法示例：%s", body)
+	}
+	for _, id := range []string{"first", "second"} {
+		cloudAgentRecordToolResult(run, state, inspect(id, broken), nil, err)
+	}
+	if repair := state.ToolRepairs["canvas_inspect_image"]; repair.Attempt != 1 || run.Status != "running" {
+		t.Fatalf("同一批的同一个错误只能算一次：%+v status=%s", repair, run.Status)
+	}
+	state.PiToolBatchTaskID = "step-2"
+	ok := inspect("fixed", `{"short":"海报","detailed":{}}`)
+	cloudAgentRecordToolResult(run, state, ok, cloudAgentImageInspection{Receipt: map[string]any{"nodeId": "n1", "summarySaved": true}}, nil)
+	if len(state.ToolRepairs) != 0 || len(state.ToolScope) != 0 {
+		t.Fatalf("看图成功应结束纠错组并恢复工具集：%+v %+v", state.ToolRepairs, state.ToolScope)
+	}
+	cloudAgentRecordToolResult(run, state, inspect("other", broken), nil, err)
+	if repair := state.ToolRepairs["canvas_inspect_image"]; repair.Attempt != 1 || run.Status != "running" {
+		t.Fatalf("修好之后的新错误应从第一次开始：%+v status=%s", repair, run.Status)
+	}
+	for step := 3; step <= 4; step++ {
+		state.PiToolBatchTaskID = "step-" + strconv.Itoa(step)
+		cloudAgentRecordToolResult(run, state, inspect("again-"+strconv.Itoa(step), broken), nil, err)
+	}
+	if run.Status != "failed" {
+		t.Fatal("跨三步重复同一个错误仍应熔断")
 	}
 }

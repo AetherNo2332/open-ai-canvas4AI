@@ -36,6 +36,12 @@ func (s *Service) startAgentWatchdog() {
 				} else if swept > 0 {
 					log.Printf("pi unclaimed sweep: terminated %d run(s)", swept)
 				}
+				// 生成是异步的：运行即便已结束或取消，生成照常完成并写回画布。
+				if settled, err := s.SettlePendingCloudAgentGenerations(); err != nil {
+					log.Printf("pi generation settle: %v", err)
+				} else if settled > 0 {
+					log.Printf("pi generation settle: %d run(s)", settled)
+				}
 				// 清扫只写终态与 CleanupPending；退预留、取消子任务、释放租约在这里补做，
 				// 否则看门狗停掉的运行会把占位预留冻在账上。
 				if cleaned, err := s.DrainPendingPiAgentCleanups(); err != nil {

@@ -17,6 +17,7 @@ import {
     Clapperboard,
     HelpCircle,
     ImagePlus,
+    Info,
     Layers3,
     ListChecks,
     LoaderCircle,
@@ -46,7 +47,7 @@ import { agentOperationCategory, agentOperationFailed, agentOperationSegmentLabe
 import { agentToolRetry, type AgentToolRetryAttempt } from "@/lib/canvas/agent-tool-retry";
 import { AgentMemoryUpdateCard, type CloudAgentMemoryUpdate } from "./canvas-cloud-agent-memory-cards";
 import { AgentReplyOptionCards, agentReplyOptionsTarget } from "./canvas-agent-reply-options";
-import { AgentThinkGlyph, agentActivityGlyph } from "./agent-activity-icons";
+import { AgentChevronGlyph, AgentThinkGlyph, agentActivityGlyph } from "./agent-activity-icons";
 import type { AgentReplyOptions } from "@/lib/canvas/agent-reply-options";
 import { agentErrorContent } from "@/lib/canvas/agent-error-presentation";
 import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
@@ -345,8 +346,8 @@ export const AgentChatMessage = memo(function AgentChatMessage({
     if (item.memoryUpdate) return <AgentMemoryUpdateCard update={item.memoryUpdate} theme={theme} />;
     if (isSystem) {
         return (
-            <div className="agent-status-message flex items-start gap-2 text-xs" data-agent-enter="">
-                <AgentTimelineMarker theme={theme} tone="muted" icon={<Sparkles className="size-3" />} />
+            <div className="agent-status-message agent-status-message--system flex items-start gap-2 text-xs" data-agent-enter="">
+                <AgentTimelineMarker theme={theme} tone="muted" icon={<Info className="size-3" />} />
                 <div className="min-w-0 flex-1 py-0.5 leading-5" style={{ color: theme.node.muted }}>
                     {item.text}
                     {item.meta ? <span className="ml-2 opacity-60">{item.meta}</span> : null}
@@ -558,6 +559,20 @@ export function AgentMessageList({
 /**
  * 推理摘要默认只保留一行入口；流式更新不改变用户手动展开的状态。
  */
+function agentReasoningPreview(items: readonly CloudAgentChatMessage[]) {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+        const line = items[index].text
+            .split(/\r?\n/u)
+            .map((value) => value.replace(/^[#>*\-\s]+|\*\*|`/gu, "").trim())
+            .find(Boolean);
+        if (line) return line.length > 160 ? `${line.slice(0, 160)}…` : line;
+    }
+    return "";
+}
+
+/**
+ * 推理是辅助信息，不与正文争夺主视觉：连续摘要合成一行，收起时用最新一段的首行做预览（与上游一致）。
+ */
 export const AgentReasoningFeed = memo(function AgentReasoningFeed({
     items,
     theme,
@@ -569,25 +584,24 @@ export const AgentReasoningFeed = memo(function AgentReasoningFeed({
     const contentId = useId();
     const streaming = items.some((item) => item.streaming);
     const text = items.map((item) => item.text.trim()).filter(Boolean).join("\n\n");
+    const preview = agentReasoningPreview(items);
+    const countLabel = !streaming && items.length > 1 ? `${items.length} 段` : "";
     return (
-        <div className="agent-reasoning" style={{ "--agent-reasoning-accent": theme.accent.primary } as CSSProperties}>
-            <div className={`agent-reasoning-card${expanded ? " is-open" : ""}${streaming ? " is-streaming" : ""}`}>
-                <button type="button" className="agent-reasoning-summary" aria-expanded={expanded} aria-controls={contentId} aria-label={`${expanded ? "收起" : "展开"}模型思考摘要`} onClick={() => setExpanded((current) => !current)}>
-                    <span className="agent-activity-glyph agent-reasoning-glyph" aria-hidden="true">
-                        <AgentThinkGlyph />
-                    </span>
-                    <span className="agent-reasoning-copy">
-                        <span className="agent-reasoning-title">{streaming ? "模型正在思考" : "模型思考"}</span>
-                        <span className="agent-reasoning-subtitle">{expanded ? "点击收起" : "点击查看"}</span>
-                    </span>
-                    <ChevronDown className="agent-reasoning-chevron" aria-hidden="true" />
-                </button>
-                <AgentFeedDisclosure expanded={expanded} id={contentId} label="模型思考摘要">
-                    <div className="agent-reasoning-content" data-canvas-wheel-scroll>
-                        <div className="agent-reasoning-text">{text || (streaming ? "正在整理思路…" : "暂无可展示的推理摘要")}</div>
-                    </div>
-                </AgentFeedDisclosure>
-            </div>
+        <div className={`agent-activity agent-reasoning${expanded ? " is-open" : ""}${streaming ? " is-live" : ""}`} data-agent-tone="think" style={{ "--agent-reasoning-accent": theme.accent.primary } as CSSProperties}>
+            <button type="button" className="agent-activity-row" aria-expanded={expanded} aria-controls={contentId} aria-label={`${expanded ? "收起" : "展开"}思考过程`} onClick={() => setExpanded((current) => !current)}>
+                <span className="agent-activity-glyph" aria-hidden="true">
+                    <AgentThinkGlyph />
+                </span>
+                <span className="agent-activity-title">{streaming ? "正在思考" : "思考过程"}</span>
+                {preview && !expanded ? <span className="agent-activity-detail agent-reasoning-preview">{preview}</span> : null}
+                {countLabel ? <span className="agent-activity-meta">{countLabel}</span> : null}
+                <AgentChevronGlyph className="agent-activity-chevron" />
+            </button>
+            <AgentFeedDisclosure expanded={expanded} id={contentId} label="思考过程">
+                <div className="agent-activity-body agent-reasoning-content" data-canvas-wheel-scroll>
+                    <div className="agent-reasoning-text">{text || (streaming ? "正在整理思路…" : "暂无可展示的推理摘要")}</div>
+                </div>
+            </AgentFeedDisclosure>
         </div>
     );
 }, sameFeedProps);
@@ -946,36 +960,46 @@ export const AgentOperationFeed = memo(function AgentOperationFeed({
     const shimmering = live && !failed;
     const latestToolName = agentToolName(latest.title || "工具执行", latest.detail);
     const latestGlyph = agentToolCategoryIcon(latestToolName, category, Boolean(agentToolRetry(latest.detail)));
+    const latestRetry = agentToolRetry(latest.detail);
+    // 自动纠正不属于任何工具类别；标题直接写“自动纠正”（与上游一致）。
+    const categoryLabel = latestRetry ? "自动纠正" : agentToolCategoryLabel(latestToolName, category);
     return (
-        <div className={`agent-operation-feed${expanded ? " is-open" : ""}${failed ? " is-failed" : ""}${shimmering ? " is-live" : ""}`} data-agent-operation-feed data-agent-category={category}>
+        <div
+            className={`agent-activity agent-operation-feed${expanded ? " is-open" : ""}${failed ? " is-failed" : ""}${shimmering ? " is-live" : ""}`}
+            data-agent-operation-feed
+            data-agent-category={category}
+            data-agent-tone={failed ? "error" : latestRetry ? (latestRetry.status === "recovered" ? "other" : "warning") : category}
+        >
             <button
                 type="button"
-                className="agent-operation-toggle"
+                className="agent-activity-row agent-operation-toggle"
                 aria-expanded={expanded}
                 aria-controls={listId}
-                aria-label={`${expanded ? "收起" : "展开"}工具调用记录，最新操作：${label}`}
+                aria-label={`${expanded ? "收起" : "展开"} ${items.length} 步${categoryLabel}记录，最新一步：${label}`}
                 onClick={() => setExpanded((current) => !current)}
             >
-                <span className="agent-activity-glyph agent-operation-glyph" aria-hidden="true">
+                <span className="agent-activity-glyph" aria-hidden="true">
                     {latestGlyph}
                 </span>
+                <span className="agent-activity-title">{categoryLabel}</span>
                 {/* 换步时旧文案淡出上移、新文案从下方上浮；只动 transform / opacity，减少动态效果时只换不动。 */}
                 <AnimatePresence mode="wait" initial={false}>
                     <motion.span
                         key={label}
-                        className="agent-operation-latest"
-                        initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+                        className="agent-activity-detail agent-operation-latest"
+                        initial={reducedMotion ? false : { opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
-                        exit={reducedMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, y: -6 }}
+                        exit={reducedMotion ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, y: -4 }}
                         transition={{ duration: reducedMotion ? 0 : duration, ease: [0.16, 1, 0.3, 1] }}
                     >
                         {label}
                     </motion.span>
                 </AnimatePresence>
-                <ChevronDown className="agent-operation-chevron" aria-hidden="true" />
+                {items.length > 1 ? <span className="agent-activity-meta">{items.length} 步</span> : null}
+                <AgentChevronGlyph className="agent-activity-chevron" />
             </button>
             <AgentFeedDisclosure expanded={expanded} id={listId} label="工具调用操作记录">
-                <div className="agent-operation-list">
+                <div className="agent-activity-body agent-operation-list">
                     {items.map((item) => (
                         <AgentChatMessage key={item.id} item={item} theme={theme} references={references} onFocusNode={onFocusNode} />
                     ))}
