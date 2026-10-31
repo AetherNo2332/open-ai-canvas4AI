@@ -29,7 +29,7 @@ func cloudAgentConnectionOperationDisabled(opType string) bool {
 
 func cloudAgentConnectionOpsDisabledError(path, opType string) error {
 	return cloudAgentFieldError(path+".type", "connection_ops_disabled", fmt.Sprintf(
-		"画布参数 %s.type=%s 已停用（connection_ops_disabled）：连线由服务端按引用字段派生，请改用 generationSpec.referenceBindings、metadata.inputBindings、分镜行 assetBindings，或 canvas_edit_storyboard 的 set_references／bind_output／unbind_output",
+		"画布参数 %s.type=%s 已停用（connection_ops_disabled）：连线由服务端按引用字段派生，请改用 generationSpec.referenceBindings、metadata.inputBindings、分镜行 assetBindings，或 storyboard 的 set_references／bind_output／unbind_output",
 		path, opType))
 }
 
@@ -186,17 +186,6 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 		cloudAgentStoryboardContracts(schema)
 	case "director":
 		cloudAgentDirectorContracts(schema)
-	case "canvas_read_storyboard":
-		schema["allOf"] = []map[string]any{
-			{"oneOf": []map[string]any{
-				{"required": []string{"view"}, "properties": map[string]any{"view": map[string]any{"const": "full"}, "rows": map[string]any{"maximum": 20}}},
-				{"properties": map[string]any{"view": map[string]any{"enum": []string{"creative", "summary", "bindings"}}}},
-			}},
-			{"anyOf": []map[string]any{
-				{"properties": cloudAgentForbiddenFields("rowIds")},
-				{"properties": map[string]any{"offset": map[string]any{"const": 0}}},
-			}},
-		}
 	case "canvas_create_character":
 		schema["oneOf"] = []map[string]any{
 			{"required": []string{"imageNodeId"}, "properties": cloudAgentForbiddenFields("primaryImageNodeId", "turnaroundImageNodeId")},
@@ -225,59 +214,6 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 			{"properties": cloudAgentForbiddenFields("storyboardNodeId", "storyboardRowId", "storyboardRowIds")},
 			{"required": []string{"mode", "storyboardNodeId", "storyboardRowId"}, "properties": cloudAgentForbiddenFields("referenceNodeIds", "storyboardRowIds")},
 			{"required": []string{"mode", "storyboardNodeId", "storyboardRowIds"}, "properties": cloudAgentForbiddenFields("referenceNodeIds", "storyboardRowId")},
-		}
-	case "canvas_create_storyboard":
-		schema["anyOf"] = []map[string]any{{"properties": cloudAgentForbiddenFields("references")}, {"properties": cloudAgentForbiddenFields("referenceNodeIds")}}
-	case "canvas_edit_storyboard":
-		selection := []map[string]any{
-			{"required": []string{"rowId"}, "properties": cloudAgentForbiddenFields("rowIds")},
-			{"required": []string{"rowIds"}, "properties": cloudAgentForbiddenFields("rowId")},
-		}
-		update := cloudAgentActionBranch("update", []string{"patch"}, nil, "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates", "rows")
-		update["oneOf"] = selection
-		remove := cloudAgentActionBranch("remove", nil, nil, "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates", "rows")
-		remove["oneOf"] = selection
-		assets := cloudAgentActionBranch("set_assets", []string{"assets"}, nil, "patch", "references", "referenceNodeIds", "outputMode", "outputNodeId", "updates", "rows")
-		assets["oneOf"] = selection
-		refs := cloudAgentActionBranch("set_references", nil, nil, "rowId", "rowIds", "patch", "assets", "outputMode", "outputNodeId", "updates", "rows")
-		refs["oneOf"] = []map[string]any{
-			{"required": []string{"references"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")},
-			{"required": []string{"referenceNodeIds"}, "properties": cloudAgentForbiddenFields("references")},
-		}
-		schema["oneOf"] = []map[string]any{
-			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId", "rowIds", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates", "rows"),
-			cloudAgentActionBranch("batch_update", []string{"updates"}, nil, "rowId", "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "rows"),
-			cloudAgentActionBranch("append_rows", []string{"rows"}, nil, "rowId", "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates"),
-			update, remove, assets, refs,
-			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "rowIds", "patch", "references", "referenceNodeIds", "assets", "updates", "rows"),
-			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputNodeId", "updates", "rows"),
-		}
-		branches := schema["oneOf"].([]map[string]any)
-		for _, action := range []string{"add_assets", "remove_assets", "upsert_assets"} {
-			assetSchema := cloudAgentStoryboardAssetsSchema()
-			assetSchema["minItems"] = 1
-			branch := cloudAgentActionBranch(action, []string{"assets"}, map[string]any{"assets": assetSchema}, "patch", "references", "referenceNodeIds", "outputMode", "outputNodeId", "updates", "rows")
-			branch["oneOf"] = selection
-			branches = append(branches, branch)
-		}
-		for _, action := range []string{"add_references", "remove_references"} {
-			branch := cloudAgentActionBranch(action, nil, map[string]any{"references": map[string]any{"type": "array", "minItems": 1}, "referenceNodeIds": map[string]any{"type": "array", "minItems": 1}}, "rowId", "rowIds", "patch", "assets", "outputMode", "outputNodeId", "updates", "rows")
-			branch["oneOf"] = refs["oneOf"]
-			branches = append(branches, branch)
-		}
-		schema["oneOf"] = branches
-		for _, branch := range branches {
-			properties := branch["properties"].(map[string]any)
-			action := properties["action"].(map[string]any)["const"]
-			if action != "update" && action != "batch_update" {
-				properties["storyboardRevision"] = map[string]any{"not": map[string]any{}}
-			} else {
-				pure := map[string]any{"patch": map[string]any{"properties": cloudAgentForbiddenFields("assets")}}
-				if action == "batch_update" {
-					pure = map[string]any{"updates": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": pure}}}
-				}
-				branch["anyOf"] = []map[string]any{{"properties": cloudAgentForbiddenFields("storyboardRevision")}, {"properties": pure}}
-			}
 		}
 	case "canvas_edit_batch_table":
 		schema["oneOf"] = []map[string]any{

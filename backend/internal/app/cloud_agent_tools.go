@@ -573,6 +573,10 @@ func cloudAgentReadToolCacheable(name string) bool {
 	}
 }
 
+func cloudAgentReadCall(call cloudAgentCall) bool {
+	return cloudAgentReadToolReadOnly(call.Function.Name) || (call.Function.Name == "storyboard" && !cloudAgentWriteCall(call))
+}
+
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
 	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "task_get":
@@ -621,7 +625,7 @@ func cloudAgentReadCacheKeyForState(repo *repository.Repository, userID string, 
 }
 
 func cloudAgentReadToolCached(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, services ...*Service) (any, error) {
-	if !cloudAgentReadToolReadOnly(call.Function.Name) && !(call.Function.Name == "storyboard" && !cloudAgentWriteCall(call)) {
+	if !cloudAgentReadCall(call) {
 		return cloudAgentReadTool(repo, userID, state, call, services...)
 	}
 	if state == nil {

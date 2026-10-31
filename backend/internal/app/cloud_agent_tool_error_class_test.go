@@ -60,7 +60,7 @@ func TestCloudAgentToolErrorClass(t *testing.T) {
 func TestAgentReferenceMigrationIsNotAnArgumentRepair(t *testing.T) {
 	state := &cloudAgentRuntime{Request: CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}}}
 	call := cloudAgentCall{ID: "needs-migration"}
-	call.Function.Name = "canvas_edit_storyboard"
+	call.Function.Name = "storyboard"
 	call.Function.Arguments = `{"nodeId":"board","snapshotHash":"snapshot","action":"set_references","referenceNodeIds":["hero"]}`
 	cloudAgentToolResult("run", state, call, nil, cloudAgentReferenceMigrationRequired())
 	event := state.Events[len(state.Events)-1]

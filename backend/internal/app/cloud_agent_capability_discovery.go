@@ -6,7 +6,7 @@ package app
 func cloudAgentReferenceContractNotes() []string {
 	return []string{
 		"connections 是服务端按引用字段派生的只读结果；Agent 没有连接节点、改接或断开连线的操作，调用 connect_nodes／update_connection／delete_connection 会被拒绝并提示改用字段。",
-		"分镜共享输入写 storyboard.referenceNodeIds（storyboard.split 顶层或 storyboard 的 set_references）。",
+		"分镜共享素材用 storyboard 的 set_references、add_references、remove_references；剧情和风格要求写入分镜节点及相连文本节点，split/resplit 由服务端读取。",
 		"分镜行素材写该行 assetBindings；镜头产物归属用 storyboard 的 bind_output／unbind_output 声明已有产物，不重写产物内容。",
 		"characters 中的 characterImageNodeId／characterAssetId 也属于引用字段，不能绕过历史画布迁移门禁；只有角色名字或描述不代表关联资产。",
 		"普通媒体草稿写 generationSpec.referenceBindings；compare、panorama、config 等无生成合同的输入节点写 metadata.inputBindings；引用元素沿用同一个 ReferenceBinding 结构。",

@@ -45,7 +45,7 @@ func TestAgentFeedbackSnapshotRepairPreservesOperation(t *testing.T) {
 func TestAgentFeedbackArgumentHintsAndExamples(t *testing.T) {
 	req := tierAutoRequest()
 	for _, sample := range []struct{ tool, args, field string }{
-		{"storyboard", `{}`, "nodeId"},
+		{"storyboard", `{"action":"read"}`, "nodeId"},
 		{"task_get", `{}`, "taskId"},
 		{"storyboard", `{"action":"update","patch":{"durationSeconds":5}}`, "rowId"},
 		{"canvas_apply_ops", `{"ops":[{"type":"update_node","id":"private-sentinel","patch":{"x":100}}]}`, "ops[0].id"},
@@ -137,7 +137,7 @@ func TestAgentFeedbackReadBudgetIsCurrentAndDoesNotMutateResult(t *testing.T) {
 	original := map[string]any{"rows": []any{}, "readCallsRemaining": 99}
 	for _, sample := range []struct{ used, limit, remaining int }{{7, 10, 3}, {10, 10, 0}, {11, 10, 0}} {
 		state := &cloudAgentRuntime{ReadToolCalls: sample.used, CallLimits: cloudAgentCallLimits{ReadCallsPerRun: sample.limit}}
-		receipt := feedbackResult(t, state, piAgentTestCall("read", "storyboard", `{}`), original, nil)
+		receipt := feedbackResult(t, state, piAgentTestCall("read", "storyboard", `{"action":"read"}`), original, nil)
 		if receipt["readCallsUsed"] != float64(sample.used) || receipt["readCallsLimit"] != float64(sample.limit) || receipt["readCallsRemaining"] != float64(sample.remaining) {
 			t.Fatalf("wrong remaining budget: %+v", receipt)
 		}
@@ -174,7 +174,7 @@ func TestAgentFeedbackNodeStyleErrorNamesPatch(t *testing.T) {
 func TestAgentFeedbackCachedReadKeepsRowDiagnostics(t *testing.T) {
 	req := tierAutoRequest()
 	state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: cloudAgentTools(req)}}
-	call := piAgentTestCall("cached", "storyboard", `{"nodeId":"board","rowIds":["missing","r1","r1"]}`)
+	call := piAgentTestCall("cached", "storyboard", `{"action":"read","nodeId":"board","rowIds":["missing","r1","r1"]}`)
 	var cached cloudAgentCachedToolResult
 	if err := json.Unmarshal([]byte(`{"error":"分镜行不存在或重复","argumentError":true,"field":"rowIds","issue":"invalid_row_ids","invalidRowIds":["missing"],"duplicateRowIds":["r1"]}`), &cached); err != nil {
 		t.Fatal(err)

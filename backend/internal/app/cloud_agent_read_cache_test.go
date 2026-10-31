@@ -121,16 +121,16 @@ func TestCloudAgentReadToolCacheReplaysRepeatedIdenticalReads(t *testing.T) {
 func TestCloudAgentCanvasWriteInvalidatesOnlyCanvasReadResults(t *testing.T) {
 	state := &cloudAgentRuntime{
 		ToolReadResults: map[string]cloudAgentCachedToolResult{
-			`canvas_get_state:{}`:       {Result: json.RawMessage(`{"nodes":[]}`)},
-			`canvas_read_storyboard:{}`: {Result: json.RawMessage(`{"shots":[]}`)},
-			`skill_read_file:{}`:        {Result: json.RawMessage(`{"content":"skill"}`)},
-			`model_list:{}`:             {Result: json.RawMessage(`{"models":[]}`)},
+			`canvas_get_state:{}`: {Result: json.RawMessage(`{"nodes":[]}`)},
+			`storyboard:{}`:       {Result: json.RawMessage(`{"shots":[]}`)},
+			`skill_read_file:{}`:  {Result: json.RawMessage(`{"content":"skill"}`)},
+			`model_list:{}`:       {Result: json.RawMessage(`{"models":[]}`)},
 		},
 		ToolReadReplays: map[string]int{
-			`canvas_get_state:{}`:       2,
-			`canvas_read_storyboard:{}`: 1,
-			`skill_read_file:{}`:        3,
-			`model_list:{}`:             4,
+			`canvas_get_state:{}`: 2,
+			`storyboard:{}`:       1,
+			`skill_read_file:{}`:  3,
+			`model_list:{}`:       4,
 		},
 	}
 
@@ -138,7 +138,7 @@ func TestCloudAgentCanvasWriteInvalidatesOnlyCanvasReadResults(t *testing.T) {
 	if _, exists := state.ToolReadResults[`canvas_get_state:{}`]; exists {
 		t.Fatal("canvas state cache survived a canvas write")
 	}
-	if _, exists := state.ToolReadResults[`canvas_read_storyboard:{}`]; exists {
+	if _, exists := state.ToolReadResults[`storyboard:{}`]; exists {
 		t.Fatal("storyboard cache survived a canvas write")
 	}
 	for _, key := range []string{`skill_read_file:{}`, `model_list:{}`} {

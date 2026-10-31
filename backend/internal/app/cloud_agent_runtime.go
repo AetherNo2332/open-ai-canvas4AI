@@ -1341,7 +1341,7 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	} else {
 		payload["text"] = "工具执行成功"
 	}
-	if cloudAgentReadToolReadOnly(call.Function.Name) {
+	if cloudAgentReadCall(call) {
 		result = state.withReadBudget(result)
 	}
 	if inspection, ok := result.(cloudAgentImageInspection); ok && err == nil {

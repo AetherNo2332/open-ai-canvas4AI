@@ -226,7 +226,7 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 ## parameter_051
 
-update/remove 使用 canvas_read_storyboard 返回的真实 rowId；append 留空
+update、lock/unlock 及资产/绑定动作使用 storyboard 的 read 返回的真实 rowId
 
 ## parameter_052
 

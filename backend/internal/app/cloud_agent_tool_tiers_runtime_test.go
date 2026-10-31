@@ -75,7 +75,7 @@ func TestCloudAgentPromptCacheKeyFollowsAdvertisedTools(t *testing.T) {
 	req.CanvasID = "agent-canvas"
 	eligible := cloudAgentTools(req)
 	empty := cloudAgentToolsNamed(eligible, cloudAgentAdvertisedToolNames(req, cloudAgentScanCanvasInventory(tierPayload()), "现在画布有几个节点"))
-	script := cloudAgentToolsNamed(eligible, cloudAgentAdvertisedToolNames(req, cloudAgentScanCanvasInventory(tierPayload(tierNode("board", "script", nil))), "现在画布有几个节点"))
+	script := cloudAgentToolsNamed(eligible, cloudAgentAdvertisedToolNames(req, cloudAgentScanCanvasInventory(tierPayload(tierNode("table", "batch-table", nil))), "现在画布有几个节点"))
 	identity := "cache-identity"
 	emptyKey := cloudAgentPromptCacheKeyForRequest(req.CanvasID, identity, "system", empty)
 	scriptKey := cloudAgentPromptCacheKeyForRequest(req.CanvasID, identity, "system", script)
