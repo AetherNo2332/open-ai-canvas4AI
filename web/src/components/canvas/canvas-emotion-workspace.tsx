@@ -405,10 +405,20 @@ function useScreenAnchor(
         if (!element || !container) return;
         const update = (next: ViewportTransform) => {
             const rect = resolveRef.current(next, container);
-            element.style.left = `${rect.left}px`;
-            element.style.top = `${rect.top}px`;
-            if (typeof rect.width === "number") element.style.width = `${rect.width}px`;
-            if (typeof rect.height === "number") element.style.height = `${rect.height}px`;
+            // 视口预览每帧到达；缩放不变时 width/height 等写入字符串完全相同，
+            // 同值守卫让这些帧不追加样式失效。
+            const leftStyle = `${rect.left}px`;
+            if (element.style.left !== leftStyle) element.style.left = leftStyle;
+            const topStyle = `${rect.top}px`;
+            if (element.style.top !== topStyle) element.style.top = topStyle;
+            if (typeof rect.width === "number") {
+                const widthStyle = `${rect.width}px`;
+                if (element.style.width !== widthStyle) element.style.width = widthStyle;
+            }
+            if (typeof rect.height === "number") {
+                const heightStyle = `${rect.height}px`;
+                if (element.style.height !== heightStyle) element.style.height = heightStyle;
+            }
         };
         update(viewport);
         const observer = new ResizeObserver(() => update(viewport));
