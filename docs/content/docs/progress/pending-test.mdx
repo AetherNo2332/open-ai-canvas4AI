@@ -5,6 +5,13 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## Agent 技术债偿还（第一批）
+
+- 已实现：按架构守卫拆分四处超长函数，行为不变：Agent 公共路由与 Worker 内部路由注册、`canvas_get_state` 分页读取、绘图编辑（Excalidraw / tldraw）、工具清单构建。拆分前后路由表一致，288 种权限与能力组合下工具清单逐字节一致；基线从 635 条降到 627 条。
+- [ ] 在 Agent 里读取大画布（翻页、按 nodeIds 精读、focusNodeIds 子图与 includeRelated），结果与拆分前一致，含 hasMore、nextOffset 与连线分页。
+- [ ] 让 Agent 修改 Excalidraw 与 tldraw 绘图各一次（新增、删除、带图片素材），预览与写入成功，失败时画布不留下半成品。
+- [ ] 新建 Agent 运行、追加消息、审批、取消与事件流断线重连都正常；Worker 认领、续租、模型步骤和工具推进不报 401 或 404。
+
 ## 后端架构守卫（全后端）
 
 - 已实现：架构守卫从 Agent 代码扩大到后端全部生产 Go 代码（不含测试、testdata、third_party），规模与复杂度上限不变；依赖方向按 AGENTS.md 第 3 节调用链检查，当前没有违规，依赖违规不能登记例外。导出 map 规则仍只约束云端 Agent 文件。
