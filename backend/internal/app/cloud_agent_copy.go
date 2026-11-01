@@ -39,115 +39,170 @@ func cloudAgentCopyTitle(title string, nodes []map[string]any) string {
 	}
 	return fmt.Sprintf("%s_copy%d", base, maxIndex+1)
 }
+
+// cloudAgentCopyPlan holds one duplicate_node: the source members, their new
+// IDs, the position offset and storyboard rows re-derived on the copies.
+type cloudAgentCopyPlan struct {
+	op         agentCanvasOp
+	nodes      []map[string]any
+	sources    []map[string]any
+	frame      bool
+	idMap      map[string]string
+	dx, dy     float64
+	copiedRows map[string]string
+}
+
 func cloudAgentCopyGraph(nodes, edges []map[string]any, op agentCanvasOp) ([]map[string]any, []map[string]any, cloudAgentApprovalPreviewItem, error) {
 	item := cloudAgentApprovalPreviewItem{Operation: "duplicate_node", NodeID: op.ID}
-	sourceIndex := cloudAgentNodeIndex(nodes, op.SourceNodeID)
-	if sourceIndex < 0 || cloudAgentNodeIndex(nodes, op.ID) >= 0 {
-		return nodes, edges, item, BadAuthRequest("复制来源不存在或副本 ID 重复")
-	}
-	source := nodes[sourceIndex]
-	sources := []map[string]any{source}
-	frame := stringValue(source["type"]) == "frame"
-	if frame {
-		for _, node := range nodes {
-			if stringValue(node["parentId"]) == op.SourceNodeID {
-				sources = append(sources, node)
-			}
-		}
-	}
-	idMap := map[string]string{op.SourceNodeID: op.ID}
-	for i, node := range sources[1:] {
-		id := fmt.Sprintf("%s-child-%d", op.ID, i+1)
-		if err := validateCloudAgentID(id, "副本节点 ID", 80); err != nil {
-			return nodes, edges, item, err
-		}
-		if cloudAgentNodeIndex(nodes, id) >= 0 {
-			return nodes, edges, item, BadAuthRequest("副本成员 ID 已存在")
-		}
-		idMap[stringValue(node["id"])] = id
-	}
-	sourcePosition, _ := source["position"].(map[string]any)
-	dx, dy := 36.0, 36.0
-	if op.X != nil {
-		value, _ := sourcePosition["x"].(float64)
-		dx = *op.X - value
-	}
-	if op.Y != nil {
-		value, _ := sourcePosition["y"].(float64)
-		dy = *op.Y - value
+	plan, err := cloudAgentCopySources(nodes, op)
+	if err != nil {
+		return nodes, edges, item, err
 	}
 	copies := []map[string]any{}
-	copiedRows := map[string]string{}
-	for _, node := range sources {
-		if _, ok := cloudAgentNodeCapabilityForNode(node); !ok {
-			return nodes, edges, item, BadAuthRequest("复制包含不支持的节点类型")
-		}
-		if stringValue(node["type"]) == "drawing" && stringValue(cloudAgentNodeMetadata(node)["drawingId"]) != "" && cloudAgentNodeMetadata(node)["drawingDocument"] == nil {
-			return nodes, edges, item, BadAuthRequest("绘图文档尚未同步，不能只复制预览节点")
-		}
-		raw, _ := json.Marshal(node)
-		var copy map[string]any
-		if err := json.Unmarshal(raw, &copy); err != nil {
+	for _, node := range plan.sources {
+		copy, err := plan.copyNode(node, &item)
+		if err != nil {
 			return nodes, edges, item, err
-		}
-		oldID := stringValue(node["id"])
-		copy["id"] = idMap[oldID]
-		if parent := stringValue(copy["parentId"]); idMap[parent] != "" {
-			copy["parentId"] = idMap[parent]
-		}
-		position, _ := copy["position"].(map[string]any)
-		if position == nil {
-			position = map[string]any{}
-			copy["position"] = position
-		}
-		for axis, delta := range map[string]float64{"x": dx, "y": dy} {
-			value, _ := position[axis].(float64)
-			value += delta
-			if math.IsNaN(value) || math.IsInf(value, 0) || math.Abs(value) > 1e6 {
-				return nodes, edges, item, BadAuthRequest("副本位置无效")
-			}
-			position[axis] = value
-		}
-		metadata := cloudAgentNodeMetadata(copy)
-		for source, derived := range cloudAgentResetCopiedMetadata(metadata, stringValue(copy["id"]), idMap) {
-			copiedRows[source] = derived
-		}
-		cloudAgentRemapCopiedReferences(metadata, idMap)
-		metadata["copiedFromNodeId"] = oldID
-		switch stringValue(node["type"]) {
-		case "image", "video", "audio":
-			metadata["generationResultPlacement"] = "replace-node"
-		}
-		if stringValue(node["type"]) == "drawing" {
-			metadata["drawingId"] = idMap[oldID] + "-document"
-			metadata["drawingRevision"] = float64(0)
-			metadata["drawingShapeCount"] = float64(0)
-			metadata["drawingPageCount"] = float64(1)
-			delete(metadata, "drawingUpdatedAt")
-			if document, ok := metadata["drawingDocument"].(map[string]any); ok {
-				document["revision"] = float64(1)
-				document["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
-				metadata["drawingEngine"] = document["engine"]
-				metadata["drawingRevision"] = document["revision"]
-				metadata["drawingUpdatedAt"] = document["updatedAt"]
-				metadata["drawingShapeCount"] = document["shapeCount"]
-				metadata["drawingPageCount"] = document["pageCount"]
-			}
-		}
-		if oldID == op.SourceNodeID {
-			copy["title"] = cloudAgentCopyTitle(stringValue(node["title"]), nodes)
-			if op.Title != nil {
-				copy["title"] = *op.Title
-			}
-			if len([]rune(stringValue(copy["title"]))) > 240 {
-				return nodes, edges, item, BadAuthRequest("副本标题超出限制")
-			}
-			item.NodeTitle = stringValue(node["title"])
-			item.NodeType = stringValue(node["type"])
-			item.ResultTitle = stringValue(copy["title"])
 		}
 		copies = append(copies, copy)
 	}
+	nextEdges, err := plan.copyEdges(edges)
+	if err != nil {
+		return nodes, edges, item, err
+	}
+	item.Summary = fmt.Sprintf("复制 %d 个节点及关联连线，并隔离生成任务身份", len(copies))
+	return append(nodes, copies...), nextEdges, item, nil
+}
+
+// cloudAgentCopySources resolves the source (a frame copies its children too),
+// assigns copy IDs and computes the position offset.
+func cloudAgentCopySources(nodes []map[string]any, op agentCanvasOp) (*cloudAgentCopyPlan, error) {
+	sourceIndex := cloudAgentNodeIndex(nodes, op.SourceNodeID)
+	if sourceIndex < 0 || cloudAgentNodeIndex(nodes, op.ID) >= 0 {
+		return nil, BadAuthRequest("复制来源不存在或副本 ID 重复")
+	}
+	source := nodes[sourceIndex]
+	plan := &cloudAgentCopyPlan{op: op, nodes: nodes, sources: []map[string]any{source}, frame: stringValue(source["type"]) == "frame", copiedRows: map[string]string{}}
+	if plan.frame {
+		for _, node := range nodes {
+			if stringValue(node["parentId"]) == op.SourceNodeID {
+				plan.sources = append(plan.sources, node)
+			}
+		}
+	}
+	plan.idMap = map[string]string{op.SourceNodeID: op.ID}
+	for i, node := range plan.sources[1:] {
+		id := fmt.Sprintf("%s-child-%d", op.ID, i+1)
+		if err := validateCloudAgentID(id, "副本节点 ID", 80); err != nil {
+			return nil, err
+		}
+		if cloudAgentNodeIndex(nodes, id) >= 0 {
+			return nil, BadAuthRequest("副本成员 ID 已存在")
+		}
+		plan.idMap[stringValue(node["id"])] = id
+	}
+	sourcePosition, _ := source["position"].(map[string]any)
+	plan.dx, plan.dy = 36.0, 36.0
+	if op.X != nil {
+		value, _ := sourcePosition["x"].(float64)
+		plan.dx = *op.X - value
+	}
+	if op.Y != nil {
+		value, _ := sourcePosition["y"].(float64)
+		plan.dy = *op.Y - value
+	}
+	return plan, nil
+}
+
+// copyNode clones one member, remaps its IDs and position, and resets
+// generation identity; the copied source also gets its new title.
+func (plan *cloudAgentCopyPlan) copyNode(node map[string]any, item *cloudAgentApprovalPreviewItem) (map[string]any, error) {
+	if _, ok := cloudAgentNodeCapabilityForNode(node); !ok {
+		return nil, BadAuthRequest("复制包含不支持的节点类型")
+	}
+	if stringValue(node["type"]) == "drawing" && stringValue(cloudAgentNodeMetadata(node)["drawingId"]) != "" && cloudAgentNodeMetadata(node)["drawingDocument"] == nil {
+		return nil, BadAuthRequest("绘图文档尚未同步，不能只复制预览节点")
+	}
+	raw, _ := json.Marshal(node)
+	var copy map[string]any
+	if err := json.Unmarshal(raw, &copy); err != nil {
+		return nil, err
+	}
+	oldID := stringValue(node["id"])
+	copy["id"] = plan.idMap[oldID]
+	if parent := stringValue(copy["parentId"]); plan.idMap[parent] != "" {
+		copy["parentId"] = plan.idMap[parent]
+	}
+	if err := plan.offsetPosition(copy); err != nil {
+		return nil, err
+	}
+	metadata := cloudAgentNodeMetadata(copy)
+	for source, derived := range cloudAgentResetCopiedMetadata(metadata, stringValue(copy["id"]), plan.idMap) {
+		plan.copiedRows[source] = derived
+	}
+	cloudAgentRemapCopiedReferences(metadata, plan.idMap)
+	metadata["copiedFromNodeId"] = oldID
+	switch stringValue(node["type"]) {
+	case "image", "video", "audio":
+		metadata["generationResultPlacement"] = "replace-node"
+	}
+	if stringValue(node["type"]) == "drawing" {
+		cloudAgentResetCopiedDrawing(metadata, plan.idMap[oldID])
+	}
+	if oldID == plan.op.SourceNodeID {
+		copy["title"] = cloudAgentCopyTitle(stringValue(node["title"]), plan.nodes)
+		if plan.op.Title != nil {
+			copy["title"] = *plan.op.Title
+		}
+		if len([]rune(stringValue(copy["title"]))) > 240 {
+			return nil, BadAuthRequest("副本标题超出限制")
+		}
+		item.NodeTitle = stringValue(node["title"])
+		item.NodeType = stringValue(node["type"])
+		item.ResultTitle = stringValue(copy["title"])
+	}
+	return copy, nil
+}
+
+func (plan *cloudAgentCopyPlan) offsetPosition(copy map[string]any) error {
+	position, _ := copy["position"].(map[string]any)
+	if position == nil {
+		position = map[string]any{}
+		copy["position"] = position
+	}
+	for axis, delta := range map[string]float64{"x": plan.dx, "y": plan.dy} {
+		value, _ := position[axis].(float64)
+		value += delta
+		if math.IsNaN(value) || math.IsInf(value, 0) || math.Abs(value) > 1e6 {
+			return BadAuthRequest("副本位置无效")
+		}
+		position[axis] = value
+	}
+	return nil
+}
+
+// cloudAgentResetCopiedDrawing gives a copied drawing its own document identity
+// and restarts its revision at 1 when a native document is present.
+func cloudAgentResetCopiedDrawing(metadata map[string]any, copyID string) {
+	metadata["drawingId"] = copyID + "-document"
+	metadata["drawingRevision"] = float64(0)
+	metadata["drawingShapeCount"] = float64(0)
+	metadata["drawingPageCount"] = float64(1)
+	delete(metadata, "drawingUpdatedAt")
+	if document, ok := metadata["drawingDocument"].(map[string]any); ok {
+		document["revision"] = float64(1)
+		document["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+		metadata["drawingEngine"] = document["engine"]
+		metadata["drawingRevision"] = document["revision"]
+		metadata["drawingUpdatedAt"] = document["updatedAt"]
+		metadata["drawingShapeCount"] = document["shapeCount"]
+		metadata["drawingPageCount"] = document["pageCount"]
+	}
+}
+
+// copyEdges copies unmanaged edges into the copied members; a frame copy only
+// keeps edges whose both ends were copied.
+func (plan *cloudAgentCopyPlan) copyEdges(edges []map[string]any) ([]map[string]any, error) {
 	nextEdges := append([]map[string]any{}, edges...)
 	edgeIndex := 0
 	for _, edge := range edges {
@@ -158,36 +213,39 @@ func cloudAgentCopyGraph(nodes, edges []map[string]any, op agentCanvasOp) ([]map
 			continue
 		}
 		from, to := stringValue(edge["fromNodeId"]), stringValue(edge["toNodeId"])
-		if idMap[to] == "" || (idMap[from] == "" && frame) {
+		if plan.idMap[to] == "" || (plan.idMap[from] == "" && plan.frame) {
 			continue
 		}
 		edgeIndex++
-		edgeID := fmt.Sprintf("%s-edge-%d", op.ID, edgeIndex)
+		edgeID := fmt.Sprintf("%s-edge-%d", plan.op.ID, edgeIndex)
 		if err := validateCloudAgentID(edgeID, "副本连线 ID", 80); err != nil {
-			return nodes, edges, item, err
+			return nil, err
 		}
 		if cloudAgentNodeIndex(nextEdges, edgeID) >= 0 {
-			return nodes, edges, item, BadAuthRequest("副本连线 ID 已存在")
+			return nil, BadAuthRequest("副本连线 ID 已存在")
 		}
-		raw, _ := json.Marshal(edge)
-		var copy map[string]any
-		_ = json.Unmarshal(raw, &copy)
-		copy["id"] = edgeID
-		copy["toNodeId"] = idMap[to]
-		if idMap[from] != "" {
-			copy["fromNodeId"] = idMap[from]
-		}
-		if row := stringValue(copy["storyboardRowId"]); row != "" {
-			if derived := copiedRows[row]; derived != "" {
-				copy["storyboardRowId"] = derived
-			} else {
-				delete(copy, "storyboardRowId")
-			}
-		}
-		nextEdges = append(nextEdges, copy)
+		nextEdges = append(nextEdges, plan.copyEdge(edge, edgeID, from, to))
 	}
-	item.Summary = fmt.Sprintf("复制 %d 个节点及关联连线，并隔离生成任务身份", len(copies))
-	return append(nodes, copies...), nextEdges, item, nil
+	return nextEdges, nil
+}
+
+func (plan *cloudAgentCopyPlan) copyEdge(edge map[string]any, edgeID, from, to string) map[string]any {
+	raw, _ := json.Marshal(edge)
+	var copy map[string]any
+	_ = json.Unmarshal(raw, &copy)
+	copy["id"] = edgeID
+	copy["toNodeId"] = plan.idMap[to]
+	if plan.idMap[from] != "" {
+		copy["fromNodeId"] = plan.idMap[from]
+	}
+	if row := stringValue(copy["storyboardRowId"]); row != "" {
+		if derived := plan.copiedRows[row]; derived != "" {
+			copy["storyboardRowId"] = derived
+		} else {
+			delete(copy, "storyboardRowId")
+		}
+	}
+	return copy
 }
 
 // cloudAgentResetCopiedMetadata clears generation state a node copy must not inherit.
