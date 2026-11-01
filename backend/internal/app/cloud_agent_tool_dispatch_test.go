@@ -176,7 +176,7 @@ func cloudAgentDispatchedToolNames(t *testing.T) []string {
 		file string
 		fn   string
 	}{
-		{"cloud_agent_tools.go", "cloudAgentReadTool"},
+		{"cloud_agent_read_tool.go", "cloudAgentReadTool"},
 	} {
 		file := parseCloudAgentFile(t, target.file)
 		found := false
