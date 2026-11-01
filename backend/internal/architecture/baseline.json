@@ -97,7 +97,6 @@
     {"id":"internal/app/cloud_agent_storyboard.go:func:prepareCloudAgentStoryboardEdit:complexity","max":40,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_storyboard.go:func:validateCloudAgentStoryboardReferences:complexity","max":21,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_storyboard_assets.go:func:cloudAgentStoryboardAssetDelta:complexity","max":23,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_storyboard_generation.go:func:resolveCloudAgentStoryboardGeneration:complexity","max":25,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_storyboard_split.go:func:Service.executeCloudAgentStoryboardSplit:complexity","max":24,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_table_state.go:func:cloudAgentStoryboardState:complexity","max":31,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_task_facts.go:func:cloudAgentTaskDiagnostic:complexity","max":27,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
