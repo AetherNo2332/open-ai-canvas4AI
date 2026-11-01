@@ -65,29 +65,11 @@ func (s *Service) UndoCloudAgentRun(userID, runID, reason string) (*CloudAgentUn
 	}
 	var result *CloudAgentUndoResult
 	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
-		chain, err := repo.CloudAgentCanvasMutationChain(userID, runID, current.CanvasID)
+		chain, err := cloudAgentUndoMutationChain(repo, userID, runID, current.CanvasID)
 		if err != nil {
 			return err
 		}
-		if len(chain) == 0 {
-			return NotFound("本次运行没有可撤销的画布修改")
-		}
-		for _, mutation := range chain {
-			if mutation.HasSubmittedTask {
-				return BadAuthRequest("本次运行已提交生成任务，不能撤销；任务不会取消或退款")
-			}
-			if mutation.Status != "applied" || mutation.BeforeJSON == "" || mutation.AfterJSON == "" {
-				return BadAuthRequest("本次运行有画布修改未保留完整快照，无法撤销")
-			}
-		}
-		canvas, err := repo.CanvasProjectForUser(userID, current.CanvasID)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return NotFound("画布不存在或无权访问")
-			}
-			return err
-		}
-		live, err := creationDocument(canvas.PayloadJSON)
+		canvas, live, err := cloudAgentUndoLiveCanvas(repo, userID, current.CanvasID)
 		if err != nil {
 			return err
 		}
@@ -101,24 +83,11 @@ func (s *Service) UndoCloudAgentRun(userID, runID, reason string) (*CloudAgentUn
 			return err
 		}
 		canvas.PayloadJSON = string(raw)
-		if err := saveCreationCanvasWithHistory(repo, canvas, previous); err != nil {
-			if errors.Is(err, repository.ErrCreationConflict) {
-				return kernel.AgentUndoConflict("画布刚刚发生了新的修改，请稍后重试撤销", nil)
-			}
-			var lease *repository.CanvasEditLeaseError
-			if errors.As(err, &lease) {
-				return kernel.AgentUndoConflict("有人正在编辑 Agent 修改过的节点，结束编辑后再撤销", map[string]any{"ids": []string{lease.NodeID}})
-			}
+		if err := cloudAgentUndoSaveCanvas(repo, canvas, previous); err != nil {
 			return err
 		}
-		now := time.Now().UTC()
-		for index := len(chain) - 1; index >= 0; index-- {
-			if err := repo.MarkCloudAgentCanvasMutationUndone(userID, runID, chain[index].ID, now); err != nil {
-				if errors.Is(err, repository.ErrCreationConflict) {
-					return kernel.AgentUndoConflict("本次修改已被处理，请重新读取画布", nil)
-				}
-				return err
-			}
+		if err := cloudAgentUndoMarkMutations(repo, userID, runID, chain); err != nil {
+			return err
 		}
 		state, err := cloudAgentDecode(current)
 		if err != nil {
@@ -141,6 +110,73 @@ func (s *Service) UndoCloudAgentRun(userID, runID, reason string) (*CloudAgentUn
 		return nil, err
 	}
 	return result, nil
+}
+
+// cloudAgentUndoMutationChain 读取本次运行的画布修改链，并拒绝提交过生成任务或
+// 快照不完整的链。
+func cloudAgentUndoMutationChain(repo *repository.Repository, userID, runID, canvasID string) ([]model.CloudAgentCanvasMutation, error) {
+	chain, err := repo.CloudAgentCanvasMutationChain(userID, runID, canvasID)
+	if err != nil {
+		return nil, err
+	}
+	if len(chain) == 0 {
+		return nil, NotFound("本次运行没有可撤销的画布修改")
+	}
+	for _, mutation := range chain {
+		if mutation.HasSubmittedTask {
+			return nil, BadAuthRequest("本次运行已提交生成任务，不能撤销；任务不会取消或退款")
+		}
+		if mutation.Status != "applied" || mutation.BeforeJSON == "" || mutation.AfterJSON == "" {
+			return nil, BadAuthRequest("本次运行有画布修改未保留完整快照，无法撤销")
+		}
+	}
+	return chain, nil
+}
+
+// cloudAgentUndoLiveCanvas 读取当前画布与可撤销文档。
+func cloudAgentUndoLiveCanvas(repo *repository.Repository, userID, canvasID string) (*model.CanvasProject, map[string]any, error) {
+	canvas, err := repo.CanvasProjectForUser(userID, canvasID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, NotFound("画布不存在或无权访问")
+		}
+		return nil, nil, err
+	}
+	live, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		return nil, nil, err
+	}
+	return canvas, live, nil
+}
+
+// cloudAgentUndoSaveCanvas 保存撤销后的画布；并发冲突与编辑租约都归一为
+// agent_undo_conflict。
+func cloudAgentUndoSaveCanvas(repo *repository.Repository, canvas *model.CanvasProject, previous string) error {
+	if err := saveCreationCanvasWithHistory(repo, canvas, previous); err != nil {
+		if errors.Is(err, repository.ErrCreationConflict) {
+			return kernel.AgentUndoConflict("画布刚刚发生了新的修改，请稍后重试撤销", nil)
+		}
+		var lease *repository.CanvasEditLeaseError
+		if errors.As(err, &lease) {
+			return kernel.AgentUndoConflict("有人正在编辑 Agent 修改过的节点，结束编辑后再撤销", map[string]any{"ids": []string{lease.NodeID}})
+		}
+		return err
+	}
+	return nil
+}
+
+// cloudAgentUndoMarkMutations 按倒序把本次运行的修改标记为已撤销。
+func cloudAgentUndoMarkMutations(repo *repository.Repository, userID, runID string, chain []model.CloudAgentCanvasMutation) error {
+	now := time.Now().UTC()
+	for index := len(chain) - 1; index >= 0; index-- {
+		if err := repo.MarkCloudAgentCanvasMutationUndone(userID, runID, chain[index].ID, now); err != nil {
+			if errors.Is(err, repository.ErrCreationConflict) {
+				return kernel.AgentUndoConflict("本次修改已被处理，请重新读取画布", nil)
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func cloudAgentRunFinished(status string) bool {
