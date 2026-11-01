@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"yingce/backend/internal/canvas/capability"
 	"yingce/backend/internal/canvas/commands"
+	"yingce/backend/internal/canvas/contract"
 	"yingce/backend/internal/canvas/mediaversions"
 	"yingce/backend/internal/canvas/references"
 	"yingce/backend/internal/canvas/tasks"
@@ -49,22 +50,9 @@ func resolveCloudAgentStoryboardGeneration(doc map[string]any, a cloudAgentMedia
 	if a.StoryboardNodeID == "" || a.StoryboardRowID == "" || (a.Mode != "image" && a.Mode != "video") {
 		return a, tasks.Consumer{}, BadAuthRequest("分镜生成需要表、行及 image/video 模式")
 	}
-	_, board, _, err := storyboardNodeFromDocument(doc, a.StoryboardNodeID)
+	row, err := cloudAgentStoryboardGenerationRow(doc, a)
 	if err != nil {
 		return a, tasks.Consumer{}, err
-	}
-	var row map[string]any
-	for _, r := range creationMaps(board["rows"]) {
-		if stringValue(r["id"]) == a.StoryboardRowID {
-			row = r
-			break
-		}
-	}
-	if row == nil {
-		return a, tasks.Consumer{}, BadAuthRequest("分镜行不存在")
-	}
-	if bound := stringValue(row[a.Mode+"NodeId"]); a.NodeID != "" && bound != "" && bound != a.NodeID {
-		return a, tasks.Consumer{}, cloudAgentFieldError(a.Mode+"NodeId", "output_binding_conflict", "分镜已有输出归属，请续用空闲草稿或先明确解除原输出绑定")
 	}
 	resolved, err := references.Resolve(doc, references.Scope{Kind: "storyboard-row", NodeID: a.StoryboardNodeID, RowID: a.StoryboardRowID, Mode: a.Mode}, capability.BuiltinRegistry())
 	if err != nil {
@@ -77,15 +65,47 @@ func resolveCloudAgentStoryboardGeneration(doc map[string]any, a cloudAgentMedia
 		a.Duration = int(seconds)
 	}
 	a.Prompt, _ = cloudAgentStoryboardEffectivePrompt(row, a.Mode)
+	a, err = cloudAgentApplyStoryboardBindings(doc, a, resolved.Bindings)
+	if err != nil {
+		return a, tasks.Consumer{}, err
+	}
+	return a, tasks.Consumer{Kind: "storyboard", RowID: a.StoryboardRowID, Field: a.Mode + "NodeId", OutputNodeID: a.NodeID}, nil
+}
+
+// cloudAgentStoryboardGenerationRow 定位分镜表与目标行，并拒绝与已有输出绑定的冲突。
+func cloudAgentStoryboardGenerationRow(doc map[string]any, a cloudAgentMediaArgs) (map[string]any, error) {
+	_, board, _, err := storyboardNodeFromDocument(doc, a.StoryboardNodeID)
+	if err != nil {
+		return nil, err
+	}
+	var row map[string]any
+	for _, r := range creationMaps(board["rows"]) {
+		if stringValue(r["id"]) == a.StoryboardRowID {
+			row = r
+			break
+		}
+	}
+	if row == nil {
+		return nil, BadAuthRequest("分镜行不存在")
+	}
+	if bound := stringValue(row[a.Mode+"NodeId"]); a.NodeID != "" && bound != "" && bound != a.NodeID {
+		return nil, cloudAgentFieldError(a.Mode+"NodeId", "output_binding_conflict", "分镜已有输出归属，请续用空闲草稿或先明确解除原输出绑定")
+	}
+	return row, nil
+}
+
+// cloudAgentApplyStoryboardBindings 处理解析后的引用绑定：首帧未就绪直接拒绝，
+// 源文本并入提示词，其余节点进入参考列表（最多 16 个）。
+func cloudAgentApplyStoryboardBindings(doc map[string]any, a cloudAgentMediaArgs, bindings []contract.ReferenceBinding) (cloudAgentMediaArgs, error) {
 	nodes := map[string]map[string]any{}
 	for _, node := range creationMaps(doc["nodes"]) {
 		nodes[stringValue(node["id"])] = node
 	}
-	for _, binding := range resolved.Bindings {
+	for _, binding := range bindings {
 		if binding.Role == "first-frame" {
 			status := stringValue(cloudAgentNodeMetadata(nodes[binding.NodeID])["status"])
 			if status == "loading" || status == "error" {
-				return a, tasks.Consumer{}, BadAuthRequest("分镜首帧尚未就绪")
+				return a, BadAuthRequest("分镜首帧尚未就绪")
 			}
 		}
 		if binding.Role == "source-text" {
@@ -98,9 +118,9 @@ func resolveCloudAgentStoryboardGeneration(doc map[string]any, a cloudAgentMedia
 		}
 	}
 	if len(a.ReferenceNodeIDs) > 16 {
-		return a, tasks.Consumer{}, BadAuthRequest("参考节点最多 16 个；请在分镜中调整素材")
+		return a, BadAuthRequest("参考节点最多 16 个；请在分镜中调整素材")
 	}
-	return a, tasks.Consumer{Kind: "storyboard", RowID: a.StoryboardRowID, Field: a.Mode + "NodeId", OutputNodeID: a.NodeID}, nil
+	return a, nil
 }
 
 func cloudAgentStoryboardEffectivePrompt(row map[string]any, mode string) (string, string) {

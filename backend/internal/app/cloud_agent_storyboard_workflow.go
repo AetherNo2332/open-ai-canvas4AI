@@ -346,40 +346,12 @@ func cloudAgentPlanStoryboardBatch(doc map[string]any, rows []map[string]any, ar
 	if args.RowID != "" || args.RowIDs != nil || args.Patch != nil {
 		return nil, nil, BadAuthRequest("批量操作不接受 rowId、rowIds 或 patch；请使用 updates 或 rows")
 	}
-	count, field := len(args.Updates), "updates"
-	if args.Action == "append_rows" {
-		count, field = len(args.Rows), "rows"
-		if args.Updates != nil {
-			return nil, nil, BadAuthRequest("append_rows 不接受 updates")
-		}
-		if len(rows)+count > maxCloudAgentStoryboardRows {
-			return nil, nil, cloudAgentFieldError("rows", "item_count", "rows 追加后分镜最多100行；整批未执行")
-		}
-	} else if args.Rows != nil {
-		return nil, nil, BadAuthRequest("batch_update 不接受 rows")
-	}
-	if count < 1 || count > maxCloudAgentStoryboardRows {
-		return nil, nil, cloudAgentFieldError(field, "item_count", field+" 必须包含1到100项；整批未执行")
+	count, _, err := cloudAgentStoryboardBatchCount(args, len(rows))
+	if err != nil {
+		return nil, nil, err
 	}
 	if args.Action == "batch_update" {
-		ids := make([]string, count)
-		known, seen := map[string]bool{}, map[string]bool{}
-		for _, row := range rows {
-			known[stringValue(row["id"])] = true
-		}
-		badIndex := -1
-		for i, update := range args.Updates {
-			ids[i] = update.RowID
-			if badIndex < 0 && (!known[update.RowID] || seen[update.RowID]) {
-				badIndex = i
-			}
-			seen[update.RowID] = true
-		}
-		if err := validateCloudAgentStoryboardRowIDs(rows, ids, "updates"); err != nil {
-			path := fmt.Sprintf("updates[%d].rowId", badIndex)
-			if typed, ok := err.(*cloudAgentStoryboardRowIDError); ok {
-				typed.error = cloudAgentFieldError(path, "invalid_row_ids", path+" 不存在或重复；使用最新读取的 rowId；整批未执行")
-			}
+		if err := cloudAgentValidateStoryboardBatchIDs(rows, args.Updates, count); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -428,6 +400,53 @@ func cloudAgentPlanStoryboardBatch(doc map[string]any, rows []map[string]any, ar
 	}
 	sort.Strings(names)
 	return rows, names, nil
+}
+
+// cloudAgentStoryboardBatchCount 校验批量规模：append_rows 用 rows、batch_update 用
+// updates，两者都限制在 1 到 100 项；追加时还要计入现有行数。
+func cloudAgentStoryboardBatchCount(args cloudAgentStoryboardEditArgs, existing int) (int, string, error) {
+	count, field := len(args.Updates), "updates"
+	if args.Action == "append_rows" {
+		count, field = len(args.Rows), "rows"
+		if args.Updates != nil {
+			return 0, "", BadAuthRequest("append_rows 不接受 updates")
+		}
+		if existing+count > maxCloudAgentStoryboardRows {
+			return 0, "", cloudAgentFieldError("rows", "item_count", "rows 追加后分镜最多100行；整批未执行")
+		}
+	} else if args.Rows != nil {
+		return 0, "", BadAuthRequest("batch_update 不接受 rows")
+	}
+	if count < 1 || count > maxCloudAgentStoryboardRows {
+		return 0, "", cloudAgentFieldError(field, "item_count", field+" 必须包含1到100项；整批未执行")
+	}
+	return count, field, nil
+}
+
+// cloudAgentValidateStoryboardBatchIDs 校验 batch_update 的 rowId 全部存在且不重复；
+// 错误定位到第一个坏下标，整批不执行。
+func cloudAgentValidateStoryboardBatchIDs(rows []map[string]any, updates []cloudAgentStoryboardRowUpdate, count int) error {
+	ids := make([]string, count)
+	known, seen := map[string]bool{}, map[string]bool{}
+	for _, row := range rows {
+		known[stringValue(row["id"])] = true
+	}
+	badIndex := -1
+	for i, update := range updates {
+		ids[i] = update.RowID
+		if badIndex < 0 && (!known[update.RowID] || seen[update.RowID]) {
+			badIndex = i
+		}
+		seen[update.RowID] = true
+	}
+	if err := validateCloudAgentStoryboardRowIDs(rows, ids, "updates"); err != nil {
+		path := fmt.Sprintf("updates[%d].rowId", badIndex)
+		if typed, ok := err.(*cloudAgentStoryboardRowIDError); ok {
+			typed.error = cloudAgentFieldError(path, "invalid_row_ids", path+" 不存在或重复；使用最新读取的 rowId；整批未执行")
+		}
+		return err
+	}
+	return nil
 }
 
 func cloudAgentStoryboardAppendRowID(userID, nodeID, mutationID string, rows []map[string]any) string {

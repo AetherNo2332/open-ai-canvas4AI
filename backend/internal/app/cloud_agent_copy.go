@@ -254,6 +254,14 @@ func (plan *cloudAgentCopyPlan) copyEdge(edge map[string]any, edgeID, from, to s
 // scoped connections can be rebound onto the copy instead of the source table. The
 // command planner applies the same rules; the shared conformance fixture pins them.
 func cloudAgentResetCopiedMetadata(meta map[string]any, nodeID string, idMap map[string]string) map[string]string {
+	cloudAgentClearCopiedGenerationState(meta)
+	cloudAgentRemapCopiedReferenceKeys(meta, idMap)
+	return cloudAgentRebindCopiedRowIDs(meta, nodeID, idMap)
+}
+
+// cloudAgentClearCopiedGenerationState 清掉副本不得继承的生成与任务状态；有正文时
+// 状态落到 success，否则回到 idle。
+func cloudAgentClearCopiedGenerationState(meta map[string]any) {
 	delete(meta, "mediaVersions")
 	delete(meta, "currentMediaVersionId")
 	for _, key := range []string{"taskId", "taskClientOperationId", "retryOf", "attemptGroupId", "taskStatus", "taskProgress", "taskStage", "taskMediaStage", "taskCanRecoverMedia", "taskProvider", "taskStartedAt", "taskCompletedAt", "taskDurationMs", "taskErrorCode", "taskOfficialStatus", "taskReceiptRecorded", "taskCreatedAt", "taskUpdatedAt", "generationBatches", "batchRootId", "batchChildIds", "batchFailedCount", "isBatchRoot", "primaryImageId", "imageBatchExpanded", "batchUsesReferenceImages", "versionOfNodeId", "versionLabel", "versionPrimary", "errorDetails", "generationErrorCode", "resourceReloadAvailable", "failedPromptFingerprint"} {
@@ -268,6 +276,10 @@ func cloudAgentResetCopiedMetadata(meta map[string]any, nodeID string, idMap map
 	if stringValue(meta["content"]) != "" {
 		meta["status"] = "success"
 	}
+}
+
+// cloudAgentRemapCopiedReferenceKeys 把引用类键重定向到副本节点；源节点没有副本时丢弃引用。
+func cloudAgentRemapCopiedReferenceKeys(meta map[string]any, idMap map[string]string) {
 	for _, key := range []string{"referenceSetId", "previsPreviewNodeId", "previsDepthNodeId", "previsNormalNodeId"} {
 		if source := stringValue(meta[key]); source != "" {
 			if idMap[source] == "" {
@@ -298,6 +310,11 @@ func cloudAgentResetCopiedMetadata(meta map[string]any, nodeID string, idMap map
 			delete(meta, "characterViewNodeIds")
 		}
 	}
+}
+
+// cloudAgentRebindCopiedRowIDs 重接分镜与批量表的行输出，返回源行到副本行的
+// ID 映射，供行级连线重新挂接到副本。
+func cloudAgentRebindCopiedRowIDs(meta map[string]any, nodeID string, idMap map[string]string) map[string]string {
 	var rowIDs map[string]string
 	if board, ok := meta["storyboard"].(map[string]any); ok {
 		rowIDs = map[string]string{}

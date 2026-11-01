@@ -202,11 +202,8 @@ func requestStoryboardApproval(current *model.CloudAgentExecution, state *cloudA
 
 func (s *Service) executeCloudAgentStoryboardSplit(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, fields map[string]any, action string) error {
 	rowIDs := cloudAgentStrings(fields["rowIds"])
-	if (action == "resplit" && len(rowIDs) == 0) || (action == "split" && len(rowIDs) > 0) {
-		return s.recordStoryboardResult(run, state, call, nil, cloudAgentFieldError("rowIds", "invalid_value", "resplit 必须指定连续镜头；split 不接受 rowIds"))
-	}
-	if len(state.PendingGenerations) >= cloudAgentMaxPendingGenerations || (state.Request.Budget.MaxGenerationTasks > 0 && state.Generations >= state.Request.Budget.MaxGenerationTasks) {
-		return s.recordStoryboardResult(run, state, call, nil, BadAuthRequest("本轮生成数量已达到上限，请等待已有任务完成或调整预算"))
+	if err := cloudAgentSplitRowAndBudgetGate(state, action, rowIDs); err != nil {
+		return s.recordStoryboardResult(run, state, call, nil, err)
 	}
 	orders, err := s.repo.BillingOrdersByTaskIDs(run.UserID, state.TaskIDs)
 	if err != nil {
@@ -219,16 +216,9 @@ func (s *Service) executeCloudAgentStoryboardSplit(run *model.CloudAgentExecutio
 	if remaining < 0 {
 		return s.recordStoryboardResult(run, state, call, nil, BadAuthRequest("Agent 累计预算已耗尽"))
 	}
-	logical, channel, key := stringValue(fields["logicalModelId"]), stringValue(fields["channelId"]), stringValue(fields["channelModelKey"])
-	if token := stringValue(fields["selectionId"]); token != "" {
-		if logical != "" || channel != "" || key != "" {
-			return s.recordStoryboardResult(run, state, call, nil, cloudAgentFieldError("selectionId", "mutually_exclusive", "selectionId 与其他模型选择不能并用"))
-		}
-		selected, err := s.resolveCloudAgentSelectionID(run.UserID, token)
-		if err != nil {
-			return s.recordStoryboardResult(run, state, call, nil, err)
-		}
-		logical, channel, key = selected.LogicalModelID, selected.ChannelID, selected.ChannelModelKey
+	logical, channel, key, err := s.cloudAgentResolveSplitModelSelection(run, fields)
+	if err != nil {
+		return s.recordStoryboardResult(run, state, call, nil, err)
 	}
 	if logical != "" && (channel != "" || key != "") {
 		return s.recordStoryboardResult(run, state, call, nil, cloudAgentFieldError("logicalModelId", "mutually_exclusive", "模型选择不能并用"))
@@ -249,7 +239,48 @@ func (s *Service) executeCloudAgentStoryboardSplit(run *model.CloudAgentExecutio
 		}
 	}
 	s.storageMu.Lock()
-	err = s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
+	err = s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, s.cloudAgentCommitStoryboardSplitMutation(run, state, call, action, req, plan))
+	s.storageMu.Unlock()
+	if err != nil {
+		return s.recordStoryboardResult(run, state, call, nil, err)
+	}
+	s.wakeTaskDispatcher()
+	return nil
+}
+
+// cloudAgentSplitRowAndBudgetGate 校验拆镜入参形态与生成容量：resplit 必须带连续
+// rowIds、split 不接受 rowIds，且本步待回执生成数与轮内生成预算都不能超限。
+func cloudAgentSplitRowAndBudgetGate(state *cloudAgentRuntime, action string, rowIDs []string) error {
+	if (action == "resplit" && len(rowIDs) == 0) || (action == "split" && len(rowIDs) > 0) {
+		return cloudAgentFieldError("rowIds", "invalid_value", "resplit 必须指定连续镜头；split 不接受 rowIds")
+	}
+	if len(state.PendingGenerations) >= cloudAgentMaxPendingGenerations || (state.Request.Budget.MaxGenerationTasks > 0 && state.Generations >= state.Request.Budget.MaxGenerationTasks) {
+		return BadAuthRequest("本轮生成数量已达到上限，请等待已有任务完成或调整预算")
+	}
+	return nil
+}
+
+// cloudAgentResolveSplitModelSelection 解析拆镜的模型选择：selectionId 与显式
+// logicalModelId/channel 三元组互斥，selectionId 展开成三元组。
+func (s *Service) cloudAgentResolveSplitModelSelection(run *model.CloudAgentExecution, fields map[string]any) (string, string, string, error) {
+	logical, channel, key := stringValue(fields["logicalModelId"]), stringValue(fields["channelId"]), stringValue(fields["channelModelKey"])
+	if token := stringValue(fields["selectionId"]); token != "" {
+		if logical != "" || channel != "" || key != "" {
+			return "", "", "", cloudAgentFieldError("selectionId", "mutually_exclusive", "selectionId 与其他模型选择不能并用")
+		}
+		selected, err := s.resolveCloudAgentSelectionID(run.UserID, token)
+		if err != nil {
+			return "", "", "", err
+		}
+		logical, channel, key = selected.LogicalModelID, selected.ChannelID, selected.ChannelModelKey
+	}
+	return logical, channel, key, nil
+}
+
+// cloudAgentCommitStoryboardSplitMutation 在 Agent 存储事务里落地拆镜：首次执行
+// 请求审批，已批准则提交计费任务并登记待回执生成。
+func (s *Service) cloudAgentCommitStoryboardSplitMutation(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, action string, req CanvasStoryboardSplitRequest, plan *canvasStoryboardSplitPlan) func(current *model.CloudAgentExecution, repo *repository.Repository) error {
+	return func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 		if state.Request.PermissionMode == "request_approval" && state.Approval == nil {
 			preview := cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认分镜拆镜", Description: fmt.Sprintf("从画布剧情和风格执行%s，预计费用 %.4f 积分；结果由服务端写回。", action, float64(plan.Result.Quote.AmountMicrocredits)/float64(CreditScale))}
 			requestStoryboardApproval(current, state, call, preview, plan.Result.Quote.QuoteHash)
@@ -268,13 +299,7 @@ func (s *Service) executeCloudAgentStoryboardSplit(run *model.CloudAgentExecutio
 		state.event(run.ID, "generation_task_created", map[string]any{"toolName": "storyboard", "taskId": handle.TaskID, "nodeId": req.NodeID, "mode": "storyboard", "canvasId": state.Request.CanvasID})
 		cloudAgentRecordToolResult(current, state, call, cloudAgentStoryboardSubmittedReceipt(&plan.Result, action, req.NodeID, len(state.PendingGenerations)), nil)
 		return cloudAgentSave(current, state)
-	})
-	s.storageMu.Unlock()
-	if err != nil {
-		return s.recordStoryboardResult(run, state, call, nil, err)
 	}
-	s.wakeTaskDispatcher()
-	return nil
 }
 
 func cloudAgentStoryboardSubmittedReceipt(result *CanvasStoryboardSplitResult, action, nodeID string, pending int) map[string]any {

@@ -468,6 +468,18 @@ func validateCloudAgentStoryboardReferences(doc, row map[string]any) error {
 	for _, node := range creationMaps(doc["nodes"]) {
 		nodes[stringValue(node["id"])] = node
 	}
+	if err := cloudAgentValidateStoryboardRowCharacters(nodes, row); err != nil {
+		return err
+	}
+	if err := cloudAgentValidateStoryboardRowBindings(nodes, row); err != nil {
+		return err
+	}
+	return validateCloudAgentStoryboardSourceRange(row)
+}
+
+// cloudAgentValidateStoryboardRowCharacters 校验角色：名称必填，图片引用必须是
+// 画布内图片或绘图节点。
+func cloudAgentValidateStoryboardRowCharacters(nodes map[string]map[string]any, row map[string]any) error {
 	for _, character := range creationMaps(row["characters"]) {
 		if strings.TrimSpace(stringValue(character["characterName"])) == "" {
 			return BadAuthRequest("分镜角色名称不能为空")
@@ -479,6 +491,12 @@ func validateCloudAgentStoryboardReferences(doc, row map[string]any) error {
 			}
 		}
 	}
+	return nil
+}
+
+// cloudAgentValidateStoryboardRowBindings 校验资产绑定：引用必须是画布内唯一节点，
+// 且节点类型符合引用角色。
+func cloudAgentValidateStoryboardRowBindings(nodes map[string]map[string]any, row map[string]any) error {
 	seen := map[string]bool{}
 	for _, binding := range creationMaps(row["assetBindings"]) {
 		id := stringValue(binding["nodeId"])
@@ -494,23 +512,27 @@ func validateCloudAgentStoryboardReferences(doc, row map[string]any) error {
 		if cloudAgentCharacterNode(node) {
 			kind = "character"
 		}
-		role := stringValue(binding["role"])
-		allowed := false
-		switch role {
-		case "character":
-			allowed = kind == "image" || kind == "character"
-		case "environment", "wardrobe", "prop", "weapon", "style":
-			allowed = kind == "image"
-		case "motion":
-			allowed = kind == "image" || kind == "video"
-		case "audio":
-			allowed = kind == "audio"
-		}
-		if !allowed {
+		if !cloudAgentStoryboardRoleAllowsKind(stringValue(binding["role"]), kind) {
 			return BadAuthRequest("分镜资产类型不符合引用角色")
 		}
 	}
-	return validateCloudAgentStoryboardSourceRange(row)
+	return nil
+}
+
+// cloudAgentStoryboardRoleAllowsKind 判断引用角色是否接受该节点类型：角色引用图片
+// 或角色，画面元素只接受图片，运动接受图片或视频，音频只接受音频。
+func cloudAgentStoryboardRoleAllowsKind(role, kind string) bool {
+	switch role {
+	case "character":
+		return kind == "image" || kind == "character"
+	case "environment", "wardrobe", "prop", "weapon", "style":
+		return kind == "image"
+	case "motion":
+		return kind == "image" || kind == "video"
+	case "audio":
+		return kind == "audio"
+	}
+	return false
 }
 
 func validateCloudAgentStoryboardSourceRange(row map[string]any) error {
