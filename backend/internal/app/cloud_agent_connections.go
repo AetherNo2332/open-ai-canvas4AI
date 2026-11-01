@@ -20,49 +20,9 @@ func validateCloudAgentConnectionCapacities(repo *repository.Repository, doc map
 	if len(targets) == 0 {
 		return nil
 	}
-	// 只读取连接容量上限，不做授权；放开渠道可见性，避免按用户分组漏掉已在画布上的模型。
-	catalogService := &Service{repo: repo}
-	access, err := catalogService.systemGroupAccess()
+	limits, err := cloudAgentConnectionReferenceLimits(repo)
 	if err != nil {
 		return err
-	}
-	catalog, err := catalogService.ModelCatalog(access, nil)
-	if err != nil {
-		return err
-	}
-	limits := map[string]map[string]int{}
-	for _, channel := range catalog.Channels {
-		for _, m := range channel.Models {
-			mode := normalizeCapability(m.Capability)
-			if !m.Available || mode != "image" && mode != "video" {
-				continue
-			}
-			raw, err := json.Marshal(m.CapabilityConfig)
-			if err != nil {
-				return err
-			}
-			var profile ModelCapabilityConfig
-			if err := json.Unmarshal(raw, &profile); err != nil {
-				return err
-			}
-			values := map[string]int{}
-			if mode == "image" && profile.Image != nil {
-				values["image"] = profile.Image.References.MaxImages
-			}
-			if mode == "video" && profile.Video != nil {
-				values["image"] = profile.Video.References.MaxImages
-				values["video"] = profile.Video.References.MaxVideos
-				values["audio"] = profile.Video.References.MaxAudios
-			}
-			if limits[mode] == nil {
-				limits[mode] = map[string]int{"image": 0, "video": 0, "audio": 0}
-			}
-			for kind, value := range values {
-				if value > limits[mode][kind] {
-					limits[mode][kind] = value
-				}
-			}
-		}
 	}
 	nodes := cloudAgentConnectionNodes(creationMaps(doc["nodes"]))
 	edges := []connection.Edge{}
@@ -87,6 +47,64 @@ func validateCloudAgentConnectionCapacities(repo *repository.Repository, doc map
 		}
 	}
 	return nil
+}
+
+// cloudAgentConnectionReferenceLimits returns, per generation mode, the largest
+// reference count of each kind any available model accepts.
+func cloudAgentConnectionReferenceLimits(repo *repository.Repository) (map[string]map[string]int, error) {
+	// 只读取连接容量上限，不做授权；放开渠道可见性，避免按用户分组漏掉已在画布上的模型。
+	catalogService := &Service{repo: repo}
+	access, err := catalogService.systemGroupAccess()
+	if err != nil {
+		return nil, err
+	}
+	catalog, err := catalogService.ModelCatalog(access, nil)
+	if err != nil {
+		return nil, err
+	}
+	limits := map[string]map[string]int{}
+	for _, channel := range catalog.Channels {
+		for _, m := range channel.Models {
+			mode := normalizeCapability(m.Capability)
+			if !m.Available || mode != "image" && mode != "video" {
+				continue
+			}
+			values, err := cloudAgentModelReferenceLimits(mode, m.CapabilityConfig)
+			if err != nil {
+				return nil, err
+			}
+			if limits[mode] == nil {
+				limits[mode] = map[string]int{"image": 0, "video": 0, "audio": 0}
+			}
+			for kind, value := range values {
+				if value > limits[mode][kind] {
+					limits[mode][kind] = value
+				}
+			}
+		}
+	}
+	return limits, nil
+}
+
+func cloudAgentModelReferenceLimits(mode string, config map[string]any) (map[string]int, error) {
+	raw, err := json.Marshal(config)
+	if err != nil {
+		return nil, err
+	}
+	var profile ModelCapabilityConfig
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return nil, err
+	}
+	values := map[string]int{}
+	if mode == "image" && profile.Image != nil {
+		values["image"] = profile.Image.References.MaxImages
+	}
+	if mode == "video" && profile.Video != nil {
+		values["image"] = profile.Video.References.MaxImages
+		values["video"] = profile.Video.References.MaxVideos
+		values["audio"] = profile.Video.References.MaxAudios
+	}
+	return values, nil
 }
 
 func cloudAgentConnectionNodes(nodes []map[string]any) []connection.Node {
@@ -198,6 +216,39 @@ func attachCloudAgentConnection(nodes []map[string]any, op agentCanvasOp) []stri
 	}
 	script := nodes[cloudAgentNodeIndex(nodes, scriptID)]
 	linked := nodes[cloudAgentNodeIndex(nodes, linkedID)]
+	storyboard := cloudAgentEnsureConnectionStoryboard(script)
+	if handle == "storyboard:context" {
+		ids, _ := storyboard["referenceNodeIds"].([]any)
+		for _, id := range ids {
+			if stringValue(id) == linkedID {
+				return []string{"关联分镜上下文"}
+			}
+		}
+		storyboard["referenceNodeIds"] = append(ids, linkedID)
+		return []string{"关联分镜上下文"}
+	}
+	row := cloudAgentConnectionRow(script, strings.TrimPrefix(handle, "row:"))
+	if row == nil {
+		return nil
+	}
+	if !output {
+		cloudAgentAttachConnectionAsset(row, linked, linkedID)
+		return []string{"关联分镜行资产"}
+	}
+	kind := stringValue(linked["type"])
+	if kind == "image" {
+		row["imageNodeId"] = linkedID
+	}
+	if kind == "video" {
+		row["videoNodeId"] = linkedID
+		cloudAgentPrepareConnectionVideo(nodes, script, row, linked)
+	}
+	return []string{"关联分镜行产物"}
+}
+
+// cloudAgentEnsureConnectionStoryboard returns the script's storyboard,
+// creating the metadata, storyboard, default columns and references if missing.
+func cloudAgentEnsureConnectionStoryboard(script map[string]any) map[string]any {
 	metadata, _ := script["metadata"].(map[string]any)
 	if metadata == nil {
 		metadata = map[string]any{}
@@ -214,70 +265,55 @@ func attachCloudAgentConnection(nodes []map[string]any, op agentCanvasOp) []stri
 	if storyboard["referenceNodeIds"] == nil {
 		storyboard["referenceNodeIds"] = []any{}
 	}
-	if handle == "storyboard:context" {
-		ids, _ := storyboard["referenceNodeIds"].([]any)
-		for _, id := range ids {
-			if stringValue(id) == linkedID {
-				return []string{"关联分镜上下文"}
-			}
-		}
-		storyboard["referenceNodeIds"] = append(ids, linkedID)
-		return []string{"关联分镜上下文"}
+	return storyboard
+}
+
+func cloudAgentAttachConnectionAsset(row, linked map[string]any, linkedID string) {
+	binding := cloudAgentConnectionAsset(linked)
+	if binding == nil {
+		return
 	}
-	row := cloudAgentConnectionRow(script, strings.TrimPrefix(handle, "row:"))
-	if row == nil {
-		return nil
-	}
-	if !output {
-		binding := cloudAgentConnectionAsset(linked)
-		if binding != nil {
-			bindings, _ := row["assetBindings"].([]any)
-			for _, b := range creationMaps(row["assetBindings"]) {
-				if stringValue(b["nodeId"]) == linkedID {
-					return []string{"关联分镜行资产"}
-				}
-			}
-			row["assetBindings"] = append(bindings, binding)
-		}
-		return []string{"关联分镜行资产"}
-	}
-	kind := stringValue(linked["type"])
-	if kind == "image" {
-		row["imageNodeId"] = linkedID
-	}
-	if kind == "video" {
-		row["videoNodeId"] = linkedID
-		shot := fmt.Sprint(row["shotNumber"])
-		prompt := stringValue(row["videoMotionPrompt"])
-		if prompt == "" {
-			prompt = stringValue(row["plotDescription"])
-		}
-		prompt = strings.TrimSpace(prompt)
-		m, _ := linked["metadata"].(map[string]any)
-		if m == nil {
-			m = map[string]any{}
-			linked["metadata"] = m
-		}
-		linked["title"] = "镜头 " + shot + " · 视频"
-		m["prompt"] = prompt
-		m["composerContent"] = cloudAgentConnectionComposer(script, row, nodes, prompt)
-		m["workflowKind"] = "shot"
-		m["workflowTitle"] = "镜头 " + shot + " 视频"
-		m["shotIndex"] = row["shotNumber"]
-		m["generationMode"] = "video"
-		m["seconds"] = fmt.Sprint(row["durationSeconds"])
-		if stringValue(m["videoEditOperation"]) == "" {
-			m["videoEditOperation"] = "text_to_video"
-		}
-		if variables, ok := row["videoPromptTemplateVariables"].(map[string]any); ok {
-			m["promptTemplateOperation"] = "storyboard_video"
-			m["promptTemplateVariables"] = variables
-		} else {
-			delete(m, "promptTemplateOperation")
-			delete(m, "promptTemplateVariables")
+	bindings, _ := row["assetBindings"].([]any)
+	for _, b := range creationMaps(row["assetBindings"]) {
+		if stringValue(b["nodeId"]) == linkedID {
+			return
 		}
 	}
-	return []string{"关联分镜行产物"}
+	row["assetBindings"] = append(bindings, binding)
+}
+
+// cloudAgentPrepareConnectionVideo turns the linked video node into this row's
+// shot: title, prompt, composer content, duration and template variables.
+func cloudAgentPrepareConnectionVideo(nodes []map[string]any, script, row, linked map[string]any) {
+	shot := fmt.Sprint(row["shotNumber"])
+	prompt := stringValue(row["videoMotionPrompt"])
+	if prompt == "" {
+		prompt = stringValue(row["plotDescription"])
+	}
+	prompt = strings.TrimSpace(prompt)
+	m, _ := linked["metadata"].(map[string]any)
+	if m == nil {
+		m = map[string]any{}
+		linked["metadata"] = m
+	}
+	linked["title"] = "镜头 " + shot + " · 视频"
+	m["prompt"] = prompt
+	m["composerContent"] = cloudAgentConnectionComposer(script, row, nodes, prompt)
+	m["workflowKind"] = "shot"
+	m["workflowTitle"] = "镜头 " + shot + " 视频"
+	m["shotIndex"] = row["shotNumber"]
+	m["generationMode"] = "video"
+	m["seconds"] = fmt.Sprint(row["durationSeconds"])
+	if stringValue(m["videoEditOperation"]) == "" {
+		m["videoEditOperation"] = "text_to_video"
+	}
+	if variables, ok := row["videoPromptTemplateVariables"].(map[string]any); ok {
+		m["promptTemplateOperation"] = "storyboard_video"
+		m["promptTemplateVariables"] = variables
+	} else {
+		delete(m, "promptTemplateOperation")
+		delete(m, "promptTemplateVariables")
+	}
 }
 
 func cloudAgentConnectionComposer(script, row map[string]any, nodes []map[string]any, prompt string) string {
@@ -345,14 +381,10 @@ func cloudAgentConnectionResourceKind(node map[string]any) string {
 	}
 	content := stringValue(m["content"]) != ""
 	storage := stringValue(m["storageKey"]) != ""
-	switch stringValue(node["type"]) {
-	case "image":
+	switch kind := stringValue(node["type"]); kind {
+	case "image", "video":
 		if content || storage {
-			return "image"
-		}
-	case "video":
-		if content || storage {
-			return "video"
+			return kind
 		}
 	case "text":
 		if content || stringValue(m["prompt"]) != "" {
@@ -377,13 +409,20 @@ func cloudAgentConnectionResourceKind(node map[string]any) string {
 	case "colorgrade":
 		return "image"
 	case "media-conversion":
-		c, _ := m["mediaConversion"].(map[string]any)
-		if stringValue(c["status"]) == "completed" && stringValue(c["resultStorageKey"]) != "" {
-			if stringValue(c["outputKind"]) == "video" {
-				return "video"
-			}
-			return "image"
+		return cloudAgentMediaConversionResourceKind(m)
+	}
+	return ""
+}
+
+// cloudAgentMediaConversionResourceKind reports the output kind of a finished
+// media conversion; unfinished conversions are not referenceable.
+func cloudAgentMediaConversionResourceKind(m map[string]any) string {
+	c, _ := m["mediaConversion"].(map[string]any)
+	if stringValue(c["status"]) == "completed" && stringValue(c["resultStorageKey"]) != "" {
+		if stringValue(c["outputKind"]) == "video" {
+			return "video"
 		}
+		return "image"
 	}
 	return ""
 }
