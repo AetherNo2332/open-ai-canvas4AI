@@ -139,72 +139,7 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 	}
 	row := &model.AgentQueuedMessage{ID: "am" + strings.TrimPrefix(cloudAgentID(userID, input.Request.IdempotencyKey), "ag"), UserID: userID, CanvasID: input.Request.CanvasID, ConversationID: conversationID, IdempotencyKey: input.Request.IdempotencyKey, Fingerprint: hex.EncodeToString(digest[:]), Mode: input.Mode, RequestJSON: string(requestJSON), Prompt: input.Request.Prompt, ReplyToQuestionID: input.ReplyToQuestionID}
 	err = s.repo.WithAgentConversation(userID, conversationID, func(tx *repository.Repository, q *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
-		prior, lookup := tx.AgentMessageByKey(userID, row.IdempotencyKey)
-		if lookup == nil {
-			if prior.Fingerprint != row.Fingerprint || prior.ConversationID != conversationID {
-				return repository.ErrCreationConflict
-			}
-			*row = *prior
-			return nil
-		}
-		if !errors.Is(lookup, gorm.ErrRecordNotFound) {
-			return lookup
-		}
-		if latest.ID != input.ExpectedRunID {
-			return repository.ErrCloudAgentStaleParent
-		}
-		if latest.CanvasID != input.Request.CanvasID {
-			return kernel.Forbidden("不能跨画布追加 Agent 消息")
-		}
-		if q.AwaitingQuestionID != "" && input.Mode == "interject" && (input.ReplyToQuestionID != q.AwaitingQuestionID || q.QuestionRunID != latest.ID) {
-			return repository.ErrAgentMessageQuestionPending
-		}
-		if input.ReplyToQuestionID != "" && input.ReplyToQuestionID != q.AwaitingQuestionID {
-			return errAgentQuestionStale
-		}
-		if input.ReplyToQuestionID != "" {
-			pending, err := tx.AgentQuestionAnswerPending(userID, conversationID, input.ReplyToQuestionID)
-			if err != nil {
-				return err
-			}
-			if pending {
-				return errAgentQuestionAnswerPending
-			}
-		}
-		if input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status) && utf8.RuneCountInString(row.Prompt) > cloudAgentInterjectionMaxRunes {
-			return BadAuthRequest("插话内容超过 4000 字，请改为排队")
-		}
-		usage, err := tx.UserStorageUsage(userID)
-		if err != nil {
-			return err
-		}
-		immediateInterjection := input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status)
-		incoming := len(row.RequestJSON) + len(row.Prompt) + len(row.Fingerprint)
-		if immediateInterjection {
-			incoming = len(row.Fingerprint)
-		}
-		if err = validateTaskDataGrowthQuotaWithPolicy(usage, int64(incoming), policy.Resource); err != nil {
-			return err
-		}
-		conversationLimit, userLimit := policy.Task.AgentMaxQueuedMessagesPerConversation, policy.Task.AgentMaxQueuedMessagesPerUser
-		// Immediate receipts and the single explicit answer must remain usable
-		// when the ordinary task queue is full; answers are unique per question.
-		if immediateInterjection || input.ReplyToQuestionID != "" {
-			conversationLimit, userLimit = math.MaxInt, math.MaxInt
-		}
-		if err = tx.InsertAgentQueuedMessage(row, q, conversationLimit, userLimit); err != nil {
-			return err
-		}
-		if immediateInterjection {
-			if _, err = interjectCloudAgentRepository(tx, userID, latest.ID, row.ID, row.Prompt); err != nil {
-				return err
-			}
-			if err = tx.FinishAgentQueuedMessage(row, "interjected", latest.ID); err != nil {
-				return err
-			}
-			return tx.SaveAgentConversationQueue(q)
-		}
-		return nil
+		return enqueueAgentConversationMessage(tx, userID, conversationID, input, policy, row, q, latest)
 	})
 	if err != nil {
 		return nil, agentMessageError(err)
@@ -216,6 +151,87 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 	}
 	s.wakeAgentMessages()
 	return s.agentMessageReceipt(userID, conversationID, row.ID)
+}
+
+// enqueueAgentConversationMessage runs inside the conversation lock: it replays
+// an identical earlier message, otherwise checks the turn, question and quota
+// state and inserts (and for a live run immediately delivers) the message.
+func enqueueAgentConversationMessage(tx *repository.Repository, userID, conversationID string, input AgentConversationMessageRequest, policy RuntimePolicySetting, row *model.AgentQueuedMessage, q *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+	prior, lookup := tx.AgentMessageByKey(userID, row.IdempotencyKey)
+	if lookup == nil {
+		if prior.Fingerprint != row.Fingerprint || prior.ConversationID != conversationID {
+			return repository.ErrCreationConflict
+		}
+		*row = *prior
+		return nil
+	}
+	if !errors.Is(lookup, gorm.ErrRecordNotFound) {
+		return lookup
+	}
+	if err := checkAgentMessageQuestion(tx, userID, conversationID, input, row, q, latest); err != nil {
+		return err
+	}
+	usage, err := tx.UserStorageUsage(userID)
+	if err != nil {
+		return err
+	}
+	immediateInterjection := input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status)
+	incoming := len(row.RequestJSON) + len(row.Prompt) + len(row.Fingerprint)
+	if immediateInterjection {
+		incoming = len(row.Fingerprint)
+	}
+	if err = validateTaskDataGrowthQuotaWithPolicy(usage, int64(incoming), policy.Resource); err != nil {
+		return err
+	}
+	conversationLimit, userLimit := policy.Task.AgentMaxQueuedMessagesPerConversation, policy.Task.AgentMaxQueuedMessagesPerUser
+	// Immediate receipts and the single explicit answer must remain usable
+	// when the ordinary task queue is full; answers are unique per question.
+	if immediateInterjection || input.ReplyToQuestionID != "" {
+		conversationLimit, userLimit = math.MaxInt, math.MaxInt
+	}
+	if err = tx.InsertAgentQueuedMessage(row, q, conversationLimit, userLimit); err != nil {
+		return err
+	}
+	if immediateInterjection {
+		if _, err = interjectCloudAgentRepository(tx, userID, latest.ID, row.ID, row.Prompt); err != nil {
+			return err
+		}
+		if err = tx.FinishAgentQueuedMessage(row, "interjected", latest.ID); err != nil {
+			return err
+		}
+		return tx.SaveAgentConversationQueue(q)
+	}
+	return nil
+}
+
+// checkAgentMessageQuestion checks the expected turn and canvas, the pending
+// question gate, answer staleness and the interjection length limit.
+func checkAgentMessageQuestion(tx *repository.Repository, userID, conversationID string, input AgentConversationMessageRequest, row *model.AgentQueuedMessage, q *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+	if latest.ID != input.ExpectedRunID {
+		return repository.ErrCloudAgentStaleParent
+	}
+	if latest.CanvasID != input.Request.CanvasID {
+		return kernel.Forbidden("不能跨画布追加 Agent 消息")
+	}
+	if q.AwaitingQuestionID != "" && input.Mode == "interject" && (input.ReplyToQuestionID != q.AwaitingQuestionID || q.QuestionRunID != latest.ID) {
+		return repository.ErrAgentMessageQuestionPending
+	}
+	if input.ReplyToQuestionID != "" && input.ReplyToQuestionID != q.AwaitingQuestionID {
+		return errAgentQuestionStale
+	}
+	if input.ReplyToQuestionID != "" {
+		pending, err := tx.AgentQuestionAnswerPending(userID, conversationID, input.ReplyToQuestionID)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return errAgentQuestionAnswerPending
+		}
+	}
+	if input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status) && utf8.RuneCountInString(row.Prompt) > cloudAgentInterjectionMaxRunes {
+		return BadAuthRequest("插话内容超过 4000 字，请改为排队")
+	}
+	return nil
 }
 func (s *Service) agentMessageReceipt(userID, conversationID, id string) (*AgentMessageReceipt, error) {
 	row, err := s.repo.AgentQueuedMessage(userID, conversationID, id)

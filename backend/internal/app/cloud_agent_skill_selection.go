@@ -46,104 +46,130 @@ func agentSkillConversationRow(conversationID string, item skills.SkillSelection
 // 两种路径最终都逐技能冻结快照并做容量准入，超限返回 400 agent_skill_budget_exceeded。
 func (s *Service) resolveRunSkills(userID, conversationID string, userSkillIDs []string, isNewConversation bool) ([]cloudAgentSkill, error) {
 	var resolved []skills.SkillSelectionItem
+	var err error
 	if isNewConversation {
-		defaults, err := s.repo.EnabledAgentSkillDefaults()
-		if err != nil {
-			return nil, err
-		}
-		globalLayer := make([]skills.SkillSelectionItem, 0, len(defaults))
-		for _, row := range defaults {
-			version, err := s.repo.SkillVersion(row.SkillVersionID)
-			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return nil, kernel.AgentSkillDefaultsInvalid(fmt.Sprintf("默认技能 %s 引用的版本已失效，请联系管理员重新配置", row.SkillID), map[string]any{"skillId": row.SkillID})
-				}
-				return nil, err
-			}
-			if _, err := s.repo.Skill(row.SkillID); err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return nil, kernel.AgentSkillDefaultsInvalid(fmt.Sprintf("默认技能 %s 不存在或已删除，请联系管理员重新配置", row.SkillID), map[string]any{"skillId": row.SkillID})
-				}
-				return nil, err
-			}
-			globalLayer = append(globalLayer, skills.SkillSelectionItem{
-				SkillID: row.SkillID, VersionID: row.SkillVersionID,
-				ContentHash: version.ContentHash, Source: skills.SkillSourceGlobal,
-			})
-		}
-		userLayer := make([]skills.SkillSelectionItem, 0, len(userSkillIDs))
-		for _, id := range userSkillIDs {
-			// 用户选择沿用既有语义：必须是本人技能库中已安装且启用的技能；
-			// 版本取当前安装版本，与 cloudAgentSkills 的冻结口径一致。
-			detail, err := s.SkillDetail(userID, id)
-			if err != nil {
-				return nil, err
-			}
-			if !detail.IsAdded || detail.Status != 1 {
-				return nil, BadAuthRequest("只能使用用户技能库中已安装且启用的技能")
-			}
-			userLayer = append(userLayer, skills.SkillSelectionItem{
-				SkillID: id, VersionID: detail.VersionID,
-				ContentHash: detail.ContentHash, Source: skills.SkillSourceUser,
-			})
-		}
-		items, err := skills.ResolveSkillSelection(globalLayer, userLayer)
-		if err != nil {
-			return nil, err
-		}
-		resolved = items
+		resolved, err = s.newConversationSkillSelection(userID, userSkillIDs)
 	} else {
-		baseline, err := s.repo.AgentConversationSkills(conversationID)
-		if err != nil {
-			return nil, err
-		}
-		resolved = make([]skills.SkillSelectionItem, 0, len(baseline)+len(userSkillIDs))
-		existing := make(map[string]int, len(baseline))
-		for _, row := range baseline {
-			// Retired Workspace selections must not become hidden skills in a new turn.
-			if row.Source == "workspace" {
-				continue
-			}
-			existing[row.SkillID] = len(resolved)
-			resolved = append(resolved, skills.SkillSelectionItem{
-				SkillID: row.SkillID, VersionID: row.SkillVersionID,
-				ContentHash: row.ContentHash, Source: row.Source,
-			})
-		}
-		selected := make(map[string]struct{}, len(userSkillIDs))
-		for _, id := range userSkillIDs {
-			if _, ok := selected[id]; ok {
-				continue
-			}
-			selected[id] = struct{}{}
-			// The browser resubmits all selected IDs on every turn. A previously
-			// chosen user version stays pinned; choosing a global skill can upgrade
-			// its source once, and selecting a new skill appends it.
-			if at, ok := existing[id]; ok && resolved[at].Source == skills.SkillSourceUser {
-				continue
-			}
-			// 用户显式选择的技能升级为 user 来源并跟踪其当前安装版本；
-			// 只影响该技能行，其他默认技能的注入保持不变。
-			detail, err := s.SkillDetail(userID, id)
-			if err != nil {
-				return nil, err
-			}
-			if !detail.IsAdded || detail.Status != 1 {
-				return nil, BadAuthRequest("只能使用用户技能库中已安装且启用的技能")
-			}
-			item := skills.SkillSelectionItem{
-				SkillID: id, VersionID: detail.VersionID,
-				ContentHash: detail.ContentHash, Source: skills.SkillSourceUser,
-			}
-			if at, ok := existing[id]; ok {
-				resolved[at] = item
-			} else {
-				existing[id] = len(resolved)
-				resolved = append(resolved, item)
-			}
-		}
+		resolved, err = s.existingConversationSkillSelection(userID, conversationID, userSkillIDs)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return s.freezeRunSkillSnapshots(userID, resolved)
+}
+
+// newConversationSkillSelection layers the enabled global defaults under the
+// user's selection for a new conversation.
+func (s *Service) newConversationSkillSelection(userID string, userSkillIDs []string) ([]skills.SkillSelectionItem, error) {
+	defaults, err := s.repo.EnabledAgentSkillDefaults()
+	if err != nil {
+		return nil, err
+	}
+	globalLayer := make([]skills.SkillSelectionItem, 0, len(defaults))
+	for _, row := range defaults {
+		item, err := s.cloudAgentSkillDefaultItem(row)
+		if err != nil {
+			return nil, err
+		}
+		globalLayer = append(globalLayer, item)
+	}
+	userLayer := make([]skills.SkillSelectionItem, 0, len(userSkillIDs))
+	for _, id := range userSkillIDs {
+		// 用户选择沿用既有语义：必须是本人技能库中已安装且启用的技能；
+		// 版本取当前安装版本，与 cloudAgentSkills 的冻结口径一致。
+		item, err := s.cloudAgentUserSkillItem(userID, id)
+		if err != nil {
+			return nil, err
+		}
+		userLayer = append(userLayer, item)
+	}
+	return skills.ResolveSkillSelection(globalLayer, userLayer)
+}
+
+// cloudAgentSkillDefaultItem freezes one global default; a default whose
+// version or skill no longer exists is an administrator configuration error.
+func (s *Service) cloudAgentSkillDefaultItem(row model.AgentSkillDefault) (skills.SkillSelectionItem, error) {
+	version, err := s.repo.SkillVersion(row.SkillVersionID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return skills.SkillSelectionItem{}, kernel.AgentSkillDefaultsInvalid(fmt.Sprintf("默认技能 %s 引用的版本已失效，请联系管理员重新配置", row.SkillID), map[string]any{"skillId": row.SkillID})
+		}
+		return skills.SkillSelectionItem{}, err
+	}
+	if _, err := s.repo.Skill(row.SkillID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return skills.SkillSelectionItem{}, kernel.AgentSkillDefaultsInvalid(fmt.Sprintf("默认技能 %s 不存在或已删除，请联系管理员重新配置", row.SkillID), map[string]any{"skillId": row.SkillID})
+		}
+		return skills.SkillSelectionItem{}, err
+	}
+	return skills.SkillSelectionItem{
+		SkillID: row.SkillID, VersionID: row.SkillVersionID,
+		ContentHash: version.ContentHash, Source: skills.SkillSourceGlobal,
+	}, nil
+}
+
+// cloudAgentUserSkillItem freezes a user-selected skill at its current
+// installed version; it must be installed and enabled in the user's library.
+func (s *Service) cloudAgentUserSkillItem(userID, id string) (skills.SkillSelectionItem, error) {
+	detail, err := s.SkillDetail(userID, id)
+	if err != nil {
+		return skills.SkillSelectionItem{}, err
+	}
+	if !detail.IsAdded || detail.Status != 1 {
+		return skills.SkillSelectionItem{}, BadAuthRequest("只能使用用户技能库中已安装且启用的技能")
+	}
+	return skills.SkillSelectionItem{
+		SkillID: id, VersionID: detail.VersionID,
+		ContentHash: detail.ContentHash, Source: skills.SkillSourceUser,
+	}, nil
+}
+
+// existingConversationSkillSelection keeps the conversation's frozen baseline
+// and only appends or upgrades the skills the user selects this turn.
+func (s *Service) existingConversationSkillSelection(userID, conversationID string, userSkillIDs []string) ([]skills.SkillSelectionItem, error) {
+	baseline, err := s.repo.AgentConversationSkills(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	resolved := make([]skills.SkillSelectionItem, 0, len(baseline)+len(userSkillIDs))
+	existing := make(map[string]int, len(baseline))
+	for _, row := range baseline {
+		// Retired Workspace selections must not become hidden skills in a new turn.
+		if row.Source == "workspace" {
+			continue
+		}
+		existing[row.SkillID] = len(resolved)
+		resolved = append(resolved, skills.SkillSelectionItem{
+			SkillID: row.SkillID, VersionID: row.SkillVersionID,
+			ContentHash: row.ContentHash, Source: row.Source,
+		})
+	}
+	selected := make(map[string]struct{}, len(userSkillIDs))
+	for _, id := range userSkillIDs {
+		if _, ok := selected[id]; ok {
+			continue
+		}
+		selected[id] = struct{}{}
+		// The browser resubmits all selected IDs on every turn. A previously
+		// chosen user version stays pinned; choosing a global skill can upgrade
+		// its source once, and selecting a new skill appends it.
+		if at, ok := existing[id]; ok && resolved[at].Source == skills.SkillSourceUser {
+			continue
+		}
+		// 用户显式选择的技能升级为 user 来源并跟踪其当前安装版本；
+		// 只影响该技能行，其他默认技能的注入保持不变。
+		item, err := s.cloudAgentUserSkillItem(userID, id)
+		if err != nil {
+			return nil, err
+		}
+		if at, ok := existing[id]; ok {
+			resolved[at] = item
+		} else {
+			existing[id] = len(resolved)
+			resolved = append(resolved, item)
+		}
+	}
+	return resolved, nil
 }
 
 // freezeRunSkillSnapshots 把解析结果逐技能冻结为运行快照：user 来源走既有

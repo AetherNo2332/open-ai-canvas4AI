@@ -292,41 +292,17 @@ func (s *Service) spawnDynamicSubagent(run *model.CloudAgentExecution, state *cl
 	}
 	key := "subagent:" + run.ID + ":" + call.ID
 	if existing, err := s.repo.AgentSubagentLinkByIdempotency(run.UserID, key); err == nil {
-		return map[string]any{"linkId": existing.ID, "childRunId": existing.ChildRunID, "displayName": existing.DisplayName, "role": existing.RoleLabel, "accepted": true, "replayed": true}, nil
+		return agentSubagentReplayReceipt(existing), nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 	if state.Workspace == nil {
 		return nil, BadAuthRequest("父 Agent Workspace 快照缺失")
 	}
-	views, err := agentSubagentViews(s.repo, run.UserID, run.ID)
-	if err != nil {
+	if err := s.agentSubagentCapacityCheck(run); err != nil {
 		return nil, err
 	}
-	active := 0
-	for _, view := range views {
-		if !cloudAgentRunTerminal(view.Status) {
-			active++
-		}
-	}
-	if len(views) >= maxDynamicSubagents {
-		return nil, BadAuthRequest(fmt.Sprintf("单个父 Agent 最多创建 %d 个子代理", maxDynamicSubagents))
-	}
-	if active >= maxDynamicSubagentConcurrent {
-		return nil, BadAuthRequest(fmt.Sprintf("单个父 Agent 最多同时运行 %d 个子代理", maxDynamicSubagentConcurrent))
-	}
-	childReq := state.Request
-	childReq.Prompt = strings.TrimSpace(input.Instructions)
-	if childReq.Prompt == "" {
-		childReq.Prompt = input.Objective
-	}
-	childReq.IdempotencyKey = key
-	childReq.SubagentEnabled = false
-	childReq.PermissionMode = "read_only"
-	childReq.Budget.MaxSteps = input.MaxSteps
-	if childReq.Budget.MaxSteps == 0 {
-		childReq.Budget.MaxSteps = 20
-	}
+	childReq := dynamicSubagentChildRequest(state.Request, input, key)
 	childID := cloudAgentID(run.UserID, key)
 	linkID := kernel.NewID()
 	runtime := &SubagentRuntime{LinkID: linkID, ParentRunID: run.ID, ChildRunID: childID, DisplayName: strings.TrimSpace(input.Name), RoleLabel: strings.TrimSpace(input.Role), Objective: strings.TrimSpace(input.Objective), Depth: maxDynamicSubagentDepth}
@@ -352,6 +328,62 @@ func (s *Service) spawnDynamicSubagent(run *model.CloudAgentExecution, state *cl
 		return nil, err
 	}
 	link := &model.AgentSubagentLink{ID: linkID, UserID: run.UserID, CanvasID: run.CanvasID, ParentRunID: run.ID, ChildRunID: child.ID, TaskID: prepared.Task.ID, IdempotencyKey: key, DisplayName: runtime.DisplayName, RoleLabel: runtime.RoleLabel, Objective: runtime.Objective, Instructions: childReq.Prompt, Depth: runtime.Depth, BudgetJSON: string(budgetSnapshot), ContextSnapshotJSON: string(contextSnapshot), Status: repository.SubagentStatusQueued}
+	if replay, err := s.admitDynamicSubagent(run, key, prepared, link, policy); replay != nil || err != nil {
+		return replay, err
+	}
+	if link.ID != runtime.LinkID {
+		return nil, BadAuthRequest("子代理 Link 身份不一致")
+	}
+	return map[string]any{"linkId": link.ID, "childRunId": child.ID, "displayName": link.DisplayName, "role": link.RoleLabel, "objective": link.Objective, "accepted": true}, nil
+}
+
+func agentSubagentReplayReceipt(existing *model.AgentSubagentLink) map[string]any {
+	return map[string]any{"linkId": existing.ID, "childRunId": existing.ChildRunID, "displayName": existing.DisplayName, "role": existing.RoleLabel, "accepted": true, "replayed": true}
+}
+
+// agentSubagentCapacityCheck rejects a new child when the parent has reached
+// its total or concurrent subagent limit.
+func (s *Service) agentSubagentCapacityCheck(run *model.CloudAgentExecution) error {
+	views, err := agentSubagentViews(s.repo, run.UserID, run.ID)
+	if err != nil {
+		return err
+	}
+	active := 0
+	for _, view := range views {
+		if !cloudAgentRunTerminal(view.Status) {
+			active++
+		}
+	}
+	if len(views) >= maxDynamicSubagents {
+		return BadAuthRequest(fmt.Sprintf("单个父 Agent 最多创建 %d 个子代理", maxDynamicSubagents))
+	}
+	if active >= maxDynamicSubagentConcurrent {
+		return BadAuthRequest(fmt.Sprintf("单个父 Agent 最多同时运行 %d 个子代理", maxDynamicSubagentConcurrent))
+	}
+	return nil
+}
+
+// dynamicSubagentChildRequest derives the read-only child request from the
+// parent request; the child cannot spawn further subagents.
+func dynamicSubagentChildRequest(parent CloudAgentRequest, input spawnSubagentInput, key string) CloudAgentRequest {
+	childReq := parent
+	childReq.Prompt = strings.TrimSpace(input.Instructions)
+	if childReq.Prompt == "" {
+		childReq.Prompt = input.Objective
+	}
+	childReq.IdempotencyKey = key
+	childReq.SubagentEnabled = false
+	childReq.PermissionMode = "read_only"
+	childReq.Budget.MaxSteps = input.MaxSteps
+	if childReq.Budget.MaxSteps == 0 {
+		childReq.Budget.MaxSteps = 20
+	}
+	return childReq
+}
+
+// admitDynamicSubagent stores the child admission under the storage quota. A
+// non-nil receipt means a concurrent identical spawn already committed.
+func (s *Service) admitDynamicSubagent(run *model.CloudAgentExecution, key string, prepared repository.CloudAgentAdmission, link *model.AgentSubagentLink, policy RuntimePolicySetting) (map[string]any, error) {
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	usage, err := s.repo.UserStorageUsage(run.UserID)
@@ -364,7 +396,7 @@ func (s *Service) spawnDynamicSubagent(run *model.CloudAgentExecution, state *cl
 	}
 	if err := s.repo.CreateDynamicSubagentAdmission(prepared, link, policy.Task.ActiveTaskLimit, maxDynamicSubagents, maxDynamicSubagentConcurrent); err != nil {
 		if existing, replayErr := s.repo.AgentSubagentLinkByIdempotency(run.UserID, key); replayErr == nil {
-			return map[string]any{"linkId": existing.ID, "childRunId": existing.ChildRunID, "displayName": existing.DisplayName, "role": existing.RoleLabel, "accepted": true, "replayed": true}, nil
+			return agentSubagentReplayReceipt(existing), nil
 		}
 		if errors.Is(err, repository.ErrTaskStateConflict) {
 			return nil, creationConflict("子代理数量或并发上限已达到")
@@ -374,8 +406,5 @@ func (s *Service) spawnDynamicSubagent(run *model.CloudAgentExecution, state *cl
 		}
 		return nil, err
 	}
-	if link.ID != runtime.LinkID {
-		return nil, BadAuthRequest("子代理 Link 身份不一致")
-	}
-	return map[string]any{"linkId": link.ID, "childRunId": child.ID, "displayName": link.DisplayName, "role": link.RoleLabel, "objective": link.Objective, "accepted": true}, nil
+	return nil, nil
 }
