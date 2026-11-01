@@ -89,18 +89,8 @@ func failWorkerRecovery(run *model.CloudAgentExecution, reason, message string) 
 }
 
 func (s *Service) PiWorkerRecovery(userID, runID, owner string, input PiWorkerRecoveryRequest) (*PiWorkerRecoveryView, error) {
-	switch input.Class {
-	case "network", "http_5xx", "timeout", "rate_limited", "conflict", "result_unknown":
-	default:
-		return nil, BadAuthRequest("未知 worker 恢复分类")
-	}
-	switch input.Operation {
-	case "snapshot", "control", "checkpoint", "model", "tool", "phase", "renew", "compaction":
-	default:
-		return nil, BadAuthRequest("未知 worker 恢复操作")
-	}
-	if input.Revision < 1 || input.RetryAfterMS < 0 || input.RetryAfterMS > 24*60*60*1000 || len(input.TaskID) > 80 || len(input.CallID) > 160 {
-		return nil, BadAuthRequest("无效 worker 恢复参数")
+	if err := validatePiWorkerRecoveryRequest(input); err != nil {
+		return nil, err
 	}
 	worker, epoch, hasEpoch, err := parsePiAgentLeaseOwner(owner)
 	if err != nil || !hasEpoch {
@@ -127,86 +117,12 @@ func (s *Service) PiWorkerRecovery(userID, runID, owner string, input PiWorkerRe
 	if run.Revision != input.Revision {
 		return nil, kernel.NewAppError(409, "恢复上报 revision 已变化，请重新读取")
 	}
-	if input.TaskID != "" && input.TaskID != run.ActiveTaskID {
-		hydrated, readErr := s.repo.CloudAgent(userID, runID)
-		if readErr != nil {
-			return nil, readErr
-		}
-		state, decodeErr := cloudAgentDecode(hydrated)
-		if decodeErr != nil || input.TaskID != state.LastStepTaskID {
-			return nil, BadAuthRequest("恢复任务与本轮步骤不匹配")
-		}
-	}
-	if input.CallID != "" {
-		hydrated, readErr := s.repo.CloudAgent(userID, runID)
-		if readErr != nil {
-			return nil, readErr
-		}
-		state, decodeErr := cloudAgentDecode(hydrated)
-		if decodeErr != nil || state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].ID != input.CallID {
-			return nil, BadAuthRequest("恢复调用与本轮步骤不匹配")
-		}
+	if err := s.piWorkerRecoveryStepMatches(userID, runID, run, input); err != nil {
+		return nil, err
 	}
 	now := time.Now().UTC()
 	err = s.mutatePiControl(userID, runID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
-		if current.LeaseOwner != worker {
-			return kernel.AgentLeaseLost("恢复上报租约已失效")
-		}
-		budgets := map[string]int{}
-		if current.RecoveryOperationBudgets != "" {
-			if err := json.Unmarshal([]byte(current.RecoveryOperationBudgets), &budgets); err != nil {
-				return err
-			}
-		}
-		if budgets == nil {
-			budgets = map[string]int{}
-		}
-		business := recoveryBusinessIdentity(input.TaskID, input.CallID)
-		// Preserve counters recorded before the per-operation ledger was added.
-		if previous := recoveryBusinessIdentity(current.RecoveryTaskID, current.RecoveryCallID); current.RecoveryOperationID != "" && budgets[previous] < current.RecoveryOperationAttempts {
-			budgets[previous] = current.RecoveryOperationAttempts
-		}
-		budgets[business]++
-		body, err := json.Marshal(budgets)
-		if err != nil {
-			return err
-		}
-		current.RecoveryOperationBudgets = string(body)
-		current.RecoveryAttempts++
-		current.RecoveryOperationAttempts = budgets[business]
-		current.RecoveryLastEpoch = epoch
-		current.RecoveryOperationID = identity
-		current.RecoveryTaskID = input.TaskID
-		current.RecoveryCallID = input.CallID
-		current.RecoveryClass = input.Class
-		current.LastErrorReason = input.Class
-		if current.RecoveryStartedAt == nil {
-			current.RecoveryStartedAt = &now
-		}
-		if input.Class == "result_unknown" {
-			return failWorkerRecovery(current, "pi_worker_result_unknown", "本轮操作结果无法确认，已停止，请核对原任务结果后重试")
-		}
-		if current.WorkerRecoveryExhausted(now) {
-			return failWorkerRecovery(current, "pi_worker_recovery_exhausted", "Pi worker 恢复次数或时间已耗尽，本轮已停止，请重试")
-		}
-		delay := time.Second * time.Duration(1<<min(current.RecoveryAttempts-1, 4))
-		delay += time.Duration(rand.Int64N(int64(delay)/4 + 1))
-		delay = min(delay, 30*time.Second)
-		delay = max(delay, time.Duration(input.RetryAfterMS)*time.Millisecond)
-		next := now.Add(delay)
-		if !next.Before(current.RecoveryStartedAt.Add(model.AgentWorkerRecoveryWindow)) {
-			return failWorkerRecovery(current, "pi_worker_recovery_exhausted", "等待恢复超过本轮恢复期限，已停止，请重试")
-		}
-		if err := repo.SetPiRecoveryLease(current, worker, epoch, next); err != nil {
-			return err
-		}
-		current.NextRecoveryAt = &next
-		current.LeaseExpiresAt = &next
-		current.RecoveryStatus = "scheduled"
-		current.RuntimePhase = "waiting_resource"
-		current.WaitKind = "worker_recovery"
-		current.WaitReason = "worker 连接异常，等待恢复"
-		return appendWorkerEvent(current, "worker_recovery_scheduled", map[string]any{"text": current.WaitReason, "class": input.Class, "operation": input.Operation, "attempts": current.RecoveryAttempts, "nextRecoveryAt": next})
+		return piRecordWorkerRecovery(current, repo, input, worker, epoch, identity, now)
 	})
 	if err != nil {
 		return nil, err
@@ -216,6 +132,118 @@ func (s *Service) PiWorkerRecovery(userID, runID, owner string, input PiWorkerRe
 		return nil, err
 	}
 	return workerRecoveryView(run), nil
+}
+
+func validatePiWorkerRecoveryRequest(input PiWorkerRecoveryRequest) error {
+	switch input.Class {
+	case "network", "http_5xx", "timeout", "rate_limited", "conflict", "result_unknown":
+	default:
+		return BadAuthRequest("未知 worker 恢复分类")
+	}
+	switch input.Operation {
+	case "snapshot", "control", "checkpoint", "model", "tool", "phase", "renew", "compaction":
+	default:
+		return BadAuthRequest("未知 worker 恢复操作")
+	}
+	if input.Revision < 1 || input.RetryAfterMS < 0 || input.RetryAfterMS > 24*60*60*1000 || len(input.TaskID) > 80 || len(input.CallID) > 160 {
+		return BadAuthRequest("无效 worker 恢复参数")
+	}
+	return nil
+}
+
+// piWorkerRecoveryStepMatches checks that a reported task or call belongs to
+// the run's current step before any recovery is recorded.
+func (s *Service) piWorkerRecoveryStepMatches(userID, runID string, run *model.CloudAgentExecution, input PiWorkerRecoveryRequest) error {
+	if input.TaskID != "" && input.TaskID != run.ActiveTaskID {
+		hydrated, readErr := s.repo.CloudAgent(userID, runID)
+		if readErr != nil {
+			return readErr
+		}
+		state, decodeErr := cloudAgentDecode(hydrated)
+		if decodeErr != nil || input.TaskID != state.LastStepTaskID {
+			return BadAuthRequest("恢复任务与本轮步骤不匹配")
+		}
+	}
+	if input.CallID != "" {
+		hydrated, readErr := s.repo.CloudAgent(userID, runID)
+		if readErr != nil {
+			return readErr
+		}
+		state, decodeErr := cloudAgentDecode(hydrated)
+		if decodeErr != nil || state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].ID != input.CallID {
+			return BadAuthRequest("恢复调用与本轮步骤不匹配")
+		}
+	}
+	return nil
+}
+
+// piRecordWorkerRecovery runs inside the control transaction: it counts the
+// attempt per business operation, then fails the run or schedules a retry.
+func piRecordWorkerRecovery(current *model.CloudAgentExecution, repo *repository.Repository, input PiWorkerRecoveryRequest, worker string, epoch int64, identity string, now time.Time) error {
+	if current.LeaseOwner != worker {
+		return kernel.AgentLeaseLost("恢复上报租约已失效")
+	}
+	budgets := map[string]int{}
+	if current.RecoveryOperationBudgets != "" {
+		if err := json.Unmarshal([]byte(current.RecoveryOperationBudgets), &budgets); err != nil {
+			return err
+		}
+	}
+	if budgets == nil {
+		budgets = map[string]int{}
+	}
+	business := recoveryBusinessIdentity(input.TaskID, input.CallID)
+	// Preserve counters recorded before the per-operation ledger was added.
+	if previous := recoveryBusinessIdentity(current.RecoveryTaskID, current.RecoveryCallID); current.RecoveryOperationID != "" && budgets[previous] < current.RecoveryOperationAttempts {
+		budgets[previous] = current.RecoveryOperationAttempts
+	}
+	budgets[business]++
+	body, err := json.Marshal(budgets)
+	if err != nil {
+		return err
+	}
+	current.RecoveryOperationBudgets = string(body)
+	current.RecoveryAttempts++
+	current.RecoveryOperationAttempts = budgets[business]
+	current.RecoveryLastEpoch = epoch
+	current.RecoveryOperationID = identity
+	current.RecoveryTaskID = input.TaskID
+	current.RecoveryCallID = input.CallID
+	current.RecoveryClass = input.Class
+	current.LastErrorReason = input.Class
+	if current.RecoveryStartedAt == nil {
+		current.RecoveryStartedAt = &now
+	}
+	if input.Class == "result_unknown" {
+		return failWorkerRecovery(current, "pi_worker_result_unknown", "本轮操作结果无法确认，已停止，请核对原任务结果后重试")
+	}
+	if current.WorkerRecoveryExhausted(now) {
+		return failWorkerRecovery(current, "pi_worker_recovery_exhausted", "Pi worker 恢复次数或时间已耗尽，本轮已停止，请重试")
+	}
+	return piScheduleWorkerRecovery(current, repo, input, worker, epoch, now)
+}
+
+// piScheduleWorkerRecovery picks the backoff (honoring the worker's
+// Retry-After) and moves the lease to the next recovery time.
+func piScheduleWorkerRecovery(current *model.CloudAgentExecution, repo *repository.Repository, input PiWorkerRecoveryRequest, worker string, epoch int64, now time.Time) error {
+	delay := time.Second * time.Duration(1<<min(current.RecoveryAttempts-1, 4))
+	delay += time.Duration(rand.Int64N(int64(delay)/4 + 1))
+	delay = min(delay, 30*time.Second)
+	delay = max(delay, time.Duration(input.RetryAfterMS)*time.Millisecond)
+	next := now.Add(delay)
+	if !next.Before(current.RecoveryStartedAt.Add(model.AgentWorkerRecoveryWindow)) {
+		return failWorkerRecovery(current, "pi_worker_recovery_exhausted", "等待恢复超过本轮恢复期限，已停止，请重试")
+	}
+	if err := repo.SetPiRecoveryLease(current, worker, epoch, next); err != nil {
+		return err
+	}
+	current.NextRecoveryAt = &next
+	current.LeaseExpiresAt = &next
+	current.RecoveryStatus = "scheduled"
+	current.RuntimePhase = "waiting_resource"
+	current.WaitKind = "worker_recovery"
+	current.WaitReason = "worker 连接异常，等待恢复"
+	return appendWorkerEvent(current, "worker_recovery_scheduled", map[string]any{"text": current.WaitReason, "class": input.Class, "operation": input.Operation, "attempts": current.RecoveryAttempts, "nextRecoveryAt": next})
 }
 
 func (s *Service) SweepWorkerRecoveries() (int, error) {

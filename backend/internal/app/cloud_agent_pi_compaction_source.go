@@ -104,6 +104,41 @@ func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry,
 	if len(branch) == 0 || branch[len(branch)-1].ID != activeLeafID {
 		return source, fmt.Errorf("Pi compaction source does not end at its active leaf")
 	}
+	visible, latestCompaction, err := cloudAgentPiBranchVisibleMessages(branch)
+	if err != nil {
+		return source, err
+	}
+	// Recovery context edits are append-only. Apply their latest content before
+	// hashing or retaining history so abandoned attempts cannot reappear in Go.
+	visible, err = cloudAgentPiApplyContextEdits(branch, visible)
+	if err != nil {
+		return source, err
+	}
+	if len(visible) == 0 {
+		return source, fmt.Errorf("Pi compaction active branch has no context messages")
+	}
+	source.Messages = make([]map[string]any, 0, len(visible))
+	for _, item := range visible {
+		source.Messages = append(source.Messages, item.Value)
+		source.MessageEntryIDs = append(source.MessageEntryIDs, item.EntryID)
+	}
+	if err := cloudAgentPiRetentionBoundary(&source, branch, visible, latestCompaction, keepRecentTokens); err != nil {
+		return source, err
+	}
+	source.CompactedTurnCount = cloudAgentConversationTurnCount(source.Messages)
+	encoded, err := json.Marshal(source.Messages)
+	if err != nil {
+		return source, err
+	}
+	source.SourceBytes = len(encoded)
+	digest := sha256.Sum256(encoded)
+	source.SourceDigest = hex.EncodeToString(digest[:])
+	return source, nil
+}
+
+// cloudAgentPiBranchVisibleMessages returns the messages Pi still exposes on the
+// branch and the index of the latest compaction entry (-1 when there is none).
+func cloudAgentPiBranchVisibleMessages(branch []cloudAgentPiCompactionEntry) ([]cloudAgentPiContextMessage, int, error) {
 	latestCompaction := -1
 	for index := range branch {
 		if branch[index].Type == "compaction" {
@@ -112,62 +147,73 @@ func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry,
 	}
 	visible := make([]cloudAgentPiContextMessage, 0, len(branch)+2)
 	if latestCompaction >= 0 {
-		compaction := branch[latestCompaction]
-		if strings.TrimSpace(compaction.Summary) == "" || compaction.FirstKeptEntryID == "" {
-			return source, fmt.Errorf("Pi compaction boundary is incomplete")
+		compacted, err := cloudAgentPiCompactedVisibleMessages(branch, latestCompaction, visible)
+		return compacted, latestCompaction, err
+	}
+	for _, entry := range branch {
+		message, ok, err := cloudAgentPiEntryMessage(entry)
+		if err != nil {
+			return visible, latestCompaction, err
 		}
-		checkpointMessage := map[string]any{"role": "user", "content": compaction.Summary}
-		if _, err := agentcontext.ParseFrame(compaction.Summary); err == nil {
-			checkpointMessage[cloudAgentContextSourceKey] = "checkpoint"
-		}
-		visible = append(visible, cloudAgentPiContextMessage{EntryID: compaction.ID, Value: checkpointMessage})
-		visible = append(visible, cloudAgentPiContextMessage{EntryID: compaction.ID, Value: map[string]any{
-			"role": "assistant", "content": agentcontext.Acknowledgement,
-		}})
-		keepFrom := latestCompaction
-		if compaction.FirstKeptEntryID != compaction.ID {
-			keepFrom = -1
-			for index := 0; index < latestCompaction; index++ {
-				if branch[index].ID == compaction.FirstKeptEntryID {
-					keepFrom = index
-					break
-				}
-			}
-			if keepFrom < 0 {
-				return source, fmt.Errorf("Pi compaction kept entry is not on the active branch")
-			}
-		}
-		for index := keepFrom; index < latestCompaction; index++ {
-			message, ok, err := cloudAgentPiEntryMessage(branch[index])
-			if err != nil {
-				return source, err
-			}
-			if ok {
-				visible = append(visible, message)
-			}
-		}
-		for index := latestCompaction + 1; index < len(branch); index++ {
-			message, ok, err := cloudAgentPiEntryMessage(branch[index])
-			if err != nil {
-				return source, err
-			}
-			if ok {
-				visible = append(visible, message)
-			}
-		}
-	} else {
-		for _, entry := range branch {
-			message, ok, err := cloudAgentPiEntryMessage(entry)
-			if err != nil {
-				return source, err
-			}
-			if ok {
-				visible = append(visible, message)
-			}
+		if ok {
+			visible = append(visible, message)
 		}
 	}
-	// Recovery context edits are append-only. Apply their latest content before
-	// hashing or retaining history so abandoned attempts cannot reappear in Go.
+	return visible, latestCompaction, nil
+}
+
+// cloudAgentPiCompactedVisibleMessages emits the previous compaction checkpoint and
+// its acknowledgement, then the kept entries before it and every entry after it.
+func cloudAgentPiCompactedVisibleMessages(branch []cloudAgentPiCompactionEntry, latestCompaction int, visible []cloudAgentPiContextMessage) ([]cloudAgentPiContextMessage, error) {
+	compaction := branch[latestCompaction]
+	if strings.TrimSpace(compaction.Summary) == "" || compaction.FirstKeptEntryID == "" {
+		return visible, fmt.Errorf("Pi compaction boundary is incomplete")
+	}
+	checkpointMessage := map[string]any{"role": "user", "content": compaction.Summary}
+	if _, err := agentcontext.ParseFrame(compaction.Summary); err == nil {
+		checkpointMessage[cloudAgentContextSourceKey] = "checkpoint"
+	}
+	visible = append(visible, cloudAgentPiContextMessage{EntryID: compaction.ID, Value: checkpointMessage})
+	visible = append(visible, cloudAgentPiContextMessage{EntryID: compaction.ID, Value: map[string]any{
+		"role": "assistant", "content": agentcontext.Acknowledgement,
+	}})
+	keepFrom := latestCompaction
+	if compaction.FirstKeptEntryID != compaction.ID {
+		keepFrom = -1
+		for index := 0; index < latestCompaction; index++ {
+			if branch[index].ID == compaction.FirstKeptEntryID {
+				keepFrom = index
+				break
+			}
+		}
+		if keepFrom < 0 {
+			return visible, fmt.Errorf("Pi compaction kept entry is not on the active branch")
+		}
+	}
+	for index := keepFrom; index < latestCompaction; index++ {
+		message, ok, err := cloudAgentPiEntryMessage(branch[index])
+		if err != nil {
+			return visible, err
+		}
+		if ok {
+			visible = append(visible, message)
+		}
+	}
+	for index := latestCompaction + 1; index < len(branch); index++ {
+		message, ok, err := cloudAgentPiEntryMessage(branch[index])
+		if err != nil {
+			return visible, err
+		}
+		if ok {
+			visible = append(visible, message)
+		}
+	}
+	return visible, nil
+}
+
+// cloudAgentPiApplyContextEdits replaces each visible message with the content of
+// its latest context edit; a null replacement removes the message.
+func cloudAgentPiApplyContextEdits(branch []cloudAgentPiCompactionEntry, visible []cloudAgentPiContextMessage) ([]cloudAgentPiContextMessage, error) {
 	edits := map[string]json.RawMessage{}
 	originals := map[string]cloudAgentPiCompactionEntry{}
 	for _, entry := range branch {
@@ -188,30 +234,27 @@ func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry,
 			original := originals[item.EntryID]
 			var message map[string]json.RawMessage
 			if json.Unmarshal(replacement, &edit) != nil || len(edit.Content) == 0 || original.Type != "message" || json.Unmarshal(original.Message, &message) != nil {
-				return source, fmt.Errorf("Pi compaction context replacement is invalid")
+				return nil, fmt.Errorf("Pi compaction context replacement is invalid")
 			}
 			message["content"] = edit.Content
 			original.Message, _ = json.Marshal(message)
 			updated, visible, err := cloudAgentPiEntryMessage(original)
 			if err != nil || !visible {
-				return source, fmt.Errorf("Pi compaction replacement message is invalid")
+				return nil, fmt.Errorf("Pi compaction replacement message is invalid")
 			}
 			item = updated
 		}
 		projected = append(projected, item)
 	}
-	visible = projected
-	if len(visible) == 0 {
-		return source, fmt.Errorf("Pi compaction active branch has no context messages")
-	}
-	source.Messages = make([]map[string]any, 0, len(visible))
-	for _, item := range visible {
-		source.Messages = append(source.Messages, item.Value)
-		source.MessageEntryIDs = append(source.MessageEntryIDs, item.EntryID)
-	}
+	return projected, nil
+}
+
+// cloudAgentPiRetentionBoundary sets the first kept entry: the complete-turn
+// boundary, moved later when keepRecentTokens retains a shorter raw suffix.
+func cloudAgentPiRetentionBoundary(source *cloudAgentPiCompactionSource, branch []cloudAgentPiCompactionEntry, visible []cloudAgentPiContextMessage, latestCompaction, keepRecentTokens int) error {
 	source.FirstKeptEntryID = cloudAgentPiFirstKeptEntryID(visible)
 	if source.FirstKeptEntryID == "" {
-		return source, fmt.Errorf("Pi compaction could not find a complete-turn retention boundary")
+		return fmt.Errorf("Pi compaction could not find a complete-turn retention boundary")
 	}
 	source.FirstKeptIndex = -1
 	if latestCompaction >= 0 && source.FirstKeptEntryID == branch[latestCompaction].ID {
@@ -227,7 +270,7 @@ func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry,
 		}
 	}
 	if source.FirstKeptIndex < 0 || source.FirstKeptIndex > len(visible) {
-		return source, fmt.Errorf("Pi compaction retention boundary is not in the projected context")
+		return fmt.Errorf("Pi compaction retention boundary is not in the projected context")
 	}
 	start := 0
 	if latestCompaction >= 0 {
@@ -236,15 +279,7 @@ func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry,
 	if index := cloudAgentPiRetentionIndex(visible, start, keepRecentTokens); index > source.FirstKeptIndex {
 		source.FirstKeptEntryID, source.FirstKeptIndex = visible[index].EntryID, index
 	}
-	source.CompactedTurnCount = cloudAgentConversationTurnCount(source.Messages)
-	encoded, err := json.Marshal(source.Messages)
-	if err != nil {
-		return source, err
-	}
-	source.SourceBytes = len(encoded)
-	digest := sha256.Sum256(encoded)
-	source.SourceDigest = hex.EncodeToString(digest[:])
-	return source, nil
+	return nil
 }
 
 func cloudAgentPiFirstKeptEntryID(messages []cloudAgentPiContextMessage) string {

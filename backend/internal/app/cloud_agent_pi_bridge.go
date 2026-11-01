@@ -13,7 +13,6 @@ import (
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
-	"yingce/backend/internal/skills"
 )
 
 const piAgentLeaseDuration = 45 * time.Second
@@ -266,21 +265,7 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 			budget.MaxOutputTokens = min(budget.MaxOutputTokens, output)
 		}
 	}
-	tools := make([]PiAgentToolSpec, 0, len(state.Canonical.Tools))
-	for _, item := range state.Canonical.Tools {
-		function, _ := item["function"].(map[string]any)
-		name := stringField(function, "name")
-		parameters, _ := function["parameters"].(map[string]any)
-		if name == "" || parameters == nil {
-			continue
-		}
-		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
-		allowed := nativeRead || (cloudAgentToolAllowed(state.Request, name) && cloudAgentToolAdvertisedForRun(&state, name))
-		tools = append(tools, PiAgentToolSpec{
-			Name: name, Description: stringField(function, "description"), Parameters: parameters,
-			Category: cloudAgentToolCategory(name), Allowed: allowed,
-		})
-	}
+	tools := piSnapshotToolSpecs(&state)
 	session, sessionEntries, err := s.repo.CloudAgentPiSession(run.UserID, firstNonEmpty(run.ConversationID, run.ID))
 	if err != nil {
 		return nil, err
@@ -293,35 +278,11 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 	if err != nil {
 		return nil, err
 	}
-	var pendingCompaction *PiPendingContextCompaction
-	if compaction := state.ContextCompaction; compaction != nil && compaction.PiOperationID != "" {
-		pendingCompaction = &PiPendingContextCompaction{
-			OperationID: compaction.PiOperationID, SessionRevision: compaction.PiSessionRevision,
-			ActiveLeafID: compaction.PiSourceLeafID, Reason: compaction.PiReason,
-			WillRetry: compaction.PiWillRetry, TokensBefore: compaction.PiTokensBefore,
-		}
-	}
-	var nativeSkills []PiSkillSnapshot
+	pendingCompaction := piSnapshotPendingCompaction(&state)
 	mode := firstNonEmpty(state.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy)
-	if mode == cloudAgentSkillRuntimeNative {
-		nativeSkills, err = s.piNativeSkillSnapshots(run.UserID, state.Skills)
-		if err != nil {
-			if skills.IsPermanentFrozenSkillError(err) {
-				message := "本轮固定的技能快照已不可用，请重新选择技能后发起新一轮"
-				if failErr := s.failCloudAgent(run, &state, message); failErr != nil {
-					return nil, failErr
-				}
-				terminal, readErr := s.repo.CloudAgent(run.UserID, run.ID)
-				if readErr != nil {
-					return nil, readErr
-				}
-				if cleanupErr := s.finishCloudAgentCleanup(context.Background(), terminal); cleanupErr != nil {
-					return nil, cleanupErr
-				}
-				return nil, kernel.BadAuthRequest(message)
-			}
-			return nil, err
-		}
+	nativeSkills, err := s.piSnapshotNativeSkills(run, &state, mode)
+	if err != nil {
+		return nil, err
 	}
 	pendingInterjections := make([]PiPendingInterjection, 0, len(state.PendingInterjections))
 	var visionBudget *cloudAgentVisionBatchBudget

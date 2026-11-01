@@ -34,54 +34,12 @@ func (s *Service) PiSkillFile(userID, runID, owner string, request PiSkillFileRe
 	if request.Offset < 0 || request.Limit < 0 || request.Limit > piNativeSkillReadMaxRunes {
 		return nil, BadAuthRequest("Skill read range is invalid")
 	}
-	var skill *cloudAgentSkill
-	for index := range state.Skills {
-		candidate := &state.Skills[index]
-		if candidate.NativeName == request.NativeName {
-			skill = candidate
-			break
-		}
-	}
-	if skill == nil {
-		return nil, kernel.Forbidden("Skill is not enabled for this run")
-	}
-	if path != cloudAgentSkillEntryPath && !isNativeSkillTextPath(path) {
-		return nil, BadAuthRequest("Only text Skill files can be read")
-	}
-	var listed *PiSkillFile
-	for index := range skill.NativeFiles {
-		if skill.NativeFiles[index].Path == path && skill.NativeFiles[index].Text {
-			listed = &skill.NativeFiles[index]
-			break
-		}
-	}
-	if listed == nil {
-		return nil, kernel.Forbidden("Skill file is not listed for this run")
-	}
-	limits, err := s.cloudAgentStepLimits()
+	skill, listed, err := piSkillFileTarget(&state, request.NativeName, path)
 	if err != nil {
 		return nil, err
 	}
-	state.CallLimits = limits.CallLimits
-	budgetKey := fmt.Sprintf("%s:%s:%s:%d:%d", state.LastStepTaskID, skill.NativeName, path, request.Offset, request.Limit)
-	if !state.NativeReadBudgetKeys[budgetKey] {
-		if state.ReadToolCalls >= state.callLimits().ReadCallsPerRun {
-			budgetErr := &cloudAgentReadLoopError{ToolName: "read", Count: state.ReadToolCalls + 1, Budget: true}
-			if err := s.failCloudAgent(run, &state, budgetErr.Error()); err != nil {
-				return nil, err
-			}
-			return nil, kernel.Forbidden(budgetErr.Error())
-		}
-		state.ReadToolCalls++
-		if state.NativeReadBudgetKeys == nil {
-			state.NativeReadBudgetKeys = map[string]bool{}
-		}
-		state.NativeReadBudgetKeys[budgetKey] = true
-		if err := s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-			return cloudAgentSave(current, &state)
-		}); err != nil {
-			return nil, err
-		}
+	if err := s.piChargeSkillReadBudget(userID, runID, run, &state, skill, path, request); err != nil {
+		return nil, err
 	}
 	file, err := s.cloudAgentFrozenSkillFile(userID, *skill, path)
 	if err != nil {
@@ -93,7 +51,76 @@ func (s *Service) PiSkillFile(userID, runID, owner string, request PiSkillFileRe
 	if file.File.SHA256 != listed.SHA256 || file.File.Size != listed.Size {
 		return nil, kernel.Forbidden("Skill file differs from the frozen snapshot")
 	}
+	return piSkillFilePage(&state, skill, path, file, request)
+}
+
+// piSkillFileTarget finds the enabled Skill and the listed text file the read
+// targets in the run's frozen snapshot.
+func piSkillFileTarget(state *cloudAgentRuntime, nativeName, path string) (*cloudAgentSkill, *PiSkillFile, error) {
+	var skill *cloudAgentSkill
+	for index := range state.Skills {
+		candidate := &state.Skills[index]
+		if candidate.NativeName == nativeName {
+			skill = candidate
+			break
+		}
+	}
+	if skill == nil {
+		return nil, nil, kernel.Forbidden("Skill is not enabled for this run")
+	}
+	if path != cloudAgentSkillEntryPath && !isNativeSkillTextPath(path) {
+		return nil, nil, BadAuthRequest("Only text Skill files can be read")
+	}
+	var listed *PiSkillFile
+	for index := range skill.NativeFiles {
+		if skill.NativeFiles[index].Path == path && skill.NativeFiles[index].Text {
+			listed = &skill.NativeFiles[index]
+			break
+		}
+	}
+	if listed == nil {
+		return nil, nil, kernel.Forbidden("Skill file is not listed for this run")
+	}
+	return skill, listed, nil
+}
+
+// piChargeSkillReadBudget counts a new read range against the run's read
+// budget once per step; exhausting the budget fails the run.
+func (s *Service) piChargeSkillReadBudget(userID, runID string, run *model.CloudAgentExecution, state *cloudAgentRuntime, skill *cloudAgentSkill, path string, request PiSkillFileRequest) error {
+	limits, err := s.cloudAgentStepLimits()
+	if err != nil {
+		return err
+	}
+	state.CallLimits = limits.CallLimits
+	budgetKey := fmt.Sprintf("%s:%s:%s:%d:%d", state.LastStepTaskID, skill.NativeName, path, request.Offset, request.Limit)
+	if state.NativeReadBudgetKeys[budgetKey] {
+		return nil
+	}
+	if state.ReadToolCalls >= state.callLimits().ReadCallsPerRun {
+		budgetErr := &cloudAgentReadLoopError{ToolName: "read", Count: state.ReadToolCalls + 1, Budget: true}
+		if err := s.failCloudAgent(run, state, budgetErr.Error()); err != nil {
+			return err
+		}
+		return kernel.Forbidden(budgetErr.Error())
+	}
+	state.ReadToolCalls++
+	if state.NativeReadBudgetKeys == nil {
+		state.NativeReadBudgetKeys = map[string]bool{}
+	}
+	state.NativeReadBudgetKeys[budgetKey] = true
+	if err := s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, state)
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// piSkillFilePage pages the frozen file content; the entry file is normalized
+// first and reports the entry digest instead of the raw file hash.
+func piSkillFilePage(state *cloudAgentRuntime, skill *cloudAgentSkill, path string, file *SkillPackageFileContent, request PiSkillFileRequest) (*PiSkillReadPage, error) {
 	content := file.Content
+	var err error
 	if path == cloudAgentSkillEntryPath {
 		entrySkill := *skill
 		entrySkill.Instruction = content

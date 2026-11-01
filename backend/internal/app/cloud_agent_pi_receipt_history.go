@@ -37,6 +37,25 @@ func piCheckpointAssistantEntryID(input PiMessageCheckpoint) string {
 	return ""
 }
 
+// piHistoricalFinishEnvelope is the shape of a stored Pi assistant message
+// entry, reduced to the finish_run tool-call fields the receipt restore needs.
+type piHistoricalFinishEnvelope struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Message struct {
+		Role      string `json:"role"`
+		Timestamp int64  `json:"timestamp"`
+		Content   []struct {
+			Type      string `json:"type"`
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			Arguments struct {
+				Summary string `json:"summary"`
+			} `json:"arguments"`
+		} `json:"content"`
+	} `json:"message"`
+}
+
 // Only restore an exact finish_run call from the same conversation. Historical
 // receipts are data for the model projection, never permission to execute a call.
 func (s *Service) piHistoricalFinishReceipts(current *model.CloudAgentExecution, entries []PiAgentSessionEntry) ([]PiHistoricalToolReceipt, error) {
@@ -47,22 +66,7 @@ func (s *Service) piHistoricalFinishReceipts(current *model.CloudAgentExecution,
 		if entry.RunID == current.ID {
 			continue
 		}
-		var envelope struct {
-			ID      string `json:"id"`
-			Type    string `json:"type"`
-			Message struct {
-				Role      string `json:"role"`
-				Timestamp int64  `json:"timestamp"`
-				Content   []struct {
-					Type      string `json:"type"`
-					ID        string `json:"id"`
-					Name      string `json:"name"`
-					Arguments struct {
-						Summary string `json:"summary"`
-					} `json:"arguments"`
-				} `json:"content"`
-			} `json:"message"`
-		}
+		var envelope piHistoricalFinishEnvelope
 		if json.Unmarshal(entry.Entry, &envelope) != nil || envelope.Type != "message" || envelope.Message.Role != "assistant" {
 			continue
 		}
@@ -70,26 +74,9 @@ func (s *Service) piHistoricalFinishReceipts(current *model.CloudAgentExecution,
 			if part.Type != "toolCall" || part.Name != "finish_run" || !missing[entry.RunID+"\x00"+envelope.ID+"\x00"+part.ID] {
 				continue
 			}
-			previous, loaded := states[entry.RunID]
-			if !loaded {
-				row, err := s.repo.CloudAgent(current.UserID, entry.RunID)
-				if err != nil {
-					if s.repo.IsMissing(err) {
-						states[entry.RunID] = nil
-						continue
-					}
-					return nil, err
-				}
-				if row.Engine != "pi" || !cloudAgentRunTerminal(row.Status) || firstNonEmpty(row.ConversationID, row.ID) != firstNonEmpty(current.ConversationID, current.ID) {
-					states[entry.RunID] = nil
-					continue
-				}
-				decoded, err := cloudAgentDecode(row)
-				if err != nil {
-					return nil, err
-				}
-				previous = &decoded
-				states[entry.RunID] = previous
+			previous, err := s.piHistoricalRunState(current, entry.RunID, states)
+			if err != nil {
+				return nil, err
 			}
 			if previous == nil {
 				continue
@@ -108,6 +95,32 @@ func (s *Service) piHistoricalFinishReceipts(current *model.CloudAgentExecution,
 		}
 	}
 	return result, nil
+}
+
+// piHistoricalRunState loads (once per run) the terminal Pi run of the same
+// conversation that owns a historical entry; nil means it cannot supply receipts.
+func (s *Service) piHistoricalRunState(current *model.CloudAgentExecution, runID string, states map[string]*cloudAgentRuntime) (*cloudAgentRuntime, error) {
+	if previous, loaded := states[runID]; loaded {
+		return previous, nil
+	}
+	row, err := s.repo.CloudAgent(current.UserID, runID)
+	if err != nil {
+		if s.repo.IsMissing(err) {
+			states[runID] = nil
+			return nil, nil
+		}
+		return nil, err
+	}
+	if row.Engine != "pi" || !cloudAgentRunTerminal(row.Status) || firstNonEmpty(row.ConversationID, row.ID) != firstNonEmpty(current.ConversationID, current.ID) {
+		states[runID] = nil
+		return nil, nil
+	}
+	decoded, err := cloudAgentDecode(row)
+	if err != nil {
+		return nil, err
+	}
+	states[runID] = &decoded
+	return &decoded, nil
 }
 
 // Match results only within their assistant batch; providers can reuse call IDs

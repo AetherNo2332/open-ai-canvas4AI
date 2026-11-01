@@ -69,27 +69,40 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	if state.ActiveTaskID != "" || state.CallIndex < len(state.Calls) || run.Status != "running" {
 		return kernel.Forbidden("Agent 尚有未完成的模型或工具步骤")
 	}
-	limits, err := s.cloudAgentStepLimits()
+	text, err := s.piAdmitToolBatchEnvelope(userID, &state, batch)
 	if err != nil {
 		return err
+	}
+	installPiToolBatch(runID, &state, batch, text)
+	return s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, &state)
+	})
+}
+
+// piAdmitToolBatchEnvelope checks the batch against the live call limits and
+// the billed model step's own tool calls, and returns that step's text.
+func (s *Service) piAdmitToolBatchEnvelope(userID string, state *cloudAgentRuntime, batch PiToolBatchRequest) (string, error) {
+	limits, err := s.cloudAgentStepLimits()
+	if err != nil {
+		return "", err
 	}
 	state.CallLimits = limits.CallLimits
 	if err := validatePiToolBatchEnvelope(batch.Calls); err != nil || len(batch.Calls) == 0 {
-		return BadAuthRequest("Pi 工具调用批次无效")
+		return "", BadAuthRequest("Pi 工具调用批次无效")
 	}
 	if len(batch.Calls) > state.callLimits().ToolCallsPerStep {
-		return BadAuthRequest(fmt.Sprintf("单步工具调用数量 %d 超过后台配置上限 %d", len(batch.Calls), state.callLimits().ToolCallsPerStep))
+		return "", BadAuthRequest(fmt.Sprintf("单步工具调用数量 %d 超过后台配置上限 %d", len(batch.Calls), state.callLimits().ToolCallsPerStep))
 	}
 	// The worker can only submit calls that the billed model step actually emitted.
 	if state.LastStepTaskID != batch.TaskID {
-		return kernel.Forbidden("Pi 工具批次与模型步骤不匹配")
+		return "", kernel.Forbidden("Pi 工具批次与模型步骤不匹配")
 	}
 	modelTask, err := s.repo.TaskForUser(userID, batch.TaskID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if modelTask.Status != model.TaskStatusSucceeded {
-		return kernel.Forbidden("Pi 模型步骤未成功")
+		return "", kernel.Forbidden("Pi 模型步骤未成功")
 	}
 	var modelOutput struct {
 		Text           string           `json:"text"`
@@ -98,21 +111,21 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 		StopReasonKind string           `json:"stopReasonKind"`
 	}
 	if err := json.Unmarshal([]byte(modelTask.ResultJSON), &modelOutput); err != nil {
-		return err
+		return "", err
 	}
 	stopKind := strings.TrimSpace(modelOutput.StopReasonKind)
 	if stopKind == "" {
 		stopKind = cloudAgentStopKindUnknown
 	}
-	if cloudAgentStepStopDisposition(&state, stopKind) != cloudAgentStepDispositionAccept {
-		return kernel.Forbidden("模型终止原因不允许执行工具")
+	if cloudAgentStepStopDisposition(state, stopKind) != cloudAgentStepDispositionAccept {
+		return "", kernel.Forbidden("模型终止原因不允许执行工具")
 	}
 	expected := modelOutput.ToolCalls
 	if len(expected) == 0 {
 		expected = modelOutput.Legacy
 	}
 	if len(expected) > state.callLimits().ToolCallsPerStep {
-		return BadAuthRequest(fmt.Sprintf("模型回复包含 %d 个工具调用，超过后台配置上限 %d", len(expected), state.callLimits().ToolCallsPerStep))
+		return "", BadAuthRequest(fmt.Sprintf("模型回复包含 %d 个工具调用，超过后台配置上限 %d", len(expected), state.callLimits().ToolCallsPerStep))
 	}
 	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
 		canvasCalls := make([]cloudAgentCall, 0, len(expected))
@@ -124,9 +137,15 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 		expected = canvasCalls
 	}
 	if !piSameCalls(expected, batch.Calls) {
-		return kernel.Forbidden("Pi 工具批次与模型结果不一致")
+		return "", kernel.Forbidden("Pi 工具批次与模型结果不一致")
 	}
-	recordedObservations := state.cloudAgentRecordImageObservations(modelOutput.Text, len(batch.Calls) > 0)
+	return modelOutput.Text, nil
+}
+
+// installPiToolBatch records image observations from the model text and makes
+// the admitted calls the run's current tool batch.
+func installPiToolBatch(runID string, state *cloudAgentRuntime, batch PiToolBatchRequest, text string) {
+	recordedObservations := state.cloudAgentRecordImageObservations(text, len(batch.Calls) > 0)
 	state.cloudAgentSyncVisualAnchor()
 	if recordedObservations > 0 {
 		state.event(runID, "context_transition", map[string]any{
@@ -142,13 +161,10 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 		state.PiToolBatchAssistantEntryID = state.PiAssistantCheckpointEntryID
 	}
 	state.CallIndex = 0
-	state.CallAdmissions = cloudAgentPreflightBatch(&state, batch.Calls)
+	state.CallAdmissions = cloudAgentPreflightBatch(state, batch.Calls)
 	state.CanvasBatchHashes = nil
 	state.StepSnapshotHash = cloudAgentCaptureStepSnapshotHash(batch.Calls)
 	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": "", "tool_calls": batch.Calls})
-	return s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		return cloudAgentSave(current, &state)
-	})
 }
 
 func piSameCalls(left, right []cloudAgentCall) bool {
@@ -167,26 +183,7 @@ func piSameCalls(left, right []cloudAgentCall) bool {
 }
 
 func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*PiToolReceipt, error) {
-	if err := s.reconcileDynamicSubagents(context.Background(), userID, runID); err != nil {
-		return nil, err
-	}
-	run, err := s.piAgentLeasedRun(userID, runID, owner)
-	if err != nil {
-		// 终态转换会清除 session 租约。Pi worker 可能正好在终结后轮询
-		// 工具回执；对已终结的本用户 Pi run 返回终止信号，避免旧租约错误
-		// 让 Node 将整轮判为协议失败。非终态仍必须通过租约 fencing。
-		terminalRun, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
-		if !terminal {
-			return nil, err
-		}
-		run = terminalRun
-	}
-	if settled, err := s.settleCloudAgentGenerationsAndReload(run); err != nil {
-		return nil, err
-	} else if settled != nil {
-		run = settled
-	}
-	state, err := cloudAgentDecode(run)
+	run, state, err := s.piToolAdvanceRun(userID, runID, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -219,6 +216,41 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 	if advanceErr != nil {
 		return nil, advanceErr
 	}
+	return s.piToolAdvanceResult(userID, runID, taskID, callID)
+}
+
+// piToolAdvanceRun loads the leased run (or its terminal row after the lease was
+// cleared), settles finished generations and decodes the runtime state.
+func (s *Service) piToolAdvanceRun(userID, runID, owner string) (*model.CloudAgentExecution, cloudAgentRuntime, error) {
+	if err := s.reconcileDynamicSubagents(context.Background(), userID, runID); err != nil {
+		return nil, cloudAgentRuntime{}, err
+	}
+	run, err := s.piAgentLeasedRun(userID, runID, owner)
+	if err != nil {
+		// 终态转换会清除 session 租约。Pi worker 可能正好在终结后轮询
+		// 工具回执；对已终结的本用户 Pi run 返回终止信号，避免旧租约错误
+		// 让 Node 将整轮判为协议失败。非终态仍必须通过租约 fencing。
+		terminalRun, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
+		if !terminal {
+			return nil, cloudAgentRuntime{}, err
+		}
+		run = terminalRun
+	}
+	if settled, err := s.settleCloudAgentGenerationsAndReload(run); err != nil {
+		return nil, cloudAgentRuntime{}, err
+	} else if settled != nil {
+		run = settled
+	}
+	state, err := cloudAgentDecode(run)
+	if err != nil {
+		return nil, cloudAgentRuntime{}, err
+	}
+	return run, state, nil
+}
+
+// piToolAdvanceResult rereads the run after the call executed and returns its
+// receipt, a terminal signal, or a pending (possibly suspended) result.
+func (s *Service) piToolAdvanceResult(userID, runID, taskID, callID string) (*PiToolReceipt, error) {
 	latest, err := s.repo.CloudAgent(userID, runID)
 	if err != nil {
 		return nil, err
