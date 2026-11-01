@@ -1,4 +1,9 @@
 # CHANGELOG
+## v1.7.3.3(43a4840)
+
+- 架构守卫扩大到整个后端：CI 对后端全部生产 Go 代码检查单文件不超过 600 行、函数（含闭包）不超过 120 行、圈复杂度不超过 20，并按 handler → service → app → 业务域包 → repository/model 的调用链检查依赖方向；越层 import 会直接失败，不能登记例外。现有超标共 635 条（其中 Agent 183 条），逐条记录在 `backend/internal/architecture/baseline.json`，只能下调或删除。
+- 升级注意：只改 CI、测试和文档，运行时代码不变；数据库 Schema（82）、系统策略（v26）、工具合同（v19）均不变，无需更新镜像。
+
 ## v1.7.3.3(ea854b0)
 
 - 新增 Agent 架构守卫：CI 用语法树检查云端 Agent 后端代码，单文件不超过 600 行、函数（含闭包）不超过 120 行、圈复杂度不超过 20，Agent 域包不得依赖 app/service，导出接口不暴露非类型化 map。现有超标共 183 条，逐条记录在 `backend/internal/architecture/baseline.json`；新代码超标、已登记处变得更大、或改善后没下调基线，CI 都会失败。
