@@ -166,6 +166,44 @@ func cloudAgentStoryboardIndex(all []map[string]any, visibleColumns []any) map[s
 // Batch-table projection exposes only the fields rendered by the component.
 // Result URLs, task IDs, storage keys and arbitrary metadata remain private.
 func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgentProjectionMode, readRows ...int) map[string]any {
+	operation, concurrency := cloudAgentBatchPlanSettings(table)
+	columns := cloudAgentBatchReferenceColumns(table)
+	globalPrompt := strings.TrimSpace(stringValue(table["globalPrompt"]))
+	all := creationMaps(table["rows"])
+	preview := cloudAgentBatchGenerationPreview(all, operation, globalPrompt, len(columns))
+	// 摘要只回报这份计划的形状与就绪度，不复制任何一行。
+	if mode == cloudAgentProjectionIndex {
+		return map[string]any{
+			"totalRows": len(all), "operation": operation, "concurrency": concurrency,
+			"referenceColumnCount": len(columns), "generationPreview": preview,
+			"readRowsWith": "canvas_read_batch_table(nodeId, offset)：每页最多20行并返回真实 rowId 与 snapshotHash",
+		}
+	}
+	count, textLimit := cloudAgentBatchPageSize(mode, readRows...)
+	rows, next := cloudAgentBatchRows(all, offset, count, textLimit, mode, len(columns))
+	projected := map[string]any{
+		"operation": operation, "concurrency": concurrency, "referenceColumns": columns,
+		"rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0,
+		"generationPreview": preview,
+	}
+	if mode == cloudAgentProjectionDetail {
+		if textColumns := cloudAgentBatchTextColumns(table); len(textColumns) > 0 {
+			projected["textColumns"] = textColumns
+		}
+	}
+	if globalPrompt != "" {
+		projected["globalPrompt"] = truncateRunes(globalPrompt, textLimit)
+		if len([]rune(globalPrompt)) > textLimit {
+			projected["globalPromptTruncated"] = true
+		}
+	}
+	if mode != cloudAgentProjectionDetail {
+		projected["rowIdSource"] = "canvas_read_batch_table 返回真实 rowId 与 snapshotHash；本分页结果不含 rowId"
+	}
+	return projected
+}
+
+func cloudAgentBatchPlanSettings(table map[string]any) (string, int) {
 	operation := stringValue(table["operation"])
 	if operation != "creative" {
 		operation = "try_on"
@@ -174,8 +212,13 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 	if value, ok := cloudAgentInteger(table["concurrency"]); ok && (value == 1 || value == 5 || value == 10) {
 		concurrency = value
 	}
+	return operation, concurrency
+}
+
+func cloudAgentBatchReferenceColumns(table map[string]any) []any {
+	referenceColumns := creationMaps(table["referenceColumns"])
 	columns := []any{}
-	for index, column := range creationMaps(table["referenceColumns"])[:min(len(creationMaps(table["referenceColumns"])), maxCloudAgentBatchReferences)] {
+	for index, column := range referenceColumns[:min(len(referenceColumns), maxCloudAgentBatchReferences)] {
 		id, label := truncateRunes(stringValue(column["id"]), 120), truncateRunes(stringValue(column["label"]), 120)
 		if id != "" && label != "" {
 			columns = append(columns, map[string]any{"id": id, "label": label, "mentionToken": fmt.Sprintf("@参考图%d", index+1)})
@@ -184,9 +227,84 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 	if len(columns) == 0 {
 		columns = defaultCloudAgentBatchReferenceColumns()
 	}
+	return columns
+}
 
-	globalPrompt := strings.TrimSpace(stringValue(table["globalPrompt"]))
-	all := creationMaps(table["rows"])
+func cloudAgentBatchPageSize(mode cloudAgentProjectionMode, readRows ...int) (int, int) {
+	count, textLimit := cloudAgentPageRows, 240
+	requested := 0
+	if len(readRows) > 0 {
+		requested = readRows[0]
+	}
+	if mode == cloudAgentProjectionDetail {
+		count, textLimit = cloudAgentDetailBatchRows, cloudAgentDetailTextLimit
+	}
+	if requested > 0 {
+		count = min(requested, cloudAgentMaxReadRows)
+		if count > 1 {
+			textLimit = min(textLimit, cloudAgentMultiRowTextLimit)
+		}
+	}
+	return count, textLimit
+}
+
+func cloudAgentBatchRows(all []map[string]any, offset, count, textLimit int, mode cloudAgentProjectionMode, columnCount int) ([]any, int) {
+	rows := []any{}
+	next := 0
+	for index, row := range all {
+		if index < offset {
+			continue
+		}
+		if len(rows) == count {
+			next = index
+			break
+		}
+		rows = append(rows, cloudAgentBatchRowState(row, mode, textLimit, columnCount))
+	}
+	return rows, next
+}
+
+// rowId 是编辑句柄：分页档不含 rowId，由调用方的 rowIdSource 指路。
+func cloudAgentBatchRowState(row map[string]any, mode cloudAgentProjectionMode, textLimit, columnCount int) map[string]any {
+	item := map[string]any{}
+	if mode == cloudAgentProjectionDetail {
+		item["id"] = truncateRunes(stringValue(row["id"]), 120)
+	}
+	item["enabled"] = row["enabled"] == true
+	if inputs := cloudAgentBatchInputIDs(row["inputNodeIds"], columnCount); len(inputs) > 0 {
+		item["inputNodeIds"] = inputs
+	}
+	prompt := stringValue(row["prompt"])
+	item["prompt"] = truncateRunes(prompt, textLimit)
+	if len([]rune(prompt)) > textLimit {
+		item["promptTruncated"] = true
+	}
+	if outputNodeID := truncateRunes(stringValue(row["outputNodeId"]), 120); outputNodeID != "" {
+		item["outputNodeId"] = outputNodeID
+	}
+	if mode == cloudAgentProjectionDetail {
+		fields := capability.BatchRowFields()
+		extra := map[string]capability.PatchField{"textNodeIds": fields["textNodeIds"], "cells": fields["cells"]}
+		for key, value := range cloudAgentRowFieldProjection(row, extra, textLimit, 8000) {
+			item[key] = value
+		}
+	}
+	return item
+}
+
+func cloudAgentBatchTextColumns(table map[string]any) []any {
+	textColumns := creationMaps(table["textColumns"])
+	columns := []any{}
+	for _, column := range textColumns[:min(len(textColumns), 100)] {
+		id, label := truncateRunes(stringValue(column["id"]), 120), truncateRunes(stringValue(column["label"]), 120)
+		if id != "" && label != "" {
+			columns = append(columns, map[string]any{"id": id, "label": label, "type": "text"})
+		}
+	}
+	return columns
+}
+
+func cloudAgentBatchGenerationPreview(all []map[string]any, operation, globalPrompt string, columnCount int) map[string]any {
 	ready, enabled, missingPrompt, missingReferences, outputLinked := 0, 0, 0, 0, 0
 	for _, row := range all {
 		rowEnabled, _ := row["enabled"].(bool)
@@ -195,7 +313,7 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 		if effectivePrompt == "" {
 			effectivePrompt = prompt
 		}
-		inputs := cloudAgentBatchInputIDs(row["inputNodeIds"], len(columns))
+		inputs := cloudAgentBatchInputIDs(row["inputNodeIds"], columnCount)
 		if rowEnabled {
 			enabled++
 			if effectivePrompt == "" {
@@ -216,98 +334,10 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 			outputLinked++
 		}
 	}
-	// 摘要只回报这份计划的形状与就绪度，不复制任何一行。
-	if mode == cloudAgentProjectionIndex {
-		return map[string]any{
-			"totalRows": len(all), "operation": operation, "concurrency": concurrency,
-			"referenceColumnCount": len(columns),
-			"generationPreview": map[string]any{
-				"enabledRows": enabled, "readyRows": ready, "missingPromptRows": missingPrompt,
-				"missingReferenceRows": missingReferences, "outputLinkedRows": outputLinked,
-			},
-			"readRowsWith": "canvas_read_batch_table(nodeId, offset)：每页最多20行并返回真实 rowId 与 snapshotHash",
-		}
+	return map[string]any{
+		"enabledRows": enabled, "readyRows": ready, "missingPromptRows": missingPrompt,
+		"missingReferenceRows": missingReferences, "outputLinkedRows": outputLinked,
 	}
-	count, textLimit := cloudAgentPageRows, 240
-	requested := 0
-	if len(readRows) > 0 {
-		requested = readRows[0]
-	}
-	if mode == cloudAgentProjectionDetail {
-		count, textLimit = cloudAgentDetailBatchRows, cloudAgentDetailTextLimit
-	}
-	if requested > 0 {
-		count = min(requested, cloudAgentMaxReadRows)
-		if count > 1 {
-			textLimit = min(textLimit, cloudAgentMultiRowTextLimit)
-		}
-	}
-	rows := []any{}
-	next := 0
-	for index, row := range all {
-		if index < offset {
-			continue
-		}
-		if len(rows) == count {
-			next = index
-			break
-		}
-		item := map[string]any{}
-		// rowId 是编辑句柄：分页档不含 rowId，由下面的 rowIdSource 指路。
-		if mode == cloudAgentProjectionDetail {
-			item["id"] = truncateRunes(stringValue(row["id"]), 120)
-		}
-		item["enabled"] = row["enabled"] == true
-		if inputs := cloudAgentBatchInputIDs(row["inputNodeIds"], len(columns)); len(inputs) > 0 {
-			item["inputNodeIds"] = inputs
-		}
-		prompt := stringValue(row["prompt"])
-		item["prompt"] = truncateRunes(prompt, textLimit)
-		if len([]rune(prompt)) > textLimit {
-			item["promptTruncated"] = true
-		}
-		if outputNodeID := truncateRunes(stringValue(row["outputNodeId"]), 120); outputNodeID != "" {
-			item["outputNodeId"] = outputNodeID
-		}
-		if mode == cloudAgentProjectionDetail {
-			fields := capability.BatchRowFields()
-			extra := map[string]capability.PatchField{"textNodeIds": fields["textNodeIds"], "cells": fields["cells"]}
-			for key, value := range cloudAgentRowFieldProjection(row, extra, textLimit, 8000) {
-				item[key] = value
-			}
-		}
-		rows = append(rows, item)
-	}
-	projected := map[string]any{
-		"operation": operation, "concurrency": concurrency, "referenceColumns": columns,
-		"rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0,
-		"generationPreview": map[string]any{
-			"enabledRows": enabled, "readyRows": ready, "missingPromptRows": missingPrompt,
-			"missingReferenceRows": missingReferences, "outputLinkedRows": outputLinked,
-		},
-	}
-	if mode == cloudAgentProjectionDetail {
-		columns := []any{}
-		for _, column := range creationMaps(table["textColumns"])[:min(len(creationMaps(table["textColumns"])), 100)] {
-			id, label := truncateRunes(stringValue(column["id"]), 120), truncateRunes(stringValue(column["label"]), 120)
-			if id != "" && label != "" {
-				columns = append(columns, map[string]any{"id": id, "label": label, "type": "text"})
-			}
-		}
-		if len(columns) > 0 {
-			projected["textColumns"] = columns
-		}
-	}
-	if globalPrompt != "" {
-		projected["globalPrompt"] = truncateRunes(globalPrompt, textLimit)
-		if len([]rune(globalPrompt)) > textLimit {
-			projected["globalPromptTruncated"] = true
-		}
-	}
-	if mode != cloudAgentProjectionDetail {
-		projected["rowIdSource"] = "canvas_read_batch_table 返回真实 rowId 与 snapshotHash；本分页结果不含 rowId"
-	}
-	return projected
 }
 
 func cloudAgentBatchInputIDs(value any, limit int) []any {
