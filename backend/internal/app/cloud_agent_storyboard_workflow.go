@@ -158,11 +158,8 @@ func cloudAgentNormalizeStoryboardPatch(doc, patch map[string]any) (map[string]a
 
 // Plan on a copy so one invalid target or reference cannot partially mutate a batch.
 func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, args cloudAgentStoryboardEditArgs, userID, callID string) ([]map[string]any, []string, error) {
-	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && !cloudAgentStoryboardAssetAction(args.Action) {
-		return nil, nil, BadAuthRequest("不支持的镜头编辑操作")
-	}
-	if args.References != nil || args.ReferenceNodeIDs != nil || args.OutputMode != "" || args.OutputNodeID != "" || (!cloudAgentStoryboardAssetAction(args.Action) && args.Assets != nil) {
-		return nil, nil, BadAuthRequest("镜头编辑包含不适用于当前操作的参数")
+	if err := checkCloudAgentStoryboardRowEditArgs(args); err != nil {
+		return nil, nil, err
 	}
 	raw, err := json.Marshal(rows)
 	if err != nil {
@@ -178,114 +175,157 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 	if args.Updates != nil || args.Rows != nil {
 		return nil, nil, BadAuthRequest("当前操作不接受 updates 或 rows")
 	}
-	ids := append([]string(nil), args.RowIDs...)
-	if args.RowID != "" {
-		if len(ids) > 0 {
-			return nil, nil, BadAuthRequest("rowId 与 rowIds 只能选择一种")
-		}
-		ids = []string{args.RowID}
-	}
-	if args.Action == "append" {
-		if len(ids) > 0 || len(next) >= maxCloudAgentStoryboardRows {
-			return nil, nil, BadAuthRequest("追加镜头不能指定已有行，分镜最多100行")
-		}
-	} else if len(ids) == 0 || len(ids) > 100 {
-		return nil, nil, BadAuthRequest("请选择1到100个真实分镜行 ID")
-	}
-	selectionField := "rowIds"
-	if args.RowID != "" {
-		selectionField = "rowId"
-	}
-	if err := validateCloudAgentStoryboardRowIDs(next, ids, selectionField); err != nil {
+	selected, err := cloudAgentStoryboardEditSelection(next, args)
+	if err != nil {
 		return nil, nil, err
 	}
-	selected := map[string]bool{}
-	for _, id := range ids {
-		selected[id] = true
-	}
 	patch := args.Patch
-	for _, row := range next {
-		if !selected[stringValue(row["id"])] || row["locked"] != true {
-			continue
-		}
-		unlockOnly := args.Action == "update" && len(args.Patch) == 1 && args.Patch["locked"] == false
-		if !unlockOnly {
-			return nil, nil, BadAuthRequest(fmt.Sprintf("镜头 %v 已锁定，请先请用户解锁或跳过", row["shotNumber"]))
-		}
-	}
 	if args.Action == "set_assets" {
 		if len(patch) > 0 || args.Assets == nil {
 			return nil, nil, BadAuthRequest("set_assets 需要 assets，不接受 patch；[] 表示清空")
 		}
 		patch = map[string]any{"assets": args.Assets}
 	}
-	fields := []string{}
+	var fields []string
 	if cloudAgentStoryboardAssetAction(args.Action) && args.Action != "set_assets" {
-		if len(args.Patch) > 0 || len(args.Assets) == 0 {
-			return nil, nil, BadAuthRequest("增量资产操作需要非空 assets，不接受 patch")
-		}
-		normalized, err := cloudAgentNormalizeStoryboardPatch(doc, map[string]any{"assets": args.Assets})
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, row := range next {
-			if selected[stringValue(row["id"])] {
-				if err := cloudAgentStoryboardAssetDelta(doc, row, creationMaps(normalized["assetBindings"]), args.Action); err != nil {
-					return nil, nil, err
-				}
-			}
-		}
-		fields = []string{"assetBindings", "characters"}
+		fields, err = cloudAgentPlanStoryboardAssetDelta(doc, next, args, selected)
 	} else if args.Action == "remove" {
-		if len(patch) > 0 {
-			return nil, nil, BadAuthRequest("删除镜头不接受 patch")
-		}
-		retained := []map[string]any{}
-		for _, row := range next {
-			if selected[stringValue(row["id"])] && stringValue(row["status"]) == "loading" {
-				return nil, nil, BadAuthRequest("镜头正在生成，不能删除；请先等待任务结束")
-			}
-			if !selected[stringValue(row["id"])] {
-				retained = append(retained, row)
-			}
-		}
-		next = retained
-		fields = []string{"镜头行"}
+		next, fields, err = cloudAgentPlanStoryboardRemove(next, patch, selected)
 	} else {
-		if len(patch) == 0 {
-			return nil, nil, BadAuthRequest("镜头编辑需要 patch")
-		}
-		normalized, err := cloudAgentNormalizeStoryboardPatch(doc, patch)
-		if err != nil {
-			return nil, nil, err
-		}
-		for key := range normalized {
-			fields = append(fields, key)
-		}
-		sort.Strings(fields)
-		if args.Action == "append" {
-			if err := validateCloudAgentStoryboardRow(normalized, true); err != nil {
-				return nil, nil, err
-			}
-			row := cloudAgentStoryboardRowDefaults()
-			for key, value := range normalized {
-				row[key] = value
-			}
-			row["id"] = cloudAgentStoryboardAppendRowID(userID, args.NodeID, callID, next)
-			next = append(next, row)
-		} else {
-			for _, row := range next {
-				if !selected[stringValue(row["id"])] {
-					continue
-				}
-				if err := cloudAgentApplyStoryboardRowPatch(row, normalized); err != nil {
-					return nil, nil, err
-				}
-			}
-		}
+		next, fields, err = cloudAgentPlanStoryboardPatch(doc, next, patch, args, selected, userID, callID)
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	for index, row := range next {
 		row["shotNumber"] = float64(index + 1)
+	}
+	return next, fields, nil
+}
+
+// checkCloudAgentStoryboardRowEditArgs rejects unknown actions and arguments
+// that belong to other storyboard actions.
+func checkCloudAgentStoryboardRowEditArgs(args cloudAgentStoryboardEditArgs) error {
+	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && !cloudAgentStoryboardAssetAction(args.Action) {
+		return BadAuthRequest("不支持的镜头编辑操作")
+	}
+	if args.References != nil || args.ReferenceNodeIDs != nil || args.OutputMode != "" || args.OutputNodeID != "" || (!cloudAgentStoryboardAssetAction(args.Action) && args.Assets != nil) {
+		return BadAuthRequest("镜头编辑包含不适用于当前操作的参数")
+	}
+	return nil
+}
+
+// cloudAgentStoryboardEditSelection resolves rowId/rowIds, checks the selection
+// size for the action and rejects locked rows unless the edit only unlocks.
+func cloudAgentStoryboardEditSelection(next []map[string]any, args cloudAgentStoryboardEditArgs) (map[string]bool, error) {
+	ids := append([]string(nil), args.RowIDs...)
+	if args.RowID != "" {
+		if len(ids) > 0 {
+			return nil, BadAuthRequest("rowId 与 rowIds 只能选择一种")
+		}
+		ids = []string{args.RowID}
+	}
+	if args.Action == "append" {
+		if len(ids) > 0 || len(next) >= maxCloudAgentStoryboardRows {
+			return nil, BadAuthRequest("追加镜头不能指定已有行，分镜最多100行")
+		}
+	} else if len(ids) == 0 || len(ids) > 100 {
+		return nil, BadAuthRequest("请选择1到100个真实分镜行 ID")
+	}
+	selectionField := "rowIds"
+	if args.RowID != "" {
+		selectionField = "rowId"
+	}
+	if err := validateCloudAgentStoryboardRowIDs(next, ids, selectionField); err != nil {
+		return nil, err
+	}
+	selected := map[string]bool{}
+	for _, id := range ids {
+		selected[id] = true
+	}
+	for _, row := range next {
+		if !selected[stringValue(row["id"])] || row["locked"] != true {
+			continue
+		}
+		unlockOnly := args.Action == "update" && len(args.Patch) == 1 && args.Patch["locked"] == false
+		if !unlockOnly {
+			return nil, BadAuthRequest(fmt.Sprintf("镜头 %v 已锁定，请先请用户解锁或跳过", row["shotNumber"]))
+		}
+	}
+	return selected, nil
+}
+
+// cloudAgentPlanStoryboardAssetDelta applies add/remove/upsert asset deltas to
+// the selected rows.
+func cloudAgentPlanStoryboardAssetDelta(doc map[string]any, next []map[string]any, args cloudAgentStoryboardEditArgs, selected map[string]bool) ([]string, error) {
+	if len(args.Patch) > 0 || len(args.Assets) == 0 {
+		return nil, BadAuthRequest("增量资产操作需要非空 assets，不接受 patch")
+	}
+	normalized, err := cloudAgentNormalizeStoryboardPatch(doc, map[string]any{"assets": args.Assets})
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range next {
+		if selected[stringValue(row["id"])] {
+			if err := cloudAgentStoryboardAssetDelta(doc, row, creationMaps(normalized["assetBindings"]), args.Action); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return []string{"assetBindings", "characters"}, nil
+}
+
+// cloudAgentPlanStoryboardRemove drops the selected rows; rows still generating
+// cannot be removed.
+func cloudAgentPlanStoryboardRemove(next []map[string]any, patch map[string]any, selected map[string]bool) ([]map[string]any, []string, error) {
+	if len(patch) > 0 {
+		return nil, nil, BadAuthRequest("删除镜头不接受 patch")
+	}
+	retained := []map[string]any{}
+	for _, row := range next {
+		if selected[stringValue(row["id"])] && stringValue(row["status"]) == "loading" {
+			return nil, nil, BadAuthRequest("镜头正在生成，不能删除；请先等待任务结束")
+		}
+		if !selected[stringValue(row["id"])] {
+			retained = append(retained, row)
+		}
+	}
+	return retained, []string{"镜头行"}, nil
+}
+
+// cloudAgentPlanStoryboardPatch normalizes the patch, then appends a new row or
+// patches the selected rows (set_assets arrives here as an assets patch).
+func cloudAgentPlanStoryboardPatch(doc map[string]any, next []map[string]any, patch map[string]any, args cloudAgentStoryboardEditArgs, selected map[string]bool, userID, callID string) ([]map[string]any, []string, error) {
+	if len(patch) == 0 {
+		return nil, nil, BadAuthRequest("镜头编辑需要 patch")
+	}
+	normalized, err := cloudAgentNormalizeStoryboardPatch(doc, patch)
+	if err != nil {
+		return nil, nil, err
+	}
+	fields := []string{}
+	for key := range normalized {
+		fields = append(fields, key)
+	}
+	sort.Strings(fields)
+	if args.Action == "append" {
+		if err := validateCloudAgentStoryboardRow(normalized, true); err != nil {
+			return nil, nil, err
+		}
+		row := cloudAgentStoryboardRowDefaults()
+		for key, value := range normalized {
+			row[key] = value
+		}
+		row["id"] = cloudAgentStoryboardAppendRowID(userID, args.NodeID, callID, next)
+		return append(next, row), fields, nil
+	}
+	for _, row := range next {
+		if !selected[stringValue(row["id"])] {
+			continue
+		}
+		if err := cloudAgentApplyStoryboardRowPatch(row, normalized); err != nil {
+			return nil, nil, err
+		}
 	}
 	return next, fields, nil
 }
