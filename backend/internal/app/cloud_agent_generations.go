@@ -241,17 +241,15 @@ func settleCloudAgentGeneration(repo *repository.Repository, run *model.CloudAge
 	default:
 		cloudAgentInvalidateReadCache(state)
 		outcome.Summary = "已生成并写入画布"
-		facts := cloudAgentTaskDiagnostic(repo, task)
-		if versionID, ok := facts["versionId"].(string); ok && versionID != "" {
-			outcome.VersionID = versionID
-		}
-		if adopted, ok := facts["adopted"].(bool); ok {
-			outcome.Adopted = &adopted
-			if !adopted {
-				outcome.Summary = "已生成，新版本已加入节点版本历史，保留手动选择的当前版本"
-			}
-		}
+		cloudAgentApplyGenerationFacts(repo, task, &outcome)
 	}
+	cloudAgentRecordSettledGeneration(repo, run, state, task, item, outcome, writeErr)
+	return outcome, nil
+}
+
+// cloudAgentRecordSettledGeneration 记录回写诊断、持久化任务诊断并发出
+// generation_settled 事件。
+func cloudAgentRecordSettledGeneration(repo *repository.Repository, run *model.CloudAgentExecution, state *cloudAgentRuntime, task *model.Task, item cloudAgentPendingGeneration, outcome cloudAgentGenerationOutcome, writeErr error) error {
 	status := "succeeded"
 	reason := ""
 	if writeErr != nil {
@@ -263,7 +261,7 @@ func settleCloudAgentGeneration(repo *repository.Repository, run *model.CloudAge
 	}
 	recordTaskWritebackDiagnostic(task, item.NodeID, status, reason, writeErr)
 	if err := repo.UpdateTaskExecutionDiagnostic(run.UserID, task.ID, task.ExecutionDiagnosticJSON); err != nil {
-		return outcome, err
+		return err
 	}
 	settled := map[string]any{
 		"taskId": task.ID, "nodeId": outcome.NodeID, "callId": item.CallID, "mode": item.Mode,
@@ -276,7 +274,22 @@ func settleCloudAgentGeneration(repo *repository.Repository, run *model.CloudAge
 		settled["adopted"] = *outcome.Adopted
 	}
 	state.event(run.ID, "generation_settled", settled)
-	return outcome, nil
+	return nil
+}
+
+// cloudAgentApplyGenerationFacts 从任务诊断里取版本 ID 与采用标记，写进结果摘要；
+// 未自动采用时改写摘要，让模型知道当前版本仍由用户手动选择。
+func cloudAgentApplyGenerationFacts(repo *repository.Repository, task *model.Task, outcome *cloudAgentGenerationOutcome) {
+	facts := cloudAgentTaskDiagnostic(repo, task)
+	if versionID, ok := facts["versionId"].(string); ok && versionID != "" {
+		outcome.VersionID = versionID
+	}
+	if adopted, ok := facts["adopted"].(bool); ok {
+		outcome.Adopted = &adopted
+		if !adopted {
+			outcome.Summary = "已生成，新版本已加入节点版本历史，保留手动选择的当前版本"
+		}
+	}
 }
 
 func settleCloudAgentStoryboardGeneration(repo *repository.Repository, run *model.CloudAgentExecution, state *cloudAgentRuntime, item cloudAgentPendingGeneration, task *model.Task) (cloudAgentGenerationOutcome, error) {
