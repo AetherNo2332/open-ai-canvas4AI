@@ -83,7 +83,7 @@ func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 // 的 range 中实际传给 add(name, …) 的注册名。无 add 调用的循环不构成注册。
 func cloudAgentRegisteredToolNames(t *testing.T) []string {
 	t.Helper()
-	file := parseCloudAgentFile(t, "cloud_agent_tools.go")
+	file := parseCloudAgentFile(t, "cloud_agent_tool_compile.go")
 	names := map[string]bool{}
 	ast.Inspect(file, func(node ast.Node) bool {
 		if loop, ok := node.(*ast.RangeStmt); ok {
@@ -99,9 +99,8 @@ func cloudAgentRegisteredToolNames(t *testing.T) []string {
 							if !ok || len(call.Args) == 0 {
 								return true
 							}
-							callee, calleeOK := call.Fun.(*ast.Ident)
 							arg, argOK := call.Args[0].(*ast.Ident)
-							if calleeOK && callee.Name == "add" && argOK && arg.Name == value.Name {
+							if cloudAgentToolAddCall(call) && argOK && arg.Name == value.Name {
 								collectStringLiteralsOf(list.Elts, names)
 							}
 							return true
@@ -114,8 +113,7 @@ func cloudAgentRegisteredToolNames(t *testing.T) []string {
 		if !ok {
 			return true
 		}
-		ident, ok := call.Fun.(*ast.Ident)
-		if !ok || ident.Name != "add" || len(call.Args) == 0 {
+		if !cloudAgentToolAddCall(call) || len(call.Args) == 0 {
 			return true
 		}
 		if literal, ok := call.Args[0].(*ast.BasicLit); ok && literal.Kind == token.STRING {
@@ -124,9 +122,15 @@ func cloudAgentRegisteredToolNames(t *testing.T) []string {
 		return true
 	})
 	if len(names) == 0 {
-		t.Fatal("没有从 cloud_agent_tools.go 解析到任何 add(...) 工具注册")
+		t.Fatal("没有从 cloud_agent_tool_compile.go 解析到任何 add(...) 工具注册")
 	}
 	return sortedKeys(names)
+}
+
+// cloudAgentToolAddCall 识别工具注册调用：编译器方法 c.add(...)。
+func cloudAgentToolAddCall(call *ast.CallExpr) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && selector.Sel.Name == "add"
 }
 
 // cloudAgentCanvasWriteToolNames 收集 cloudAgentCanvasWriteTool 的 case 字面量。
