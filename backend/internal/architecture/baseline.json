@@ -85,7 +85,6 @@
     {"id":"internal/app/cloud_agent_previs_mutation.go:func:cloudAgentPrevisApplyPatchOperation:lines","max":435,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_previs_mutation.go:func:cloudAgentPrevisValidateScene:complexity","max":81,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_previs_mutation.go:func:cloudAgentPrevisValidateScene:lines","max":222,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_read_cache.go:func:cloudAgentReadToolCached:complexity","max":23,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_recovery.go:func:Service.finishCloudAgentCleanup:complexity","max":37,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_recovery.go:func:Service.finishCloudAgentCleanup:lines","max":132,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_runtime.go:signature:CloudAgentEvent.Payload","max":1,"reason":"存量运行事件载荷为 map；改为 json.RawMessage 后删除本条"},

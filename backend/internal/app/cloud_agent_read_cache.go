@@ -95,44 +95,66 @@ func cloudAgentReadToolCached(repo *repository.Repository, userID string, state 
 	}
 	if state.ToolReadResults != nil {
 		if cached, ok := state.ToolReadResults[key]; ok {
-			if cached.Error != "" {
-				if cached.ArgumentError {
-					var err error = &cloudAgentArgumentError{BadAuthRequest(cached.Error)}
-					if cached.Field != "" {
-						err = &cloudAgentFieldArgumentError{error: err, Field: cached.Field, Issue: cached.Issue}
-					}
-					if len(cached.InvalidRowIDs)+len(cached.DuplicateRowIDs) > 0 {
-						err = &cloudAgentStoryboardRowIDError{error: err, InvalidRowIDs: append([]string{}, cached.InvalidRowIDs...), DuplicateRowIDs: append([]string{}, cached.DuplicateRowIDs...)}
-					}
-					return nil, err
-				}
-				delete(state.ToolReadResults, key)
-			} else {
-				if state.ToolReadReplays == nil {
-					state.ToolReadReplays = map[string]int{}
-				}
-				cached.ReplayCount = state.ToolReadReplays[key] + 1
-				state.ToolReadReplays[key] = cached.ReplayCount
-				state.ToolReadResults[key] = cached
-				if len(cached.Result) == 0 {
-					return nil, errors.New("缓存的 Agent 只读结果无效")
-				}
-				if !cloudAgentReadResultInContext(state, cached.Result) {
-					var restored any
-					if err := json.Unmarshal(cached.Result, &restored); err != nil {
-						return nil, errors.New("缓存的 Agent 只读结果无效")
-					}
-					return restored, nil
-				}
-				return map[string]any{"cacheReplay": true, "replayCount": cached.ReplayCount, "message": "结果与上次读取相同，可直接使用；若用户刚修改过画布或纠正了你，请重新读取需要的节点"}, nil
+			if result, handled, replayErr := cloudAgentReplayCachedRead(state, key, cached); handled {
+				return result, replayErr
 			}
 		}
 	}
-
 	state.ReadToolCalls++
 	state.readCacheExecution = true
 	result, err := cloudAgentReadTool(repo, userID, state, call, services...)
 	state.readCacheExecution = false
+	if cacheErr := cloudAgentCacheReadOutcome(state, key, result, err); cacheErr != nil {
+		return result, cacheErr
+	}
+	return result, err
+}
+
+// cloudAgentReplayCachedRead 重放缓存的只读结果或错误。handled=false 表示缓存条目
+// 已失效（仅缓存过一次的错误会被清除），需要真实执行。
+func cloudAgentReplayCachedRead(state *cloudAgentRuntime, key string, cached cloudAgentCachedToolResult) (any, bool, error) {
+	if cached.Error != "" {
+		if cached.ArgumentError {
+			return nil, true, cloudAgentReplayCachedError(cached)
+		}
+		delete(state.ToolReadResults, key)
+		return nil, false, nil
+	}
+	if state.ToolReadReplays == nil {
+		state.ToolReadReplays = map[string]int{}
+	}
+	cached.ReplayCount = state.ToolReadReplays[key] + 1
+	state.ToolReadReplays[key] = cached.ReplayCount
+	state.ToolReadResults[key] = cached
+	if len(cached.Result) == 0 {
+		return nil, true, errors.New("缓存的 Agent 只读结果无效")
+	}
+	if !cloudAgentReadResultInContext(state, cached.Result) {
+		var restored any
+		if err := json.Unmarshal(cached.Result, &restored); err != nil {
+			return nil, true, errors.New("缓存的 Agent 只读结果无效")
+		}
+		return restored, true, nil
+	}
+	return map[string]any{"cacheReplay": true, "replayCount": cached.ReplayCount, "message": "结果与上次读取相同，可直接使用；若用户刚修改过画布或纠正了你，请重新读取需要的节点"}, true, nil
+}
+
+// cloudAgentReplayCachedError 依据缓存的错误分类重建参数错误：字段级问题保留
+// field/issue，rowId 类问题附带无效与重复清单。
+func cloudAgentReplayCachedError(cached cloudAgentCachedToolResult) error {
+	var err error = &cloudAgentArgumentError{BadAuthRequest(cached.Error)}
+	if cached.Field != "" {
+		err = &cloudAgentFieldArgumentError{error: err, Field: cached.Field, Issue: cached.Issue}
+	}
+	if len(cached.InvalidRowIDs)+len(cached.DuplicateRowIDs) > 0 {
+		err = &cloudAgentStoryboardRowIDError{error: err, InvalidRowIDs: append([]string{}, cached.InvalidRowIDs...), DuplicateRowIDs: append([]string{}, cached.DuplicateRowIDs...)}
+	}
+	return err
+}
+
+// cloudAgentCacheReadOutcome 把执行结果写回缓存：参数类错误按分类缓存以便重放，
+// 成功结果编码后缓存。编码失败原样向上返回。
+func cloudAgentCacheReadOutcome(state *cloudAgentRuntime, key string, result any, err error) error {
 	if err != nil {
 		var argumentErr *cloudAgentArgumentError
 		if errors.As(err, &argumentErr) {
@@ -151,15 +173,15 @@ func cloudAgentReadToolCached(repo *repository.Repository, userID string, state 
 			}
 			state.ToolReadResults[key] = cached
 		}
-		return result, err
+		return nil
 	}
 	encoded, marshalErr := json.Marshal(result)
 	if marshalErr != nil {
-		return result, marshalErr
+		return marshalErr
 	}
 	if state.ToolReadResults == nil {
 		state.ToolReadResults = map[string]cloudAgentCachedToolResult{}
 	}
 	state.ToolReadResults[key] = cloudAgentCachedToolResult{Result: encoded}
-	return result, nil
+	return nil
 }
