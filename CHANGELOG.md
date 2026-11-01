@@ -7,6 +7,11 @@
 - Agent：`canvas_get_state` 回执带上读取来源、读取时间和画布版本；创建角色卡参数类型错误时，回执会指出具体字段和需要的类型。短剧 Agent 工具（`drama_get_context`）本次仍未接入。
 - 升级注意：数据库 Schema 不变（82），系统策略（v26）和工具合同（`cloud-agent-tools/v18`）都不变；需同时更新 web、backend、agent 三份镜像。
 
+## v1.7.3.2(e8b9d05)
+
+- 修复 Agent 新建分镜后无法拆镜：创建节点时保留剧情正文，支持读回、更新和局部替换，剧情与拆镜读取使用同一字段。此前创建回执虽成功，剧情却被丢弃，随后读取、补写和拆镜均失败。
+- 升级需同步更新 backend、agent 和 web；数据库 Schema 仍为 82，工具合同 v18、系统策略 v26 不变。
+
 ## v1.7.3.2(e7672e6)
 
 - 同步技能安装接口的文档覆盖清单，移除已补齐 OpenAPI 的旧缺项记录，修复发布前接口合同检查不一致；运行行为和数据库不变。
@@ -113,7 +118,6 @@
 - 升级注意：数据库 Schema 升至 78。v76 把存量排队的服务端预演渲染任务标为失败；v77 把 `canvas_media_versions` 中已就绪的版本迁入节点 `metadata.mediaVersions` 并沿用原 ID，原表保留只读；v78 为任务绑定增加媒体版本快照列 `canvas_task_bindings.media_version_json`。Agent 工具合同升至 `cloud-agent-tools/v16`，部署需同时更新 web、backend 与 agent 三份镜像。新增可选环境变量 `CANVAS_AGENT_DIRECTOR_PREVIEW_TIMEOUT`（导演台预演等待时长，默认 120s），已透传到各 Compose 文件。本版改动已通过专项与全量回归，真实浏览器联调、多端协作与 PostgreSQL 升级验收见待测试清单。
 
 ### 本版本此前记录（a421413）
-
 
 - 同步上游 ddcat-ai/open-ai-canvas v1.7.2：除云端 Agent 外，前端、后端、文档与部署均按上游对齐，上游本版更新见下方小节。
 - 云端 Agent 保留本仓库实现：独立 Pi Worker（`agent` 服务）、事件调度与准入、消息排队、子代理、技能默认与 Workspace、Agent 画布命令与任务写回。画布内 Agent 面板继续使用本仓库界面，Agent 形象改用上游的动画包与 Live2D 配置；上游的 `yingce-agent`、全局 Agent 面板与记忆提案界面不再使用。
@@ -597,7 +601,6 @@
 
 - 修复恢复已有 Pi 会话时优先沿用旧系统提示，导致 `Pi session is missing the frozen server policy` 的问题；首步和流式模型准入统一使用当前运行快照冻结的服务端策略提示。
 - 保留 Go 侧服务端策略 fail-closed 校验，并增加恢复提示回退回归测试。
-
 
 ## v1.5.1
 

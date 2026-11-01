@@ -2775,7 +2775,7 @@
                 ],
                 "properties": {
                   "content": {
-                    "description": "新建节点的文本或待编辑提示词；update_node 使用 patch.content。正文长度按节点合同限制，媒体节点的内容参数仅修改草稿提示词，已有媒体替换用 canvas_bind_asset。",
+                    "description": "节点正文或提示词草稿；媒体替换用 canvas_bind_asset。",
                     "type": "string"
                   },
                   "id": {
@@ -3119,6 +3119,15 @@
                           },
                           {
                             "description": "Markdown 正文 null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
+                            "maxLength": 1048576,
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "x-canvas-resettable": true
+                          },
+                          {
+                            "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
                             "maxLength": 1048576,
                             "type": [
                               "string",

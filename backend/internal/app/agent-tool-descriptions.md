@@ -250,7 +250,7 @@ set_global_prompt 使用；非空时覆盖各任务提示词，空字符串清�
 
 ## parameter_059
 
-新建节点的文本或待编辑提示词；update_node 使用 patch.content。正文长度按节点合同限制，媒体节点的内容参数仅修改草稿提示词，已有媒体替换用 canvas_bind_asset。
+节点正文或提示词草稿；媒体替换用 canvas_bind_asset。
 
 ## parameter_062
 

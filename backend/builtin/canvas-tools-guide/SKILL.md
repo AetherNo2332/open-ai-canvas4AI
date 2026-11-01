@@ -25,7 +25,7 @@ metadata:
 | --- | --- |
 | 看有哪些节点、查已有关系或任务 | `canvas_get_state`；分镜或批量表继续用专用 read 工具 |
 | 创建空白节点、改普通节点文本、声明输入引用 | `canvas_list_node_types` → `canvas_apply_ops`（引用写 `generationSpec.referenceBindings`／`inputBindings`） |
-| 创建多镜头分镜 | `canvas_apply_ops` 建 script，剧情写 composerContent，风格与要求写相连文本节点，再 `storyboard` 的 `split` |
+| 创建多镜头分镜 | `canvas_apply_ops` 用 `add_node` 建 script、`content` 写剧情（保存为 composerContent），更新用 `patch.composerContent`；风格与要求写相连文本节点，再 `storyboard` 的 `split` |
 | 改镜头台词、时长、关联资产或共享引用 | `storyboard` 的 `read` → `storyboard`；多行用 `rowIds`，资产用 `set_assets` |
 | 改批量表行、参考列、并发或全局提示词 | `canvas_read_batch_table` → `canvas_edit_batch_table` |
 | 用已有形象图建角色卡 | 精读原图 → `canvas_create_character` |
