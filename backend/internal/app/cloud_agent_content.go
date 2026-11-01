@@ -44,7 +44,7 @@ func cloudAgentTextSource(doc map[string]any, args cloudAgentTextReadArgs) (stri
 		return "", "", BadAuthRequest("该节点的正文路径无效")
 	}
 	expected := parts[1]
-	if args.Field != "" && args.Field != expected {
+	if args.Field != "" && args.Field != expected && !(descriptor.Type == "script" && args.Field == "content") {
 		return "", "", BadAuthRequest("请求字段不是该节点可编辑的正文")
 	}
 	return stringValue(cloudAgentNodeMetadata(node)[expected]), expected, nil

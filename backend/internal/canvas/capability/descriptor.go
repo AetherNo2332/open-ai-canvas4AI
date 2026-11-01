@@ -136,6 +136,13 @@ func (d Descriptor) ValidatePatch(patch map[string]any) error {
 			return fmt.Errorf("%s: %w", d.Label, err)
 		}
 	}
+	if d.Type == "script" {
+		if content, exists := patch["content"]; exists {
+			if composer, also := patch["composerContent"]; also && content != composer {
+				return fmt.Errorf("剧情正文 content 与 composerContent 不能冲突")
+			}
+		}
+	}
 	if rich, exists := patch["richText"]; exists && rich != nil {
 		if text, also := patch["content"]; also && text != richTextPlainText(rich.(map[string]any)) {
 			return fmt.Errorf("富文本与正文不能冲突")
