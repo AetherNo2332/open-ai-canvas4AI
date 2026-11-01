@@ -64,7 +64,6 @@
     {"id":"internal/app/cloud_agent_media.go:func:cloudAgentMediaDocument:lines","max":157,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_media.go:func:completeCloudAgentMediaNode:complexity","max":28,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_media.go:func:validateCloudAgentMediaArgs:complexity","max":45,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_media_receipts.go:func:emitCloudAgentMediaCompletion:complexity","max":23,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_pi_bridge.go:signature:PiAgentSnapshot.Canonical","max":1,"reason":"存量导出类型经跨文件别名暴露 map（守卫扩大到全后端后识别）；改为类型化 DTO 或 json.RawMessage 后删除本条"},
     {"id":"internal/app/cloud_agent_pi_bridge.go:signature:PiAgentSnapshot.Tools","max":1,"reason":"存量 Pi Worker 内部协议 DTO 用 map；改为类型化 DTO 或 json.RawMessage 后删除本条"},
     {"id":"internal/app/cloud_agent_pi_bridge.go:signature:PiAgentToolSpec.Parameters","max":1,"reason":"存量 Pi Worker 内部协议 DTO 用 map；改为类型化 DTO 或 json.RawMessage 后删除本条"},
