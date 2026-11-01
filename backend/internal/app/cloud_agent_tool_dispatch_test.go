@@ -154,11 +154,24 @@ func cloudAgentCanvasWriteToolNames(t *testing.T) []string {
 func cloudAgentDispatchedToolNames(t *testing.T) []string {
 	t.Helper()
 	names := map[string]bool{}
+	// 写工具审批与执行分派按职责拆在两个文件里：整份文件的函数都算分派，读取分派仍只看 cloudAgentReadTool。
+	for _, file := range []string{"cloud_agent_tool_dispatch.go", "cloud_agent_write_approval.go"} {
+		parsed := parseCloudAgentFile(t, file)
+		found := false
+		for _, decl := range parsed.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+				found = found || fn.Name.Name == "executeCloudAgentToolCallAttempt" || fn.Name.Name == "requestCloudAgentWriteApproval"
+				collectToolNameBranches(fn.Body, names)
+			}
+		}
+		if !found {
+			t.Fatalf("%s 里找不到工具执行或审批分派入口：分派实现被重命名或搬走了，守卫需要同步更新", file)
+		}
+	}
 	for _, target := range []struct {
 		file string
 		fn   string
 	}{
-		{"cloud_agent_runtime.go", "executeCloudAgentToolCallAttempt"},
 		{"cloud_agent_tools.go", "cloudAgentReadTool"},
 	} {
 		file := parseCloudAgentFile(t, target.file)
