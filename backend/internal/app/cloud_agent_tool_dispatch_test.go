@@ -83,7 +83,7 @@ func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 // 的 range 中实际传给 add(name, …) 的注册名。无 add 调用的循环不构成注册。
 func cloudAgentRegisteredToolNames(t *testing.T) []string {
 	t.Helper()
-	file := parseCloudAgentFile(t, "cloud_agent_tools.go")
+	file := parseCloudAgentFile(t, "cloud_agent_tool_compile.go")
 	names := map[string]bool{}
 	ast.Inspect(file, func(node ast.Node) bool {
 		if loop, ok := node.(*ast.RangeStmt); ok {
@@ -99,9 +99,8 @@ func cloudAgentRegisteredToolNames(t *testing.T) []string {
 							if !ok || len(call.Args) == 0 {
 								return true
 							}
-							callee, calleeOK := call.Fun.(*ast.Ident)
 							arg, argOK := call.Args[0].(*ast.Ident)
-							if calleeOK && callee.Name == "add" && argOK && arg.Name == value.Name {
+							if cloudAgentToolAddCall(call) && argOK && arg.Name == value.Name {
 								collectStringLiteralsOf(list.Elts, names)
 							}
 							return true
@@ -114,8 +113,7 @@ func cloudAgentRegisteredToolNames(t *testing.T) []string {
 		if !ok {
 			return true
 		}
-		ident, ok := call.Fun.(*ast.Ident)
-		if !ok || ident.Name != "add" || len(call.Args) == 0 {
+		if !cloudAgentToolAddCall(call) || len(call.Args) == 0 {
 			return true
 		}
 		if literal, ok := call.Args[0].(*ast.BasicLit); ok && literal.Kind == token.STRING {
@@ -124,9 +122,15 @@ func cloudAgentRegisteredToolNames(t *testing.T) []string {
 		return true
 	})
 	if len(names) == 0 {
-		t.Fatal("没有从 cloud_agent_tools.go 解析到任何 add(...) 工具注册")
+		t.Fatal("没有从 cloud_agent_tool_compile.go 解析到任何 add(...) 工具注册")
 	}
 	return sortedKeys(names)
+}
+
+// cloudAgentToolAddCall 识别工具注册调用：编译器方法 c.add(...)。
+func cloudAgentToolAddCall(call *ast.CallExpr) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && selector.Sel.Name == "add"
 }
 
 // cloudAgentCanvasWriteToolNames 收集 cloudAgentCanvasWriteTool 的 case 字面量。
@@ -154,12 +158,25 @@ func cloudAgentCanvasWriteToolNames(t *testing.T) []string {
 func cloudAgentDispatchedToolNames(t *testing.T) []string {
 	t.Helper()
 	names := map[string]bool{}
+	// 写工具审批与执行分派按职责拆在两个文件里：整份文件的函数都算分派，读取分派仍只看 cloudAgentReadTool。
+	for _, file := range []string{"cloud_agent_tool_dispatch.go", "cloud_agent_write_approval.go"} {
+		parsed := parseCloudAgentFile(t, file)
+		found := false
+		for _, decl := range parsed.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+				found = found || fn.Name.Name == "executeCloudAgentToolCallAttempt" || fn.Name.Name == "requestCloudAgentWriteApproval"
+				collectToolNameBranches(fn.Body, names)
+			}
+		}
+		if !found {
+			t.Fatalf("%s 里找不到工具执行或审批分派入口：分派实现被重命名或搬走了，守卫需要同步更新", file)
+		}
+	}
 	for _, target := range []struct {
 		file string
 		fn   string
 	}{
-		{"cloud_agent_runtime.go", "executeCloudAgentToolCallAttempt"},
-		{"cloud_agent_tools.go", "cloudAgentReadTool"},
+		{"cloud_agent_read_tool.go", "cloudAgentReadTool"},
 	} {
 		file := parseCloudAgentFile(t, target.file)
 		found := false

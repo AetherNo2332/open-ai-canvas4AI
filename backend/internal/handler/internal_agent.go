@@ -33,7 +33,19 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		panic("agent worker bootstrap failed: " + err.Error())
 	}
 	group := r.Group("/internal-agent")
-	group.Use(func(c *gin.Context) {
+	group.Use(internalAgentAuth(svc))
+	registerInternalAgentWorkerRoutes(group, svc)
+	registerInternalAgentLeaseRoutes(group, svc)
+	registerInternalAgentRunRoutes(group, svc)
+	registerInternalAgentCompactionRoutes(group, svc)
+	registerInternalAgentModelRoutes(group, svc)
+	registerInternalAgentToolRoutes(group, svc)
+}
+
+// internalAgentAuth 校验每个请求：运行级接口要求运行授权与会话 epoch，Worker 级接口要求 Worker 身份；
+// 两类都要求 Worker 协议、Pi SDK 与会话格式版本完全一致。
+func internalAgentAuth(svc *service.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		provided := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 		if c.Param("id") != "" || strings.HasPrefix(c.Request.URL.Path, "/internal-agent/runs/") {
 			epoch, err := strconv.ParseInt(c.GetHeader("X-Agent-Session-Epoch"), 10, 64)
@@ -62,7 +74,11 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 			return
 		}
 		c.Next()
-	})
+	}
+}
+
+// registerInternalAgentWorkerRoutes Worker 级接口：事件流、配置与容量上报。
+func registerInternalAgentWorkerRoutes(group *gin.RouterGroup, svc *service.Service) {
 	group.GET("/events", func(c *gin.Context) {
 		after, err := strconv.ParseInt(firstAgentCursor(c), 10, 64)
 		if err != nil || after < 0 {
@@ -136,6 +152,10 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		}
 		ok(c, gin.H{"updated": true})
 	})
+}
+
+// registerInternalAgentLeaseRoutes 运行阶段上报、控制指令读取、释放运行与认领新运行。
+func registerInternalAgentLeaseRoutes(group *gin.RouterGroup, svc *service.Service) {
 	group.POST("/runs/:id/phase", func(c *gin.Context) {
 		var input service.PiRuntimePhaseRequest
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
@@ -194,6 +214,10 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		}
 		ok(c, gin.H{"run": claimed, "runAuthorization": token})
 	})
+}
+
+// registerInternalAgentRunRoutes 已租约运行的读取、技能文件、续租与消息检查点。
+func registerInternalAgentRunRoutes(group *gin.RouterGroup, svc *service.Service) {
 	group.GET("/runs/:id", func(c *gin.Context) {
 		run, err := svc.PiAgentSnapshot(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c))
 		if err != nil {
@@ -258,6 +282,10 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		}
 		ok(c, outcome)
 	})
+}
+
+// registerInternalAgentCompactionRoutes 上下文压缩的开始、读取、提交、模型调用与完成。
+func registerInternalAgentCompactionRoutes(group *gin.RouterGroup, svc *service.Service) {
 	group.POST("/runs/:id/context-compactions", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
 		var input service.PiContextCompactionStart
@@ -330,6 +358,10 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+}
+
+// registerInternalAgentModelRoutes 无工具轮次判定与模型步骤的准入、读取、确认和失败。
+func registerInternalAgentModelRoutes(group *gin.RouterGroup, svc *service.Service) {
 	group.POST("/runs/:id/no-tool-turn", func(c *gin.Context) {
 		var input struct {
 			TaskID string `json:"taskId" binding:"required"`
@@ -394,6 +426,10 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		}
 		ok(c, decision)
 	})
+}
+
+// registerInternalAgentToolRoutes 工具批次、运行失败与恢复、单个工具调用推进。
+func registerInternalAgentToolRoutes(group *gin.RouterGroup, svc *service.Service) {
 	group.POST("/runs/:id/tool-batches", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
 		var input service.PiToolBatchRequest

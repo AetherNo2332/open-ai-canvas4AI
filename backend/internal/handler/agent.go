@@ -19,6 +19,15 @@ import (
 // Agent orchestration is durable; the browser stream never drives execution.
 func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 	RegisterAgentMessageQueueRoutes(r, svc)
+	registerAgentConversationRoutes(r, svc)
+	registerAgentSettingsRoutes(r, svc)
+	registerAgentRunRoutes(r, svc)
+	registerAgentApprovalRoutes(r, svc)
+	registerAgentEventStreamRoute(r, svc)
+}
+
+// registerAgentConversationRoutes 会话归档、列表与按会话列出运行。
+func registerAgentConversationRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.DELETE("/agent/conversations/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -67,6 +76,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, page)
 	})
+}
+
+// registerAgentSettingsRoutes 子代理策略、技能默认值、能力与技能用量等只读或用户级设置。
+func registerAgentSettingsRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/agent/subagent-policy", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -156,7 +169,21 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
-	create := func(c *gin.Context) {
+}
+
+// registerAgentRunRoutes 创建运行与追加消息、插话、切换权限、读取、取消与撤销。
+func registerAgentRunRoutes(r *gin.RouterGroup, svc *service.Service) {
+	create := createAgentRunHandler(svc)
+	r.POST("/agent/runs", create)
+	// Each additional message starts a new immutable turn and returns its ID.
+	r.POST("/agent/runs/:id/messages", create)
+	registerAgentRunControlRoutes(r, svc)
+	registerAgentRunStateRoutes(r, svc)
+}
+
+// createAgentRunHandler 新建运行和追加消息共用：限流、严格解码单个 JSON 对象，并检查 Agent 是否可用。
+func createAgentRunHandler(svc *service.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
@@ -194,9 +221,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"run": run})
 	}
-	r.POST("/agent/runs", create)
-	// Each additional message starts a new immutable turn and returns its ID.
-	r.POST("/agent/runs/:id/messages", create)
+}
+
+// registerAgentRunControlRoutes 运行中的插话与执行权限切换。
+func registerAgentRunControlRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/agent/runs/:id/interjections", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -274,6 +302,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, result)
 	})
+}
+
+// registerAgentRunStateRoutes 读取运行状态、取消与逐步撤销。
+func registerAgentRunStateRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/agent/runs/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -338,6 +370,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, result)
 	})
+}
+
+// registerAgentApprovalRoutes 审批决策与导演台预览回传。
+func registerAgentApprovalRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/agent/runs/:id/approvals/:approvalId/decision", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -411,6 +447,10 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"accepted": true})
 	})
+}
+
+// registerAgentEventStreamRoute 运行事件 SSE：游标为事件 seq，断线用 Last-Event-ID 或 ?after= 续传。
+func registerAgentEventStreamRoute(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/agent/runs/:id/events", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
