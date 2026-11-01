@@ -1,6 +1,8 @@
 package app
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -16,18 +18,18 @@ const (
 
 // cloudAgentCharacterDefinitionArgs 是 Agent 可写的角色设定字段；未声明的字段会被拒绝。
 type cloudAgentCharacterDefinitionArgs struct {
-	Role              string   `json:"role"`
-	Aliases           []string `json:"aliases"`
-	Appearance        string   `json:"appearance"`
-	Physique          string   `json:"physique"`
-	Clothing          string   `json:"clothing"`
-	Personality       string   `json:"personality"`
-	Props             string   `json:"props"`
-	ConsistencyPrompt string   `json:"consistencyPrompt"`
-	MultiViewPrompt   string   `json:"multiViewPrompt"`
-	VoiceLanguage     string   `json:"voiceLanguage"`
-	VoiceAge          string   `json:"voiceAge"`
-	VoiceTimbre       string   `json:"voiceTimbre"`
+	Role              string   `json:"role,omitempty"`
+	Aliases           []string `json:"aliases,omitempty"`
+	Appearance        string   `json:"appearance,omitempty"`
+	Physique          string   `json:"physique,omitempty"`
+	Clothing          string   `json:"clothing,omitempty"`
+	Personality       string   `json:"personality,omitempty"`
+	Props             string   `json:"props,omitempty"`
+	ConsistencyPrompt string   `json:"consistencyPrompt,omitempty"`
+	MultiViewPrompt   string   `json:"multiViewPrompt,omitempty"`
+	VoiceLanguage     string   `json:"voiceLanguage,omitempty"`
+	VoiceAge          string   `json:"voiceAge,omitempty"`
+	VoiceTimbre       string   `json:"voiceTimbre,omitempty"`
 }
 
 type cloudAgentCharacterCreateArgs struct {
@@ -142,7 +144,11 @@ func cloudAgentCharacterMediaResource(repo *repository.Repository, userID string
 func prepareCloudAgentCharacterCreate(repo *repository.Repository, userID, canvasID string, call cloudAgentCall) (*cloudAgentCharacterCreatePlan, error) {
 	var args cloudAgentCharacterCreateArgs
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-		return nil, &cloudAgentArgumentError{BadAuthRequest("创建角色卡参数无效，请按当前 schema 提供形象节点、设定及可选位置")}
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) && typeErr.Field != "" {
+			return nil, cloudAgentFieldError(typeErr.Field, "type_mismatch", fmt.Sprintf("创建角色卡参数 %s 类型错误，需要 %s", typeErr.Field, typeErr.Type))
+		}
+		return nil, cloudAgentJSONArgumentError(err)
 	}
 	if args.NodeID == "" {
 		args.NodeID = cloudAgentID(userID, "character:"+canvasID+":"+call.ID)

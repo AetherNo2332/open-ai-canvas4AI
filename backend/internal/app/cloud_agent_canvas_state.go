@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"yingce/backend/internal/canvas/capability"
 	"yingce/backend/internal/canvas/mediaversions"
@@ -220,6 +221,7 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 	if readRows < 0 || readRows > cloudAgentMaxReadRows {
 		return nil, BadAuthRequest("每页行数超出限制")
 	}
+	readAt := time.Now()
 	all := creationMaps(doc["nodes"])
 	if connectionOffset < 0 {
 		return nil, BadAuthRequest("连线分页参数无效")
@@ -565,6 +567,13 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 		migration["nextAction"] = "这是旧版引用格式的画布，Agent 暂不能在其上关联素材或生成媒体；请告知用户在画布顶部的「引用迁移」提示中完成一次迁移后再继续；不要重试或改写其他字段来替代绑定"
 	}
 	result["referenceMigration"] = migration
+	// 读取来源与时间：画布内容是最近一次保存的快照，canvasRevision 用来判断是否已有更新的写入。
+	result["source"], result["readAt"] = "canvas_snapshot", readAt.Format(time.RFC3339)
+	if repo != nil {
+		if canvas, err := repo.CanvasProjectMetadataForUser(userID, canvasID); err == nil && canvas != nil {
+			result["canvasRevision"] = canvas.Revision
+		}
+	}
 	if selectedMode {
 		result["totalSelectedNodes"] = len(candidateNodes)
 		selection := map[string]any{"mode": "subgraph", "focusNodeIds": focusNodeIDs, "selectedNodes": len(candidateNodes)}
