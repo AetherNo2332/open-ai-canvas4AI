@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v18",
+  "schemaVersion": "cloud-agent-tools/v19",
   "tools": [
     {
       "function": {
@@ -2664,7 +2664,7 @@
     },
     {
       "function": {
-        "description": "基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的版本 id 切换当前媒体，已是当前版本即成功；锁定 media_version_locked、上传中或首次生成中 media_version_loading（可稍后重试；原位生成新版本期间可切换，切换后新结果只进历史）、版本不存在或无媒体 media_version_missing。extract_media_version 给 versionId 和新 nodeId，把该版取出为右侧独立节点（无版本历史和任务绑定）。均无生成费用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的版本 id 切换当前媒体，已是当前版本即成功；锁定 media_version_locked、上传中或首次生成中 media_version_loading（可稍后重试；原位生成新版本期间可切换，切换后新结果只进历史）、版本不存在或无媒体 media_version_missing。extract_media_version 给 versionId 和新 nodeId，把该版取出为右侧独立节点（无版本历史和任务绑定）。均无生成费用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。update_node 的 patch 在 schema 里只完整列出 title、content、prompt、composerContent，其余字段只给类型；改其他字段前先用 canvas_list_node_types(nodeType) 读该类型的字段合同，字段或取值不对会按字段报错。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_apply_ops",
         "parameters": {
           "additionalProperties": false,
@@ -2827,247 +2827,156 @@
                   },
                   "patch": {
                     "additionalProperties": false,
+                    "description": "title、content、prompt、composerContent 之外的字段只列类型；取值范围、枚举和适用节点用 canvas_list_node_types(nodeType) 读取",
                     "minProperties": 1,
                     "properties": {
                       "actionBoardColumns": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maximum": 12,
-                        "minimum": 1,
-                        "multipleOf": 1,
                         "type": [
-                          "number",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "number"
+                        ]
                       },
                       "actionBoardRows": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maximum": 12,
-                        "minimum": 1,
-                        "multipleOf": 1,
                         "type": [
-                          "number",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "number"
+                        ]
                       },
                       "assetCategory": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "enum": [
-                          "character",
-                          "environment",
-                          "prop",
-                          "material",
-                          "other",
-                          null
-                        ],
-                        "maxLength": 240,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "assetTags": {
-                        "description": "数组元素合同见 canvas_list_node_types(nodeType)",
                         "items": {},
-                        "maxItems": 100,
                         "type": "array"
                       },
                       "audioEmotionAfraid": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioEmotionAngry": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioEmotionCalm": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioEmotionControlMethod": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioEmotionDisgusted": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioEmotionHappy": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioEmotionMelancholic": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioEmotionRandom": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioEmotionSad": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioEmotionSurprised": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioFormat": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioInstructions": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioSpeed": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "audioVoice": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "batchInputNodeIds": {
-                        "description": "数组元素合同见 canvas_list_node_types(nodeType)；null 清除该可选字段，省略保持原值。",
                         "items": {},
-                        "maxItems": 10,
                         "type": [
                           "array",
                           "null"
-                        ],
-                        "x-canvas-resettable": true
+                        ]
                       },
                       "batchOperation": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "enum": [
-                          "try_on",
-                          "creative",
-                          null
-                        ],
-                        "maxLength": 240,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "batchRowId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 120,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "batchSourceNodeId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "cameraControl": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)；null 清除该可选字段，省略保持原值。",
                         "type": [
-                          "object",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "object"
+                        ]
                       },
                       "chapterId": {
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "chapterTitle": {
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "chartKind": {
-                        "enum": [
-                          "bar",
-                          "line"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "colorGrade": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
                       "composerContent": {
@@ -3169,211 +3078,94 @@
                         ]
                       },
                       "conversionOperation": {
-                        "enum": [
-                          "grayscale",
-                          "edge-canny",
-                          "lineart",
-                          "depth",
-                          "pose",
-                          "cutout"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "conversionState": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
                       "count": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maximum": 100,
-                        "minimum": 1,
-                        "multipleOf": 1,
                         "type": [
-                          "number",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "number"
+                        ]
                       },
                       "drawingEngine": {
-                        "enum": [
-                          "tldraw",
-                          "excalidraw"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "emotionEdit": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
                       "folderAssetFolderId": {
-                        "maxLength": 128,
                         "type": "string"
                       },
                       "folderCreatedAt": {
-                        "maxLength": 80,
                         "type": "string"
                       },
                       "folderProjectId": {
-                        "maxLength": 128,
                         "type": "string"
                       },
                       "folderStyle": {
-                        "enum": [
-                          "glass",
-                          "stacked",
-                          "midnight",
-                          "paper",
-                          "cinema",
-                          "compact"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "folderTheme": {
-                        "enum": [
-                          "aurora",
-                          "obsidian",
-                          "ember",
-                          "pearl"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "folderThemeCover": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "enum": [
-                          "",
-                          null
-                        ],
-                        "maxLength": 240,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "fontSize": {
-                        "maximum": 120,
-                        "minimum": 8,
                         "type": "number"
                       },
                       "frame": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
                       "freeResize": {
                         "type": "boolean"
                       },
                       "generateAudio": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "generationMode": {
-                        "anyOf": [
-                          {
-                            "enum": [
-                              "audio"
-                            ],
-                            "maxLength": 240,
-                            "type": "string"
-                          },
-                          {
-                            "enum": [
-                              "text",
-                              "image",
-                              "video",
-                              "audio"
-                            ],
-                            "maxLength": 240,
-                            "type": "string"
-                          },
-                          {
-                            "enum": [
-                              "image"
-                            ],
-                            "maxLength": 240,
-                            "type": "string"
-                          },
-                          {
-                            "enum": [
-                              "video"
-                            ],
-                            "maxLength": 240,
-                            "type": "string"
-                          }
-                        ],
                         "type": "string"
                       },
                       "generationResultPlacement": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "enum": [
-                          "replace-node",
-                          "new-version",
-                          null
-                        ],
-                        "maxLength": 240,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "generationSpec": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
                       "generationType": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "enum": [
-                          "generation",
-                          "edit",
-                          null
-                        ],
-                        "maxLength": 240,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "height": {
-                        "maximum": 100000,
-                        "minimum": 1,
                         "type": "number"
                       },
                       "imageBatchExpanded": {
                         "type": "boolean"
                       },
                       "imageToolData": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
                       "imageToolKind": {
-                        "enum": [
-                          "annotation-edit",
-                          "layer-decomposition"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "imageToolPlugin": {
-                        "enum": [
-                          "image-tools"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "inputBindings": {
-                        "description": "数组元素合同见 canvas_list_node_types(nodeType)",
                         "items": {},
-                        "maxItems": 100,
                         "type": "array"
                       },
                       "listMode": {
@@ -3386,79 +3178,55 @@
                         "type": "boolean"
                       },
                       "model": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "panoramaConfig": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
                       "portraitTexture": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)；null 清除该可选字段，省略保持原值。",
                         "type": [
-                          "object",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "object"
+                        ]
                       },
                       "previsClayVideoNodeId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "previsDepthNodeId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "previsNormalNodeId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "previsPreviewNodeId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "previsSceneId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "previsShotId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "prompt": {
                         "anyOf": [
@@ -3487,194 +3255,112 @@
                         ]
                       },
                       "promptTemplateOperation": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "promptTemplateVariables": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)；null 清除该可选字段，省略保持原值。",
                         "type": [
-                          "object",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "object"
+                        ]
                       },
                       "quality": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "referenceAssetNodeIds": {
-                        "description": "数组元素合同见 canvas_list_node_types(nodeType)；null 清除该可选字段，省略保持原值。",
                         "items": {},
-                        "maxItems": 100,
                         "type": [
                           "array",
                           "null"
-                        ],
-                        "x-canvas-resettable": true
+                        ]
                       },
                       "referenceSetId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "richText": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)；null 清除该可选字段，省略保持原值。",
                         "type": [
-                          "object",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "object"
+                        ]
                       },
                       "runningHubWorkflowId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 240,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "runningHubWorkflowKind": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "enum": [
-                          "workflow",
-                          "app",
-                          null
-                        ],
-                        "maxLength": 240,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "seconds": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "shotIndex": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maximum": 100000,
-                        "minimum": 1,
-                        "multipleOf": 1,
                         "type": [
-                          "number",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "number"
+                        ]
                       },
                       "size": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "storyboardShotCount": {
-                        "enum": [
-                          "auto",
-                          "1",
-                          "2",
-                          "3",
-                          "4",
-                          "5",
-                          "6",
-                          "7",
-                          "8",
-                          "9",
-                          "10"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "storyboardShotDuration": {
-                        "enum": [
-                          "auto",
-                          "5",
-                          "10",
-                          "15",
-                          "30"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "storyboardVideoInputMode": {
-                        "enum": [
-                          "direct",
-                          "keyframe"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "stylePresetId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 128,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "styleProfileJson": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 1048576,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "subtitleEntries": {
-                        "description": "数组元素合同见 canvas_list_node_types(nodeType)",
                         "items": {},
-                        "maxItems": 10000,
                         "type": "array"
                       },
                       "subtitleHighlights": {
-                        "description": "数组元素合同见 canvas_list_node_types(nodeType)",
                         "items": {},
-                        "maxItems": 10000,
                         "type": "array"
                       },
                       "subtitleStyle": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
                       "supersededByNodeId": {
-                        "maxLength": 80,
                         "type": "string"
                       },
                       "textCount": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maximum": 100,
-                        "minimum": 1,
-                        "multipleOf": 1,
                         "type": [
-                          "number",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "number"
+                        ]
                       },
                       "title": {
                         "anyOf": [
@@ -3696,210 +3382,103 @@
                         "type": "string"
                       },
                       "transparentBackground": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "usageNote": {
-                        "maxLength": 500,
                         "type": "string"
                       },
                       "usageStatus": {
-                        "enum": [
-                          "active",
-                          "archived"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "videoCameraMoveId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "videoCameraMovePrompt": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "videoEditOperation": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "enum": [
-                          "text_to_video",
-                          "image_to_video",
-                          "reference_to_video",
-                          "extend",
-                          "inpaint",
-                          "replace_element",
-                          "camera_motion",
-                          "style_transfer",
-                          "audio_to_video",
-                          "compare_versions",
-                          "concat",
-                          null
-                        ],
-                        "maxLength": 240,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "videoEndFrameNodeId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "videoFrameSourceNodeId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "videoStartFrameNodeId": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 80,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "visibleColumns": {
-                        "description": "数组元素合同见 canvas_list_node_types(nodeType)",
                         "items": {},
-                        "maxItems": 20,
                         "type": "array"
                       },
                       "vquality": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "watermark": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 16000,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "width": {
-                        "maximum": 100000,
-                        "minimum": 1,
                         "type": "number"
                       },
                       "workflowDescription": {
-                        "anyOf": [
-                          {
-                            "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                            "maxLength": 2000,
-                            "type": [
-                              "string",
-                              "null"
-                            ],
-                            "x-canvas-resettable": true
-                          },
-                          {
-                            "maxLength": 2000,
-                            "type": "string"
-                          }
+                        "type": [
+                          "null",
+                          "string"
                         ]
                       },
                       "workflowKind": {
-                        "anyOf": [
-                          {
-                            "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                            "enum": [
-                              "free",
-                              "script",
-                              "story_input",
-                              "scene",
-                              "storyboard",
-                              "shot",
-                              "final",
-                              "styleboard",
-                              "reference_set",
-                              "reference_video",
-                              "action_board",
-                              null
-                            ],
-                            "maxLength": 240,
-                            "type": [
-                              "string",
-                              "null"
-                            ],
-                            "x-canvas-resettable": true
-                          },
-                          {
-                            "enum": [
-                              "script",
-                              "storyboard"
-                            ],
-                            "maxLength": 240,
-                            "type": "string"
-                          }
+                        "type": [
+                          "null",
+                          "string"
                         ]
                       },
                       "workflowParameters": {
-                        "description": "字段完整合同见 canvas_list_node_types(nodeType)；null 清除该可选字段，省略保持原值。",
                         "type": [
-                          "object",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "object"
+                        ]
                       },
                       "workflowProvider": {
-                        "enum": [
-                          "model",
-                          "runninghub"
-                        ],
-                        "maxLength": 240,
                         "type": "string"
                       },
                       "workflowTitle": {
-                        "description": "null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。",
-                        "maxLength": 240,
                         "type": [
-                          "string",
-                          "null"
-                        ],
-                        "x-canvas-resettable": true
+                          "null",
+                          "string"
+                        ]
                       },
                       "x": {
-                        "description": "画布横坐标（像素）；与 y 一起移动节点，通常用 canvas_arrange_nodes 批量整理",
-                        "maximum": 1000000,
-                        "minimum": -1000000,
                         "type": "number"
                       },
                       "y": {
-                        "description": "画布纵坐标（像素）；与 x 一起移动节点，通常用 canvas_arrange_nodes 批量整理",
-                        "maximum": 1000000,
-                        "minimum": -1000000,
                         "type": "number"
                       }
                     },

@@ -131,11 +131,10 @@ type cloudAgentRuntime struct {
 	// **每一条**运行（`server.ts` 的 `harness` 在 while 循环外）。运维改了
 	// SYSTEM.md/AGENTS.md 再重启，在途运行就会**静默换提示** —— 既违反"首步与后续步同一份
 	// 快照"，也违反"恢复不得重读新版磁盘文件"。运行恢复继续核对冻结的 Harness 内容身份。
-	PromptContract           string   `json:"promptContract,omitempty"`
-	SelectedToolCategory     string   `json:"selectedToolCategory,omitempty"`
-	ActivatedToolCategories  []string `json:"activatedToolCategories,omitempty"`
-	AdvertisedToolNames      []string `json:"advertisedToolNames,omitempty"`
-	DeliveredIntentToolNames []string `json:"deliveredIntentToolNames,omitempty"`
+	PromptContract          string   `json:"promptContract,omitempty"`
+	SelectedToolCategory    string   `json:"selectedToolCategory,omitempty"`
+	ActivatedToolCategories []string `json:"activatedToolCategories,omitempty"`
+	AdvertisedToolNames     []string `json:"advertisedToolNames,omitempty"`
 	// 首步合同（P1.5）：合同版本、阶段、不可变快照与占位任务的持久化位置。
 	// 旧运行的 ContractVersion 为 0，这些字段全部留空，行为与迁移前一致。
 	ContractVersion int `json:"contractVersion,omitempty"`

@@ -174,7 +174,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v18"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v19"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -466,6 +466,11 @@ func CloudAgentSupportedToolNames() []string {
 	return names
 }
 
+// cloudAgentPatchCommonFields 是 update_node 在多数节点上都会用到的文本字段，在工具 schema 里保留完整合同。
+// 其余字段只声明类型，枚举、范围和说明按节点类型从 canvas_list_node_types(nodeType) 读取；
+// 节点描述符在预览和执行时照常做完整校验，写错字段或取值会得到按字段的错误回执。
+var cloudAgentPatchCommonFields = map[string]bool{"title": true, "content": true, "prompt": true, "composerContent": true}
+
 func cloudAgentPatchSchema() map[string]any {
 	properties := map[string]any{}
 	variants := map[string][]map[string]any{}
@@ -477,6 +482,18 @@ func cloudAgentPatchSchema() map[string]any {
 		for key, field := range descriptor.PatchFields {
 			property := field.JSONSchema()
 			kind := property["type"]
+			if !cloudAgentPatchCommonFields[key] {
+				property = cloudAgentPatchTypeOnly(property)
+				encoded, _ := json.Marshal(property)
+				if seen[key] == nil {
+					seen[key] = map[string]bool{}
+				}
+				if !seen[key][string(encoded)] {
+					variants[key] = append(variants[key], property)
+					seen[key][string(encoded)] = true
+				}
+				continue
+			}
 			// Rich native contracts are discovered per node type rather than
 			// repeated in every model request. The descriptor still validates
 			// the complete nested contract during preview and execution.
@@ -504,6 +521,10 @@ func cloudAgentPatchSchema() map[string]any {
 		}
 	}
 	for key, values := range variants {
+		if !cloudAgentPatchCommonFields[key] {
+			properties[key] = cloudAgentPatchMergeTypes(values)
+			continue
+		}
 		if len(values) == 1 {
 			properties[key] = values[0]
 		} else {
@@ -520,7 +541,76 @@ func cloudAgentPatchSchema() map[string]any {
 			}
 		}
 	}
-	return map[string]any{"type": "object", "minProperties": 1, "properties": properties, "additionalProperties": false}
+	return map[string]any{"type": "object", "minProperties": 1, "properties": properties, "additionalProperties": false,
+		"description": "title、content、prompt、composerContent 之外的字段只列类型；取值范围、枚举和适用节点用 canvas_list_node_types(nodeType) 读取"}
+}
+
+// cloudAgentPatchTypeOnly 只保留字段的 JSON 类型（含可空），去掉枚举、范围、说明等按节点类型才成立的约束。
+func cloudAgentPatchTypeOnly(property map[string]any) map[string]any {
+	types := map[string]bool{}
+	var collect func(map[string]any)
+	collect = func(schema map[string]any) {
+		switch kind := schema["type"].(type) {
+		case string:
+			types[kind] = true
+		case []string:
+			for _, item := range kind {
+				types[item] = true
+			}
+		case []any:
+			for _, item := range kind {
+				if text, ok := item.(string); ok {
+					types[text] = true
+				}
+			}
+		}
+		if choices, ok := schema["anyOf"].([]any); ok {
+			for _, choice := range choices {
+				if nested, ok := choice.(map[string]any); ok {
+					collect(nested)
+				}
+			}
+		}
+	}
+	collect(property)
+	return cloudAgentPatchTypedField(types)
+}
+
+// cloudAgentPatchTypedField 生成只含类型的字段声明；数组带空的元素约束，避免部分模型服务拒收无 items 的数组。
+func cloudAgentPatchTypedField(types map[string]bool) map[string]any {
+	field := map[string]any{"type": cloudAgentSchemaTypeValue(types)}
+	if types["array"] {
+		field["items"] = map[string]any{}
+	}
+	return field
+}
+
+// cloudAgentPatchMergeTypes 合并同名字段在不同节点类型上的类型，得到一个不带 anyOf 的类型声明。
+func cloudAgentPatchMergeTypes(values []map[string]any) map[string]any {
+	types := map[string]bool{}
+	for _, value := range values {
+		switch kind := value["type"].(type) {
+		case string:
+			types[kind] = true
+		default:
+			for _, name := range cloudAgentSchemaStrings(kind) {
+				types[name] = true
+			}
+		}
+	}
+	return cloudAgentPatchTypedField(types)
+}
+
+func cloudAgentSchemaTypeValue(types map[string]bool) any {
+	names := make([]string, 0, len(types))
+	for name := range types {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 1 {
+		return names[0]
+	}
+	return names
 }
 
 func cloudAgentToolAllowed(req CloudAgentRequest, name string) bool {

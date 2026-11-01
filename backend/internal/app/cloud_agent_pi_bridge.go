@@ -1875,7 +1875,6 @@ func cloudAgentCommitPiInterjections(runID string, state *cloudAgentRuntime, ids
 	remaining := make([]cloudAgentInterjection, 0, len(state.PendingInterjections)-len(requested))
 	for _, item := range state.PendingInterjections {
 		if _, delivered := requested[item.ID]; delivered {
-			cloudAgentRecordDeliveredToolIntent(state, item)
 			state.event(runID, cloudAgentInterjectionSource(item)+"_delivered", map[string]any{"messageId": item.ID, "text": item.Text})
 			cloudAgentRememberInterjectionID(state, item.ID)
 			continue

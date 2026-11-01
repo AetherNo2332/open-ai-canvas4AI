@@ -21,8 +21,9 @@ export interface SessionToolDefinitionLike {
 const legacyCategoryPrefix = "agent_tools_";
 
 /**
- * Run-scoped registry for concrete Canvas tools. Each model boundary can add
- * an advertised L1 tool; only allowed concrete tools are registered with Pi.
+ * Run-scoped registry for concrete Canvas tools. The run advertises its full
+ * eligible catalog up front; a boundary may only drop tools the current
+ * permission no longer allows. Only allowed concrete tools are registered with Pi.
  * Categories remain metadata and never become tools.
  *
  * This registry is not an authorization boundary: Pi's tool_call hook checks
