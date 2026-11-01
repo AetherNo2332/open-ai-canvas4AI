@@ -31,18 +31,8 @@ func validateCloudAgentDrawingValue(value any, depth int) error {
 	switch v := value.(type) {
 	case map[string]any:
 		for key, item := range v {
-			if key == "__proto__" || key == "constructor" || key == "prototype" {
-				return BadAuthRequest("绘图记录不接受原型字段")
-			}
-			clean := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", ""))
-			for _, part := range []string{"secret", "token", "credential", "apikey", "accesskey", "authorization", "cookie", "password", "authheaders"} {
-				if strings.Contains(clean, part) {
-					return BadAuthRequest("绘图记录不接受凭证字段")
-				}
-			}
-			switch clean {
-			case "__proto__", "constructor", "prototype", "apikey", "authorization", "cookie", "password", "secret", "token", "accesstoken", "refreshtoken", "headers":
-				return BadAuthRequest("绘图记录不接受凭证或原型字段")
+			if err := validateCloudAgentDrawingKey(key); err != nil {
+				return err
 			}
 			if err := validateCloudAgentDrawingValue(item, depth+1); err != nil {
 				return err
@@ -59,27 +49,54 @@ func validateCloudAgentDrawingValue(value any, depth int) error {
 			return BadAuthRequest("绘图数值无效")
 		}
 	case string:
-		v = strings.TrimSpace(v)
-		lower := strings.ToLower(v)
-		if strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "blob:") || strings.HasPrefix(lower, "javascript:") {
-			return BadAuthRequest("绘图媒体必须引用已上传的平台资源")
+		return validateCloudAgentDrawingString(v)
+	}
+	return nil
+}
+
+// validateCloudAgentDrawingKey rejects prototype keys and any key that looks
+// like a credential (case, underscores and hyphens ignored).
+func validateCloudAgentDrawingKey(key string) error {
+	if key == "__proto__" || key == "constructor" || key == "prototype" {
+		return BadAuthRequest("绘图记录不接受原型字段")
+	}
+	clean := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", ""))
+	for _, part := range []string{"secret", "token", "credential", "apikey", "accesskey", "authorization", "cookie", "password", "authheaders"} {
+		if strings.Contains(clean, part) {
+			return BadAuthRequest("绘图记录不接受凭证字段")
 		}
-		if strings.HasPrefix(lower, "http:") || strings.HasPrefix(lower, "https:") {
-			u, err := url.Parse(v)
-			if err != nil || u.User != nil {
-				return BadAuthRequest("绘图链接无效")
+	}
+	switch clean {
+	case "__proto__", "constructor", "prototype", "apikey", "authorization", "cookie", "password", "secret", "token", "accesstoken", "refreshtoken", "headers":
+		return BadAuthRequest("绘图记录不接受凭证或原型字段")
+	}
+	return nil
+}
+
+// validateCloudAgentDrawingString rejects inline media (data:, blob:,
+// javascript:) and http(s) links carrying user info or auth query parameters.
+func validateCloudAgentDrawingString(v string) error {
+	v = strings.TrimSpace(v)
+	lower := strings.ToLower(v)
+	if strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "blob:") || strings.HasPrefix(lower, "javascript:") {
+		return BadAuthRequest("绘图媒体必须引用已上传的平台资源")
+	}
+	if !strings.HasPrefix(lower, "http:") && !strings.HasPrefix(lower, "https:") {
+		return nil
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.User != nil {
+		return BadAuthRequest("绘图链接无效")
+	}
+	for key := range u.Query() {
+		key = strings.ToLower(key)
+		for _, part := range []string{"token", "signature", "credential", "secret", "password", "api_key", "apikey", "authorization"} {
+			if strings.Contains(key, part) {
+				return BadAuthRequest("绘图记录不接受授权链接")
 			}
-			for key := range u.Query() {
-				key = strings.ToLower(key)
-				for _, part := range []string{"token", "signature", "credential", "secret", "password", "api_key", "apikey", "authorization"} {
-					if strings.Contains(key, part) {
-						return BadAuthRequest("绘图记录不接受授权链接")
-					}
-				}
-				if key == "key" {
-					return BadAuthRequest("绘图记录不接受授权链接")
-				}
-			}
+		}
+		if key == "key" {
+			return BadAuthRequest("绘图记录不接受授权链接")
 		}
 	}
 	return nil
@@ -226,44 +243,55 @@ func cloudAgentReadDrawing(repo *repository.Repository, userID, canvasID string,
 	}
 	result := map[string]any{"nodeId": args.NodeID, "engine": wrapper["engine"], "synced": true, "records": items, "totalRecords": len(ids), "offset": args.Offset, "nextOffset": end, "hasMore": end < len(ids), "snapshotHash": cloudAgentCanvasHash(doc)}
 	if stringValue(wrapper["engine"]) == "tldraw" {
-		shapeTypes := []string{}
-		for shapeType := range cloudAgentTLShapeProps {
-			shapeTypes = append(shapeTypes, shapeType)
-		}
-		sort.Strings(shapeTypes)
-		result["supportedShapeTypes"] = shapeTypes
-		result["editingHint"] = "upsert 必须提交完整原生记录。修改已有形状时复制读取到的完整 record 后修改所需字段；新建矩形可复制 exampleRecord，使用未占用的 shape:ID，保留所有 base 字段和 props。其他类型的 props 不相同，不要只改 type。原生图片素材只接受 image 类型的平台资源。"
-		pages := []map[string]any{}
-		for _, record := range records {
-			if stringValue(record["typeName"]) == "page" {
-				pages = append(pages, record)
-			}
-		}
-		sort.Slice(pages, func(i, j int) bool {
-			if stringValue(pages[i]["index"]) != stringValue(pages[j]["index"]) {
-				return stringValue(pages[i]["index"]) < stringValue(pages[j]["index"])
-			}
-			return stringValue(pages[i]["id"]) < stringValue(pages[j]["id"])
-		})
-		if len(pages) > 0 {
-			pageID := stringValue(pages[0]["id"])
-			shapeID, shapeIndex := "shape:new", "a1"
-			for i := 1; records[shapeID] != nil; i++ {
-				shapeID = fmt.Sprintf("shape:new%d", i)
-			}
-			for _, record := range records {
-				if stringValue(record["typeName"]) == "shape" && stringValue(record["parentId"]) == pageID && stringValue(record["index"]) >= shapeIndex {
-					shapeIndex = stringValue(record["index"])
-				}
-			}
-			shapeIndex += "V"
-			result["exampleRecord"] = map[string]any{
-				"id": shapeID, "typeName": "shape", "type": "geo", "x": 0.0, "y": 0.0, "rotation": 0.0, "index": shapeIndex, "parentId": pageID, "isLocked": false, "opacity": 1.0, "meta": map[string]any{},
-				"props": map[string]any{"geo": "rectangle", "w": 100.0, "h": 100.0, "growY": 0.0, "scale": 1.0, "color": "black", "labelColor": "black", "fill": "none", "dash": "draw", "size": "m", "font": "draw", "align": "middle", "verticalAlign": "middle", "url": "", "richText": map[string]any{"type": "doc", "content": []any{map[string]any{"type": "paragraph"}}}},
-			}
-		}
+		cloudAgentTldrawReadGuide(result, records)
 	}
 	return result, nil
+}
+
+// cloudAgentTldrawReadGuide adds the supported shape types, the editing hint
+// and, when the drawing has a page, a ready-to-copy rectangle record.
+func cloudAgentTldrawReadGuide(result map[string]any, records map[string]map[string]any) {
+	shapeTypes := []string{}
+	for shapeType := range cloudAgentTLShapeProps {
+		shapeTypes = append(shapeTypes, shapeType)
+	}
+	sort.Strings(shapeTypes)
+	result["supportedShapeTypes"] = shapeTypes
+	result["editingHint"] = "upsert 必须提交完整原生记录。修改已有形状时复制读取到的完整 record 后修改所需字段；新建矩形可复制 exampleRecord，使用未占用的 shape:ID，保留所有 base 字段和 props。其他类型的 props 不相同，不要只改 type。原生图片素材只接受 image 类型的平台资源。"
+	pages := []map[string]any{}
+	for _, record := range records {
+		if stringValue(record["typeName"]) == "page" {
+			pages = append(pages, record)
+		}
+	}
+	sort.Slice(pages, func(i, j int) bool {
+		if stringValue(pages[i]["index"]) != stringValue(pages[j]["index"]) {
+			return stringValue(pages[i]["index"]) < stringValue(pages[j]["index"])
+		}
+		return stringValue(pages[i]["id"]) < stringValue(pages[j]["id"])
+	})
+	if len(pages) > 0 {
+		result["exampleRecord"] = cloudAgentTldrawExampleRecord(records, stringValue(pages[0]["id"]))
+	}
+}
+
+// cloudAgentTldrawExampleRecord builds a rectangle on the page with an unused
+// shape ID and an index after the page's existing shapes.
+func cloudAgentTldrawExampleRecord(records map[string]map[string]any, pageID string) map[string]any {
+	shapeID, shapeIndex := "shape:new", "a1"
+	for i := 1; records[shapeID] != nil; i++ {
+		shapeID = fmt.Sprintf("shape:new%d", i)
+	}
+	for _, record := range records {
+		if stringValue(record["typeName"]) == "shape" && stringValue(record["parentId"]) == pageID && stringValue(record["index"]) >= shapeIndex {
+			shapeIndex = stringValue(record["index"])
+		}
+	}
+	shapeIndex += "V"
+	return map[string]any{
+		"id": shapeID, "typeName": "shape", "type": "geo", "x": 0.0, "y": 0.0, "rotation": 0.0, "index": shapeIndex, "parentId": pageID, "isLocked": false, "opacity": 1.0, "meta": map[string]any{},
+		"props": map[string]any{"geo": "rectangle", "w": 100.0, "h": 100.0, "growY": 0.0, "scale": 1.0, "color": "black", "labelColor": "black", "fill": "none", "dash": "draw", "size": "m", "font": "draw", "align": "middle", "verticalAlign": "middle", "url": "", "richText": map[string]any{"type": "doc", "content": []any{map[string]any{"type": "paragraph"}}}},
+	}
 }
 
 func validateCloudAgentOwnedReferences(repo *repository.Repository, userID string, doc map[string]any) error {

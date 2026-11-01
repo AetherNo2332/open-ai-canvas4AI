@@ -65,8 +65,6 @@
     {"id":"internal/app/cloud_agent_conversations.go:signature:Service.CloudAgentConversationRuns","max":1,"reason":"存量 HTTP 视图 DTO 用 map 承载运行事件与审批载荷；改为类型化 DTO 或 json.RawMessage 后删除本条"},
     {"id":"internal/app/cloud_agent_copy.go:func:cloudAgentResetCopiedMetadata:complexity","max":24,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_director_tool.go:file_lines","max":627,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_drawing.go:func:cloudAgentReadDrawing:complexity","max":26,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_drawing.go:func:validateCloudAgentDrawingValue:complexity","max":29,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_event_store.go:func:Service.cloudAgentRunEventsForView:complexity","max":22,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_generation_contract.go:func:cloudAgentGenerationSpec:complexity","max":23,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_generations.go:func:settleCloudAgentGeneration:complexity","max":24,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
