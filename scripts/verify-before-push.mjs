@@ -24,6 +24,9 @@ const WEB = path.join(ROOT, "web");
 const BACKEND = path.join(ROOT, "backend");
 const LOG_DIR = path.join(ROOT, ".local", "cache", "verify");
 const TASK_TIMEOUT_MS = 25 * 60 * 1000;
+// Windows 没有 POSIX 进程组，detached 还会让子进程脱离控制台，go test 启动的每个测试程序都会各自弹出控制台窗口；
+// 所以只在非 Windows 上分离进程组，Windows 用隐藏窗口启动、用 taskkill /T 结束整棵进程树。
+const DETACH_PROCESS_GROUP = process.platform !== "win32";
 
 const options = parseArgs(process.argv.slice(2));
 
@@ -189,6 +192,10 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 function killTree(child) {
     // pid 必须是真实子进程：process.kill(-0) 会向本脚本所在的进程组发信号。
     if (!child?.pid) return;
+    if (!DETACH_PROCESS_GROUP) {
+        spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        return;
+    }
     try {
         process.kill(-child.pid, "SIGTERM");
     } catch {
@@ -213,8 +220,8 @@ function runTask(task) {
         const log = createWriteStream(logPath);
         let output = "";
         const startedAt = Date.now();
-        // 独立进程组：超时或中断时能结束 vite、chrome、go 子进程。
-        const child = spawn(task.cmd, args, { cwd: task.cwd, env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", ...task.env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+        // 独立进程组（Windows 为进程树）：超时或中断时能结束 vite、chrome、go 子进程。
+        const child = spawn(task.cmd, args, { cwd: task.cwd, env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", ...task.env }, detached: DETACH_PROCESS_GROUP, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
         running.set(task.name, child);
         const collect = (chunk) => {
             output += chunk;
