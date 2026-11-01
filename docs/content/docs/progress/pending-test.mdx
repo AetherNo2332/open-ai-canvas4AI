@@ -7,7 +7,9 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 ## Agent 技术债偿还（第一批）
 
-- 已实现：按架构守卫拆分四处超长函数，行为不变：Agent 公共路由与 Worker 内部路由注册、`canvas_get_state` 分页读取、绘图编辑（Excalidraw / tldraw）、工具清单构建。拆分前后路由表一致，288 种权限与能力组合下工具清单逐字节一致；基线从 635 条降到 627 条。
+- 已实现：按架构守卫拆分九处超长函数，行为不变：Agent 公共路由与 Worker 内部路由注册、工具调用执行（`executeCloudAgentToolCallAttempt`，审批与媒体草稿合并到 `cloud_agent_write_approval.go`）、只读工具分派、`canvas_get_state` 分页读取、分镜读取、绘图编辑（Excalidraw / tldraw）、工具清单构建、Pi 模型步骤与消息检查点（`cloud_agent_pi_bridge.go` 拆成 6 个文件）。拆分前后路由表一致，288 种权限与能力组合下工具清单逐字节一致；基线从 635 条降到 608 条。
+- [ ] 用 Pi Worker 跑一轮完整 Agent：模型步骤、工具批次、消息检查点、上下文压缩和无工具收尾都正常，Worker 重启后能从检查点继续。
+- [ ] 写工具在「需要审批」和「自动」两种权限下各跑一次：审批卡内容与执行一致，auto 媒体生成只扣一次费、只写一个草稿节点。
 - [ ] 在 Agent 里读取大画布（翻页、按 nodeIds 精读、focusNodeIds 子图与 includeRelated），结果与拆分前一致，含 hasMore、nextOffset 与连线分页。
 - [ ] 让 Agent 修改 Excalidraw 与 tldraw 绘图各一次（新增、删除、带图片素材），预览与写入成功，失败时画布不留下半成品。
 - [ ] 新建 Agent 运行、追加消息、审批、取消与事件流断线重连都正常；Worker 认领、续租、模型步骤和工具推进不报 401 或 404。
