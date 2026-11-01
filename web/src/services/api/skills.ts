@@ -1,7 +1,6 @@
 import { ApiError, http, apiBaseURL, compactApiParams, serializeApiParams, type ApiParams } from "@/services/api/request";
 import { getActiveUserScope } from "@/lib/user-scope";
 
-
 let addedSkillsRequest: { scope: string; promise: Promise<{ skills: Skill[] }> } | null = null;
 let addedSkillsCache: { scope: string; value: { skills: Skill[] }; expiresAt: number } | null = null;
 let addedSkillsCacheVersion = 0;
@@ -97,7 +96,6 @@ export type SkillRecommendationInstallResult = {
 };
 
 export type SkillCategory = { value: string; label: string; count?: number };
-
 
 export type SkillLibraryCategory = {
     id: string;
@@ -203,6 +201,18 @@ export type InstallSkillUploadInput = {
     isPrivate?: boolean;
 };
 
+export type SkillUploadPreview = {
+    skills: Array<{ entryPath: string; name: string; description: string; version: string; fileCount: number; totalBytes: number }>;
+    ignoredFileCount: number;
+    totalBytes: number;
+};
+
+export type SkillUploadInstallResult = {
+    skills: Skill[];
+    skill?: Skill;
+    ignoredFileCount: number;
+};
+
 export type InstallGitHubSkillInput = {
     url: string;
     ref?: string;
@@ -212,12 +222,10 @@ export type InstallGitHubSkillInput = {
     autoUpdate?: boolean;
 };
 
-
 export function listSkills(input: ListSkillsInput = {}) {
     const params = serializeApiParams(compactApiParams(input as ApiParams));
     return http.get<SkillList>(`/skills?${params.toString()}`);
 }
-
 
 export function listSkillLibraryCategories(scope: "mine" | "created" = "mine") {
     return http.get<SkillLibraryCategoryList>("/skills/library-categories", { params: { scope } });
@@ -338,7 +346,14 @@ export function installSkillUpload(input: InstallSkillUploadInput) {
     if (input.description) form.append("description", input.description);
     if (input.tag) form.append("tag", input.tag);
     form.append("isPrivate", String(Boolean(input.isPrivate)));
-    return http.post<{ skill: Skill }>("/skills/install", form).finally(invalidateAddedSkillsCache);
+    return http.post<SkillUploadInstallResult>("/skills/install", form).finally(invalidateAddedSkillsCache);
+}
+
+export function previewSkillUpload(file: File, sourceType: "markdown" | "zip", signal?: AbortSignal) {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("sourceType", sourceType);
+    return http.post<SkillUploadPreview>("/skills/install/preview", form, { signal });
 }
 
 export function installGitHubSkill(input: InstallGitHubSkillInput) {
@@ -357,10 +372,7 @@ export function getSkillBundle(id: string) {
     return http.get<{ bundle: SkillPackageBundle }>(`/skills/${encodeURIComponent(id)}/bundle`);
 }
 
-export type SkillFileOperationInput =
-    | { op: "write"; path: string; content: string }
-    | { op: "rename"; path: string; to: string }
-    | { op: "delete"; path: string };
+export type SkillFileOperationInput = { op: "write"; path: string; content: string } | { op: "rename"; path: string; to: string } | { op: "delete"; path: string };
 
 export type SaveSkillFilesInput = {
     /** 编辑开始时的 versionId；服务端版本已前进时返回 409 skill_version_conflict。 */
@@ -425,7 +437,5 @@ export function listSkillRecommendations(signal?: AbortSignal) {
 
 /** 安装某个行业的推荐技能；skillIds 为空时安装该行业全部推荐。 */
 export function installSkillRecommendations(industryId: string, skillIds: string[] = []) {
-    return http
-        .post<SkillRecommendationInstallResult>(`/skills/recommendations/${encodeURIComponent(industryId)}/install`, { skillIds })
-        .finally(invalidateAddedSkillsCache);
+    return http.post<SkillRecommendationInstallResult>(`/skills/recommendations/${encodeURIComponent(industryId)}/install`, { skillIds }).finally(invalidateAddedSkillsCache);
 }
