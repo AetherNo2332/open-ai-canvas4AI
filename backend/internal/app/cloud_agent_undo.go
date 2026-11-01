@@ -159,17 +159,51 @@ func cloudAgentRunFinished(status string) bool {
 // conflict. Mutation rows do not record a revision, and those bookkeeping
 // saves also bump entity versions, so versions alone cannot decide authorship.
 func cloudAgentUndoDocument(chain []model.CloudAgentCanvasMutation, live map[string]any) (map[string]any, []string, error) {
+	entries, order, baseOrder, finalOrder, err := cloudAgentUndoEntriesFromChain(chain)
+	if err != nil {
+		return nil, nil, err
+	}
+	changes, restored, conflicts := cloudAgentUndoChanges(entries, order, cloudAgentUndoEntities(live))
+	if len(conflicts) > 0 {
+		ids := []string{}
+		for _, key := range conflicts {
+			_, id, _ := strings.Cut(key, ":")
+			ids = append(ids, id)
+		}
+		return nil, nil, kernel.AgentUndoConflict("Agent 修改过的内容之后又被编辑过，未执行撤销", map[string]any{"entityKeys": conflicts, "ids": ids})
+	}
+	if len(changes.Entities) == 0 && len(changes.Fields) == 0 {
+		return nil, nil, NotFound("本次运行的画布修改已经不存在，无需撤销")
+	}
+	next, err := commands.ApplyChanges(live, changes)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Restore a reorder the run made only while the live canvas still shows it.
+	liveOrder := cloudAgentUndoOrders(live)
+	for _, field := range []string{"nodes", "connections"} {
+		if ordered, ok := cloudAgentUndoRestoreOrder(next[field], baseOrder[field], finalOrder[field], liveOrder[field]); ok {
+			next[field] = ordered
+		}
+	}
+	return next, restored, nil
+}
+
+// cloudAgentUndoEntriesFromChain folds the run's mutations into one entry per
+// entity (its state before the run and after it), marking entities another
+// writer touched between the run's own mutations as interleaved.
+func cloudAgentUndoEntriesFromChain(chain []model.CloudAgentCanvasMutation) (map[string]*cloudAgentUndoEntry, []string, map[string][]string, map[string][]string, error) {
 	entries := map[string]*cloudAgentUndoEntry{}
 	order := []string{}
 	var baseOrder, finalOrder map[string][]string
 	for index, mutation := range chain {
 		before, err := creationDocument(mutation.BeforeJSON)
 		if err != nil {
-			return nil, nil, BadAuthRequest("本次运行的撤销快照无效")
+			return nil, nil, nil, nil, BadAuthRequest("本次运行的撤销快照无效")
 		}
 		after, err := creationDocument(mutation.AfterJSON)
 		if err != nil {
-			return nil, nil, BadAuthRequest("本次运行的撤销快照无效")
+			return nil, nil, nil, nil, BadAuthRequest("本次运行的撤销快照无效")
 		}
 		if index == 0 {
 			baseOrder = cloudAgentUndoOrders(before)
@@ -177,31 +211,41 @@ func cloudAgentUndoDocument(chain []model.CloudAgentCanvasMutation, live map[str
 		if index == len(chain)-1 {
 			finalOrder = cloudAgentUndoOrders(after)
 		}
-		beforeEntities, afterEntities := cloudAgentUndoEntities(before), cloudAgentUndoEntities(after)
-		keys := map[string]bool{}
-		for key := range beforeEntities {
-			keys[key] = true
-		}
-		for key := range afterEntities {
-			keys[key] = true
-		}
-		for key := range keys {
-			b, a := beforeEntities[key], afterEntities[key]
-			if cloudAgentUndoSame(key, b, a) {
-				continue
-			}
-			entry := entries[key]
-			if entry == nil {
-				entry = &cloudAgentUndoEntry{base: b}
-				entries[key] = entry
-				order = append(order, key)
-			} else if !cloudAgentUndoSame(key, b, entry.final) {
-				entry.interleaved = true
-			}
-			entry.final = a
-		}
+		order = cloudAgentUndoFoldMutation(entries, order, cloudAgentUndoEntities(before), cloudAgentUndoEntities(after))
 	}
-	liveEntities := cloudAgentUndoEntities(live)
+	return entries, order, baseOrder, finalOrder, nil
+}
+
+func cloudAgentUndoFoldMutation(entries map[string]*cloudAgentUndoEntry, order []string, beforeEntities, afterEntities map[string]cloudAgentUndoValue) []string {
+	keys := map[string]bool{}
+	for key := range beforeEntities {
+		keys[key] = true
+	}
+	for key := range afterEntities {
+		keys[key] = true
+	}
+	for key := range keys {
+		b, a := beforeEntities[key], afterEntities[key]
+		if cloudAgentUndoSame(key, b, a) {
+			continue
+		}
+		entry := entries[key]
+		if entry == nil {
+			entry = &cloudAgentUndoEntry{base: b}
+			entries[key] = entry
+			order = append(order, key)
+		} else if !cloudAgentUndoSame(key, b, entry.final) {
+			entry.interleaved = true
+		}
+		entry.final = a
+	}
+	return order
+}
+
+// cloudAgentUndoChanges builds the change set that restores each entity the run
+// changed, provided the live canvas still shows the run's final state; any
+// other entity is reported as a conflict.
+func cloudAgentUndoChanges(entries map[string]*cloudAgentUndoEntry, order []string, liveEntities map[string]cloudAgentUndoValue) (commands.ChangeSet, []string, []string) {
 	changes := commands.ChangeSet{Entities: []commands.EntityChange{}, Fields: map[string]commands.FieldChange{}}
 	conflicts, restored := []string{}, []string{}
 	sort.Strings(order)
@@ -233,29 +277,7 @@ func cloudAgentUndoDocument(chain []model.CloudAgentCanvasMutation, live map[str
 			changes.Entities = append(changes.Entities, commands.EntityChange{Key: key, Delete: true})
 		}
 	}
-	if len(conflicts) > 0 {
-		ids := []string{}
-		for _, key := range conflicts {
-			_, id, _ := strings.Cut(key, ":")
-			ids = append(ids, id)
-		}
-		return nil, nil, kernel.AgentUndoConflict("Agent 修改过的内容之后又被编辑过，未执行撤销", map[string]any{"entityKeys": conflicts, "ids": ids})
-	}
-	if len(changes.Entities) == 0 && len(changes.Fields) == 0 {
-		return nil, nil, NotFound("本次运行的画布修改已经不存在，无需撤销")
-	}
-	next, err := commands.ApplyChanges(live, changes)
-	if err != nil {
-		return nil, nil, err
-	}
-	// Restore a reorder the run made only while the live canvas still shows it.
-	liveOrder := cloudAgentUndoOrders(live)
-	for _, field := range []string{"nodes", "connections"} {
-		if ordered, ok := cloudAgentUndoRestoreOrder(next[field], baseOrder[field], finalOrder[field], liveOrder[field]); ok {
-			next[field] = ordered
-		}
-	}
-	return next, restored, nil
+	return changes, restored, conflicts
 }
 
 func cloudAgentUndoEntities(doc map[string]any) map[string]cloudAgentUndoValue {
