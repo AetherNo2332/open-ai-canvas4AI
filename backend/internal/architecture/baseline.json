@@ -54,8 +54,6 @@
     {"id":"internal/app/cloud_agent_batch_table.go:func:batchTableNodeFromDocument:complexity","max":30,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_batch_table.go:func:prepareCloudAgentBatchTableEdit:complexity","max":67,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_batch_table.go:func:prepareCloudAgentBatchTableEdit:lines","max":169,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_canvas_events.go:func:cloudAgentShrinkStoryboardRows:complexity","max":31,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_canvas_events.go:func:emitCloudAgentCanvasDocuments:complexity","max":30,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_canvas_state.go:file_lines","max":748,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_canvas_state.go:func:cloudAgentBatchTableState:complexity","max":41,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_canvas_state.go:func:cloudAgentBatchTableState:lines","max":144,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
