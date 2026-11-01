@@ -241,7 +241,11 @@ func expressionChildren(expr ast.Expr) []ast.Expr {
 func FormatFindings(findings []Finding) string {
 	var text strings.Builder
 	for _, finding := range findings {
-		text.WriteString(finding.ID + ": " + finding.Detail + "\n")
+		text.WriteString(finding.ID + ": " + finding.Detail)
+		if finding.Rule != "dependency" && finding.Rule != "untyped_protocol_map" {
+			text.WriteString(" (value=" + strconv.Itoa(finding.Value) + ", limit=" + strconv.Itoa(finding.Limit) + ")")
+		}
+		text.WriteString("\n")
 	}
 	return text.String()
 }
