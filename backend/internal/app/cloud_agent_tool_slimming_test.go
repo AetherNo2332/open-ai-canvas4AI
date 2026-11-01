@@ -39,7 +39,6 @@ func TestCloudAgentRetiredImageToolsAreNotCallable(t *testing.T) {
 
 func TestCloudAgentRetiredDirectorToolsAreNotCallable(t *testing.T) {
 	tools := []string{"previs_scene_read", "previs_scene_create", "previs_apply_patch", "previs_preview", "director_block_scene", "director_design_shot", "director_draw_action", "director_preview_shot", "director_check_continuity", "director_handoff_shot"}
-	inventory := cloudAgentScanCanvasInventory(`{"nodes":[{"id":"legacy","type":"video","metadata":{"previsSceneId":"scene-1"}}],"previsScenes":[{"id":"scene-1"}]}`)
 	for _, permission := range []string{"auto", "request_approval", "read_only"} {
 		req := tierAutoRequest()
 		req.PermissionMode = permission
@@ -61,12 +60,10 @@ func TestCloudAgentRetiredDirectorToolsAreNotCallable(t *testing.T) {
 				}
 			}
 		}
-		for _, prompt := range []string{"现在画布有几个节点", "打开导演台", "创建一个预演场景", "use director desk", "继续当前场景"} {
-			names := cloudAgentAdvertisedToolNames(req, inventory, prompt)
-			for _, name := range tools {
-				if containsToolName(names, name) {
-					t.Fatalf("retired tool %s was redisclosed for %s/%q", name, permission, prompt)
-				}
+		names := cloudAgentAdvertisedToolNames(req)
+		for _, name := range tools {
+			if containsToolName(names, name) {
+				t.Fatalf("retired tool %s was redisclosed for %s", name, permission)
 			}
 		}
 		if !cloudAgentToolAllowed(req, "canvas_get_state") || permission != "read_only" && !cloudAgentToolAllowed(req, "generate_media") {
@@ -77,18 +74,6 @@ func TestCloudAgentRetiredDirectorToolsAreNotCallable(t *testing.T) {
 		if containsToolName(CloudAgentSupportedToolNames(), name) || containsToolName(cloudAgentToolNames(CloudAgentToolSchemaArtifact().Tools), name) {
 			t.Fatalf("retired tool %s remains in the shared catalog", name)
 		}
-	}
-}
-
-func TestCloudAgentRetiredDirectorIntentCannotUnlockTools(t *testing.T) {
-	state := &cloudAgentRuntime{Canonical: canonicalAgentRequest{Tools: cloudAgentTools(tierAutoRequest())}}
-	cloudAgentRecordDeliveredToolIntent(state, cloudAgentInterjection{Source: "subagent", Text: "打开导演台并做预演"})
-	if len(state.DeliveredIntentToolNames) != 0 {
-		t.Fatal("subagent text unlocked director tools")
-	}
-	cloudAgentRecordDeliveredToolIntent(state, cloudAgentInterjection{Source: "user", Text: "打开导演台并做预演"})
-	if len(state.DeliveredIntentToolNames) != 0 {
-		t.Fatalf("delivered user intent unlocked retired director tools: %v", state.DeliveredIntentToolNames)
 	}
 }
 

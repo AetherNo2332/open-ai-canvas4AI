@@ -74,16 +74,16 @@ func TestCloudAgentPromptCacheKeyFollowsAdvertisedTools(t *testing.T) {
 	req := tierAutoRequest()
 	req.CanvasID = "agent-canvas"
 	eligible := cloudAgentTools(req)
-	empty := cloudAgentToolsNamed(eligible, cloudAgentAdvertisedToolNames(req, cloudAgentScanCanvasInventory(tierPayload()), "现在画布有几个节点"))
-	script := cloudAgentToolsNamed(eligible, cloudAgentAdvertisedToolNames(req, cloudAgentScanCanvasInventory(tierPayload(tierNode("table", "batch-table", nil))), "现在画布有几个节点"))
+	full := cloudAgentToolsNamed(eligible, cloudAgentAdvertisedToolNames(req))
+	readOnly := req
+	readOnly.PermissionMode = "read_only"
+	narrowed := cloudAgentToolsNamed(eligible, cloudAgentAdvertisedToolNames(readOnly))
 	identity := "cache-identity"
-	emptyKey := cloudAgentPromptCacheKeyForRequest(req.CanvasID, identity, "system", empty)
-	scriptKey := cloudAgentPromptCacheKeyForRequest(req.CanvasID, identity, "system", script)
-	if emptyKey == scriptKey {
-		t.Fatal("prompt cache key must change when advertised L1 tools change")
+	fullKey := cloudAgentPromptCacheKeyForRequest(req.CanvasID, identity, "system", full)
+	if fullKey == cloudAgentPromptCacheKeyForRequest(req.CanvasID, identity, "system", narrowed) {
+		t.Fatal("prompt cache key must change when the advertised tools change")
 	}
-	again := cloudAgentPromptCacheKeyForRequest(req.CanvasID, identity, "system", empty)
-	if again != emptyKey {
+	if cloudAgentPromptCacheKeyForRequest(req.CanvasID, identity, "system", full) != fullKey {
 		t.Fatal("same advertised tools must keep the same prompt cache key")
 	}
 }
@@ -114,7 +114,8 @@ func TestCloudAgentEmptyAdvertisedNamesFallBackToEligibleCatalog(t *testing.T) {
 	}
 }
 
-func TestAgentStoryboardBoundaryLoadoutPersistsBeforeInventoryUndo(t *testing.T) {
+// 画布内容变化不再影响工具清单：刷新前后都是同一份冻结清单。
+func TestAgentLoadoutIgnoresCanvasInventoryChanges(t *testing.T) {
 	s, db, _, _ := creationTestService(t)
 	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: tierPayload()}).Error; err != nil {
 		t.Fatal(err)
@@ -127,29 +128,23 @@ func TestAgentStoryboardBoundaryLoadoutPersistsBeforeInventoryUndo(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "agent-canvas").Update("payload_json", tierPayload(tierNode("board", "script", nil))).Error; err != nil {
-		t.Fatal(err)
-	}
-	run, err = s.cloudAgentRefreshToolLoadout(run)
+	before, err := cloudAgentDecode(run)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "agent-canvas").Update("payload_json", tierPayload()).Error; err != nil {
-		t.Fatal(err)
+	for _, payload := range []string{tierPayload(tierNode("table", "batch-table", nil)), tierPayload()} {
+		if err := db.Model(&model.CanvasProject{}).Where("id = ?", "agent-canvas").Update("payload_json", payload).Error; err != nil {
+			t.Fatal(err)
+		}
+		if run, err = s.cloudAgentRefreshToolLoadout(run); err != nil {
+			t.Fatal(err)
+		}
 	}
-	stored, err := s.repo.CloudAgent("user", run.ID)
+	after, err := cloudAgentDecode(run)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := cloudAgentDecode(stored)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !containsToolName(state.AdvertisedToolNames, "storyboard") {
-		t.Fatal("Worker would receive an uncommitted loadout")
-	}
-	names, err := cloudAgentNextToolLoadout(s.repo, "user", &state)
-	if err != nil || !containsToolName(names, "storyboard") {
-		t.Fatalf("loadout retracted after undo: %v %v", names, err)
+	if len(after.AdvertisedToolNames) != len(before.AdvertisedToolNames) || !containsToolName(after.AdvertisedToolNames, "canvas_edit_batch_table") {
+		t.Fatalf("canvas changes must not change the frozen loadout: %v -> %v", before.AdvertisedToolNames, after.AdvertisedToolNames)
 	}
 }

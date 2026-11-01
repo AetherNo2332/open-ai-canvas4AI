@@ -9,17 +9,6 @@ import (
 	"yingce/backend/internal/repository"
 )
 
-func cloudAgentNextToolLoadout(repo *repository.Repository, userID string, state *cloudAgentRuntime) ([]string, error) {
-	if state.ActiveTaskID != "" || state.CallIndex < len(state.Calls) || state.Request.CanvasID == "" {
-		return cloudAgentNextAdvertisedToolNames(state, cloudAgentCanvasInventory{}), nil
-	}
-	canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID)
-	if err != nil {
-		return nil, err
-	}
-	return cloudAgentNextAdvertisedToolNames(state, cloudAgentScanCanvasInventory(canvas.PayloadJSON)), nil
-}
-
 // Persist before returning the loadout to Worker. Canvas undo or compaction
 // after this boundary cannot retract a tool that Pi has already registered.
 func (s *Service) cloudAgentRefreshToolLoadout(run *model.CloudAgentExecution) (*model.CloudAgentExecution, error) {
@@ -35,10 +24,7 @@ func (s *Service) cloudAgentRefreshToolLoadout(run *model.CloudAgentExecution) (
 		if err != nil {
 			return nil, err
 		}
-		names, err := cloudAgentNextToolLoadout(s.repo, run.UserID, &state)
-		if err != nil {
-			return nil, err
-		}
+		names := cloudAgentNextAdvertisedToolNames(&state)
 		if slices.Equal(names, state.AdvertisedToolNames) {
 			return run, nil
 		}

@@ -664,10 +664,9 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	state.Workspace = &workspace
 	canonical := cloudAgentCanonical(system, history, req.Prompt, req)
 	canonical.Tools = compileCloudAgentToolsForRuntime(req, cloudAgentSkillRuntimeNative)
-	inventory := cloudAgentScanCanvasInventory(canvas.PayloadJSON)
-	advertisedNames := cloudAgentSelectAdvertisedTools(canonical.Tools, inventory, req.Prompt)
-	// Keep the complete eligible tool catalog in the Go runtime snapshot for
-	// authorization. The model only receives the frozen L0∪L1 advertised subset.
+	// The model receives the complete eligible catalog, frozen for this run; the
+	// runtime snapshot keeps the same list for authorization.
+	advertisedNames := cloudAgentSelectAdvertisedTools(canonical.Tools)
 	if strings.TrimSpace(canvasSummary) != "" && len(canonical.Messages) > 0 {
 		catalog := map[string]any{
 			"role":                     "user",

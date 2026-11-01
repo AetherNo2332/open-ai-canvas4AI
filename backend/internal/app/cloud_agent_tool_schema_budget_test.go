@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"yingce/backend/internal/model"
 )
 
 // 工具 schema 是每一步都要发出去（并且是前缀缓存的第一段）的固定开销，因此值得钉住体积：
@@ -60,18 +62,39 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 		t.Fatal("canvas_apply_ops 未暴露")
 	}
 
-	// The eligible catalog stays complete for authorization. The model wire is
-	// the frozen L0∪L1 advertised subset for an empty canvas with no L1 intent.
+	// 有画布的运行下发完整合格目录（不再分批开放），所以总量按完整目录计。
 	_ = raw
 	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}}
 	req.Budget.MaxGenerationTasks = 1
-	advertised := cloudAgentToolsNamed(tools, cloudAgentAdvertisedToolNames(req, cloudAgentCanvasInventory{}, "现在画布有几个节点"))
+	advertised := cloudAgentToolsNamed(tools, cloudAgentAdvertisedToolNames(req))
 	wire, err := json.Marshal(advertised)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("eligible catalog: %d tools, %d bytes; advertised wire: %d tools, %d bytes", len(cloudAgentToolNames(tools)), len(raw), len(cloudAgentToolNames(advertised)), len(wire))
-	if len(wire) > 64000 {
-		t.Fatalf("模型实际接收的 advertised 工具 schema 超出 64000 字节：%d", len(wire))
+	if len(wire) > cloudAgentToolSchemaTotalBudget {
+		t.Fatalf("模型实际接收的工具 schema 超出 %d 字节：%d", cloudAgentToolSchemaTotalBudget, len(wire))
+	}
+}
+
+// 工具 schema 是每一步都发出去的固定开销。总量上限之外再给每个工具一个上限，
+// 防止某一个工具再次膨胀、挤占其他工具的空间；超限时应把细节挪到按需读取的工具（如 canvas_list_node_types）。
+const (
+	cloudAgentToolSchemaTotalBudget   = 64000
+	cloudAgentToolSchemaPerToolBudget = 12000
+)
+
+func TestCloudAgentEachToolSchemaStaysWithinBudget(t *testing.T) {
+	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}, VisionEnabled: true, WebSearchEnabled: true, MemoryMode: model.AgentMemoryDocumentModeAuto}
+	req.Budget.MaxGenerationTasks = 1
+	for _, tool := range compileCloudAgentToolsForRuntime(req, cloudAgentSkillRuntimeNative) {
+		encoded, err := json.Marshal(tool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := tool["function"].(map[string]any)["name"]
+		if len(encoded) > cloudAgentToolSchemaPerToolBudget {
+			t.Errorf("工具 %v 的 schema 为 %d 字节，超过单工具上限 %d", name, len(encoded), cloudAgentToolSchemaPerToolBudget)
+		}
 	}
 }
