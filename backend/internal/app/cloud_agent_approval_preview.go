@@ -164,116 +164,133 @@ func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) (
 			return nil, BadAuthRequest("节点标题或正文超出限制")
 		}
 		index := cloudAgentNodeIndex(nodes, op.ID)
+		var item cloudAgentApprovalPreviewItem
+		var err error
 		switch op.Type {
 		case "use_media_version", "extract_media_version":
 			if index < 0 {
 				return nil, &cloudAgentMediaVersionError{reason: "media_version_missing", error: BadAuthRequest("媒体节点不存在，请重新读取画布")}
 			}
-			item, next, err := applyCloudAgentMediaVersionOp(nodes, index, op)
-			if err != nil {
-				return nil, err
+			var next []map[string]any
+			item, next, err = applyCloudAgentMediaVersionOp(nodes, index, op)
+			if err == nil {
+				nodes = next
 			}
-			nodes = next
-			items = append(items, item)
 		case "add_node":
-			if index >= 0 {
-				return nil, BadAuthRequest("新增节点ID重复")
+			var next []map[string]any
+			next, item, err = cloudAgentPlanAddNode(doc, nodes, index, op, title, content)
+			if err == nil {
+				nodes = next
 			}
-			capability, ok := cloudAgentNodeCapabilityForType(op.NodeType)
-			if strings.TrimSpace(op.NodeType) == "" {
-				return nil, BadAuthRequest("新增节点缺少 nodeType")
-			}
-			if !ok {
-				return nil, BadAuthRequest("不支持的节点类型")
-			}
-			if field, exists := capability.PatchFields["content"]; exists && field.MaxRunes > 0 && utf8.RuneCountInString(content) > field.MaxRunes {
-				return nil, BadAuthRequest("该类型正文超过字段限制")
-			}
-			x, y := op.X, op.Y
-			if x == nil || y == nil {
-				// 没有（完整）坐标时不落到原点：按泳道与依赖关系算一个空位，
-				// 保证同一批新增的多个节点也不会互相重叠。模型只给了一个轴时保留它。
-				pending := cloudAgentLayoutNodes(map[string]any{"nodes": nodes})
-				var hint *layout.Position
-				if x != nil || y != nil {
-					hint = &layout.Position{}
-					if x != nil {
-						hint.X = *x
-					}
-					if y != nil {
-						hint.Y = *y
-					}
-				}
-				if slot, ok := cloudAgentArrangeAddNodePosition(doc, pending, op, hint); ok {
-					if x == nil {
-						value := slot.X
-						x = &value
-					}
-					if y == nil {
-						value := slot.Y
-						y = &value
-					}
-				}
-			}
-			node := creationAddedNode(CreationCanvasOp{Type: op.Type, ID: op.ID, NodeType: op.NodeType, Title: title, X: x, Y: y, Metadata: capability.Metadata(content)})
-			nodes = append(nodes, node)
-			nodeTitle := cloudAgentApprovalNodeTitle(node, capability.Label)
-			items = append(items, cloudAgentApprovalPreviewItem{
-				Operation: "add_node", NodeID: op.ID, NodeTitle: nodeTitle,
-				NodeType: capability.Type, NodeTypeLabel: capability.Label,
-				Summary: fmt.Sprintf("新增%s《%s》", capability.Label, nodeTitle),
-			})
 		case "update_node":
-			if len(op.Patch) == 0 {
-				// 漏字段是模型照 schema 就能自己修好的参数错误：当成工具结果回给它重试，
-				// 而不是判整轮失败（用户只在失败提示里看到一句"必须提供 patch"）。
-				// 未知操作类型仍按准入失败终止（cloud_agent_test.go 有用例断言这一行为）。
-				return nil, &cloudAgentArgumentError{BadAuthRequest("更新节点必须提供 patch")}
-			}
-			if index < 0 {
-				return nil, BadAuthRequest("只能更新现有且受 Agent 支持的节点")
-			}
-			capability, ok := cloudAgentNodeCapabilityForNode(nodes[index])
-			if !ok || !capability.CanUpdate {
-				return nil, BadAuthRequest("该节点类型不支持 Agent 更新")
-			}
-			metadata, _ := nodes[index]["metadata"].(map[string]any)
-			if metadata["locked"] == true && cloudAgentPatchMovesNode(op.Patch) {
-				return nil, BadAuthRequest("不能修改锁定节点的位置或尺寸，请先解锁")
-			}
-			beforeTitle := cloudAgentApprovalNodeTitle(nodes[index], capability.Label)
-			fields := cloudAgentApprovalPatchLabels(capability.PatchFields, op.Patch)
-			if err := capability.ApplyPatch(nodes[index], op.Patch); err != nil {
-				return nil, BadAuthRequest(err.Error())
-			}
-			if _, changed := op.Patch["content"]; changed && capability.Type == "text" && op.Patch["richText"] == nil {
-				delete(cloudAgentNodeMetadata(nodes[index]), "richText")
-			}
-			afterTitle := cloudAgentApprovalNodeTitle(nodes[index], capability.Label)
-			resultTitle := ""
-			if afterTitle != beforeTitle {
-				resultTitle = afterTitle
-			}
-			items = append(items, cloudAgentApprovalPreviewItem{
-				Operation: "update_node", NodeID: op.ID, NodeTitle: beforeTitle, ResultTitle: resultTitle,
-				NodeType: capability.Type, NodeTypeLabel: capability.Label, Fields: fields,
-				Summary: fmt.Sprintf("修改%s《%s》的%s", capability.Label, beforeTitle, strings.Join(fields, "、")),
-			})
+			item, err = cloudAgentPlanUpdateNode(nodes, index, op)
 		case "delete_node", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows":
-			var item cloudAgentApprovalPreviewItem
-			var err error
 			nodes, edges, item, err = applyCloudAgentExtendedOp(nodes, edges, op)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, item)
 		default:
 			return nil, BadAuthRequest("不支持的画布写操作")
 		}
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
 	}
 	doc["nodes"] = nodes
 	doc["connections"] = edges
 	return items, nil
+}
+
+func cloudAgentPlanAddNode(doc map[string]any, nodes []map[string]any, index int, op agentCanvasOp, title, content string) ([]map[string]any, cloudAgentApprovalPreviewItem, error) {
+	if index >= 0 {
+		return nil, cloudAgentApprovalPreviewItem{}, BadAuthRequest("新增节点ID重复")
+	}
+	capability, ok := cloudAgentNodeCapabilityForType(op.NodeType)
+	if strings.TrimSpace(op.NodeType) == "" {
+		return nil, cloudAgentApprovalPreviewItem{}, BadAuthRequest("新增节点缺少 nodeType")
+	}
+	if !ok {
+		return nil, cloudAgentApprovalPreviewItem{}, BadAuthRequest("不支持的节点类型")
+	}
+	if field, exists := capability.PatchFields["content"]; exists && field.MaxRunes > 0 && utf8.RuneCountInString(content) > field.MaxRunes {
+		return nil, cloudAgentApprovalPreviewItem{}, BadAuthRequest("该类型正文超过字段限制")
+	}
+	x, y := cloudAgentAddNodePosition(doc, nodes, op)
+	node := creationAddedNode(CreationCanvasOp{Type: op.Type, ID: op.ID, NodeType: op.NodeType, Title: title, X: x, Y: y, Metadata: capability.Metadata(content)})
+	nodes = append(nodes, node)
+	nodeTitle := cloudAgentApprovalNodeTitle(node, capability.Label)
+	return nodes, cloudAgentApprovalPreviewItem{
+		Operation: "add_node", NodeID: op.ID, NodeTitle: nodeTitle,
+		NodeType: capability.Type, NodeTypeLabel: capability.Label,
+		Summary: fmt.Sprintf("新增%s《%s》", capability.Label, nodeTitle),
+	}, nil
+}
+
+// cloudAgentAddNodePosition 没有（完整）坐标时不落到原点：按泳道与依赖关系算一个空位，
+// 保证同一批新增的多个节点也不会互相重叠。模型只给了一个轴时保留它。
+func cloudAgentAddNodePosition(doc map[string]any, nodes []map[string]any, op agentCanvasOp) (*float64, *float64) {
+	x, y := op.X, op.Y
+	if x != nil && y != nil {
+		return x, y
+	}
+	pending := cloudAgentLayoutNodes(map[string]any{"nodes": nodes})
+	var hint *layout.Position
+	if x != nil || y != nil {
+		hint = &layout.Position{}
+		if x != nil {
+			hint.X = *x
+		}
+		if y != nil {
+			hint.Y = *y
+		}
+	}
+	if slot, ok := cloudAgentArrangeAddNodePosition(doc, pending, op, hint); ok {
+		if x == nil {
+			value := slot.X
+			x = &value
+		}
+		if y == nil {
+			value := slot.Y
+			y = &value
+		}
+	}
+	return x, y
+}
+
+func cloudAgentPlanUpdateNode(nodes []map[string]any, index int, op agentCanvasOp) (cloudAgentApprovalPreviewItem, error) {
+	if len(op.Patch) == 0 {
+		// 漏字段是模型照 schema 就能自己修好的参数错误：当成工具结果回给它重试，
+		// 而不是判整轮失败（用户只在失败提示里看到一句"必须提供 patch"）。
+		// 未知操作类型仍按准入失败终止（cloud_agent_test.go 有用例断言这一行为）。
+		return cloudAgentApprovalPreviewItem{}, &cloudAgentArgumentError{BadAuthRequest("更新节点必须提供 patch")}
+	}
+	if index < 0 {
+		return cloudAgentApprovalPreviewItem{}, BadAuthRequest("只能更新现有且受 Agent 支持的节点")
+	}
+	capability, ok := cloudAgentNodeCapabilityForNode(nodes[index])
+	if !ok || !capability.CanUpdate {
+		return cloudAgentApprovalPreviewItem{}, BadAuthRequest("该节点类型不支持 Agent 更新")
+	}
+	metadata, _ := nodes[index]["metadata"].(map[string]any)
+	if metadata["locked"] == true && cloudAgentPatchMovesNode(op.Patch) {
+		return cloudAgentApprovalPreviewItem{}, BadAuthRequest("不能修改锁定节点的位置或尺寸，请先解锁")
+	}
+	beforeTitle := cloudAgentApprovalNodeTitle(nodes[index], capability.Label)
+	fields := cloudAgentApprovalPatchLabels(capability.PatchFields, op.Patch)
+	if err := capability.ApplyPatch(nodes[index], op.Patch); err != nil {
+		return cloudAgentApprovalPreviewItem{}, BadAuthRequest(err.Error())
+	}
+	if _, changed := op.Patch["content"]; changed && capability.Type == "text" && op.Patch["richText"] == nil {
+		delete(cloudAgentNodeMetadata(nodes[index]), "richText")
+	}
+	afterTitle := cloudAgentApprovalNodeTitle(nodes[index], capability.Label)
+	resultTitle := ""
+	if afterTitle != beforeTitle {
+		resultTitle = afterTitle
+	}
+	return cloudAgentApprovalPreviewItem{
+		Operation: "update_node", NodeID: op.ID, NodeTitle: beforeTitle, ResultTitle: resultTitle,
+		NodeType: capability.Type, NodeTypeLabel: capability.Label, Fields: fields,
+		Summary: fmt.Sprintf("修改%s《%s》的%s", capability.Label, beforeTitle, strings.Join(fields, "、")),
+	}, nil
 }
 
 func cloudAgentCanvasApprovalPreview(items []cloudAgentApprovalPreviewItem) cloudAgentApprovalPreview {

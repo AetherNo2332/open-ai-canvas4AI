@@ -48,6 +48,7 @@ func validateCloudAgentTldrawRecords(records map[string]map[string]any) error {
 			return err
 		}
 		var fields string
+		var err error
 		switch kind {
 		case "document":
 			documentCount++
@@ -60,53 +61,18 @@ func validateCloudAgentTldrawRecords(records map[string]map[string]any) error {
 			fields = "id:string typeName:string name:string index:index meta:jsonobject"
 		case "shape":
 			fields = "id:string typeName:string type:string x:number y:number rotation:number index:index parentId:string isLocked:bool opacity:opacity props:object meta:jsonobject"
-			specs, supported := cloudAgentTLShapeProps[stringValue(record["type"])]
-			if !supported {
-				return BadAuthRequest("不支持的 tldraw 原生形状类型")
-			}
-			props, ok := record["props"].(map[string]any)
-			if !ok || !cloudAgentTLObject(props, specs) {
-				return BadAuthRequest("tldraw 形状 props 不完整或无效")
-			}
-			parent := records[stringValue(record["parentId"])]
-			parentType := stringValue(parent["typeName"])
-			if parentType != "page" && parentType != "shape" {
-				return BadAuthRequest("tldraw 形状缺少有效父页面或形状")
-			}
-			if assetID := stringValue(props["assetId"]); assetID != "" {
-				asset := records[assetID]
-				if stringValue(asset["typeName"]) != "asset" || stringValue(asset["type"]) != stringValue(record["type"]) {
-					return BadAuthRequest("tldraw 形状素材不存在或类型不匹配")
-				}
-			}
+			err = validateCloudAgentTldrawShape(records, record)
 		case "asset":
 			fields = "id:string typeName:string type:string props:object meta:jsonobject"
-			props, ok := record["props"].(map[string]any)
-			specs := "w:number h:number name:string isAnimated:bool mimeType:string-null src:resource-null fileSize?:positive pixelRatio?:nonnegative"
-			switch stringValue(record["type"]) {
-			case "image":
-			case "video":
-				specs = "w:number h:number name:string isAnimated:bool mimeType:string-null src:resource-null fileSize?:number"
-			case "bookmark":
-				specs = "title:string description:string image:string favicon:string src:resource-null"
-			default:
-				return BadAuthRequest("不支持的 tldraw 原生素材类型")
-			}
-			if !ok || !cloudAgentTLObject(props, specs) {
-				return BadAuthRequest("tldraw 素材 props 不完整或无效")
-			}
+			err = validateCloudAgentTldrawAsset(record)
 		case "binding":
 			fields = "id:string typeName:string type:string fromId:string toId:string props:object meta:jsonobject"
-			props, ok := record["props"].(map[string]any)
-			if stringValue(record["type"]) != "arrow" || !ok || !cloudAgentTLObject(props, "terminal:terminal normalizedAnchor:vec isExact:bool isPrecise:bool snap:snap") {
-				return BadAuthRequest("tldraw 绑定类型或 props 无效")
-			}
-			source, target := records[stringValue(record["fromId"])], records[stringValue(record["toId"])]
-			if stringValue(source["typeName"]) != "shape" || stringValue(source["type"]) != "arrow" || stringValue(target["typeName"]) != "shape" || source == nil || target == nil || source["id"] == target["id"] {
-				return BadAuthRequest("tldraw 箭头绑定缺少有效来源或目标形状")
-			}
+			err = validateCloudAgentTldrawBinding(records, record)
 		default:
 			return BadAuthRequest("不支持的 tldraw 原生记录类型")
+		}
+		if err != nil {
+			return err
 		}
 		if !cloudAgentTLObject(record, fields) {
 			return BadAuthRequest("tldraw 原生记录字段不完整或无效")
@@ -115,7 +81,64 @@ func validateCloudAgentTldrawRecords(records map[string]map[string]any) error {
 	if pageCount < 1 || documentCount != 1 {
 		return BadAuthRequest("tldraw 需要完整文档及至少一个页面")
 	}
-	// A valid shape ancestry must terminate at a page, never a cycle.
+	return validateCloudAgentTldrawAncestry(records)
+}
+
+func validateCloudAgentTldrawShape(records map[string]map[string]any, record map[string]any) error {
+	specs, supported := cloudAgentTLShapeProps[stringValue(record["type"])]
+	if !supported {
+		return BadAuthRequest("不支持的 tldraw 原生形状类型")
+	}
+	props, ok := record["props"].(map[string]any)
+	if !ok || !cloudAgentTLObject(props, specs) {
+		return BadAuthRequest("tldraw 形状 props 不完整或无效")
+	}
+	parent := records[stringValue(record["parentId"])]
+	parentType := stringValue(parent["typeName"])
+	if parentType != "page" && parentType != "shape" {
+		return BadAuthRequest("tldraw 形状缺少有效父页面或形状")
+	}
+	if assetID := stringValue(props["assetId"]); assetID != "" {
+		asset := records[assetID]
+		if stringValue(asset["typeName"]) != "asset" || stringValue(asset["type"]) != stringValue(record["type"]) {
+			return BadAuthRequest("tldraw 形状素材不存在或类型不匹配")
+		}
+	}
+	return nil
+}
+
+func validateCloudAgentTldrawAsset(record map[string]any) error {
+	props, ok := record["props"].(map[string]any)
+	specs := "w:number h:number name:string isAnimated:bool mimeType:string-null src:resource-null fileSize?:positive pixelRatio?:nonnegative"
+	switch stringValue(record["type"]) {
+	case "image":
+	case "video":
+		specs = "w:number h:number name:string isAnimated:bool mimeType:string-null src:resource-null fileSize?:number"
+	case "bookmark":
+		specs = "title:string description:string image:string favicon:string src:resource-null"
+	default:
+		return BadAuthRequest("不支持的 tldraw 原生素材类型")
+	}
+	if !ok || !cloudAgentTLObject(props, specs) {
+		return BadAuthRequest("tldraw 素材 props 不完整或无效")
+	}
+	return nil
+}
+
+func validateCloudAgentTldrawBinding(records map[string]map[string]any, record map[string]any) error {
+	props, ok := record["props"].(map[string]any)
+	if stringValue(record["type"]) != "arrow" || !ok || !cloudAgentTLObject(props, "terminal:terminal normalizedAnchor:vec isExact:bool isPrecise:bool snap:snap") {
+		return BadAuthRequest("tldraw 绑定类型或 props 无效")
+	}
+	source, target := records[stringValue(record["fromId"])], records[stringValue(record["toId"])]
+	if stringValue(source["typeName"]) != "shape" || stringValue(source["type"]) != "arrow" || stringValue(target["typeName"]) != "shape" || source == nil || target == nil || source["id"] == target["id"] {
+		return BadAuthRequest("tldraw 箭头绑定缺少有效来源或目标形状")
+	}
+	return nil
+}
+
+// validateCloudAgentTldrawAncestry 有效的形状父级链必须终止于页面，不能成环。
+func validateCloudAgentTldrawAncestry(records map[string]map[string]any) error {
 	visited := map[string]bool{}
 	for id, record := range records {
 		if stringValue(record["typeName"]) != "shape" || visited[id] {
@@ -178,61 +201,94 @@ func cloudAgentTLValue(value any, rule string) bool {
 		}
 		return false
 	}
+	if valid, handled := cloudAgentTLScalarValue(value, rule); handled {
+		return valid
+	}
+	return cloudAgentTLStructuredValue(value, rule)
+}
+
+// cloudAgentTLScalarValue checks string, boolean, number and string-shaped
+// rules; handled=false means the rule is structured or unknown.
+func cloudAgentTLScalarValue(value any, rule string) (valid, handled bool) {
 	switch rule {
 	case "string":
 		_, ok := value.(string)
-		return ok
+		return ok, true
 	case "bool":
 		_, ok := value.(bool)
-		return ok
+		return ok, true
+	case "number", "positive", "nonnegative", "nonzero", "opacity":
+		return cloudAgentTLNumber(value, rule), true
+	case "index":
+		return cloudAgentTLIndex(value), true
+	case "asset":
+		text, ok := value.(string)
+		return ok && strings.HasPrefix(text, "asset:") && len(text) > 6, true
+	case "resource":
+		text, ok := value.(string)
+		return ok && strings.HasPrefix(text, "resource:") && len(text) > 9, true
+	case "link":
+		return cloudAgentTLLink(value), true
+	case "dimension":
+		n, ok := value.(float64)
+		return ok && (n == 2 || n == 3), true
+	}
+	return false, false
+}
+
+func cloudAgentTLNumber(value any, rule string) bool {
+	n, ok := value.(float64)
+	if !ok || math.IsNaN(n) || math.IsInf(n, 0) {
+		return false
+	}
+	switch rule {
+	case "positive":
+		return n > 0
+	case "nonnegative":
+		return n >= 0
+	case "nonzero":
+		return n != 0
+	case "opacity":
+		return n >= 0 && n <= 1
+	}
+	return true
+}
+
+// cloudAgentTLIndex checks a tldraw fractional index key: the first letter
+// encodes the integer part length, and a trailing zero is not canonical.
+func cloudAgentTLIndex(value any) bool {
+	text, ok := value.(string)
+	if !ok || len(text) < 2 {
+		return false
+	}
+	integerLength := 0
+	if text[0] >= 'a' && text[0] <= 'z' {
+		integerLength = int(text[0]-'a') + 2
+	}
+	if text[0] >= 'A' && text[0] <= 'Z' {
+		integerLength = int('Z'-text[0]) + 2
+	}
+	return integerLength > 0 && len(text) >= integerLength && text != "A"+strings.Repeat("0", 26) && !(len(text) > integerLength && strings.HasSuffix(text, "0"))
+}
+
+func cloudAgentTLLink(value any) bool {
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	if text == "" {
+		return true
+	}
+	parsed, err := url.Parse(text)
+	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http" || parsed.Scheme == "mailto")
+}
+
+// cloudAgentTLStructuredValue checks object, array and nested-record rules.
+func cloudAgentTLStructuredValue(value any, rule string) bool {
+	switch rule {
 	case "object", "jsonobject":
 		_, ok := value.(map[string]any)
 		return ok
-	case "number", "positive", "nonnegative", "nonzero", "opacity":
-		n, ok := value.(float64)
-		if !ok || math.IsNaN(n) || math.IsInf(n, 0) {
-			return false
-		}
-		switch rule {
-		case "positive":
-			return n > 0
-		case "nonnegative":
-			return n >= 0
-		case "nonzero":
-			return n != 0
-		case "opacity":
-			return n >= 0 && n <= 1
-		}
-		return true
-	case "index":
-		text, ok := value.(string)
-		if !ok || len(text) < 2 {
-			return false
-		}
-		integerLength := 0
-		if text[0] >= 'a' && text[0] <= 'z' {
-			integerLength = int(text[0]-'a') + 2
-		}
-		if text[0] >= 'A' && text[0] <= 'Z' {
-			integerLength = int('Z'-text[0]) + 2
-		}
-		return integerLength > 0 && len(text) >= integerLength && text != "A"+strings.Repeat("0", 26) && !(len(text) > integerLength && strings.HasSuffix(text, "0"))
-	case "asset":
-		text, ok := value.(string)
-		return ok && strings.HasPrefix(text, "asset:") && len(text) > 6
-	case "resource":
-		text, ok := value.(string)
-		return ok && strings.HasPrefix(text, "resource:") && len(text) > 9
-	case "link":
-		text, ok := value.(string)
-		if !ok {
-			return false
-		}
-		if text == "" {
-			return true
-		}
-		parsed, err := url.Parse(text)
-		return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http" || parsed.Scheme == "mailto")
 	case "vec":
 		object, ok := value.(map[string]any)
 		return ok && cloudAgentTLObject(object, "x:number y:number z?:number")
@@ -248,37 +304,42 @@ func cloudAgentTLValue(value any, rule string) bool {
 	case "any":
 		return true
 	case "segments":
-		segments, ok := value.([]any)
-		if !ok {
-			return false
-		}
-		for _, item := range segments {
-			segment, ok := item.(map[string]any)
-			if !ok || !cloudAgentTLObject(segment, "type:segmenttype path:string dim?:dimension") {
-				return false
-			}
-			if !cloudAgentTLPath(segment) {
-				return false
-			}
-		}
-		return true
-	case "dimension":
-		n, ok := value.(float64)
-		return ok && (n == 2 || n == 3)
+		return cloudAgentTLSegments(value)
 	case "points":
-		points, ok := value.(map[string]any)
-		if !ok {
-			return false
-		}
-		for _, item := range points {
-			point, ok := item.(map[string]any)
-			if !ok || !cloudAgentTLObject(point, "id:string index:index x:number y:number") {
-				return false
-			}
-		}
-		return true
+		return cloudAgentTLPoints(value)
 	}
 	return false
+}
+
+func cloudAgentTLSegments(value any) bool {
+	segments, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range segments {
+		segment, ok := item.(map[string]any)
+		if !ok || !cloudAgentTLObject(segment, "type:segmenttype path:string dim?:dimension") {
+			return false
+		}
+		if !cloudAgentTLPath(segment) {
+			return false
+		}
+	}
+	return true
+}
+
+func cloudAgentTLPoints(value any) bool {
+	points, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, item := range points {
+		point, ok := item.(map[string]any)
+		if !ok || !cloudAgentTLObject(point, "id:string index:index x:number y:number") {
+			return false
+		}
+	}
+	return true
 }
 
 // The native schema only declares path:string; the renderer then decodes it as

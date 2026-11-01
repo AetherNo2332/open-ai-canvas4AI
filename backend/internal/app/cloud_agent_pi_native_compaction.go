@@ -76,43 +76,9 @@ func cloudAgentPrepareNativeCompaction(raw json.RawMessage, tokens int, source *
 	if json.Unmarshal(raw, &prep) != nil || prep.FirstKeptEntryID == "" || prep.TokensBefore != tokens {
 		return nil, errPiNativePreparationInvalid
 	}
-	index := -1
-	for i, id := range source.MessageEntryIDs {
-		if id == prep.FirstKeptEntryID && (stringField(source.Messages[i], "role") == "user" || stringField(source.Messages[i], "role") == "assistant") {
-			index = i
-			break
-		}
-	}
-	if index < 0 {
-		// Pi may retain only an invisible recovery context_edit suffix. No
-		// context-producing entry may follow that boundary.
-		for i, entry := range branch {
-			if entry.ID != prep.FirstKeptEntryID || entry.Type != "context_edit" {
-				continue
-			}
-			visibleAfter := false
-			for _, suffix := range branch[i:] {
-				for _, id := range source.MessageEntryIDs {
-					if suffix.ID == id {
-						visibleAfter = true
-					}
-				}
-			}
-			if !visibleAfter {
-				index = len(source.Messages)
-			}
-		}
-	}
-	if index < 0 {
-		// 分支里完全不存在的切点意味着 Pi 端边界元数据已过期，按建议性信息
-		// 处理，交由调用方回退服务端语义压缩；已在会话中登记、但不能作为
-		// 保留边界的条目（例如 toolResult）仍按错误拒绝。
-		for _, entry := range branch {
-			if entry.ID == prep.FirstKeptEntryID {
-				return nil, fmt.Errorf("Pi 保留切点不在当前可见消息边界")
-			}
-		}
-		return nil, errPiNativePreparationInvalid
+	index, err := cloudAgentNativeCompactionKeptIndex(prep, source, branch)
+	if err != nil {
+		return nil, err
 	}
 	previous := ""
 	for _, entry := range branch {
@@ -133,6 +99,73 @@ func cloudAgentPrepareNativeCompaction(raw json.RawMessage, tokens int, source *
 	if index < start {
 		return nil, fmt.Errorf("Pi 压缩不能重新切入旧检查点")
 	}
+	historyEnd, err := cloudAgentNativeCompactionHistoryEnd(prep, source, index, start)
+	if err != nil {
+		return nil, err
+	}
+	if !cloudAgentNativeCompactionMessagesMatch(prep.Messages, source.Messages[start:historyEnd]) || !cloudAgentNativeCompactionMessagesMatch(prep.Prefix, source.Messages[historyEnd:index]) {
+		return nil, fmt.Errorf("Pi 压缩准备材料与持久会话不一致")
+	}
+	if err := cloudAgentNativeCompactionToolPairs(source.Messages[index:]); err != nil {
+		return nil, err
+	}
+	source.FirstKeptEntryID, source.FirstKeptIndex = prep.FirstKeptEntryID, index
+	return &cloudAgentPiNativeCompaction{Preparation: append(json.RawMessage(nil), raw...), PreparationDigest: cloudAgentTextDigest(string(raw)), Calls: map[string]cloudAgentPiNativeCall{}}, nil
+}
+
+// cloudAgentNativeCompactionKeptIndex locates Pi's first kept entry among the
+// projected messages; a trailing invisible context_edit maps past the end.
+func cloudAgentNativeCompactionKeptIndex(prep piNativePreparation, source *cloudAgentPiCompactionSource, branch []cloudAgentPiCompactionEntry) (int, error) {
+	index := -1
+	for i, id := range source.MessageEntryIDs {
+		if id == prep.FirstKeptEntryID && (stringField(source.Messages[i], "role") == "user" || stringField(source.Messages[i], "role") == "assistant") {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		index = cloudAgentNativeCompactionVisibleBoundary(prep, source, branch)
+	}
+	if index < 0 {
+		// 分支里完全不存在的切点意味着 Pi 端边界元数据已过期，按建议性信息
+		// 处理，交由调用方回退服务端语义压缩；已在会话中登记、但不能作为
+		// 保留边界的条目（例如 toolResult）仍按错误拒绝。
+		for _, entry := range branch {
+			if entry.ID == prep.FirstKeptEntryID {
+				return index, fmt.Errorf("Pi 保留切点不在当前可见消息边界")
+			}
+		}
+		return index, errPiNativePreparationInvalid
+	}
+	return index, nil
+}
+
+// cloudAgentNativeCompactionVisibleBoundary 处理 Pi may retain only an invisible recovery
+// context_edit suffix. No context-producing entry may follow that boundary.
+func cloudAgentNativeCompactionVisibleBoundary(prep piNativePreparation, source *cloudAgentPiCompactionSource, branch []cloudAgentPiCompactionEntry) int {
+	index := -1
+	for i, entry := range branch {
+		if entry.ID != prep.FirstKeptEntryID || entry.Type != "context_edit" {
+			continue
+		}
+		visibleAfter := false
+		for _, suffix := range branch[i:] {
+			for _, id := range source.MessageEntryIDs {
+				if suffix.ID == id {
+					visibleAfter = true
+				}
+			}
+		}
+		if !visibleAfter {
+			index = len(source.Messages)
+		}
+	}
+	return index
+}
+
+// cloudAgentNativeCompactionHistoryEnd returns where summarized history stops: the
+// kept index, or for a split turn the start of that turn.
+func cloudAgentNativeCompactionHistoryEnd(prep piNativePreparation, source *cloudAgentPiCompactionSource, index, start int) (int, error) {
 	historyEnd := index
 	if prep.IsSplitTurn {
 		historyEnd = -1
@@ -143,60 +176,61 @@ func cloudAgentPrepareNativeCompaction(raw json.RawMessage, tokens int, source *
 			}
 		}
 		if historyEnd < start || len(prep.Prefix) == 0 {
-			return nil, fmt.Errorf("Pi 长轮压缩缺少有效的轮次前缀")
+			return historyEnd, fmt.Errorf("Pi 长轮压缩缺少有效的轮次前缀")
 		}
 	} else if len(prep.Prefix) != 0 {
-		return nil, fmt.Errorf("Pi 普通压缩不能包含轮次前缀")
+		return historyEnd, fmt.Errorf("Pi 普通压缩不能包含轮次前缀")
 	}
-	match := func(sent []json.RawMessage, expected []map[string]any) bool {
-		if len(sent) != len(expected) {
+	return historyEnd, nil
+}
+
+func cloudAgentNativeCompactionMessagesMatch(sent []json.RawMessage, expected []map[string]any) bool {
+	if len(sent) != len(expected) {
+		return false
+	}
+	for i, raw := range sent {
+		message, ok, err := cloudAgentPiEntryMessage(cloudAgentPiCompactionEntry{Type: "message", Message: raw})
+		if err != nil || !ok {
 			return false
 		}
-		for i, raw := range sent {
-			message, ok, err := cloudAgentPiEntryMessage(cloudAgentPiCompactionEntry{Type: "message", Message: raw})
-			if err != nil || !ok {
-				return false
-			}
-			want := map[string]any{}
-			for k, v := range expected[i] {
-				if k != cloudAgentContextSourceKey {
-					want[k] = v
-				}
-			}
-			a, _ := json.Marshal(message.Value)
-			b, _ := json.Marshal(want)
-			if string(a) != string(b) {
-				return false
+		want := map[string]any{}
+		for k, v := range expected[i] {
+			if k != cloudAgentContextSourceKey {
+				want[k] = v
 			}
 		}
-		return true
+		a, _ := json.Marshal(message.Value)
+		b, _ := json.Marshal(want)
+		if string(a) != string(b) {
+			return false
+		}
 	}
-	if !match(prep.Messages, source.Messages[start:historyEnd]) || !match(prep.Prefix, source.Messages[historyEnd:index]) {
-		return nil, fmt.Errorf("Pi 压缩准备材料与持久会话不一致")
-	}
-	// A retained result must keep its call, and each retained call must keep its result.
+	return true
+}
+
+// cloudAgentNativeCompactionToolPairs 校验 A retained result must keep its call, and each retained call must keep its result.
+func cloudAgentNativeCompactionToolPairs(retained []map[string]any) error {
 	pending := map[string]bool{}
-	for _, message := range source.Messages[index:] {
+	for _, message := range retained {
 		for _, call := range creationMaps(message["tool_calls"]) {
 			id := stringField(call, "id")
 			if id == "" || pending[id] {
-				return nil, fmt.Errorf("Pi 保留工具调用无效")
+				return fmt.Errorf("Pi 保留工具调用无效")
 			}
 			pending[id] = true
 		}
 		if stringField(message, "role") == "tool" {
 			id := stringField(message, "tool_call_id")
 			if !pending[id] {
-				return nil, fmt.Errorf("Pi 保留工具结果缺少调用")
+				return fmt.Errorf("Pi 保留工具结果缺少调用")
 			}
 			delete(pending, id)
 		}
 	}
 	if len(pending) != 0 {
-		return nil, fmt.Errorf("Pi 保留工具调用缺少结果")
+		return fmt.Errorf("Pi 保留工具调用缺少结果")
 	}
-	source.FirstKeptEntryID, source.FirstKeptIndex = prep.FirstKeptEntryID, index
-	return &cloudAgentPiNativeCompaction{Preparation: append(json.RawMessage(nil), raw...), PreparationDigest: cloudAgentTextDigest(string(raw)), Calls: map[string]cloudAgentPiNativeCall{}}, nil
+	return nil
 }
 
 func cloudAgentNativeCompactionView(compaction *cloudAgentContextCompaction) (*PiContextCompactionView, error) {
@@ -277,14 +311,8 @@ func (s *Service) PiNativeContextCompactionModel(userID, runID, owner, operation
 	native := state.ContextCompaction.PiNative
 	var prep piNativePreparation
 	_ = json.Unmarshal(native.Preparation, &prep)
-	allowed := false
-	for _, id := range nativeCompactionCallIDs(prep) {
-		if id == input.CallID {
-			allowed = true
-		}
-	}
-	if !allowed || input.MaxTokens < 1 || input.MaxTokens > native.MaxTokens || len(input.SystemPrompt) == 0 || len(input.SystemPrompt) > 16<<10 || len(input.Prompt) == 0 || len(input.Prompt) > 1<<20 {
-		return nil, BadAuthRequest("Pi 摘要子调用参数无效")
+	if err := validatePiNativeCompactionModelRequest(prep, native, input); err != nil {
+		return nil, err
 	}
 	raw, _ := json.Marshal(input)
 	fingerprint := cloudAgentTextDigest(string(raw))
@@ -296,31 +324,10 @@ func (s *Service) PiNativeContextCompactionModel(userID, runID, owner, operation
 		return nil, kernel.Forbidden("Pi 原生压缩已完成")
 	}
 	if !exists {
-		// Only one active task at a time; a restart replays completed calls before
-		// advancing to the next native split-turn call.
-		for _, previous := range native.Calls {
-			task, e := s.repo.TaskForUser(userID, previous.TaskID)
-			if e != nil {
-				return nil, e
-			}
-			if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
-				return nil, kernel.Forbidden("Pi 上一个摘要子调用仍在执行")
-			}
-		}
-		native.ActiveCall = input.CallID
-		native.Calls[input.CallID] = cloudAgentPiNativeCall{Fingerprint: fingerprint}
-		taskInput := map[string]any{"mode": "text", "prompt": input.Prompt,
-			"agentRequests": map[string]any{"canonical": map[string]any{"systemPrompt": input.SystemPrompt,
-				"messages": []map[string]any{{"role": "user", "content": input.Prompt}}, "tools": []any{}, "toolChoice": "auto"}},
-			"config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey,
-				"model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model), "systemPrompt": input.SystemPrompt},
-			"textOptions": map[string]any{"stream": false, "thinking": false, "maxOutputTokens": input.MaxTokens}}
-		req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: cloudAgentContextCompactionOperation,
-			Prompt: input.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: taskInput}
-		if err := s.enqueueCloudAgentTask(run, &state, req, nil); err != nil {
+		call, err = s.piEnqueueNativeCompactionCall(run, &state, native, input, fingerprint)
+		if err != nil {
 			return nil, err
 		}
-		call = native.Calls[input.CallID]
 	}
 	task, err := s.repo.TaskForUser(userID, call.TaskID)
 	if err != nil {
@@ -339,6 +346,49 @@ func (s *Service) PiNativeContextCompactionModel(userID, runID, owner, operation
 		}
 	}
 	return view, nil
+}
+
+func validatePiNativeCompactionModelRequest(prep piNativePreparation, native *cloudAgentPiNativeCompaction, input PiNativeCompactionModelRequest) error {
+	allowed := false
+	for _, id := range nativeCompactionCallIDs(prep) {
+		if id == input.CallID {
+			allowed = true
+		}
+	}
+	if !allowed || input.MaxTokens < 1 || input.MaxTokens > native.MaxTokens || len(input.SystemPrompt) == 0 || len(input.SystemPrompt) > 16<<10 || len(input.Prompt) == 0 || len(input.Prompt) > 1<<20 {
+		return BadAuthRequest("Pi 摘要子调用参数无效")
+	}
+	return nil
+}
+
+// piEnqueueNativeCompactionCall records and enqueues a new native summary
+// sub-call, and returns the call with the task ID set by the enqueue.
+func (s *Service) piEnqueueNativeCompactionCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, native *cloudAgentPiNativeCompaction, input PiNativeCompactionModelRequest, fingerprint string) (cloudAgentPiNativeCall, error) {
+	// Only one active task at a time; a restart replays completed calls before
+	// advancing to the next native split-turn call.
+	for _, previous := range native.Calls {
+		task, e := s.repo.TaskForUser(run.UserID, previous.TaskID)
+		if e != nil {
+			return cloudAgentPiNativeCall{}, e
+		}
+		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
+			return cloudAgentPiNativeCall{}, kernel.Forbidden("Pi 上一个摘要子调用仍在执行")
+		}
+	}
+	native.ActiveCall = input.CallID
+	native.Calls[input.CallID] = cloudAgentPiNativeCall{Fingerprint: fingerprint}
+	taskInput := map[string]any{"mode": "text", "prompt": input.Prompt,
+		"agentRequests": map[string]any{"canonical": map[string]any{"systemPrompt": input.SystemPrompt,
+			"messages": []map[string]any{{"role": "user", "content": input.Prompt}}, "tools": []any{}, "toolChoice": "auto"}},
+		"config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey,
+			"model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model), "systemPrompt": input.SystemPrompt},
+		"textOptions": map[string]any{"stream": false, "thinking": false, "maxOutputTokens": input.MaxTokens}}
+	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: cloudAgentContextCompactionOperation,
+		Prompt: input.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: taskInput}
+	if err := s.enqueueCloudAgentTask(run, state, req, nil); err != nil {
+		return cloudAgentPiNativeCall{}, err
+	}
+	return native.Calls[input.CallID], nil
 }
 
 type PiNativeCompactionComplete struct {
@@ -408,81 +458,13 @@ func (s *Service) PiFinishNativeContextCompaction(userID, runID, owner, operatio
 	native := c.PiNative
 	var prep piNativePreparation
 	_ = json.Unmarshal(native.Preparation, &prep)
-	texts := map[string]string{}
-	failed := false
-	usage := map[string]float64{}
-	for _, id := range nativeCompactionCallIDs(prep) {
-		call, ok := native.Calls[id]
-		if !ok {
-			if input.Fallback && failed {
-				break
-			}
-			return nil, BadAuthRequest("Pi 摘要子调用尚未提交")
-		}
-		task, e := s.repo.TaskForUser(userID, call.TaskID)
-		if e != nil {
-			return nil, e
-		}
-		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
-			return nil, BadAuthRequest("Pi 摘要子调用尚未完成")
-		}
-		text, e := nativeSummaryText(task)
-		if e != nil {
-			failed = true
-		}
-		texts[id] = text
-		var result struct {
-			Usage map[string]json.RawMessage `json:"usage"`
-		}
-		if json.Unmarshal([]byte(task.ResultJSON), &result) == nil {
-			for _, key := range []string{"input", "output", "cacheRead", "cacheWrite", "totalTokens"} {
-				var count float64
-				if raw, ok := result.Usage[key]; ok && json.Unmarshal(raw, &count) == nil && count >= 0 {
-					usage[key] += count
-				}
-			}
-		}
+	texts, failed, usage, err := s.piCollectNativeSummaries(userID, prep, native, input)
+	if err != nil {
+		return nil, err
 	}
-	checkpoint := cloudAgentFallbackCheckpoint(&state)
-	mode, reason := "pi-native", ""
-	if failed {
-		if !input.Fallback {
-			return nil, BadAuthRequest("Pi 摘要结果不完整")
-		}
-		mode, reason = "fallback", "原生摘要未成功，已使用服务端保底检查点"
-	} else {
-		if input.Fallback {
-			return nil, BadAuthRequest("成功摘要不能被未验证的降级请求替代")
-		}
-		expected := texts["history"]
-		if prep.IsSplitTurn && len(prep.Prefix) > 0 {
-			if len(prep.Messages) == 0 {
-				expected = prep.PreviousSummary
-				if expected == "" {
-					expected = "No prior history."
-				}
-			}
-			expected += "\n\n---\n\n**Turn Context (split turn):**\n\n" + texts["turnPrefix"]
-		}
-		expected += nativeFileSuffix(prep)
-		if input.Summary != expected || !utf8.ValidString(input.Summary) {
-			return nil, BadAuthRequest("Pi 合并摘要与模型子调用结果不一致或超限")
-		}
-		if len(input.Summary) > 32<<10 {
-			mode, reason = "fallback", "原生摘要超过检查点预算，已使用服务端保底检查点"
-		} else {
-			checkpoint.HistorySummary = input.Summary
-		}
-	}
-	checkpoint.CompactedTurnCount = c.TurnCount
-	checkpoint = cloudAgentBoundCheckpoint(checkpoint)
-	// Preserve the native narrative without the legacy per-field truncation; the
-	// frame's total size remains bounded and execution facts come from Go only.
-	if mode == "pi-native" {
-		checkpoint.HistorySummary = input.Summary
-		// The native narrative already carries creative history. Keep only the
-		// server anchor here, rather than duplicating the raw history in two fields.
-		checkpoint.ScriptDesign = truncateRunes(state.CreativeAnchor.UserPrompt, 1500)
+	checkpoint, mode, reason, err := piNativeCompactionCheckpoint(&state, prep, texts, failed, input)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := agentcontext.Frame(checkpoint); err != nil {
 		return nil, BadAuthRequest("Pi 摘要检查点超限")
@@ -506,4 +488,96 @@ func (s *Service) PiFinishNativeContextCompaction(userID, runID, owner, operatio
 		return nil, err
 	}
 	return cloudAgentNativeCompactionView(c)
+}
+
+// piCollectNativeSummaries reads every native summary sub-call in order. A
+// fallback request may stop at the first missing call once one has failed.
+func (s *Service) piCollectNativeSummaries(userID string, prep piNativePreparation, native *cloudAgentPiNativeCompaction, input PiNativeCompactionComplete) (map[string]string, bool, map[string]float64, error) {
+	texts := map[string]string{}
+	failed := false
+	usage := map[string]float64{}
+	for _, id := range nativeCompactionCallIDs(prep) {
+		call, ok := native.Calls[id]
+		if !ok {
+			if input.Fallback && failed {
+				break
+			}
+			return nil, false, nil, BadAuthRequest("Pi 摘要子调用尚未提交")
+		}
+		task, e := s.repo.TaskForUser(userID, call.TaskID)
+		if e != nil {
+			return nil, false, nil, e
+		}
+		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
+			return nil, false, nil, BadAuthRequest("Pi 摘要子调用尚未完成")
+		}
+		text, e := nativeSummaryText(task)
+		if e != nil {
+			failed = true
+		}
+		texts[id] = text
+		piAddNativeSummaryUsage(usage, task)
+	}
+	return texts, failed, usage, nil
+}
+
+func piAddNativeSummaryUsage(usage map[string]float64, task *model.Task) {
+	var result struct {
+		Usage map[string]json.RawMessage `json:"usage"`
+	}
+	if json.Unmarshal([]byte(task.ResultJSON), &result) == nil {
+		for _, key := range []string{"input", "output", "cacheRead", "cacheWrite", "totalTokens"} {
+			var count float64
+			if raw, ok := result.Usage[key]; ok && json.Unmarshal(raw, &count) == nil && count >= 0 {
+				usage[key] += count
+			}
+		}
+	}
+}
+
+// piNativeCompactionCheckpoint builds the bounded checkpoint and its mode: the
+// verified native summary, or the server fallback when a sub-call failed.
+func piNativeCompactionCheckpoint(state *cloudAgentRuntime, prep piNativePreparation, texts map[string]string, failed bool, input PiNativeCompactionComplete) (agentcontext.Checkpoint, string, string, error) {
+	checkpoint := cloudAgentFallbackCheckpoint(state)
+	mode, reason := "pi-native", ""
+	if failed {
+		if !input.Fallback {
+			return checkpoint, mode, reason, BadAuthRequest("Pi 摘要结果不完整")
+		}
+		mode, reason = "fallback", "原生摘要未成功，已使用服务端保底检查点"
+	} else {
+		if input.Fallback {
+			return checkpoint, mode, reason, BadAuthRequest("成功摘要不能被未验证的降级请求替代")
+		}
+		expected := texts["history"]
+		if prep.IsSplitTurn && len(prep.Prefix) > 0 {
+			if len(prep.Messages) == 0 {
+				expected = prep.PreviousSummary
+				if expected == "" {
+					expected = "No prior history."
+				}
+			}
+			expected += "\n\n---\n\n**Turn Context (split turn):**\n\n" + texts["turnPrefix"]
+		}
+		expected += nativeFileSuffix(prep)
+		if input.Summary != expected || !utf8.ValidString(input.Summary) {
+			return checkpoint, mode, reason, BadAuthRequest("Pi 合并摘要与模型子调用结果不一致或超限")
+		}
+		if len(input.Summary) > 32<<10 {
+			mode, reason = "fallback", "原生摘要超过检查点预算，已使用服务端保底检查点"
+		} else {
+			checkpoint.HistorySummary = input.Summary
+		}
+	}
+	checkpoint.CompactedTurnCount = state.ContextCompaction.TurnCount
+	checkpoint = cloudAgentBoundCheckpoint(checkpoint)
+	// Preserve the native narrative without the legacy per-field truncation; the
+	// frame's total size remains bounded and execution facts come from Go only.
+	if mode == "pi-native" {
+		checkpoint.HistorySummary = input.Summary
+		// The native narrative already carries creative history. Keep only the
+		// server anchor here, rather than duplicating the raw history in two fields.
+		checkpoint.ScriptDesign = truncateRunes(state.CreativeAnchor.UserPrompt, 1500)
+	}
+	return checkpoint, mode, reason, nil
 }

@@ -20,18 +20,67 @@ func cloudAgentStoryboardMutationReceipt(plan *cloudAgentStoryboardMutationPlan,
 	if err != nil {
 		return nil, err
 	}
+	beforeBoard, beforeRows, err := cloudAgentStoryboardBeforeState(beforeDoc, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	changes, created, removed := cloudAgentStoryboardRowDiff(beforeRows, rows)
+	affected, err := cloudAgentStoryboardAffectedRows(call, len(created))
+	if err != nil {
+		return nil, err
+	}
+	snapshot := cloudAgentCanvasHash(plan.Document)
+	receipt := map[string]any{
+		"canvasId": plan.Canvas.ID, "nodeId": nodeID, "snapshotHash": snapshot, "beforeSnapshotHash": plan.BeforeSnapshotHash,
+		"applied": true, "changed": snapshot != plan.BeforeSnapshotHash, "affectedRows": affected, "changedRows": changes,
+		"summary": plan.Preview.Description, "preview": plan.Preview,
+	}
+	if len(created) > 0 {
+		receipt["createdRows"] = created
+	}
+	if len(removed) > 0 {
+		receipt["removedRowIds"] = removed
+	}
+	if fields := cloudAgentStoryboardChangedFields(beforeBoard, board, "rows"); len(fields) > 0 {
+		receipt["changedFields"] = fields
+	}
+	assets, err := cloudAgentStoryboardAssetChanges(beforeDoc, plan.Document, nodeID, beforeRows, rows, cloudAgentStrings(board["referenceNodeIds"]))
+	if err != nil {
+		return nil, err
+	}
+	cloudAgentStoryboardReceiptAssets(receipt, assets, nodeID)
+	if call.Function.Name == "canvas_edit_storyboard" || call.Function.Name == "storyboard" {
+		var args cloudAgentStoryboardEditArgs
+		_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+		if cloudAgentStoryboardSharedAction(args.Action) {
+			receipt["referenceChanges"] = cloudAgentStoryboardReferenceChanges(beforeBoard, board, len(rows))
+		}
+	}
+	return receipt, nil
+}
+
+// cloudAgentStoryboardBeforeState reads the storyboard from the pre-edit
+// document; a node created by this edit has an empty before state.
+func cloudAgentStoryboardBeforeState(beforeDoc map[string]any, nodeID string) (map[string]any, []map[string]any, error) {
 	beforeBoard := map[string]any{}
 	beforeRows := []map[string]any{}
 	for _, node := range creationMaps(beforeDoc["nodes"]) {
 		if stringValue(node["id"]) != nodeID {
 			continue
 		}
+		var err error
 		_, beforeBoard, beforeRows, err = storyboardNodeFromDocument(beforeDoc, nodeID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		break
 	}
+	return beforeBoard, beforeRows, nil
+}
+
+// cloudAgentStoryboardRowDiff lists changed rows with their changed fields,
+// created rows and removed row IDs.
+func cloudAgentStoryboardRowDiff(beforeRows, rows []map[string]any) ([]any, []any, []string) {
 	oldByID, newByID := map[string]map[string]any{}, map[string]map[string]any{}
 	for _, row := range beforeRows {
 		oldByID[stringValue(row["id"])] = row
@@ -56,80 +105,69 @@ func cloudAgentStoryboardMutationReceipt(plan *cloudAgentStoryboardMutationPlan,
 			removed = append(removed, id)
 		}
 	}
-	affected := len(created)
-	if call.Function.Name != "canvas_create_storyboard" {
-		var args cloudAgentStoryboardEditArgs
-		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
-			return nil, cloudAgentJSONArgumentError(err)
-		}
-		if args.Action == "update" && len(args.Updates) > 0 {
-			args.Action = "batch_update"
-		}
-		switch args.Action {
-		case "append", "append_rows":
-			affected = len(created)
-		case "batch_update":
-			affected = len(args.Updates)
-		default:
-			affected = len(args.RowIDs)
-			if args.RowID != "" {
-				affected = 1
-			}
-		}
+	return changes, created, removed
+}
+
+// cloudAgentStoryboardAffectedRows counts the rows the call targeted (not the
+// rows that changed): created rows for appends, updates for batches, else the
+// selected row IDs.
+func cloudAgentStoryboardAffectedRows(call cloudAgentCall, createdCount int) (int, error) {
+	if call.Function.Name == "canvas_create_storyboard" {
+		return createdCount, nil
 	}
-	snapshot := cloudAgentCanvasHash(plan.Document)
-	receipt := map[string]any{
-		"canvasId": plan.Canvas.ID, "nodeId": nodeID, "snapshotHash": snapshot, "beforeSnapshotHash": plan.BeforeSnapshotHash,
-		"applied": true, "changed": snapshot != plan.BeforeSnapshotHash, "affectedRows": affected, "changedRows": changes,
-		"summary": plan.Preview.Description, "preview": plan.Preview,
+	var args cloudAgentStoryboardEditArgs
+	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+		return 0, cloudAgentJSONArgumentError(err)
 	}
-	if len(created) > 0 {
-		receipt["createdRows"] = created
+	if args.Action == "update" && len(args.Updates) > 0 {
+		args.Action = "batch_update"
 	}
-	if len(removed) > 0 {
-		receipt["removedRowIds"] = removed
+	switch args.Action {
+	case "append", "append_rows":
+		return createdCount, nil
+	case "batch_update":
+		return len(args.Updates), nil
 	}
-	if fields := cloudAgentStoryboardChangedFields(beforeBoard, board, "rows"); len(fields) > 0 {
-		receipt["changedFields"] = fields
+	if args.RowID != "" {
+		return 1, nil
 	}
-	assets, err := cloudAgentStoryboardAssetChanges(beforeDoc, plan.Document, nodeID, beforeRows, rows, cloudAgentStrings(board["referenceNodeIds"]))
-	if err != nil {
-		return nil, err
+	return len(args.RowIDs), nil
+}
+
+// cloudAgentStoryboardReceiptAssets attaches asset changes and, when some row
+// details were omitted, the read call that returns them.
+func cloudAgentStoryboardReceiptAssets(receipt map[string]any, assets []any, nodeID string) {
+	if len(assets) == 0 {
+		return
 	}
-	if len(assets) > 0 {
-		receipt["assetChanges"] = assets
-		remaining := []string{}
-		for _, change := range creationMaps(assets) {
-			if change["detailsOmitted"] == true {
-				remaining = append(remaining, stringValue(change["rowId"]))
-			}
-		}
-		if len(remaining) > 0 {
-			receipt["assetChangesNextRead"] = map[string]any{"tool": "storyboard", "arguments": map[string]any{"action": "read", "nodeId": nodeID, "rowIds": remaining, "view": "bindings"}}
+	receipt["assetChanges"] = assets
+	remaining := []string{}
+	for _, change := range creationMaps(assets) {
+		if change["detailsOmitted"] == true {
+			remaining = append(remaining, stringValue(change["rowId"]))
 		}
 	}
-	if call.Function.Name == "canvas_edit_storyboard" || call.Function.Name == "storyboard" {
-		var args cloudAgentStoryboardEditArgs
-		_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
-		if cloudAgentStoryboardSharedAction(args.Action) {
-			old, next := cloudAgentStrings(beforeBoard["referenceNodeIds"]), cloudAgentStrings(board["referenceNodeIds"])
-			added, removed, retained := []string{}, []string{}, []string{}
-			for _, id := range old {
-				if cloudAgentContainsString(next, id) {
-					retained = append(retained, id)
-				} else {
-					removed = append(removed, id)
-				}
-			}
-			for _, id := range next {
-				if !cloudAgentContainsString(old, id) {
-					added = append(added, id)
-				}
-			}
-			receipt["referenceChanges"] = map[string]any{"scope": "shared", "addedNodeIds": added, "removedNodeIds": removed, "retainedNodeIds": retained, "affectedRows": len(rows)}
+	if len(remaining) > 0 {
+		receipt["assetChangesNextRead"] = map[string]any{"tool": "storyboard", "arguments": map[string]any{"action": "read", "nodeId": nodeID, "rowIds": remaining, "view": "bindings"}}
+	}
+}
+
+func cloudAgentStoryboardReferenceChanges(beforeBoard, board map[string]any, rowCount int) map[string]any {
+	old, next := cloudAgentStrings(beforeBoard["referenceNodeIds"]), cloudAgentStrings(board["referenceNodeIds"])
+	added, removed, retained := []string{}, []string{}, []string{}
+	for _, id := range old {
+		if cloudAgentContainsString(next, id) {
+			retained = append(retained, id)
+		} else {
+			removed = append(removed, id)
 		}
 	}
-	return receipt, nil
+	for _, id := range next {
+		if !cloudAgentContainsString(old, id) {
+			added = append(added, id)
+		}
+	}
+	return map[string]any{"scope": "shared", "addedNodeIds": added, "removedNodeIds": removed, "retainedNodeIds": retained, "affectedRows": rowCount}
 }
 
 func cloudAgentStoryboardChangedFields(before, after map[string]any, excluded string) []string {
