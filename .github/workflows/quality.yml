@@ -114,7 +114,7 @@ jobs:
       - name: Check Agent tool contracts before full suite
         run: go test ./internal/app -run '^(TestCloudAgent(PatchSchema|ToolsFollowCanvasCapabilityRegistry|FunctionSchemasAreWellFormed|ToolArgumentValidation)|TestAgentToolSchemaArtifactMatchesRuntime)' -count=1 -timeout=1m
       # 只扫描源码，不编译业务包；失败时日志直接列出超标或基线未下调的条目。rest 分片的全量测试也会再跑一次。
-      - name: Check Agent architecture
+      - name: Check backend architecture
         if: matrix.shard == 'rest'
         run: go test ./internal/architecture -count=1 -timeout=1m
       - name: Run Go tests

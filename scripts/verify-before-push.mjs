@@ -142,7 +142,7 @@ if (wantBackend) {
     });
     if (spawnSync("golangci-lint", ["--version"], { encoding: "utf8" }).status === 0) {
         tasks.push({ name: "backend:agent-lint", cwd: BACKEND, cmd: "golangci-lint", args: ["run", "--config=.golangci.yml", "./internal/agentcontext/...", "./internal/agentmemory/...", "./internal/architecture/..."], weight: 60 });
-    } else notCovered.push("Agent 静态检查 golangci-lint v2.5.0（本机未安装；Agent 架构守卫 internal/architecture 已包含在 backend:test-rest）");
+    } else notCovered.push("Agent 静态检查 golangci-lint v2.5.0（本机未安装；后端架构守卫 internal/architecture 已包含在 backend:test-rest）");
     const appPackage = "yingce/backend/internal/app";
     const otherPackages = lines(spawnSync("go", ["list", "./..."], { cwd: BACKEND, encoding: "utf8" }).stdout).filter((pkg) => pkg !== appPackage);
     tasks.push({ name: "backend:test-rest", cwd: BACKEND, cmd: "go", args: ["test", "-timeout=20m", ...otherPackages], weight: 100 });
