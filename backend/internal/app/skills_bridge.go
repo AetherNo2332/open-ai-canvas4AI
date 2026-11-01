@@ -28,6 +28,9 @@ type (
 	SkillList                             = skills.SkillList
 	SkillMutationRequest                  = skills.SkillMutationRequest
 	SkillInstallRequest                   = skills.SkillInstallRequest
+	SkillUploadPreviewItem                = skills.SkillUploadPreviewItem
+	SkillUploadPreview                    = skills.SkillUploadPreview
+	SkillUploadInstallResult              = skills.SkillUploadInstallResult
 	SkillGitHubInstallRequest             = skills.SkillGitHubInstallRequest
 	SkillPackageFileItem                  = skills.SkillPackageFileItem
 	SkillPackageFileContent               = skills.SkillPackageFileContent
@@ -148,6 +151,14 @@ func (s *Service) EnsureSkillPackages() error {
 
 func (s *Service) InstallSkillUpload(userID string, sourceType string, header *multipart.FileHeader, req SkillInstallRequest) (*SkillItem, error) {
 	return s.skillDomain().InstallSkillUpload(userID, sourceType, header, req)
+}
+
+func (s *Service) PreviewSkillUpload(sourceType string, header *multipart.FileHeader) (*SkillUploadPreview, error) {
+	return s.skillDomain().PreviewSkillUpload(sourceType, header)
+}
+
+func (s *Service) InstallSkillUploadCollection(userID, sourceType string, header *multipart.FileHeader, req SkillInstallRequest) (*SkillUploadInstallResult, error) {
+	return s.skillDomain().InstallSkillUploadCollection(userID, sourceType, header, req)
 }
 
 func (s *Service) InstallGitHubSkill(userID string, req SkillGitHubInstallRequest) (*SkillItem, error) {

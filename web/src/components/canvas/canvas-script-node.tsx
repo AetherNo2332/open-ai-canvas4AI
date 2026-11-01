@@ -41,6 +41,7 @@ import type { CanvasGenerationBatch, CanvasGenerationBatchItem, CanvasNodeData, 
 import type { TaskStatus } from "@/services/api/task-center";
 import { Select } from "@/components/ui/base/select";
 import { GenerationBatchDetails, StoryboardMiniPipeline, StoryboardWindowedRows, batchItemTone, generationBatchItemLabel, generationBatchSummary } from "./canvas-script-node-parts";
+import { StoryboardTextCell } from "./canvas-storyboard-text-cell";
 
 const STORYBOARD_PROMPT_MIN_HEIGHT = 40;
 const STORYBOARD_PROMPT_MAX_HEIGHT = 116;
@@ -668,14 +669,7 @@ export function CanvasScriptEditor({
                     onChange={(shotSize) => updateRow(row.id, { shotSize })}
                 />
             ) : (
-                <Input.TextArea
-                    autoSize={{ minRows: 1, maxRows: 6 }}
-                    value={String(row[option.value] || "")}
-                    placeholder={`填写${option.label}`}
-                    aria-label={option.label}
-                    disabled={row.locked}
-                    onChange={(event) => updateRow(row.id, { [option.value]: event.target.value } as Partial<StoryboardRow>)}
-                />
+                <StoryboardTextCell value={String(row[option.value] || "")} label={option.label} disabled={row.locked} onChange={(value) => updateRow(row.id, { [option.value]: value } as Partial<StoryboardRow>)} />
             ),
     }));
     columns.push({
@@ -834,6 +828,7 @@ export function CanvasScriptEditor({
                 <div className="min-h-0 flex-1 px-3 pb-3">
                     <div ref={setTableWrap} className="h-full min-h-0 pt-2">
                         <Table<StoryboardRow>
+                            virtual
                             rowKey="id"
                             size="middle"
                             bordered

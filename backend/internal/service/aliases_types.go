@@ -297,6 +297,9 @@ type (
 	SkillFileSearchResult                  = app.SkillFileSearchResult
 	SkillGitHubInstallRequest              = app.SkillGitHubInstallRequest
 	SkillInstallRequest                    = app.SkillInstallRequest
+	SkillUploadPreviewItem                 = app.SkillUploadPreviewItem
+	SkillUploadPreview                     = app.SkillUploadPreview
+	SkillUploadInstallResult               = app.SkillUploadInstallResult
 	SkillItem                              = app.SkillItem
 	SkillList                              = app.SkillList
 	SkillListRequest                       = app.SkillListRequest

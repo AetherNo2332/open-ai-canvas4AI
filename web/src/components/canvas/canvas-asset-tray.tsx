@@ -260,7 +260,7 @@ type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 function TrayTabButton({ active, label, theme, onClick }: { active: boolean; label: string; theme: CanvasTheme; onClick: () => void }) {
     return (
         <button type="button" className={cn("relative z-10 h-7 rounded-[var(--dock-item-radius)] px-2 text-[var(--fs-tiny)] font-semibold outline-none transition-colors focus-visible:ring-2", active ? "" : "opacity-55 hover:opacity-90")} style={{ color: active ? theme.node.text : theme.node.muted }} onClick={onClick}>
-            {active ? <motion.span layoutId="canvas-asset-tray-active-tab" className="absolute inset-0 -z-10 rounded-[var(--dock-item-radius)]" style={{ background: theme.node.panel, boxShadow: `0 6px 16px ${theme.spatial.shadow}` }} transition={aceternityMotion.spring.dock} /> : null}
+            {active ? <motion.span layoutId="canvas-asset-tray-active-tab" layoutDependency={label} className="absolute inset-0 -z-10 rounded-[var(--dock-item-radius)]" style={{ background: theme.node.panel, boxShadow: `0 6px 16px ${theme.spatial.shadow}` }} transition={aceternityMotion.spring.dock} /> : null}
             {label}
         </button>
     );

@@ -1,0 +1,96 @@
+.skill-native-guide {
+    max-block-size: 65dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    color: var(--foreground);
+    font-size: var(--fs-body);
+    line-height: 1.75;
+    scrollbar-gutter: stable;
+}
+
+.skill-native-guide p,
+.skill-native-guide li {
+    max-inline-size: 60ch;
+    text-wrap: pretty;
+}
+
+.skill-native-guide-intro,
+.skill-native-guide dd {
+    color: color-mix(in oklab, var(--foreground) 75%, transparent);
+}
+
+.skill-native-guide section {
+    margin-block: var(--space-6);
+}
+
+.skill-native-guide h3 {
+    margin-block: 0 var(--space-2);
+    font-size: var(--fs-heading);
+    font-weight: 600;
+    text-wrap: balance;
+}
+
+.skill-native-guide ol {
+    padding-inline-start: var(--space-6);
+    list-style: decimal;
+}
+
+.skill-native-guide li + li {
+    margin-block-start: var(--space-2);
+}
+
+.skill-native-guide-prompt {
+    margin-block-start: var(--space-4);
+}
+
+.skill-native-guide summary {
+    min-block-size: 44px;
+    display: list-item;
+    align-content: center;
+    cursor: pointer;
+}
+
+.skill-native-guide pre {
+    max-inline-size: 100%;
+    margin-block: var(--space-2);
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    background: var(--site-surface);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: var(--fs-caption);
+}
+
+.skill-native-guide pre:focus-visible,
+.skill-native-guide summary:focus-visible,
+.skill-native-guide a:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+
+.skill-native-guide-boundaries {
+    display: grid;
+    gap: var(--space-3);
+    margin-block-end: var(--space-2);
+}
+
+.skill-native-guide-boundaries dt {
+    font-weight: 600;
+}
+
+.skill-native-guide-boundaries dd {
+    margin: 0;
+    max-inline-size: 60ch;
+}
+
+.skill-native-guide-source {
+    color: color-mix(in oklab, var(--foreground) 65%, transparent);
+    font-size: var(--fs-caption);
+}
+
+.skill-native-guide a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}

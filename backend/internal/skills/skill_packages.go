@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"mime"
 	"mime/multipart"
@@ -167,32 +166,9 @@ func (s *Service) EnsureSkillPackages() error {
 }
 
 func (s *Service) InstallSkillUpload(userID string, sourceType string, header *multipart.FileHeader, req SkillInstallRequest) (*SkillItem, error) {
-	sourceType = strings.ToLower(strings.TrimSpace(sourceType))
-	if sourceType == "" && header != nil {
-		switch strings.ToLower(path.Ext(header.Filename)) {
-		case ".md", ".markdown":
-			sourceType = "markdown"
-		case ".zip":
-			sourceType = "zip"
-		}
-	}
-	if sourceType != "markdown" && sourceType != "zip" {
-		return nil, kernel.BadAuthRequest("技能文件仅支持 Markdown 或 ZIP")
-	}
-	if header == nil || header.Size <= 0 || header.Size > maxSkillPackageBytes {
-		return nil, kernel.BadAuthRequest("技能文件大小必须在 1B-20MB 之间")
-	}
-	file, err := header.Open()
+	data, sourceType, err := readSkillUpload(sourceType, header)
 	if err != nil {
 		return nil, err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxSkillPackageBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxSkillPackageBytes {
-		return nil, kernel.BadAuthRequest("技能文件不能超过 20MB")
 	}
 	var archive skillPackageArchive
 	if sourceType == "markdown" {

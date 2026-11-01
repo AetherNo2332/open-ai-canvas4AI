@@ -142,6 +142,7 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                         fromBatchScroll={props.batchScrollById?.[from.id]}
                         toBatchScroll={props.batchScrollById?.[to.id]}
                         active={props.selectedConnectionId === connection.id || props.relatedConnectionIds.has(connection.id)}
+                        animateBeam={props.selectedConnectionId === connection.id}
                         visualMode="hover-only"
                         // 拖动预览由 Leafer 图形层逐帧同步；隐藏这层静态 SVG 描边，避免两套位置叠出残影。
                         hideVisual={props.isNodeDragging}
@@ -266,12 +267,12 @@ const BatchConnectionTails = memo(function BatchConnectionTails(props: CanvasPro
         const height = Math.max(0, node.height - BATCH_TABLE_HEADER_HEIGHT - BATCH_COLUMN_HEADER_HEIGHT);
         const scroll = props.batchScrollById?.[tableId];
         return <svg key={tableId} data-batch-cell-connections={tableId} className="pointer-events-none absolute overflow-hidden" viewBox={`${node.position.x} ${top} ${node.width} ${height}`} style={{ left: node.position.x, top, width: node.width, height, zIndex: "var(--z-node-active)" }}>
-            {items.map((item) => <BatchConnectionTail key={item.connection.id} item={item} top={top} scroll={scroll} fromScrollTop={props.scriptScrollTopById[item.from.id] || 0} fromBatchScroll={props.batchScrollById?.[item.from.id]} active={props.selectedConnectionId === item.connection.id || props.relatedConnectionIds.has(item.connection.id)} />)}
+            {items.map((item) => <BatchConnectionTail key={item.connection.id} item={item} top={top} scroll={scroll} fromScrollTop={props.scriptScrollTopById[item.from.id] || 0} fromBatchScroll={props.batchScrollById?.[item.from.id]} active={props.selectedConnectionId === item.connection.id || props.relatedConnectionIds.has(item.connection.id)} animateBeam={!props.isNodeDragging && props.selectedConnectionId === item.connection.id} />)}
         </svg>;
     })}</>;
 });
 
-function BatchConnectionTail({ item, top, scroll, fromScrollTop, fromBatchScroll, active }: { item: CanvasDisplayConnection; top: number; scroll?: BatchScroll; fromScrollTop: number; fromBatchScroll?: BatchScroll; active: boolean }) {
+function BatchConnectionTail({ item, top, scroll, fromScrollTop, fromBatchScroll, active, animateBeam }: { item: CanvasDisplayConnection; top: number; scroll?: BatchScroll; fromScrollTop: number; fromBatchScroll?: BatchScroll; active: boolean; animateBeam: boolean }) {
     const theme = canvasThemes[useActiveTheme()];
     const from = useCanvasVisualNode(item.from);
     const to = useCanvasVisualNode(item.to);
@@ -279,8 +280,8 @@ function BatchConnectionTail({ item, top, scroll, fromScrollTop, fromBatchScroll
     if (!cell) return null;
     const path = canvasConnectionPath(item.connection, from, to, fromScrollTop, 0, fromBatchScroll, scroll);
     return <g>
-        <path d={path.pathD} fill="none" stroke={theme.connection.stroke} strokeWidth={CANVAS_CONNECTION_STROKE_WIDTH} strokeOpacity={0.8} vectorEffect="non-scaling-stroke" />
-        {active ? <CanvasConnectionBeam pathD={path.pathD} color={theme.connection.beam} /> : null}
+        <path d={path.pathD} fill="none" stroke={active ? theme.connection.beam : theme.connection.stroke} strokeWidth={CANVAS_CONNECTION_STROKE_WIDTH} strokeOpacity={0.8} vectorEffect="non-scaling-stroke" />
+        {animateBeam ? <CanvasConnectionBeam pathD={path.pathD} color={theme.connection.beam} /> : null}
         <circle cx={cell.x} cy={cell.y} r={3} fill={theme.connection.beam} fillOpacity={active ? 1 : 0.65} />
         {active && cell.clipped ? <text x={cell.x + 8} y={cell.y <= top + 8 ? cell.y + 15 : cell.y - 8} fill="var(--foreground)" fontSize={12}>{cell.label} · 滚动查看</text> : null}
     </g>;

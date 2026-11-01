@@ -10636,7 +10636,7 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
     }
 
     [data-canvas-viewport-interacting="true"] :where(.canvas-connection-comet, .canvas-connection-draft) {
-        animation: none !important;
+        animation-play-state: paused !important;
     }
 
     [data-canvas-viewport-interacting="true"] :where(.canvas-node-toolbar, [data-canvas-node-panel]) {

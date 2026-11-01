@@ -364,7 +364,6 @@ POST /api/runninghub/app-info
 POST /api/runninghub/workflow-info
 POST /api/settings/oss/test
 POST /api/skills
-POST /api/skills/install
 POST /api/skills/install/github
 POST /api/skills/{id}/add
 POST /api/skills/{id}/like
