@@ -1353,6 +1353,45 @@
     display: none;
 }
 
+.canvas-agent-launcher.canvas-agent-launcher-media {
+    position: fixed;
+    overflow: visible;
+    border-radius: var(--card-radius);
+    box-shadow: none;
+}
+
+.canvas-agent-launcher-media::before {
+    display: none;
+}
+
+.canvas-agent-launcher-media > img,
+.canvas-agent-launcher-media > .canvas-agent-keyed-video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.canvas-agent-launcher-media > .canvas-agent-keyed-video {
+    border-radius: var(--card-radius);
+    transform: scale(1.18);
+}
+
+.canvas-agent-keyed-video {
+    position: absolute;
+    inset: 0;
+}
+
+.canvas-agent-video-source {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
 .canvas-agent-launcher-status {
     position: absolute;
     top: 6px;

@@ -313,6 +313,23 @@ func (m *Manager) stopApplicationServices(version string, timeout time.Duration)
 	return m.compose(m.composePath(), version, timeout, nil, args...)
 }
 
+// startApplicationServices 在迁移前失败时恢复已停止的旧服务；只启动编排里存在的 agent 服务。
+func (m *Manager) startApplicationServices(version string, timeout time.Duration) error {
+	var services bytes.Buffer
+	if err := m.compose(m.composePath(), version, timeout, &services, "config", "--services"); err != nil {
+		return err
+	}
+	args := []string{"start", "backend"}
+	for _, service := range strings.Fields(services.String()) {
+		if service == "agent" {
+			args = append(args, "agent")
+			break
+		}
+	}
+	args = append(args, "web")
+	return m.compose(m.composePath(), version, timeout, nil, args...)
+}
+
 func composeProjectName(installDir string) string {
 	name := filepath.Base(filepath.Clean(installDir))
 	if name == "." || name == string(filepath.Separator) || name == "" {
@@ -440,7 +457,8 @@ func (m *Manager) createBackup(version string) (Backup, error) {
 	if err != nil {
 		return Backup{}, err
 	}
-	if err := m.compose(m.composePath(), version, m.config.StepTimeout, dataEntry, "exec", "-T", "--user", "root", "backend", "tar", "-C", "/data", "-cf", "-", "."); err != nil {
+	// Backend 已停止；复用旧镜像与原数据卷，只执行 tar，不启动业务或依赖服务。
+	if err := m.compose(m.composePath(), version, m.config.StepTimeout, dataEntry, "run", "--rm", "--no-deps", "--pull", "never", "-T", "--user", "root", "--entrypoint", "tar", "backend", "-C", "/data", "-cf", "-", "."); err != nil {
 		return Backup{}, fmt.Errorf("备份数据目录：%w", err)
 	}
 	if err := archive.Close(); err != nil {
