@@ -497,7 +497,6 @@
     {"id":"internal/handler/admin_channel_routes.go:func:registerAdminChannelRoutes:lines","max":251,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/handler/admin_setting_routes.go:func:registerAdminSettingRoutes:lines","max":176,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/handler/admin_user_routes.go:func:registerAdminUserRoutes:lines","max":168,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
-    {"id":"internal/handler/agent_message_queue.go:func:RegisterAgentMessageQueueRoutes:lines","max":127,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/handler/announcement.go:func:RegisterAnnouncementRoutes:lines","max":240,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/handler/appearance.go:func:RegisterAppearanceRoutes:lines","max":128,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/handler/auth.go:file_lines","max":645,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},

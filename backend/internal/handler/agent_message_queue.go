@@ -37,6 +37,12 @@ func agentMessageWriteAllowed(c *gin.Context, svc *service.Service, userID strin
 	return available && enforceRateLimit(c, "tasks:"+userID, policy.Request.TaskCreatePerMinute, time.Minute)
 }
 func RegisterAgentMessageQueueRoutes(r *gin.RouterGroup, svc *service.Service) {
+	registerAgentUISettingsRoutes(r, svc)
+	registerAgentConversationQueueRoutes(r, svc)
+}
+
+// registerAgentUISettingsRoutes 读取与更新 Agent 面板的发送方式等界面设置。
+func registerAgentUISettingsRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/agent/ui-settings", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -74,6 +80,10 @@ func RegisterAgentMessageQueueRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+}
+
+// registerAgentConversationQueueRoutes 向会话发送消息，以及读取、调整、修改和取消排队消息。
+func registerAgentConversationQueueRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/agent/conversations/:id/messages", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
