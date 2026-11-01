@@ -61,17 +61,9 @@ func prepareCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID
 		return nil, cloudAgentSnapshotConflictError("画布已变化，请重新读取后绑定素材")
 	}
 	nodes := creationMaps(doc["nodes"])
-	index := cloudAgentNodeIndex(nodes, args.NodeID)
-	if index < 0 {
-		return nil, BadAuthRequest("绑定节点不在当前画布")
-	}
-	node := nodes[index]
-	if descriptor, ok := cloudAgentNodeCapabilityForNode(node); !ok || descriptor.Variant != nil {
-		return nil, BadAuthRequest("角色卡或未知节点不能替换为普通素材")
-	}
-	kind := stringValue(node["type"])
-	if kind != "image" && kind != "video" && kind != "audio" && kind != "text" {
-		return nil, BadAuthRequest("当前节点不支持素材库内容替换")
+	node, kind, err := cloudAgentAssetBindingTarget(nodes, args.NodeID)
+	if err != nil {
+		return nil, err
 	}
 	asset, err := repo.AssetForUser(userID, args.AssetID)
 	if err != nil {
@@ -90,60 +82,101 @@ func prepareCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID
 	}
 	data, _ := payload["data"].(map[string]any)
 	if kind == "text" {
-		content, ok := data["content"].(string)
-		if !ok {
-			content, ok = data["text"].(string)
-		}
-		if !ok || len([]rune(content)) > 1<<20 {
-			return nil, BadAuthRequest("文本素材内容无效")
-		}
-		metadata["content"] = content
-		delete(metadata, "richText")
+		err = bindCloudAgentTextAsset(metadata, data)
 	} else {
-		resourceID := assets.ResourceID(stringValue(data["storageKey"]))
-		if resourceID == "" {
-			for _, field := range []string{"dataUrl", "url"} {
-				resourceID = assets.ResourceID(stringValue(data[field]))
-				if resourceID != "" {
-					break
-				}
-			}
-		}
-		if resourceID == "" {
-			return nil, BadAuthRequest("素材没有可绑定的平台资源")
-		}
-		resource, err := repo.ResourceForUser(userID, resourceID)
-		if err != nil {
-			return nil, err
-		}
-		if resource.Status != model.ResourceStatusReady || !(resource.Kind == kind || strings.HasPrefix(resource.MimeType, kind+"/")) {
-			return nil, BadAuthRequest("素材资源未就绪或类型不符")
-		}
-		cloudAgentResetCopiedMetadata(metadata, "", nil)
-		for _, field := range []string{"agentGenerationContinuation", "agentDraftRunId", "agentDraftCallId", "generationSubmitted", "generationEffect", "generationEffects", "generationEffectKeys", "producedModel", "previewContent", "previewStorageKey", "videoPreview", "durationMs", "hasAudio", "naturalWidth", "naturalHeight", "intrinsicWidth", "intrinsicHeight", "bytes", "mimeType"} {
-			delete(metadata, field)
-		}
-		metadata["content"], metadata["storageKey"] = "/api/resources/"+resource.ID+"/file", "resource:"+resource.ID
-		metadata["status"] = "success"
-		delete(metadata, "errorDetails")
-		for _, field := range []string{"taskId", "taskStatus", "taskProgress", "taskError", "generationAppliedKeys", "generationPersistence"} {
-			delete(metadata, field)
-		}
-		metadata["mimeType"], metadata["bytes"] = resource.MimeType, resource.Size
-		if resource.DurationMs > 0 {
-			metadata["durationMs"] = resource.DurationMs
-		}
-		if resource.Width > 0 {
-			metadata["naturalWidth"] = resource.Width
-		}
-		if resource.Height > 0 {
-			metadata["naturalHeight"] = resource.Height
-		}
+		err = bindCloudAgentMediaAsset(repo, userID, kind, metadata, data)
+	}
+	if err != nil {
+		return nil, err
 	}
 	metadata["assetId"] = asset.ID
 	doc["nodes"] = mapsAsAny(nodes)
 	preview := cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "替换节点素材", Description: "使用当前用户素材库中的内容替换目标节点。", Items: []cloudAgentApprovalPreviewItem{{Operation: "bind_asset", NodeID: args.NodeID, NodeType: kind, NodeTitle: stringValue(node["title"]), Summary: "绑定素材《" + asset.Title + "》"}}}
 	return &cloudAgentCanvasMutationPlan{Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: hash, Preview: preview}, nil
+}
+
+// cloudAgentAssetBindingTarget finds the node to replace and returns its media
+// kind; character cards and unknown nodes cannot take a plain library asset.
+func cloudAgentAssetBindingTarget(nodes []map[string]any, nodeID string) (map[string]any, string, error) {
+	index := cloudAgentNodeIndex(nodes, nodeID)
+	if index < 0 {
+		return nil, "", BadAuthRequest("绑定节点不在当前画布")
+	}
+	node := nodes[index]
+	if descriptor, ok := cloudAgentNodeCapabilityForNode(node); !ok || descriptor.Variant != nil {
+		return nil, "", BadAuthRequest("角色卡或未知节点不能替换为普通素材")
+	}
+	kind := stringValue(node["type"])
+	if kind != "image" && kind != "video" && kind != "audio" && kind != "text" {
+		return nil, "", BadAuthRequest("当前节点不支持素材库内容替换")
+	}
+	return node, kind, nil
+}
+
+func bindCloudAgentTextAsset(metadata, data map[string]any) error {
+	content, ok := data["content"].(string)
+	if !ok {
+		content, ok = data["text"].(string)
+	}
+	if !ok || len([]rune(content)) > 1<<20 {
+		return BadAuthRequest("文本素材内容无效")
+	}
+	metadata["content"] = content
+	delete(metadata, "richText")
+	return nil
+}
+
+// bindCloudAgentMediaAsset points the node at the asset's ready platform
+// resource and clears generation state left from earlier tasks.
+func bindCloudAgentMediaAsset(repo *repository.Repository, userID, kind string, metadata, data map[string]any) error {
+	resourceID := cloudAgentAssetResourceID(data)
+	if resourceID == "" {
+		return BadAuthRequest("素材没有可绑定的平台资源")
+	}
+	resource, err := repo.ResourceForUser(userID, resourceID)
+	if err != nil {
+		return err
+	}
+	if resource.Status != model.ResourceStatusReady || !(resource.Kind == kind || strings.HasPrefix(resource.MimeType, kind+"/")) {
+		return BadAuthRequest("素材资源未就绪或类型不符")
+	}
+	cloudAgentResetCopiedMetadata(metadata, "", nil)
+	for _, field := range []string{"agentGenerationContinuation", "agentDraftRunId", "agentDraftCallId", "generationSubmitted", "generationEffect", "generationEffects", "generationEffectKeys", "producedModel", "previewContent", "previewStorageKey", "videoPreview", "durationMs", "hasAudio", "naturalWidth", "naturalHeight", "intrinsicWidth", "intrinsicHeight", "bytes", "mimeType"} {
+		delete(metadata, field)
+	}
+	metadata["content"], metadata["storageKey"] = "/api/resources/"+resource.ID+"/file", "resource:"+resource.ID
+	metadata["status"] = "success"
+	delete(metadata, "errorDetails")
+	for _, field := range []string{"taskId", "taskStatus", "taskProgress", "taskError", "generationAppliedKeys", "generationPersistence"} {
+		delete(metadata, field)
+	}
+	metadata["mimeType"], metadata["bytes"] = resource.MimeType, resource.Size
+	if resource.DurationMs > 0 {
+		metadata["durationMs"] = resource.DurationMs
+	}
+	if resource.Width > 0 {
+		metadata["naturalWidth"] = resource.Width
+	}
+	if resource.Height > 0 {
+		metadata["naturalHeight"] = resource.Height
+	}
+	return nil
+}
+
+// cloudAgentAssetResourceID reads the platform resource ID from the asset's
+// storageKey, falling back to dataUrl and url.
+func cloudAgentAssetResourceID(data map[string]any) string {
+	resourceID := assets.ResourceID(stringValue(data["storageKey"]))
+	if resourceID != "" {
+		return resourceID
+	}
+	for _, field := range []string{"dataUrl", "url"} {
+		resourceID = assets.ResourceID(stringValue(data[field]))
+		if resourceID != "" {
+			return resourceID
+		}
+	}
+	return ""
 }
 
 func applyCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder cloudAgentMutationRecorder) (any, error) {

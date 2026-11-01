@@ -84,72 +84,14 @@ func validateCloudAgentSchemaValue(field string, schema map[string]any, value an
 		}
 		return firstError
 	}
+	var err error
 	if expected, ok := schema["type"].(string); ok && expected != "" {
-		switch expected {
-		case "object":
-			object, ok := value.(map[string]any)
-			if !ok {
-				return cloudAgentSchemaStructuredTypeError(path, "对象", value)
-			}
-			if err := validateCloudAgentSchemaObject(path, schema, object, depth); err != nil {
-				return err
-			}
-		case "array":
-			items, ok := value.([]any)
-			if !ok {
-				return cloudAgentSchemaStructuredTypeError(path, "数组", value)
-			}
-			if err := validateCloudAgentSchemaArray(path, schema, items, depth); err != nil {
-				return err
-			}
-		case "string":
-			text, ok := value.(string)
-			if !ok {
-				return cloudAgentSchemaTypeError(path, "字符串")
-			}
-			if err := validateCloudAgentSchemaString(path, schema, text); err != nil {
-				return err
-			}
-		case "integer":
-			number, ok := cloudAgentSchemaNumber(value)
-			if !ok || number != float64(int64(number)) {
-				return cloudAgentSchemaTypeError(path, "整数")
-			}
-			if err := validateCloudAgentSchemaNumberBounds(path, schema, number); err != nil {
-				return err
-			}
-		case "number":
-			number, ok := cloudAgentSchemaNumber(value)
-			if !ok {
-				return cloudAgentSchemaTypeError(path, "数字")
-			}
-			if err := validateCloudAgentSchemaNumberBounds(path, schema, number); err != nil {
-				return err
-			}
-		case "boolean":
-			if _, ok := value.(bool); !ok {
-				return cloudAgentSchemaTypeError(path, "布尔值")
-			}
-		case "null":
-			if value != nil {
-				return cloudAgentSchemaTypeError(path, "null")
-			}
-		}
-	} else if text, ok := value.(string); ok {
-		if err := validateCloudAgentSchemaString(path, schema, text); err != nil {
-			return err
-		}
-	} else if number, ok := cloudAgentSchemaNumber(value); ok {
-		if err := validateCloudAgentSchemaNumberBounds(path, schema, number); err != nil {
-			return err
-		}
+		err = validateCloudAgentSchemaTyped(path, expected, schema, value, depth)
 	} else {
-		// 没有声明 type 的分支（oneOf 的子 schema）也要能递归检查嵌套结构。
-		if object, ok := value.(map[string]any); ok {
-			if err := validateCloudAgentSchemaObject(path, schema, object, depth); err != nil {
-				return err
-			}
-		}
+		err = validateCloudAgentSchemaUntyped(path, schema, value, depth)
+	}
+	if err != nil {
+		return err
 	}
 	if err := validateCloudAgentSchemaEnum(path, schema, value); err != nil {
 		return err
@@ -158,6 +100,68 @@ func validateCloudAgentSchemaValue(field string, schema map[string]any, value an
 		return cloudAgentFieldError(path, "invalid_value", "当前操作不允许参数 "+path+"；请省略该字段")
 	}
 	return validateCloudAgentSchemaOneOf(path, schema, value, depth)
+}
+
+// validateCloudAgentSchemaTyped checks a value against one declared JSON type
+// and that type's own constraints.
+func validateCloudAgentSchemaTyped(path, expected string, schema map[string]any, value any, depth int) error {
+	switch expected {
+	case "object":
+		object, ok := value.(map[string]any)
+		if !ok {
+			return cloudAgentSchemaStructuredTypeError(path, "对象", value)
+		}
+		return validateCloudAgentSchemaObject(path, schema, object, depth)
+	case "array":
+		items, ok := value.([]any)
+		if !ok {
+			return cloudAgentSchemaStructuredTypeError(path, "数组", value)
+		}
+		return validateCloudAgentSchemaArray(path, schema, items, depth)
+	case "string":
+		text, ok := value.(string)
+		if !ok {
+			return cloudAgentSchemaTypeError(path, "字符串")
+		}
+		return validateCloudAgentSchemaString(path, schema, text)
+	case "integer":
+		number, ok := cloudAgentSchemaNumber(value)
+		if !ok || number != float64(int64(number)) {
+			return cloudAgentSchemaTypeError(path, "整数")
+		}
+		return validateCloudAgentSchemaNumberBounds(path, schema, number)
+	case "number":
+		number, ok := cloudAgentSchemaNumber(value)
+		if !ok {
+			return cloudAgentSchemaTypeError(path, "数字")
+		}
+		return validateCloudAgentSchemaNumberBounds(path, schema, number)
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return cloudAgentSchemaTypeError(path, "布尔值")
+		}
+	case "null":
+		if value != nil {
+			return cloudAgentSchemaTypeError(path, "null")
+		}
+	}
+	return nil
+}
+
+// validateCloudAgentSchemaUntyped applies string, number or object constraints
+// by the value's own kind when the schema declares no type.
+func validateCloudAgentSchemaUntyped(path string, schema map[string]any, value any, depth int) error {
+	if text, ok := value.(string); ok {
+		return validateCloudAgentSchemaString(path, schema, text)
+	}
+	if number, ok := cloudAgentSchemaNumber(value); ok {
+		return validateCloudAgentSchemaNumberBounds(path, schema, number)
+	}
+	// 没有声明 type 的分支（oneOf 的子 schema）也要能递归检查嵌套结构。
+	if object, ok := value.(map[string]any); ok {
+		return validateCloudAgentSchemaObject(path, schema, object, depth)
+	}
+	return nil
 }
 
 func validateCloudAgentSchemaObject(path string, schema map[string]any, object map[string]any, depth int) error {

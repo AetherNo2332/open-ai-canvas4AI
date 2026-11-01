@@ -78,10 +78,25 @@ func (s *Service) PiCapacityReport(owner string, p model.AgentCapacityReport) er
 	if p.Readiness == "" {
 		p.Readiness = "starting"
 	}
-	if owner == "" || len(owner) > 80 || p.Active < 0 || p.Active > 64 || p.Capacity < 1 || p.Capacity > 64 || p.ClaimReservations < 0 || p.ClaimReservations > 16 || p.DispatchActive < 0 || p.DispatchActive > 16 || p.ReadyQueued < 0 || p.AppliedConfigRevision < 0 || (p.Active > p.Capacity && !p.Draining) || len(p.ReadinessReason) > 512 || (p.Readiness != "starting" && p.Readiness != "ready" && p.Readiness != "degraded" && p.Readiness != "draining") {
+	if !validAgentCapacityReport(owner, p) {
 		return BadAuthRequest("Invalid Agent capacity")
 	}
 	return s.repo.AgentCapacityReport(owner, p)
+}
+
+// validAgentCapacityReport bounds every worker-reported counter and accepts
+// only the known readiness states; a draining worker may exceed capacity.
+func validAgentCapacityReport(owner string, p model.AgentCapacityReport) bool {
+	if owner == "" || len(owner) > 80 || len(p.ReadinessReason) > 512 {
+		return false
+	}
+	if p.Active < 0 || p.Active > 64 || p.Capacity < 1 || p.Capacity > 64 || (p.Active > p.Capacity && !p.Draining) {
+		return false
+	}
+	if p.ClaimReservations < 0 || p.ClaimReservations > 16 || p.DispatchActive < 0 || p.DispatchActive > 16 || p.ReadyQueued < 0 || p.AppliedConfigRevision < 0 {
+		return false
+	}
+	return p.Readiness == "starting" || p.Readiness == "ready" || p.Readiness == "degraded" || p.Readiness == "draining"
 }
 
 type AgentAvailability struct {

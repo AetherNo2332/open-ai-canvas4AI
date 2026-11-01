@@ -120,96 +120,16 @@ func emitCloudAgentCanvasDocuments(runID string, state *cloudAgentRuntime, input
 		state.event(runID, "canvas_updated", map[string]any{"canvasId": input.CanvasID, "operation": input.Operation, "requiresRefresh": true})
 		return nil
 	}
+	previews := newCloudAgentCanvasPreviewIndex(input.Preview)
 	actions := []map[string]any{}
-	previewByOperationAndNode := map[string]cloudAgentApprovalPreviewItem{}
-	previewByUniqueNode := map[string]cloudAgentApprovalPreviewItem{}
-	ambiguousPreviewNode := map[string]bool{}
-	if inputPreview := input.Preview; inputPreview != nil {
-		for _, item := range inputPreview.Items {
-			if item.NodeID == "" {
-				continue
-			}
-			previewByOperationAndNode[item.Operation+"\x00"+item.NodeID] = item
-			if _, exists := previewByUniqueNode[item.NodeID]; exists {
-				ambiguousPreviewNode[item.NodeID] = true
-			} else {
-				previewByUniqueNode[item.NodeID] = item
-			}
-		}
-	}
-	findPreview := func(operation, nodeID string) (cloudAgentApprovalPreviewItem, bool) {
-		if item, ok := previewByOperationAndNode[operation+"\x00"+nodeID]; ok {
-			return item, true
-		}
-		if !ambiguousPreviewNode[nodeID] {
-			item, ok := previewByUniqueNode[nodeID]
-			return item, ok
-		}
-		return cloudAgentApprovalPreviewItem{}, false
-	}
 	for _, change := range nodes {
-		node, _ := change["after"].(map[string]any)
-		action := "updated"
-		if node == nil {
-			node, _ = change["before"].(map[string]any)
-			action = "deleted"
-		} else if old, _ := change["before"].(map[string]any); old == nil {
-			action = "created"
-		}
-		entry := map[string]any{"action": action, "nodeId": node["id"], "title": node["title"], "nodeType": node["type"]}
-		previewOperation := "update_node"
-		if action == "created" {
-			previewOperation = "add_node"
-		} else if action == "deleted" {
-			previewOperation = "delete_node"
-		}
-		if preview, ok := findPreview(previewOperation, stringValue(node["id"])); ok {
-			switch preview.Operation {
-			case "duplicate_node":
-				entry["action"] = "duplicated"
-			case "set_parent":
-				entry["action"] = "grouped"
-			case "reorder_rows":
-				entry["action"] = "reordered"
-			case "replace_text":
-				entry["action"] = "edited"
-			}
-			if preview.NodeTitle != "" {
-				entry["title"] = preview.NodeTitle
-			}
-			if len(preview.Fields) > 0 {
-				entry["fields"] = preview.Fields
-			}
-			if preview.ResultTitle != "" {
-				entry["resultTitle"] = preview.ResultTitle
-			}
-			if preview.Summary != "" {
-				entry["summary"] = preview.Summary
-			}
-		}
-		actions = append(actions, entry)
+		actions = append(actions, previews.nodeAction(change))
 	}
 	byID, err := creationObjects(after["nodes"])
 	if err != nil {
 		return err
 	}
-	for _, change := range edges {
-		edge, _ := change["after"].(map[string]any)
-		edgeAction := "referenced"
-		if edge == nil {
-			edge, _ = change["before"].(map[string]any)
-			edgeAction = "disconnected"
-		}
-		if node := byID[stringValue(edge["fromNodeId"])]; node != nil {
-			entry := map[string]any{"action": edgeAction, "nodeId": node["id"], "title": node["title"], "nodeType": node["type"], "targetNodeId": edge["toNodeId"]}
-			if target := byID[stringValue(edge["toNodeId"])]; target != nil {
-				entry["targetTitle"], entry["targetNodeType"] = target["title"], target["type"]
-			}
-			// 连接不再由 Agent 操作产生，而是引用字段协调出来的派生结果：端点身份直接取
-			// 变更后的文档，不再有 connect_nodes 预览可借。
-			actions = append(actions, entry)
-		}
-	}
+	actions = append(actions, cloudAgentCanvasEdgeActions(edges, byID)...)
 	payload := map[string]any{
 		"canvasId": input.CanvasID, "operation": input.Operation, "actions": actions,
 		"canvasPatch": map[string]any{"canvasId": input.CanvasID, "baseRevision": revision - 1, "revision": revision, "updatedAt": after["updatedAt"], "nodes": nodes, "connections": edges},
@@ -231,6 +151,117 @@ func emitCloudAgentCanvasDocuments(runID string, state *cloudAgentRuntime, input
 	}
 	state.event(runID, "canvas_updated", payload)
 	return nil
+}
+
+// cloudAgentCanvasPreviewIndex finds the approval preview item for a changed
+// node: by operation and node first, else by node when only one item names it.
+type cloudAgentCanvasPreviewIndex struct {
+	byOperationAndNode map[string]cloudAgentApprovalPreviewItem
+	byUniqueNode       map[string]cloudAgentApprovalPreviewItem
+	ambiguousNode      map[string]bool
+}
+
+func newCloudAgentCanvasPreviewIndex(preview *cloudAgentApprovalPreview) cloudAgentCanvasPreviewIndex {
+	index := cloudAgentCanvasPreviewIndex{byOperationAndNode: map[string]cloudAgentApprovalPreviewItem{}, byUniqueNode: map[string]cloudAgentApprovalPreviewItem{}, ambiguousNode: map[string]bool{}}
+	if preview == nil {
+		return index
+	}
+	for _, item := range preview.Items {
+		if item.NodeID == "" {
+			continue
+		}
+		index.byOperationAndNode[item.Operation+"\x00"+item.NodeID] = item
+		if _, exists := index.byUniqueNode[item.NodeID]; exists {
+			index.ambiguousNode[item.NodeID] = true
+		} else {
+			index.byUniqueNode[item.NodeID] = item
+		}
+	}
+	return index
+}
+
+func (index cloudAgentCanvasPreviewIndex) find(operation, nodeID string) (cloudAgentApprovalPreviewItem, bool) {
+	if item, ok := index.byOperationAndNode[operation+"\x00"+nodeID]; ok {
+		return item, true
+	}
+	if !index.ambiguousNode[nodeID] {
+		item, ok := index.byUniqueNode[nodeID]
+		return item, ok
+	}
+	return cloudAgentApprovalPreviewItem{}, false
+}
+
+// nodeAction builds the human-readable change entry for one node, refined by
+// its approval preview item when one matches.
+func (index cloudAgentCanvasPreviewIndex) nodeAction(change map[string]any) map[string]any {
+	node, _ := change["after"].(map[string]any)
+	action := "updated"
+	if node == nil {
+		node, _ = change["before"].(map[string]any)
+		action = "deleted"
+	} else if old, _ := change["before"].(map[string]any); old == nil {
+		action = "created"
+	}
+	entry := map[string]any{"action": action, "nodeId": node["id"], "title": node["title"], "nodeType": node["type"]}
+	previewOperation := "update_node"
+	if action == "created" {
+		previewOperation = "add_node"
+	} else if action == "deleted" {
+		previewOperation = "delete_node"
+	}
+	if preview, ok := index.find(previewOperation, stringValue(node["id"])); ok {
+		cloudAgentApplyPreviewToAction(entry, preview)
+	}
+	return entry
+}
+
+func cloudAgentApplyPreviewToAction(entry map[string]any, preview cloudAgentApprovalPreviewItem) {
+	switch preview.Operation {
+	case "duplicate_node":
+		entry["action"] = "duplicated"
+	case "set_parent":
+		entry["action"] = "grouped"
+	case "reorder_rows":
+		entry["action"] = "reordered"
+	case "replace_text":
+		entry["action"] = "edited"
+	}
+	if preview.NodeTitle != "" {
+		entry["title"] = preview.NodeTitle
+	}
+	if len(preview.Fields) > 0 {
+		entry["fields"] = preview.Fields
+	}
+	if preview.ResultTitle != "" {
+		entry["resultTitle"] = preview.ResultTitle
+	}
+	if preview.Summary != "" {
+		entry["summary"] = preview.Summary
+	}
+}
+
+// cloudAgentCanvasEdgeActions lists referenced/disconnected entries for edges
+// whose source node still exists in the updated document.
+func cloudAgentCanvasEdgeActions(edges []map[string]any, byID map[string]map[string]any) []map[string]any {
+	actions := []map[string]any{}
+	for _, change := range edges {
+		edge, _ := change["after"].(map[string]any)
+		edgeAction := "referenced"
+		if edge == nil {
+			edge, _ = change["before"].(map[string]any)
+			edgeAction = "disconnected"
+		}
+		if node := byID[stringValue(edge["fromNodeId"])]; node != nil {
+			entry := map[string]any{"action": edgeAction, "nodeId": node["id"], "title": node["title"], "nodeType": node["type"], "targetNodeId": edge["toNodeId"]}
+			if target := byID[stringValue(edge["toNodeId"])]; target != nil {
+				entry["targetTitle"], entry["targetNodeType"] = target["title"], target["type"]
+			}
+			// 连接不再由 Agent 操作产生，而是引用字段协调出来的派生结果：端点身份直接取
+			// 变更后的文档，不再有 connect_nodes 预览可借。
+			actions = append(actions, entry)
+		}
+	}
+	return actions
 }
 
 func cloudAgentPatchCoversDocument(before, after map[string]any) bool {
@@ -325,28 +356,68 @@ func cloudAgentRetainedObjectOrderChanged(before, after any) bool {
 // 行以外的字段（含 title/type/status/taskId）只有在完全相同的情况下才会走到这里，
 // 因此不会影响前端对生成任务状态的保护逻辑。
 func cloudAgentShrinkStoryboardRows(before, after map[string]any) (map[string]any, map[string]any, bool) {
-	if stringValue(before["type"]) != "script" || stringValue(after["type"]) != "script" {
+	beforeRows, afterRows, ok := cloudAgentShrinkableStoryboardRows(before, after)
+	if !ok {
 		return before, after, false
+	}
+	deltaBefore, deltaAfter, ok := cloudAgentStoryboardRowDeltas(beforeRows, afterRows)
+	if !ok || (len(deltaBefore) == 0 && len(deltaAfter) == 0) {
+		return before, after, false
+	}
+
+	// 行以外保留 id/type/title：画布变更列表要用它们构造人类可读的动作条目，
+	// 且它们在三方合并里是"两边相同 → 保持本地值"的空操作。
+	shrunkBefore := map[string]any{"id": before["id"], "metadata": map[string]any{"storyboard": map[string]any{"rows": deltaBefore}}}
+	shrunkAfter := map[string]any{"id": after["id"], "metadata": map[string]any{"storyboard": map[string]any{"rows": deltaAfter}}}
+	for _, key := range []string{"type", "title"} {
+		if value, exists := after[key]; exists {
+			shrunkBefore[key] = before[key]
+			shrunkAfter[key] = value
+		}
+	}
+	return shrunkBefore, shrunkAfter, true
+}
+
+// cloudAgentShrinkableStoryboardRows returns both row lists only when the two
+// script nodes differ in rows alone and a sparse row delta can express it.
+func cloudAgentShrinkableStoryboardRows(before, after map[string]any) ([]map[string]any, []map[string]any, bool) {
+	if stringValue(before["type"]) != "script" || stringValue(after["type"]) != "script" {
+		return nil, nil, false
 	}
 	beforeMeta, beforeOK := before["metadata"].(map[string]any)
 	afterMeta, afterOK := after["metadata"].(map[string]any)
 	if !beforeOK || !afterOK {
-		return before, after, false
+		return nil, nil, false
 	}
 	beforeBoard, beforeHasBoard := cloudAgentStoryboardBoard(beforeMeta)
 	afterBoard, afterHasBoard := cloudAgentStoryboardBoard(afterMeta)
 	if !beforeHasBoard || !afterHasBoard {
-		return before, after, false
+		return nil, nil, false
 	}
 	beforeRows := cloudAgentRowsOf(beforeBoard["rows"])
 	afterRows := cloudAgentRowsOf(afterBoard["rows"])
 	// A sparse row delta does not encode order. Keep the full arrays when an
 	// existing row moves so clients can reconcile content and order separately.
 	if !cloudAgentValidKeyedCollection(beforeBoard["rows"]) || !cloudAgentValidKeyedCollection(afterBoard["rows"]) || cloudAgentRetainedObjectOrderChanged(beforeBoard["rows"], afterBoard["rows"]) {
-		return before, after, false
+		return nil, nil, false
 	}
-	// Sparse additions append at the tail. Restoring a deleted row at its old
-	// position needs full arrays even if retained rows keep their relative order.
+	if !cloudAgentNewRowsAppendedAtTail(beforeRows, afterRows) {
+		return nil, nil, false
+	}
+	if len(beforeRows) == 0 && len(afterRows) == 0 {
+		return nil, nil, false
+	}
+	// 除 rows 外的所有内容必须完全一致，否则交回调用方发完整增量。
+	if !cloudAgentSameExcept(before, after, "metadata") || !cloudAgentSameExcept(beforeMeta, afterMeta, "storyboard") || !cloudAgentSameExcept(beforeBoard, afterBoard, "rows") {
+		return nil, nil, false
+	}
+	return beforeRows, afterRows, true
+}
+
+// cloudAgentNewRowsAppendedAtTail reports whether new rows only appear after
+// every retained row. Sparse additions append at the tail; restoring a deleted
+// row at its old position needs full arrays even if retained rows keep order.
+func cloudAgentNewRowsAppendedAtTail(beforeRows, afterRows []map[string]any) bool {
 	existingIDs := map[string]bool{}
 	for _, row := range beforeRows {
 		existingIDs[stringValue(row["id"])] = true
@@ -356,23 +427,15 @@ func cloudAgentShrinkStoryboardRows(before, after map[string]any) (map[string]an
 		if !existingIDs[stringValue(row["id"])] {
 			newRowSeen = true
 		} else if newRowSeen {
-			return before, after, false
+			return false
 		}
 	}
-	if len(beforeRows) == 0 && len(afterRows) == 0 {
-		return before, after, false
-	}
-	// 除 rows 外的所有内容必须完全一致，否则交回调用方发完整增量。
-	if !cloudAgentSameExcept(before, after, "metadata") {
-		return before, after, false
-	}
-	if !cloudAgentSameExcept(beforeMeta, afterMeta, "storyboard") {
-		return before, after, false
-	}
-	if !cloudAgentSameExcept(beforeBoard, afterBoard, "rows") {
-		return before, after, false
-	}
+	return true
+}
 
+// cloudAgentStoryboardRowDeltas lists added (full), changed (field delta) and
+// removed (full old) rows; ok is false when a row has no ID.
+func cloudAgentStoryboardRowDeltas(beforeRows, afterRows []map[string]any) ([]any, []any, bool) {
 	beforeIndex := map[string]map[string]any{}
 	for _, row := range beforeRows {
 		beforeIndex[stringValue(row["id"])] = row
@@ -385,7 +448,7 @@ func cloudAgentShrinkStoryboardRows(before, after map[string]any) (map[string]an
 	for _, row := range afterRows {
 		id := stringValue(row["id"])
 		if id == "" {
-			return before, after, false
+			return nil, nil, false
 		}
 		old, existed := beforeIndex[id]
 		if !existed {
@@ -404,21 +467,7 @@ func cloudAgentShrinkStoryboardRows(before, after map[string]any) (map[string]an
 			deltaBefore = append(deltaBefore, row) // 删除：完整旧行
 		}
 	}
-	if len(deltaBefore) == 0 && len(deltaAfter) == 0 {
-		return before, after, false
-	}
-
-	// 行以外保留 id/type/title：画布变更列表要用它们构造人类可读的动作条目，
-	// 且它们在三方合并里是"两边相同 → 保持本地值"的空操作。
-	shrunkBefore := map[string]any{"id": before["id"], "metadata": map[string]any{"storyboard": map[string]any{"rows": deltaBefore}}}
-	shrunkAfter := map[string]any{"id": after["id"], "metadata": map[string]any{"storyboard": map[string]any{"rows": deltaAfter}}}
-	for _, key := range []string{"type", "title"} {
-		if value, exists := after[key]; exists {
-			shrunkBefore[key] = before[key]
-			shrunkAfter[key] = value
-		}
-	}
-	return shrunkBefore, shrunkAfter, true
+	return deltaBefore, deltaAfter, true
 }
 
 func cloudAgentStoryboardBoard(meta map[string]any) (map[string]any, bool) {

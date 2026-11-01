@@ -24,23 +24,9 @@ func (s *Service) applyCloudAgentProjectDefaultModel(run *model.CloudAgentExecut
 	if a.Mode != "image" && a.Mode != "video" || strings.TrimSpace(state.Request.CanvasID) == "" {
 		return false, nil
 	}
-	canvas, err := s.repo.CanvasProjectForUser(run.UserID, state.Request.CanvasID)
-	if err != nil {
+	defaultModel, err := s.cloudAgentDefaultModelFor(run.UserID, state.Request.CanvasID, a.Mode)
+	if err != nil || defaultModel == "" {
 		return false, err
-	}
-	if strings.TrimSpace(canvas.ProjectID) == "" {
-		return false, nil
-	}
-	project, err := s.repo.ProjectForUser(run.UserID, canvas.ProjectID)
-	if err != nil {
-		return false, err
-	}
-	defaultModel := strings.TrimSpace(project.DefaultImageModel)
-	if a.Mode == "video" {
-		defaultModel = strings.TrimSpace(project.DefaultVideoModel)
-	}
-	if defaultModel == "" {
-		return false, nil
 	}
 	access, err := s.userGroupAccess(run.UserID)
 	if err != nil {
@@ -48,24 +34,52 @@ func (s *Service) applyCloudAgentProjectDefaultModel(run *model.CloudAgentExecut
 	}
 
 	if channelID, channelModelKey, ok := splitCloudAgentChannelModel(defaultModel); ok {
-		catalog, catalogErr := s.ModelCatalog(access, nil)
-		if catalogErr != nil {
-			return false, catalogErr
-		}
-		for _, channel := range catalog.Channels {
-			if channel.ID != channelID {
-				continue
-			}
-			for _, channelModel := range channel.Models {
-				if channelModel.ModelKey == channelModelKey && channelModel.Available && normalizeCapability(channelModel.Capability) == a.Mode {
-					a.ChannelID, a.ChannelModelKey = channelID, channelModelKey
-					return true, nil
-				}
-			}
-		}
-		return false, fmt.Errorf("项目默认%s模型不可用或能力不匹配，请在项目设置中重新选择模型", cloudAgentModeLabel(a.Mode))
+		return s.matchCloudAgentDefaultChannelModel(access, channelID, channelModelKey, a)
 	}
+	return s.matchCloudAgentDefaultLogicalModel(access, defaultModel, a)
+}
 
+// cloudAgentDefaultModelFor reads the canvas project's default image or video
+// model; "" means the canvas has no project or no default for this mode.
+func (s *Service) cloudAgentDefaultModelFor(userID, canvasID, mode string) (string, error) {
+	canvas, err := s.repo.CanvasProjectForUser(userID, canvasID)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(canvas.ProjectID) == "" {
+		return "", nil
+	}
+	project, err := s.repo.ProjectForUser(userID, canvas.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	defaultModel := strings.TrimSpace(project.DefaultImageModel)
+	if mode == "video" {
+		defaultModel = strings.TrimSpace(project.DefaultVideoModel)
+	}
+	return defaultModel, nil
+}
+
+func (s *Service) matchCloudAgentDefaultChannelModel(access *userGroupAccess, channelID, channelModelKey string, a *cloudAgentMediaArgs) (bool, error) {
+	catalog, catalogErr := s.ModelCatalog(access, nil)
+	if catalogErr != nil {
+		return false, catalogErr
+	}
+	for _, channel := range catalog.Channels {
+		if channel.ID != channelID {
+			continue
+		}
+		for _, channelModel := range channel.Models {
+			if channelModel.ModelKey == channelModelKey && channelModel.Available && normalizeCapability(channelModel.Capability) == a.Mode {
+				a.ChannelID, a.ChannelModelKey = channelID, channelModelKey
+				return true, nil
+			}
+		}
+	}
+	return false, fmt.Errorf("项目默认%s模型不可用或能力不匹配，请在项目设置中重新选择模型", cloudAgentModeLabel(a.Mode))
+}
+
+func (s *Service) matchCloudAgentDefaultLogicalModel(access *userGroupAccess, defaultModel string, a *cloudAgentMediaArgs) (bool, error) {
 	logicalModels, err := s.PublicLogicalModels(access, nil)
 	if err != nil {
 		return false, err
@@ -108,6 +122,26 @@ func cloudAgentModeLabel(mode string) string {
 // validateCloudAgentModelSelection 校验并**归一化**模型选择：优先解开 selectionId，
 // 否则沿用旧的三字段契约。归一化后下游代码只看到三个字段，不需要知道凭证存在。
 func (s *Service) validateCloudAgentModelSelection(userID, raw string, a *cloudAgentMediaArgs) error {
+	if err := validateCloudAgentModelSelectionFields(raw); err != nil {
+		return err
+	}
+	if a.SelectionID != "" {
+		if a.LogicalModelID != "" || a.ChannelID != "" || a.ChannelModelKey != "" {
+			return cloudAgentFieldError("selectionId", "mutually_exclusive", "模型选择冲突：selectionId 与 logicalModelId/channelId/channelModelKey 不得混用，只能给一种")
+		}
+		selection, err := s.resolveCloudAgentSelectionID(userID, a.SelectionID)
+		if err != nil {
+			return err
+		}
+		a.LogicalModelID, a.ChannelID, a.ChannelModelKey = selection.LogicalModelID, selection.ChannelID, selection.ChannelModelKey
+		return nil
+	}
+	return resolveCloudAgentLegacySelection(a)
+}
+
+// validateCloudAgentModelSelectionFields checks the presence and JSON type of
+// each raw model-selection field before the decoded selection is interpreted.
+func validateCloudAgentModelSelectionFields(raw string) error {
 	// Go's JSON decoder accepts null for string fields; the tool contract does
 	// not. Check presence/type before interpreting the decoded selection.
 	var fields map[string]json.RawMessage
@@ -131,17 +165,12 @@ func (s *Service) validateCloudAgentModelSelection(userID, raw string, a *cloudA
 			}
 		}
 	}
-	if a.SelectionID != "" {
-		if a.LogicalModelID != "" || a.ChannelID != "" || a.ChannelModelKey != "" {
-			return cloudAgentFieldError("selectionId", "mutually_exclusive", "模型选择冲突：selectionId 与 logicalModelId/channelId/channelModelKey 不得混用，只能给一种")
-		}
-		selection, err := s.resolveCloudAgentSelectionID(userID, a.SelectionID)
-		if err != nil {
-			return err
-		}
-		a.LogicalModelID, a.ChannelID, a.ChannelModelKey = selection.LogicalModelID, selection.ChannelID, selection.ChannelModelKey
-		return nil
-	}
+	return nil
+}
+
+// resolveCloudAgentLegacySelection checks the logicalModelId or complete
+// channelId/channelModelKey selection when no selectionId was given.
+func resolveCloudAgentLegacySelection(a *cloudAgentMediaArgs) error {
 	switch {
 	case a.LogicalModelID != "" && (a.ChannelID != "" || a.ChannelModelKey != ""):
 		return cloudAgentFieldError("logicalModelId", "mutually_exclusive", "模型选择冲突：logicalModelId 与 channelId/channelModelKey 不得混用，请复制 model_list 的一种 selection")

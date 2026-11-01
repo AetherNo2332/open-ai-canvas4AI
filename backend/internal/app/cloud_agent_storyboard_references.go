@@ -110,71 +110,91 @@ func prepareCloudAgentStoryboardReferenceEdit(repo *repository.Repository, userI
 	if err != nil {
 		return nil, err
 	}
-	summary := ""
-	fields := []string{}
+	var summary string
+	var fields []string
 	if cloudAgentStoryboardSharedAction(args.Action) {
-		if args.RowID != "" || args.ReferenceNodeIDs == nil || len(args.ReferenceNodeIDs) > 100 || args.OutputMode != "" || args.OutputNodeID != "" {
-			return nil, BadAuthRequest("共享引用需要 referenceNodeIds，不接受行或输出参数")
-		}
-		next := append([]string{}, cloudAgentStrings(board["referenceNodeIds"])...)
-		if args.Action == "set_references" {
-			next = args.ReferenceNodeIDs
-		} else {
-			if len(args.ReferenceNodeIDs) == 0 {
-				return nil, BadAuthRequest("增量共享引用需要非空 references")
-			}
-			if _, err = cloudAgentResolveBusinessReferences(doc, args.ReferenceNodeIDs); err != nil {
-				return nil, err
-			}
-			for _, id := range args.ReferenceNodeIDs {
-				if args.Action == "add_references" {
-					if !cloudAgentContainsString(next, id) {
-						next = append(next, id)
-					}
-				} else {
-					retained := []string{}
-					for _, old := range next {
-						if old != id {
-							retained = append(retained, old)
-						}
-					}
-					next = retained
-				}
-			}
-		}
-		if len(next) > 100 {
-			return nil, BadAuthRequest("共享引用最多100项")
-		}
-		board["referenceNodeIds"] = next
-		if _, err = references.Resolve(doc, references.Scope{Kind: "storyboard-context", NodeID: args.NodeID}, capability.BuiltinRegistry()); err != nil {
-			return nil, cloudAgentReferenceError(err)
-		}
-		summary = "修改分镜共享引用"
-		fields = []string{"referenceNodeIds"}
+		summary, fields, err = applyCloudAgentStoryboardSharedReferences(doc, board, args)
 	} else {
-		if args.ReferenceNodeIDs != nil {
-			return nil, BadAuthRequest("输出绑定不接受 referenceNodeIds")
-		}
-		output := args.OutputNodeID
-		if args.Action == "unbind_output" {
-			if output != "" {
-				return nil, BadAuthRequest("解除输出不接受 outputNodeId")
-			}
-		} else if output == "" {
-			return nil, BadAuthRequest("绑定输出需要 outputNodeId")
-		}
-		// 绑定与解除都先核对持久占用：解除一个正在生成中的槽位同样会打乱回填。
-		if err = validateCloudAgentStoryboardOccupancy(repo, userID, canvasID, args.NodeID, args.RowID, output); err != nil {
-			return nil, err
-		}
-		if err = references.BindStoryboardOutput(doc, args.NodeID, args.RowID, args.OutputMode, output); err != nil {
-			return nil, cloudAgentReferenceError(err)
-		}
-		summary = fmt.Sprintf("修改镜头 %s 的 %s 输出归属", args.RowID, args.OutputMode)
-		fields = []string{args.OutputMode + "NodeId"}
+		summary, fields, err = applyCloudAgentStoryboardOutputBinding(repo, userID, canvasID, doc, args)
+	}
+	if err != nil {
+		return nil, err
 	}
 	if err = reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
 		return nil, err
 	}
 	return &cloudAgentStoryboardMutationPlan{Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash, Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认修改分镜引用", Description: summary, Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeType: "script", NodeTypeLabel: "分镜脚本", Summary: summary, Fields: fields}}}}, nil
+}
+
+// applyCloudAgentStoryboardSharedReferences replaces, adds or removes the
+// storyboard's shared references and checks they still resolve.
+func applyCloudAgentStoryboardSharedReferences(doc, board map[string]any, args cloudAgentStoryboardEditArgs) (string, []string, error) {
+	if args.RowID != "" || args.ReferenceNodeIDs == nil || len(args.ReferenceNodeIDs) > 100 || args.OutputMode != "" || args.OutputNodeID != "" {
+		return "", nil, BadAuthRequest("共享引用需要 referenceNodeIds，不接受行或输出参数")
+	}
+	next := append([]string{}, cloudAgentStrings(board["referenceNodeIds"])...)
+	if args.Action == "set_references" {
+		next = args.ReferenceNodeIDs
+	} else {
+		if len(args.ReferenceNodeIDs) == 0 {
+			return "", nil, BadAuthRequest("增量共享引用需要非空 references")
+		}
+		if _, err := cloudAgentResolveBusinessReferences(doc, args.ReferenceNodeIDs); err != nil {
+			return "", nil, err
+		}
+		next = cloudAgentApplyReferenceDelta(next, args.ReferenceNodeIDs, args.Action == "add_references")
+	}
+	if len(next) > 100 {
+		return "", nil, BadAuthRequest("共享引用最多100项")
+	}
+	board["referenceNodeIds"] = next
+	if _, err := references.Resolve(doc, references.Scope{Kind: "storyboard-context", NodeID: args.NodeID}, capability.BuiltinRegistry()); err != nil {
+		return "", nil, cloudAgentReferenceError(err)
+	}
+	return "修改分镜共享引用", []string{"referenceNodeIds"}, nil
+}
+
+// cloudAgentApplyReferenceDelta adds (keeping order, skipping duplicates) or
+// removes every listed reference ID.
+func cloudAgentApplyReferenceDelta(next, ids []string, add bool) []string {
+	for _, id := range ids {
+		if add {
+			if !cloudAgentContainsString(next, id) {
+				next = append(next, id)
+			}
+			continue
+		}
+		retained := []string{}
+		for _, old := range next {
+			if old != id {
+				retained = append(retained, old)
+			}
+		}
+		next = retained
+	}
+	return next
+}
+
+// applyCloudAgentStoryboardOutputBinding binds or unbinds one row's image or
+// video output after checking the slot is not occupied by a running task.
+func applyCloudAgentStoryboardOutputBinding(repo *repository.Repository, userID, canvasID string, doc map[string]any, args cloudAgentStoryboardEditArgs) (string, []string, error) {
+	if args.ReferenceNodeIDs != nil {
+		return "", nil, BadAuthRequest("输出绑定不接受 referenceNodeIds")
+	}
+	output := args.OutputNodeID
+	if args.Action == "unbind_output" {
+		if output != "" {
+			return "", nil, BadAuthRequest("解除输出不接受 outputNodeId")
+		}
+	} else if output == "" {
+		return "", nil, BadAuthRequest("绑定输出需要 outputNodeId")
+	}
+	// 绑定与解除都先核对持久占用：解除一个正在生成中的槽位同样会打乱回填。
+	if err := validateCloudAgentStoryboardOccupancy(repo, userID, canvasID, args.NodeID, args.RowID, output); err != nil {
+		return "", nil, err
+	}
+	if err := references.BindStoryboardOutput(doc, args.NodeID, args.RowID, args.OutputMode, output); err != nil {
+		return "", nil, cloudAgentReferenceError(err)
+	}
+	return fmt.Sprintf("修改镜头 %s 的 %s 输出归属", args.RowID, args.OutputMode), []string{args.OutputMode + "NodeId"}, nil
 }

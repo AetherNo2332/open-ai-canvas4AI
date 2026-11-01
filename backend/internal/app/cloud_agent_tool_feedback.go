@@ -78,7 +78,6 @@ func cloudAgentArgumentFeedback(state *cloudAgentRuntime, call cloudAgentCall, d
 func cloudAgentArgumentExample(call cloudAgentCall, field string) map[string]any {
 	args := map[string]any{}
 	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
-	snapshot := "<canvas_get_state.snapshotHash>"
 	switch call.Function.Name {
 	case "canvas_get_state", "canvas_list_node_types", "canvas_list_assets", "model_list":
 		return map[string]any{}
@@ -89,107 +88,136 @@ func cloudAgentArgumentExample(call cloudAgentCall, field string) map[string]any
 	case "task_get":
 		return map[string]any{"taskId": "<taskId>"}
 	case "canvas_inspect_image":
-		// 保存摘要是最容易写坏的一种调用：给出完整的对象结构，nodeId/sha256 原样沿用本次调用。
-		nodeID, _ := args["nodeId"].(string)
-		sha, _ := args["sha256"].(string)
-		if !strings.HasPrefix(field, "summary") || nodeID == "" || len(sha) != 64 {
-			return nil
-		}
-		return map[string]any{"nodeId": nodeID, "sha256": sha, "summary": map[string]any{
-			"short":    "<一句话画面内容>",
-			"detailed": map[string]any{"subjects": []string{"<主体与外观>"}, "composition": "<构图>", "uncertainties": []string{}},
-		}}
+		return cloudAgentInspectImageExample(args, field)
 	case "storyboard":
-		example := map[string]any{"snapshotHash": snapshot, "nodeId": "<nodeId>", "action": args["action"]}
-		switch args["action"] {
-		case "read":
-			return map[string]any{"action": "read", "nodeId": "<nodeId>"}
-		case "lock", "unlock":
-			example["rowId"] = "<rowId>"
-			return example
-		case "append":
-			patch := cloudAgentPatchExample(args["patch"], cloudAgentStoryboardRowSchema())
-			if patch == nil {
-				return nil
-			}
-			example["patch"] = patch
-		case "update":
-			patch := cloudAgentPatchExample(args["patch"], cloudAgentStoryboardPatchSchema())
-			if patch == nil {
-				return nil
-			}
-			example["rowId"], example["patch"] = "<rowId>", patch
-		case "remove":
-			example["rowId"] = "<rowId>"
-		case "set_assets", "set_references":
-			// Guessing a replacement list could silently remove existing inputs.
-			return nil
-		case "bind_output", "unbind_output":
-			mode, _ := args["outputMode"].(string)
-			if mode != "image" && mode != "video" {
-				return nil
-			}
-			example["rowId"], example["outputMode"] = "<rowId>", mode
-			if args["action"] == "bind_output" {
-				example["outputNodeId"] = "<outputNodeId>"
-			}
-		default:
-			return nil
-		}
-		if ids, ok := args["rowIds"].([]any); ok && len(ids) > 0 {
-			placeholders := make([]string, len(ids))
-			for index := range ids {
-				placeholders[index] = fmt.Sprintf("<rowId%d>", index+1)
-			}
-			delete(example, "rowId")
-			example["rowIds"] = placeholders
-		}
-		return example
+		return cloudAgentStoryboardArgumentExample(args)
 	case "canvas_apply_ops":
-		ops := creationMaps(args["ops"])
-		index := 0
-		_, _ = fmt.Sscanf(field, "ops[%d]", &index)
-		if index < 0 || index >= len(ops) {
-			return nil
-		}
-		op := map[string]any{"type": ops[index]["type"], "id": "<nodeId>"}
-		switch op["type"] {
-		case "add_node":
-			nodeType := stringValue(ops[index]["nodeType"])
-			if !containsString(cloudAgentNodeTypeNames(), nodeType) {
-				return nil
-			}
-			op["id"], op["nodeType"] = "<new-node-id>", nodeType
-		case "update_node":
-			patch := cloudAgentPatchExample(ops[index]["patch"], cloudAgentPatchSchema())
-			if patch == nil {
-				return nil
-			}
-			op["patch"] = patch
-		case "delete_node":
-		case "duplicate_node":
-			op["id"], op["sourceNodeId"] = "<new-node-id>", "<sourceNodeId>"
-		case "set_parent":
-			parent, ok := ops[index]["parentId"].(string)
-			if !ok {
-				return nil
-			}
-			op["parentId"] = ""
-			if parent != "" {
-				op["parentId"] = "<parentId>"
-			}
-		case "replace_text":
-			op["match"], op["replacement"] = "<原文唯一片段>", "<替换内容>"
-		case "reorder_nodes":
-			op["nodeIds"] = []string{"<全部节点ID，按目标顺序>"}
-		case "reorder_rows":
-			op["rowIds"] = []string{"<全部行ID，按目标顺序>"}
-		default:
-			return nil
-		}
-		return map[string]any{"snapshotHash": snapshot, "ops": []any{op}}
+		return cloudAgentApplyOpsArgumentExample(args, field)
 	}
 	return nil
+}
+
+// cloudAgentInspectImageExample 保存摘要是最容易写坏的一种调用：给出完整的对象结构，nodeId/sha256 原样沿用本次调用。
+func cloudAgentInspectImageExample(args map[string]any, field string) map[string]any {
+	nodeID, _ := args["nodeId"].(string)
+	sha, _ := args["sha256"].(string)
+	if !strings.HasPrefix(field, "summary") || nodeID == "" || len(sha) != 64 {
+		return nil
+	}
+	return map[string]any{"nodeId": nodeID, "sha256": sha, "summary": map[string]any{
+		"short":    "<一句话画面内容>",
+		"detailed": map[string]any{"subjects": []string{"<主体与外观>"}, "composition": "<构图>", "uncertainties": []string{}},
+	}}
+}
+
+func cloudAgentStoryboardArgumentExample(args map[string]any) map[string]any {
+	example := map[string]any{"snapshotHash": "<canvas_get_state.snapshotHash>", "nodeId": "<nodeId>", "action": args["action"]}
+	switch args["action"] {
+	case "read":
+		return map[string]any{"action": "read", "nodeId": "<nodeId>"}
+	case "lock", "unlock":
+		example["rowId"] = "<rowId>"
+		return example
+	case "append":
+		patch := cloudAgentPatchExample(args["patch"], cloudAgentStoryboardRowSchema())
+		if patch == nil {
+			return nil
+		}
+		example["patch"] = patch
+	case "update":
+		patch := cloudAgentPatchExample(args["patch"], cloudAgentStoryboardPatchSchema())
+		if patch == nil {
+			return nil
+		}
+		example["rowId"], example["patch"] = "<rowId>", patch
+	case "remove":
+		example["rowId"] = "<rowId>"
+	case "set_assets", "set_references":
+		// Guessing a replacement list could silently remove existing inputs.
+		return nil
+	case "bind_output", "unbind_output":
+		if !cloudAgentStoryboardOutputExample(args, example) {
+			return nil
+		}
+	default:
+		return nil
+	}
+	if ids, ok := args["rowIds"].([]any); ok && len(ids) > 0 {
+		placeholders := make([]string, len(ids))
+		for index := range ids {
+			placeholders[index] = fmt.Sprintf("<rowId%d>", index+1)
+		}
+		delete(example, "rowId")
+		example["rowIds"] = placeholders
+	}
+	return example
+}
+
+func cloudAgentStoryboardOutputExample(args, example map[string]any) bool {
+	mode, _ := args["outputMode"].(string)
+	if mode != "image" && mode != "video" {
+		return false
+	}
+	example["rowId"], example["outputMode"] = "<rowId>", mode
+	if args["action"] == "bind_output" {
+		example["outputNodeId"] = "<outputNodeId>"
+	}
+	return true
+}
+
+func cloudAgentApplyOpsArgumentExample(args map[string]any, field string) map[string]any {
+	ops := creationMaps(args["ops"])
+	index := 0
+	_, _ = fmt.Sscanf(field, "ops[%d]", &index)
+	if index < 0 || index >= len(ops) {
+		return nil
+	}
+	op := cloudAgentCanvasOpExample(ops[index])
+	if op == nil {
+		return nil
+	}
+	return map[string]any{"snapshotHash": "<canvas_get_state.snapshotHash>", "ops": []any{op}}
+}
+
+// cloudAgentCanvasOpExample builds one placeholder op of the failing op's type;
+// nil means no safe example exists.
+func cloudAgentCanvasOpExample(source map[string]any) map[string]any {
+	op := map[string]any{"type": source["type"], "id": "<nodeId>"}
+	switch op["type"] {
+	case "add_node":
+		nodeType := stringValue(source["nodeType"])
+		if !containsString(cloudAgentNodeTypeNames(), nodeType) {
+			return nil
+		}
+		op["id"], op["nodeType"] = "<new-node-id>", nodeType
+	case "update_node":
+		patch := cloudAgentPatchExample(source["patch"], cloudAgentPatchSchema())
+		if patch == nil {
+			return nil
+		}
+		op["patch"] = patch
+	case "delete_node":
+	case "duplicate_node":
+		op["id"], op["sourceNodeId"] = "<new-node-id>", "<sourceNodeId>"
+	case "set_parent":
+		parent, ok := source["parentId"].(string)
+		if !ok {
+			return nil
+		}
+		op["parentId"] = ""
+		if parent != "" {
+			op["parentId"] = "<parentId>"
+		}
+	case "replace_text":
+		op["match"], op["replacement"] = "<原文唯一片段>", "<替换内容>"
+	case "reorder_nodes":
+		op["nodeIds"] = []string{"<全部节点ID，按目标顺序>"}
+	case "reorder_rows":
+		op["rowIds"] = []string{"<全部行ID，按目标顺序>"}
+	default:
+		return nil
+	}
+	return op
 }
 
 // Keep the requested field set; complex or ambiguous patches receive hints only.
