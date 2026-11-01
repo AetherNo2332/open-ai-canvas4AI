@@ -5,6 +5,12 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 后端架构守卫（全后端）
+
+- 已实现：架构守卫从 Agent 代码扩大到后端全部生产 Go 代码（不含测试、testdata、third_party），规模与复杂度上限不变；依赖方向按 AGENTS.md 第 3 节调用链检查，当前没有违规，依赖违规不能登记例外。导出 map 规则仍只约束云端 Agent 文件。
+- 已实现：存量共 635 条（超大文件 62、长函数 150、高复杂度 398、Agent 导出 map 25）；其中 Agent 原有 183 条不变，新增 452 条为非 Agent 代码与跨文件别名识别出的存量。
+- [ ] 在 PR 上故意让 repository 或业务域包 import `internal/app`，确认 CI 的「Check backend architecture」失败且无法通过登记基线放行。
+
 ## Agent 架构守卫
 
 - 已实现：`backend/internal/architecture` 用 AST 检查云端 Agent 代码（app 的 `cloud_agent*.go`、`agent_*.go`，handler 的 `agent*.go`、`internal_agent.go`，以及 `agentcontext`、`agentmemory`）：单文件不超过 600 行、函数和闭包不超过 120 行、圈复杂度不超过 20，域包不得 import app/service，导出 API 不暴露非类型化 map。CI 的 Backend tests（rest）在全量测试前单独运行。

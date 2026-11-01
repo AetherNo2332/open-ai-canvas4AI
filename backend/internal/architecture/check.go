@@ -1,7 +1,8 @@
 // Package architecture enforces size, complexity, dependency and protocol
-// boundaries for the fork's cloud Agent code using Go syntax trees. It parses
+// boundaries for backend production Go code using Go syntax trees. It parses
 // sources without type checking and has no dependency on app, service, or a
-// linter plugin. Rules follow upstream ddcat backend/internal/agent/architecture.
+// linter plugin. Size and protocol rules follow upstream ddcat
+// backend/internal/agent/architecture; the layer rules follow AGENTS.md section 3.
 package architecture
 
 import (
@@ -50,6 +51,8 @@ type source struct {
 	file    *ast.File
 	imports map[string]string
 	body    []byte
+	// agent marks cloud Agent files; only they carry the exported-map rule.
+	agent bool
 }
 
 type typeDecl struct {
@@ -58,14 +61,32 @@ type typeDecl struct {
 }
 
 type scanner struct {
-	files []*source
-	types map[string]typeDecl
-	fset  *token.FileSet
+	module string
+	files  []*source
+	types  map[string]typeDecl
+	fset   *token.FileSet
+}
+
+// InScope reports whether a backend-relative Go file is production code this
+// guard scans: everything in the backend module except tests, testdata, and the
+// vendored third_party module.
+func InScope(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") {
+		return false
+	}
+	for _, part := range strings.Split(path.Dir(rel), "/") {
+		if part == "testdata" || part == "third_party" || strings.HasPrefix(part, ".") {
+			return false
+		}
+	}
+	return true
 }
 
 // InAgentScope reports whether a backend-relative Go file is part of the cloud
-// Agent code this guard covers. Test files are matched by their production name
-// but are excluded from scanning by the caller.
+// Agent code (AGENTS.md section 3). Agent files follow the backend rules and
+// additionally may not expose untyped maps in exported APIs. Test files are
+// matched by their production name.
 func InAgentScope(rel string) bool {
 	rel = filepath.ToSlash(rel)
 	dir, base := path.Dir(rel), path.Base(rel)
@@ -91,12 +112,35 @@ func InAgentScope(rel string) bool {
 	return false
 }
 
-// dependencyRuleApplies limits the import rule to Agent domain packages. The
-// HTTP layer (handler) and the composition root (app) import service/app by
-// design; see AGENTS.md section 3.
-func dependencyRuleApplies(rel string) bool {
-	dir := path.Dir(filepath.ToSlash(rel))
-	return dir != "internal/app" && dir != "internal/handler"
+// layerOf returns the internal top-level package a backend-relative path or
+// import belongs to ("" outside internal/).
+func layerOf(rel string) string {
+	rel = filepath.ToSlash(rel)
+	rest, ok := strings.CutPrefix(rel, "internal/")
+	if !ok {
+		return ""
+	}
+	return strings.Split(rest, "/")[0]
+}
+
+// layerViolation applies the dependency direction of AGENTS.md section 3
+// (handler -> service -> app -> domain packages -> repository/model). It keeps
+// the rule set of the earlier internal/architecture import test: handler stays
+// off app/repository/database, repository and domain packages never reach back
+// into handler/service/app, and model depends on no layer above it. Entry
+// points outside internal/ (cmd, payment plugins) wire layers freely.
+func layerViolation(from, to string) bool {
+	upper := to == "handler" || to == "service" || to == "app"
+	switch from {
+	case "", "service", "app":
+		return false
+	case "handler":
+		return to == "app" || to == "repository" || to == "database"
+	case "model":
+		return upper || to == "repository" || to == "database"
+	default:
+		return upper
+	}
 }
 
 func DecodeBaseline(body []byte) (Baseline, error) {
@@ -173,20 +217,23 @@ func loadSources(root string) (*scanner, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &scanner{fset: token.NewFileSet(), types: map[string]typeDecl{}}
-	err = filepath.WalkDir(filepath.Join(root, "internal"), func(file string, entry fs.DirEntry, walkErr error) error {
+	s := &scanner{module: module, fset: token.NewFileSet(), types: map[string]typeDecl{}}
+	err = filepath.WalkDir(root, func(file string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
-		}
-		if entry.IsDir() || !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") {
-			return nil
 		}
 		rel, relErr := filepath.Rel(root, file)
 		if relErr != nil {
 			return relErr
 		}
 		rel = filepath.ToSlash(rel)
-		if !InAgentScope(rel) {
+		if entry.IsDir() {
+			if rel != "." && (entry.Name() == "testdata" || entry.Name() == "third_party" || strings.HasPrefix(entry.Name(), ".") || entry.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !InScope(rel) {
 			return nil
 		}
 		content, readErr := os.ReadFile(file)
@@ -197,7 +244,11 @@ func loadSources(root string) (*scanner, error) {
 		if parseErr != nil {
 			return parseErr
 		}
-		src := &source{path: rel, pkg: module + "/" + path.Dir(rel), file: parsed, body: content, imports: map[string]string{}}
+		pkg := module
+		if dir := path.Dir(rel); dir != "." {
+			pkg += "/" + dir
+		}
+		src := &source{path: rel, pkg: pkg, file: parsed, body: content, imports: map[string]string{}, agent: InAgentScope(rel)}
 		for _, spec := range parsed.Imports {
 			imported, _ := strconv.Unquote(spec.Path.Value)
 			name := path.Base(imported)
@@ -242,15 +293,7 @@ func moduleName(root string) (string, error) {
 }
 
 func (s *scanner) fileFindings(src *source) []Finding {
-	findings := []Finding{}
-	if dependencyRuleApplies(src.path) {
-		for _, spec := range src.file.Imports {
-			imported, _ := strconv.Unquote(spec.Path.Value)
-			if strings.Contains(imported, "/internal/app") && pathBoundary(imported, "/internal/app") || strings.Contains(imported, "/internal/service") && pathBoundary(imported, "/internal/service") {
-				findings = append(findings, Finding{ID: src.path + ":import:" + imported, Rule: "dependency", Value: 1, Detail: "Agent domain packages must not import app/service"})
-			}
-		}
-	}
+	findings := s.dependencyFindings(src)
 	lines := len(strings.Split(strings.TrimSuffix(string(src.body), "\n"), "\n"))
 	if lines > fileLineLimit {
 		findings = append(findings, Finding{ID: src.path + ":file_lines", Rule: "file_lines", Value: lines, Limit: fileLineLimit, Detail: "production Go file exceeds 600 lines"})
@@ -260,7 +303,9 @@ func (s *scanner) fileFindings(src *source) []Finding {
 		case *ast.FuncDecl:
 			findings = append(findings, s.functionFindings(src, typed)...)
 		case *ast.GenDecl:
-			findings = append(findings, s.exportedTypeFindings(src, typed)...)
+			if src.agent {
+				findings = append(findings, s.exportedTypeFindings(src, typed)...)
+			}
 			for _, spec := range typed.Specs {
 				if value, ok := spec.(*ast.ValueSpec); ok && len(value.Names) > 0 {
 					findings = append(findings, s.closureFindings(src, value.Names[0].Name, value)...)
@@ -271,7 +316,20 @@ func (s *scanner) fileFindings(src *source) []Finding {
 	return findings
 }
 
-func pathBoundary(imported, component string) bool {
-	_, tail, ok := strings.Cut(imported, component)
-	return ok && (tail == "" || strings.HasPrefix(tail, "/"))
+// dependencyFindings reports imports that cross the layer order. Dependency
+// findings can never be baselined: a violating import must be removed.
+func (s *scanner) dependencyFindings(src *source) []Finding {
+	findings := []Finding{}
+	from := layerOf(src.path)
+	for _, spec := range src.file.Imports {
+		imported, _ := strconv.Unquote(spec.Path.Value)
+		rest, ok := strings.CutPrefix(imported, s.module+"/")
+		if !ok {
+			continue
+		}
+		if to := layerOf(rest); layerViolation(from, to) {
+			findings = append(findings, Finding{ID: src.path + ":import:" + imported, Rule: "dependency", Value: 1, Detail: "internal/" + from + " must not import internal/" + to + " (AGENTS.md section 3 call chain)"})
+		}
+	}
+	return findings
 }

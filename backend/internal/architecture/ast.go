@@ -14,7 +14,7 @@ func (s *scanner) functionFindings(src *source, fn *ast.FuncDecl) []Finding {
 		findings = append(findings, s.bodyFindings(src, src.path+":func:"+name, fn.Pos(), fn.End(), fn.Body)...)
 		findings = append(findings, s.closureFindings(src, name, fn.Body)...)
 	}
-	if ast.IsExported(fn.Name.Name) && s.containsUntypedMap(fn.Type, src, map[string]bool{}) {
+	if src.agent && ast.IsExported(fn.Name.Name) && s.containsUntypedMap(fn.Type, src, map[string]bool{}) {
 		findings = append(findings, signatureFinding(src.path, name))
 	}
 	return findings

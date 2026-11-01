@@ -202,6 +202,6 @@ func TestWorkspaceArchitecture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(findings) > 0 {
-		t.Fatal("Agent architecture check failed:\n" + FormatFindings(findings))
+		t.Fatal("backend architecture check failed:\n" + FormatFindings(findings))
 	}
 }
