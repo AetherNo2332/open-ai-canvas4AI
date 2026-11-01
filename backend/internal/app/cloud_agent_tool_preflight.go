@@ -108,56 +108,70 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 	seenCalls := map[string]bool{}
 	categoryAdmitted := false
 	for index, call := range calls {
-		admission := cloudAgentCallAdmission{CallID: call.ID, Allowed: true}
-		name := call.Function.Name
-		schema, advertised := cloudAgentAdvertisedTool(state, name)
+		schema, advertised := cloudAgentAdvertisedTool(state, call.Function.Name)
 		// 工具表为空（旧检查点或测试构造的状态）时不拿"没下发"当罪证，退回平台工具集判断。
 		if !advertised && len(state.Canonical.Tools) == 0 {
-			advertised = cloudAgentPlatformToolNames()[name]
+			advertised = cloudAgentPlatformToolNames()[call.Function.Name]
 		}
-		switch {
-		case cloudAgentLegacyStoryboardTool(name):
-			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "tool", "旧分镜工具已退役；使用 storyboard，action=read/split/resplit/update/lock/unlock。新表通过 canvas_apply_ops 创建 script 并写入剧情后调用 split")
-		case !advertised:
-			issue, message := cloudAgentUnadvertisedToolAdmission(state, name)
-			admission = cloudAgentRejectCall(call, issue, "", message)
-		case !cloudAgentToolInScope(state, name):
-			// 上一个同类错误的自动纠错进入收紧档：本步只开放修复所需的工具。
-			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "上一步的同类错误尚未修正，本步只开放修复所需的工具（"+strings.Join(state.ToolScope, "、")+"）；请先用它们改正后再继续")
-		case !cloudAgentToolAllowed(state.Request, name):
-			admission = cloudAgentRejectCall(call, cloudAgentAdmissionPermission, "", "工具未获本轮权限授权")
-		case call.ID != "" && seenCalls[call.ID]:
-			admission = cloudAgentRejectCall(call, cloudAgentAdmissionDuplicateCall, "callId", "同一批里 callId 重复：「"+truncateRunes(call.ID, 60)+"」；本步只执行第一次出现的调用")
-		case state.DisclosureVersion < cloudAgentToolDisclosureVersion && cloudAgentIsToolCategory(name) && categoryAdmitted:
-			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "每个模型步只可打开一种工具类型；请在下一步选择其他类型")
-		default:
-			if err := cloudAgentStrictArgumentObjectError(call.Function.Arguments); err != nil {
-				admission = cloudAgentRejectArgumentError(call, err)
-			} else if err := validateCloudAgentToolArguments(schema, call.Function.Arguments); err != nil {
-				admission = cloudAgentRejectArgumentError(call, err)
-			}
-		}
-		if state.DisclosureVersion < cloudAgentToolDisclosureVersion && admission.Allowed && cloudAgentIsToolCategory(name) {
+		admission := cloudAgentAdmitCall(state, call, schema, advertised, seenCalls, categoryAdmitted)
+		if state.DisclosureVersion < cloudAgentToolDisclosureVersion && admission.Allowed && cloudAgentIsToolCategory(call.Function.Name) {
 			categoryAdmitted = true
 		}
 		if call.ID != "" {
 			seenCalls[call.ID] = true
 		}
 		if cloudAgentWriteCall(call) {
-			switch {
-			case writeFailed && admission.Allowed:
-				admission = cloudAgentSkipCall(call, cloudAgentAdmissionBatchCancel, "同一批里前面的写入/生成调用未通过校验，本调用已跳过；请先修正那条调用的参数，再在下一步单独提交")
-			case !admission.Allowed:
-				writeFailed = true
-			case writeAdmitted:
-				admission = cloudAgentSkipCall(call, cloudAgentAdmissionSingleWrite, "本模型步骤已放行一个写入/生成调用，本调用未执行；请在下一模型步骤单独提交，可复用成功回执的新 snapshotHash；仅在实际冲突或所需状态未知时重新读取目标并核对原操作")
-			default:
-				writeAdmitted = true
-			}
+			admission, writeAdmitted, writeFailed = cloudAgentApplyWritePolicy(call, admission, writeAdmitted, writeFailed)
 		}
 		admissions[index] = admission
 	}
 	return admissions
+}
+
+// cloudAgentAdmitCall 做单调用准入判定：退役工具、下发工具表、纠错范围、权限、
+// 重复 callId、类型敞口与参数 schema，按此优先级取第一个命中的结论。
+func cloudAgentAdmitCall(state *cloudAgentRuntime, call cloudAgentCall, schema map[string]any, advertised bool, seenCalls map[string]bool, categoryAdmitted bool) cloudAgentCallAdmission {
+	name := call.Function.Name
+	admission := cloudAgentCallAdmission{CallID: call.ID, Allowed: true}
+	switch {
+	case cloudAgentLegacyStoryboardTool(name):
+		admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "tool", "旧分镜工具已退役；使用 storyboard，action=read/split/resplit/update/lock/unlock。新表通过 canvas_apply_ops 创建 script 并写入剧情后调用 split")
+	case !advertised:
+		issue, message := cloudAgentUnadvertisedToolAdmission(state, name)
+		admission = cloudAgentRejectCall(call, issue, "", message)
+	case !cloudAgentToolInScope(state, name):
+		// 上一个同类错误的自动纠错进入收紧档：本步只开放修复所需的工具。
+		admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "上一步的同类错误尚未修正，本步只开放修复所需的工具（"+strings.Join(state.ToolScope, "、")+"）；请先用它们改正后再继续")
+	case !cloudAgentToolAllowed(state.Request, name):
+		admission = cloudAgentRejectCall(call, cloudAgentAdmissionPermission, "", "工具未获本轮权限授权")
+	case call.ID != "" && seenCalls[call.ID]:
+		admission = cloudAgentRejectCall(call, cloudAgentAdmissionDuplicateCall, "callId", "同一批里 callId 重复：「"+truncateRunes(call.ID, 60)+"」；本步只执行第一次出现的调用")
+	case state.DisclosureVersion < cloudAgentToolDisclosureVersion && cloudAgentIsToolCategory(name) && categoryAdmitted:
+		admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "每个模型步只可打开一种工具类型；请在下一步选择其他类型")
+	default:
+		if err := cloudAgentStrictArgumentObjectError(call.Function.Arguments); err != nil {
+			admission = cloudAgentRejectArgumentError(call, err)
+		} else if err := validateCloudAgentToolArguments(schema, call.Function.Arguments); err != nil {
+			admission = cloudAgentRejectArgumentError(call, err)
+		}
+	}
+	return admission
+}
+
+// cloudAgentApplyWritePolicy 落实写入批次策略：一步最多放行一个写入/生成调用，
+// 前面的写入未通过校验时同批后续写入整批取消。
+func cloudAgentApplyWritePolicy(call cloudAgentCall, admission cloudAgentCallAdmission, writeAdmitted, writeFailed bool) (cloudAgentCallAdmission, bool, bool) {
+	switch {
+	case writeFailed && admission.Allowed:
+		admission = cloudAgentSkipCall(call, cloudAgentAdmissionBatchCancel, "同一批里前面的写入/生成调用未通过校验，本调用已跳过；请先修正那条调用的参数，再在下一步单独提交")
+	case !admission.Allowed:
+		writeFailed = true
+	case writeAdmitted:
+		admission = cloudAgentSkipCall(call, cloudAgentAdmissionSingleWrite, "本模型步骤已放行一个写入/生成调用，本调用未执行；请在下一模型步骤单独提交，可复用成功回执的新 snapshotHash；仅在实际冲突或所需状态未知时重新读取目标并核对原操作")
+	default:
+		writeAdmitted = true
+	}
+	return admission, writeAdmitted, writeFailed
 }
 
 func cloudAgentLegacyStoryboardTool(name string) bool {
