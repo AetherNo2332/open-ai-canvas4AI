@@ -61,7 +61,27 @@ func cloudAgentProjectedInputTokens(pressure cloudAgentContextPressure, state *c
 // actual 是"实际要发出去的那份信封"（上游 #601 新增的可选参数）：占用分布必须对着真实请求算，
 // 准入改写之后的 canonical 与内存里的运行态副本可能不是同一份。
 func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state *cloudAgentRuntime, actual ...canonicalAgentRequest) map[string]any {
-	payload := map[string]any{
+	payload := cloudAgentContextPressureBase(pressure)
+	cloudAgentContextPressureWindow(payload, pressure)
+	if state == nil {
+		return payload
+	}
+	// 单步边界（输出上限与墙钟）也要能一眼看出"哪条线在管这一步"：管理员改了策略、
+	// 或者把上限配成 0（不限制）时，界面与排查都不该靠猜。
+	if state.StepLimits.OutputTokens > 0 {
+		payload["stepMaxOutputTokens"] = state.StepLimits.OutputTokens
+	}
+	if state.StepLimits.Timeout > 0 {
+		payload["stepTimeoutSeconds"] = int(state.StepLimits.Timeout / time.Second)
+	}
+	projectedTokens, tokenSource := cloudAgentContextPressureTokens(payload, pressure, state)
+	cloudAgentContextPressureCompaction(payload, pressure, state, projectedTokens, tokenSource)
+	payload["breakdown"] = cloudAgentContextBreakdownPayload(state, actual...)
+	return payload
+}
+
+func cloudAgentContextPressureBase(pressure cloudAgentContextPressure) map[string]any {
+	return map[string]any{
 		"budgetPlan":    pressure.BudgetPlan,
 		"budgetVersion": pressure.BudgetPlan.Version, "budgetDigest": pressure.BudgetPlan.Digest,
 		"compactionReserveTokens": pressure.BudgetPlan.CompactionReserveTokens,
@@ -79,6 +99,10 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		// 快照版本与相位：读数属于"下一次请求发出之前"的测量，消费方不必猜。
 		"schemaVersion": 2, "phase": "before_request",
 	}
+}
+
+// cloudAgentContextPressureWindow adds the model window and budget lines.
+func cloudAgentContextPressureWindow(payload map[string]any, pressure cloudAgentContextPressure) {
 	if pressure.PromptLimitChars > 0 {
 		payload["promptLimitChars"] = pressure.PromptLimitChars
 	}
@@ -108,17 +132,11 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 	if pressure.CompactAtTokens > 0 {
 		payload["compactAtTokens"] = pressure.CompactAtTokens
 	}
-	if state == nil {
-		return payload
-	}
-	// 单步边界（输出上限与墙钟）也要能一眼看出"哪条线在管这一步"：管理员改了策略、
-	// 或者把上限配成 0（不限制）时，界面与排查都不该靠猜。
-	if state.StepLimits.OutputTokens > 0 {
-		payload["stepMaxOutputTokens"] = state.StepLimits.OutputTokens
-	}
-	if state.StepLimits.Timeout > 0 {
-		payload["stepTimeoutSeconds"] = int(state.StepLimits.Timeout / time.Second)
-	}
+}
+
+// cloudAgentContextPressureTokens adds the provider anchor and the projected
+// next-request reading, and returns the projected tokens and their source.
+func cloudAgentContextPressureTokens(payload map[string]any, pressure cloudAgentContextPressure, state *cloudAgentRuntime) (int, string) {
 	// 上游实测锚点：provider 用模型自己的分词器报出的 prompt 规模，是权威读数。
 	// 主读数与压缩判据直接使用实测；本地估算仅留作诊断。
 	projectedTokens, tokenSource := cloudAgentProjectedInputTokens(pressure, state)
@@ -169,6 +187,12 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		ratio := math.Min(9.99, float64(projectedTokens)/float64(pressure.UsableInputTokens))
 		payload["pressureRatio"], payload["projectedPressureRatio"] = ratio, ratio
 	}
+	return projectedTokens, tokenSource
+}
+
+// cloudAgentContextPressureCompaction adds the compaction trigger reading:
+// tokens when a model budget is known, bytes or message count otherwise.
+func cloudAgentContextPressureCompaction(payload map[string]any, pressure cloudAgentContextPressure, state *cloudAgentRuntime, projectedTokens int, tokenSource string) {
 	raw, _ := json.Marshal(state.Canonical.Messages)
 	// 条数口径必须数"当前会话"，不是压缩后残留的 TextHistory：后者最多 7 条，
 	// 让"≥16 条"这条规则永远是死的（实测 38 条消息的会话也照样不触发）。
@@ -189,8 +213,6 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		payload["compactionBasis"] = "bytes"
 		payload["compactionPressureRatio"] = math.Max(byteRatio, messageRatio)
 	}
-	payload["breakdown"] = cloudAgentContextBreakdownPayload(state, actual...)
-	return payload
 }
 
 // cloudAgentContextBreakdownPayload 报"这次要发出去的请求被谁占着"：三个 canonical 桶
