@@ -14,5 +14,5 @@ linters:
     - staticcheck
 
 # Agent dependency direction, exported protocol maps, size, and cyclomatic
-# complexity are enforced by internal/agent/architecture AST tests. They are
+# complexity are enforced by internal/architecture AST tests. They are
 # deliberately not expressed as ineffective text/forbidigo regexes here.

@@ -5,6 +5,13 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## Agent 架构守卫
+
+- 已实现：`backend/internal/architecture` 用 AST 检查云端 Agent 代码（app 的 `cloud_agent*.go`、`agent_*.go`，handler 的 `agent*.go`、`internal_agent.go`，以及 `agentcontext`、`agentmemory`）：单文件不超过 600 行、函数和闭包不超过 120 行、圈复杂度不超过 20，域包不得 import app/service，导出 API 不暴露非类型化 map。CI 的 Backend tests（rest）在全量测试前单独运行。
+- 已实现：存量 183 条登记在 `baseline.json`（超大文件 11、长函数 43、高复杂度 109、导出 map 20），每条为精确 ID 和冻结值；新增或增长失败，改善后不下调也失败。
+- [ ] 在 PR 上故意让一个 Agent 函数超过 120 行或复杂度超过 20，确认 CI 的「Check Agent architecture」失败并列出该函数；改回后通过。
+- [ ] 拆分 `cloud_agent_runtime.go` 的 `executeCloudAgentToolCallAttempt` 后，按失败信息下调或删除对应基线条目，确认工具调用、审批、重试与生成任务行为不变。
+
 ## Agent 工具合同 v19：精简节点更新字段、取消分批开放
 
 - 已实现：`canvas_apply_ops` 的 `update_node.patch` 只完整列出 title、content、prompt、composerContent，其余字段只给类型；有画布的运行从首步起下发完整合格目录，不再按提示词关键词或画布内容追加批量创作表等工具；每步只剔除当前权限不再允许的工具。工具 schema 从 68,203 字节降到 55,591 字节（22 个工具），并新增单工具 12,000 字节上限。

@@ -24,6 +24,9 @@ const WEB = path.join(ROOT, "web");
 const BACKEND = path.join(ROOT, "backend");
 const LOG_DIR = path.join(ROOT, ".local", "cache", "verify");
 const TASK_TIMEOUT_MS = 25 * 60 * 1000;
+// Windows 没有 POSIX 进程组，detached 还会让子进程脱离控制台，go test 启动的每个测试程序都会各自弹出控制台窗口；
+// 所以只在非 Windows 上分离进程组，Windows 用隐藏窗口启动、用 taskkill /T 结束整棵进程树。
+const DETACH_PROCESS_GROUP = process.platform !== "win32";
 
 const options = parseArgs(process.argv.slice(2));
 
@@ -138,8 +141,8 @@ if (wantBackend) {
         check: (output) => (output.trim() ? `以下文件需要 gofmt -w：\n${output.trim()}` : ""),
     });
     if (spawnSync("golangci-lint", ["--version"], { encoding: "utf8" }).status === 0) {
-        tasks.push({ name: "backend:agent-lint", cwd: BACKEND, cmd: "golangci-lint", args: ["run", "--config=.golangci.yml", "./internal/agent/..."], weight: 60 });
-    } else notCovered.push("Agent 静态检查 golangci-lint v2.5.0（本机未安装；Agent 架构测试已包含在 backend:test-rest）");
+        tasks.push({ name: "backend:agent-lint", cwd: BACKEND, cmd: "golangci-lint", args: ["run", "--config=.golangci.yml", "./internal/agentcontext/...", "./internal/agentmemory/...", "./internal/architecture/..."], weight: 60 });
+    } else notCovered.push("Agent 静态检查 golangci-lint v2.5.0（本机未安装；Agent 架构守卫 internal/architecture 已包含在 backend:test-rest）");
     const appPackage = "yingce/backend/internal/app";
     const otherPackages = lines(spawnSync("go", ["list", "./..."], { cwd: BACKEND, encoding: "utf8" }).stdout).filter((pkg) => pkg !== appPackage);
     tasks.push({ name: "backend:test-rest", cwd: BACKEND, cmd: "go", args: ["test", "-timeout=20m", ...otherPackages], weight: 100 });
@@ -189,6 +192,10 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 function killTree(child) {
     // pid 必须是真实子进程：process.kill(-0) 会向本脚本所在的进程组发信号。
     if (!child?.pid) return;
+    if (!DETACH_PROCESS_GROUP) {
+        spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        return;
+    }
     try {
         process.kill(-child.pid, "SIGTERM");
     } catch {
@@ -213,8 +220,8 @@ function runTask(task) {
         const log = createWriteStream(logPath);
         let output = "";
         const startedAt = Date.now();
-        // 独立进程组：超时或中断时能结束 vite、chrome、go 子进程。
-        const child = spawn(task.cmd, args, { cwd: task.cwd, env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", ...task.env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+        // 独立进程组（Windows 为进程树）：超时或中断时能结束 vite、chrome、go 子进程。
+        const child = spawn(task.cmd, args, { cwd: task.cwd, env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", ...task.env }, detached: DETACH_PROCESS_GROUP, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
         running.set(task.name, child);
         const collect = (chunk) => {
             output += chunk;

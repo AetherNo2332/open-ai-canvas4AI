@@ -474,7 +474,14 @@ var cloudAgentPatchCommonFields = map[string]bool{"title": true, "content": true
 func cloudAgentPatchSchema() map[string]any {
 	properties := map[string]any{}
 	variants := map[string][]map[string]any{}
-	seen := map[string]map[string]bool{}
+	seen := map[string]bool{}
+	addVariant := func(key string, property map[string]any) {
+		encoded, _ := json.Marshal(property)
+		if marker := key + "\x00" + string(encoded); !seen[marker] {
+			seen[marker] = true
+			variants[key] = append(variants[key], property)
+		}
+	}
 	for _, descriptor := range canvasCapabilityRegistry.List() {
 		if !descriptor.CanUpdate {
 			continue
@@ -483,15 +490,7 @@ func cloudAgentPatchSchema() map[string]any {
 			property := field.JSONSchema()
 			kind := property["type"]
 			if !cloudAgentPatchCommonFields[key] {
-				property = cloudAgentPatchTypeOnly(property)
-				encoded, _ := json.Marshal(property)
-				if seen[key] == nil {
-					seen[key] = map[string]bool{}
-				}
-				if !seen[key][string(encoded)] {
-					variants[key] = append(variants[key], property)
-					seen[key][string(encoded)] = true
-				}
+				addVariant(key, cloudAgentPatchTypeOnly(property))
 				continue
 			}
 			// Rich native contracts are discovered per node type rather than
@@ -510,14 +509,7 @@ func cloudAgentPatchSchema() map[string]any {
 				property["x-canvas-resettable"] = true
 				property["description"] = fmt.Sprint(property["description"]) + "；null 清除该可选字段，省略保持原值。"
 			}
-			encoded, _ := json.Marshal(property)
-			if seen[key] == nil {
-				seen[key] = map[string]bool{}
-			}
-			if !seen[key][string(encoded)] {
-				variants[key] = append(variants[key], property)
-				seen[key][string(encoded)] = true
-			}
+			addVariant(key, property)
 		}
 	}
 	for key, values := range variants {

@@ -84,6 +84,7 @@ description: 从产品功能快速定位主要代码入口
 - `backend/internal/model/agent_admission.go`、`repository/agent_admission.go`：后台配额、数据库串行化准入、用户与画布公平性；`database/migrations.go`：迁移60、61。
 - `app/agent_worker_auth.go`、`repository/agent_worker.go`、`handler/internal_agent.go`：Worker 引导/撤销、用户作用域、短期授权与当前租约验证；`handler/admin_agent_workers.go`：管理员身份管理。
 - `internal/observability/exporter.go`：Agent 运行与工具事件的进程内聚合及可选 OTLP 导出。
+- `internal/architecture`：Agent 架构守卫（AST）。扫描 `app/cloud_agent*.go`、`app/agent_*.go`、`handler/agent*.go`、`handler/internal_agent.go` 与 `agentcontext`、`agentmemory`，限制单文件 600 行、函数与闭包 120 行、圈复杂度 20，域包不得 import app/service，导出 API 不暴露非类型化 map；存量在 `baseline.json` 精确登记，只能下调或删除。
 - `handler/openapi_contract_test.go` 与 `openapi-route-baseline.txt`：公共路由合同（规范里不得有未注册路由，未写入规范的路由按精确基线登记）、`CloudAgentRequest` 与运行读取查询的字段守卫；工具 schema 制品测试继续保留。
 - `scripts/release-metadata.mjs`：唯一 VERSION 的发布派生与精确日志边界；`scripts/verify-production-agent-smoke.py`：隔离生产编排、确定性模型、审批和 SSE 验收入口。
 

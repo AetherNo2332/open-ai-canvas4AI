@@ -1,0 +1,277 @@
+// Package architecture enforces size, complexity, dependency and protocol
+// boundaries for the fork's cloud Agent code using Go syntax trees. It parses
+// sources without type checking and has no dependency on app, service, or a
+// linter plugin. Rules follow upstream ddcat backend/internal/agent/architecture.
+package architecture
+
+import (
+	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+const (
+	fileLineLimit     = 600
+	functionLineLimit = 120
+	complexityLimit   = 20
+)
+
+type Finding struct {
+	ID     string `json:"id"`
+	Rule   string `json:"rule"`
+	Value  int    `json:"value"`
+	Limit  int    `json:"limit"`
+	Detail string `json:"detail"`
+}
+
+type Allowance struct {
+	ID     string `json:"id"`
+	Max    int    `json:"max"`
+	Reason string `json:"reason"`
+}
+
+type Baseline struct {
+	Version    int         `json:"version"`
+	Allowances []Allowance `json:"allowances"`
+}
+
+type source struct {
+	path    string
+	pkg     string
+	file    *ast.File
+	imports map[string]string
+	body    []byte
+}
+
+type typeDecl struct {
+	expr ast.Expr
+	src  *source
+}
+
+type scanner struct {
+	files []*source
+	types map[string]typeDecl
+	fset  *token.FileSet
+}
+
+// InAgentScope reports whether a backend-relative Go file is part of the cloud
+// Agent code this guard covers. Test files are matched by their production name
+// but are excluded from scanning by the caller.
+func InAgentScope(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	dir, base := path.Dir(rel), path.Base(rel)
+	base = strings.TrimSuffix(base, "_test.go")
+	if !strings.HasSuffix(base, ".go") {
+		base += ".go"
+	}
+	match := func(pattern string) bool {
+		ok, _ := path.Match(pattern, base)
+		return ok
+	}
+	switch {
+	case dir == "internal/app":
+		return base == "cloud_agent.go" || match("cloud_agent_*.go") || match("agent_*.go")
+	case dir == "internal/handler":
+		return match("agent*.go") || base == "internal_agent.go"
+	}
+	for _, domain := range []string{"internal/agentcontext", "internal/agentmemory"} {
+		if dir == domain || strings.HasPrefix(dir, domain+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// dependencyRuleApplies limits the import rule to Agent domain packages. The
+// HTTP layer (handler) and the composition root (app) import service/app by
+// design; see AGENTS.md section 3.
+func dependencyRuleApplies(rel string) bool {
+	dir := path.Dir(filepath.ToSlash(rel))
+	return dir != "internal/app" && dir != "internal/handler"
+}
+
+func DecodeBaseline(body []byte) (Baseline, error) {
+	var baseline Baseline
+	if err := json.Unmarshal(body, &baseline); err != nil {
+		return baseline, err
+	}
+	if baseline.Version != 1 {
+		return baseline, fmt.Errorf("baseline version must be 1")
+	}
+	seen := make(map[string]bool)
+	for _, row := range baseline.Allowances {
+		if row.ID == "" || strings.ContainsAny(row.ID, "*?") || row.Max < 1 || strings.TrimSpace(row.Reason) == "" || seen[row.ID] {
+			return baseline, fmt.Errorf("invalid or duplicate baseline allowance %q", row.ID)
+		}
+		seen[row.ID] = true
+	}
+	return baseline, nil
+}
+
+// Check never writes or expands the baseline. Reductions must lower/remove an
+// existing allowance; additions and increased values fail the check.
+func Check(backendRoot string, baseline Baseline) ([]Finding, error) {
+	metrics, err := Scan(backendRoot)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]Allowance)
+	for _, row := range baseline.Allowances {
+		allowed[row.ID] = row
+	}
+	findings := []Finding{}
+	for _, metric := range metrics {
+		row, ok := allowed[metric.ID]
+		delete(allowed, metric.ID)
+		if !ok {
+			findings = append(findings, metric)
+			continue
+		}
+		if metric.Rule == "dependency" {
+			findings = append(findings, metric)
+			continue
+		}
+		if metric.Value > row.Max {
+			metric.Limit = row.Max
+			findings = append(findings, metric)
+		}
+		if metric.Value < row.Max {
+			findings = append(findings, Finding{ID: metric.ID, Rule: "stale_baseline", Value: metric.Value, Limit: row.Max, Detail: "lower the existing baseline to the improved value; do not restore old debt"})
+		}
+	}
+	for id, row := range allowed {
+		findings = append(findings, Finding{ID: id, Rule: "stale_baseline", Limit: row.Max, Detail: "remove resolved baseline allowance"})
+	}
+	sort.Slice(findings, func(i, j int) bool { return findings[i].ID < findings[j].ID })
+	return findings, nil
+}
+
+func Scan(backendRoot string) ([]Finding, error) {
+	s, err := loadSources(backendRoot)
+	if err != nil {
+		return nil, err
+	}
+	out := []Finding{}
+	for _, src := range s.files {
+		out = append(out, s.fileFindings(src)...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func loadSources(root string) (*scanner, error) {
+	module, err := moduleName(root)
+	if err != nil {
+		return nil, err
+	}
+	s := &scanner{fset: token.NewFileSet(), types: map[string]typeDecl{}}
+	err = filepath.WalkDir(filepath.Join(root, "internal"), func(file string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, file)
+		if relErr != nil {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
+		if !InAgentScope(rel) {
+			return nil
+		}
+		content, readErr := os.ReadFile(file)
+		if readErr != nil {
+			return readErr
+		}
+		parsed, parseErr := parser.ParseFile(s.fset, file, content, 0)
+		if parseErr != nil {
+			return parseErr
+		}
+		src := &source{path: rel, pkg: module + "/" + path.Dir(rel), file: parsed, body: content, imports: map[string]string{}}
+		for _, spec := range parsed.Imports {
+			imported, _ := strconv.Unquote(spec.Path.Value)
+			name := path.Base(imported)
+			if spec.Name != nil {
+				name = spec.Name.Name
+			}
+			src.imports[name] = imported
+		}
+		s.files = append(s.files, src)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, src := range s.files {
+		for _, decl := range src.file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				if typed, ok := spec.(*ast.TypeSpec); ok {
+					s.types[src.pkg+"."+typed.Name.Name] = typeDecl{expr: typed.Type, src: src}
+				}
+			}
+		}
+	}
+	return s, nil
+}
+
+func moduleName(root string) (string, error) {
+	body, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
+		}
+	}
+	return "", fmt.Errorf("go.mod module declaration missing")
+}
+
+func (s *scanner) fileFindings(src *source) []Finding {
+	findings := []Finding{}
+	if dependencyRuleApplies(src.path) {
+		for _, spec := range src.file.Imports {
+			imported, _ := strconv.Unquote(spec.Path.Value)
+			if strings.Contains(imported, "/internal/app") && pathBoundary(imported, "/internal/app") || strings.Contains(imported, "/internal/service") && pathBoundary(imported, "/internal/service") {
+				findings = append(findings, Finding{ID: src.path + ":import:" + imported, Rule: "dependency", Value: 1, Detail: "Agent domain packages must not import app/service"})
+			}
+		}
+	}
+	lines := len(strings.Split(strings.TrimSuffix(string(src.body), "\n"), "\n"))
+	if lines > fileLineLimit {
+		findings = append(findings, Finding{ID: src.path + ":file_lines", Rule: "file_lines", Value: lines, Limit: fileLineLimit, Detail: "production Go file exceeds 600 lines"})
+	}
+	for _, decl := range src.file.Decls {
+		switch typed := decl.(type) {
+		case *ast.FuncDecl:
+			findings = append(findings, s.functionFindings(src, typed)...)
+		case *ast.GenDecl:
+			findings = append(findings, s.exportedTypeFindings(src, typed)...)
+			for _, spec := range typed.Specs {
+				if value, ok := spec.(*ast.ValueSpec); ok && len(value.Names) > 0 {
+					findings = append(findings, s.closureFindings(src, value.Names[0].Name, value)...)
+				}
+			}
+		}
+	}
+	return findings
+}
+
+func pathBoundary(imported, component string) bool {
+	_, tail, ok := strings.Cut(imported, component)
+	return ok && (tail == "" || strings.HasPrefix(tail, "/"))
+}
