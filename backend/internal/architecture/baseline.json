@@ -90,8 +90,6 @@
     {"id":"internal/app/cloud_agent_media_receipts.go:func:emitCloudAgentMediaCompletion:complexity","max":23,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_model_selection.go:func:Service.applyCloudAgentProjectDefaultModel:complexity","max":29,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_model_selection.go:func:Service.validateCloudAgentModelSelection:complexity","max":24,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_operations.go:func:applyCloudAgentExtendedOp:complexity","max":38,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_operations.go:func:applyCloudAgentExtendedOp:lines","max":124,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_pi_arguments.go:func:Service.validatePiNativeRawRead:complexity","max":33,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_pi_bridge.go:func:Service.piAgentSnapshotSettled:complexity","max":27,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_pi_bridge.go:signature:PiAgentSnapshot.Canonical","max":1,"reason":"存量导出类型经跨文件别名暴露 map（守卫扩大到全后端后识别）；改为类型化 DTO 或 json.RawMessage 后删除本条"},
