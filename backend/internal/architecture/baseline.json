@@ -51,7 +51,6 @@
     {"id":"internal/app/cloud_agent.go:signature:Service.CloudAgentRunIfChanged","max":1,"reason":"存量 HTTP 视图 DTO 用 map 承载运行事件与审批载荷；改为类型化 DTO 或 json.RawMessage 后删除本条"},
     {"id":"internal/app/cloud_agent.go:signature:Service.CreateCloudAgentRun","max":1,"reason":"存量 HTTP 视图 DTO 用 map 承载运行事件与审批载荷；改为类型化 DTO 或 json.RawMessage 后删除本条"},
     {"id":"internal/app/cloud_agent_anchor.go:func:cloudAgentCreativeAnchorForCanvas:complexity","max":22,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_asset_binding.go:func:prepareCloudAgentAssetBinding:complexity","max":36,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_batch_table.go:func:batchTableNodeFromDocument:complexity","max":30,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_batch_table.go:func:prepareCloudAgentBatchTableEdit:complexity","max":67,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_batch_table.go:func:prepareCloudAgentBatchTableEdit:lines","max":169,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
