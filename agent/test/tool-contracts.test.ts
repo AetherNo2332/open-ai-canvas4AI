@@ -9,7 +9,9 @@ const artifact = JSON.parse(await readFile(new URL("../../harness/TOOL_SCHEMA.js
 
 const cases: [string, ToolCall["arguments"], boolean][] = [
   ["storyboard", {action:"split",nodeId:"b",channelId:"c",channelModelKey:"m"}, true],
-  ["storyboard", {action:"split",nodeId:"b"}, false],
+  // split/resplit 模型选择可完全省略：服务端回退本轮运行的文本模型。
+  ["storyboard", {action:"split",nodeId:"b"}, true],
+  ["storyboard", {action:"resplit",nodeId:"b",rowIds:["r"],request:"延长停顿"}, true],
   ["storyboard", {action:"split",nodeId:"b",logicalModelId:"m",rowIds:["r"]}, false],
   ["storyboard", {action:"resplit",nodeId:"b",rowIds:["r"],request:"延长停顿",selectionId:"s"}, true],
   ["storyboard", {action:"resplit",nodeId:"b",rowIds:[],selectionId:"s"}, false],
