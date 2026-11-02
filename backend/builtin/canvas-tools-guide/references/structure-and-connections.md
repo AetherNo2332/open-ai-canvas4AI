@@ -32,7 +32,7 @@ Agent 不连接、不改接、不断开连线：`canvas_apply_ops` 没有边操�
 
 ## 分镜：以创作和资产选择为中心
 
-新建时用 canvas_apply_ops 的 add_node 创建 script，用 content 传剧情，服务端保存为 metadata.composerContent。更新用 update_node.patch.composerContent（content 是同一正文的别名）；精读用 canvas_read_content，局部修改用 replace_text。风格与用户要求写入相连文本节点，再调用 storyboard 的 split，行由服务端生成，不让 Agent 手填整表。生成后用 read 检查。需要小范围手工校正时才维护 durationSeconds、plotDescription（镜头创作说明）、dialogue；构图、表演、运镜、光影、节拍和连续性可自行组织在创作说明中。必要时用 imageGenerationPrompt/videoMotionPrompt 覆盖生成提示词。已有覆盖优先于创作说明，修改说明时核对覆盖是否也要更新或清空。旧细分列仍保存在行中供界面和高级编辑使用，不要求模型逐列填写。
+新建时用 canvas_apply_ops 的 add_node 创建 script，用 content 传剧情，服务端保存为 metadata.composerContent。更新用 update_node.patch.composerContent（content 是同一正文的别名）；精读用 canvas_read_content，局部修改用 replace_text。风格与用户要求写入相连文本节点，再调用 storyboard 的 split，行由服务端生成，不让 Agent 手填整表。split 和 resplit 的模型选择凭证可以完全省略：服务端回退本轮运行的文本模型执行拆镜，回执带 modelFallback:true；需要指定时 selectionId、logicalModelId、channelId+channelModelKey 三选一互斥且必须是文本模型，凭据混用或用图像模型凭证会在预检被拒，model_list 只返回生成媒体的模型目录。生成后用 read 检查。需要小范围手工校正时才维护 durationSeconds、plotDescription（镜头创作说明）、dialogue；构图、表演、运镜、光影、节拍和连续性可自行组织在创作说明中。必要时用 imageGenerationPrompt/videoMotionPrompt 覆盖生成提示词。已有覆盖优先于创作说明，修改说明时核对覆盖是否也要更新或清空。旧细分列仍保存在行中供界面和高级编辑使用，不要求模型逐列填写。
 
 | 意图 | 写入方式 |
 | --- | --- |
@@ -63,4 +63,4 @@ Agent 不连接、不改接、不断开连线：`canvas_apply_ops` 没有边操�
 
 ## 批量表
 
-按 `action` 只传对应字段：update 用真实 `rowId` 和 `patch`；remove 不带 patch；set_concurrency 只给 schema 允许的并发值；增减参考列不混入行字段。行 patch 只写允许的 enabled/inputNodeIds/textNodeIds/cells/prompt，图片 ID 必须来自当前画布。append 省略 inputNodeIds 会继承上一行，若不希望继承应显式给空数组。维护表不等于已执行批量生成；工具未提供执行能力时如实说明。
+按 `action` 只传对应字段：update 用真实 `rowId` 和 `patch`；remove 不带 patch；set_concurrency 只给 schema 允许的并发值；set_operation 切换表的创作操作（try_on/creative）；set_global_prompt 维护全局提示词（空串清空）；增减参考列不混入行字段。行 patch 只写允许的 enabled/inputNodeIds/textNodeIds/cells/prompt/referenceOverrides；referenceOverrides 是按参考图列 ID 的单元格覆盖，元素取 canvas_read_batch_table 返回的参考列 ID；inputNodeIds/textNodeIds 里的节点 ID 必须来自当前画布。append 省略 inputNodeIds 会继承上一行，若不希望继承应显式给空数组。维护表不等于已执行批量生成；工具未提供执行能力时如实说明。
