@@ -249,13 +249,41 @@ export function applyAgentEvent(
         setMessages((current) => upsertMediaToolTrace(current, message));
         return;
     }
+    // 工具收到"已接单/正在执行"的生命周期提示：与完成回执共用同一 callId 维度，
+    // 把"接单行"原地升级成结果行，避免同一次调用在会话里挂两条。
+    if (event.type === "tool_pending") {
+        const id = `tool-${event.runId}-${payload.callId || event.eventId}`;
+        setMessages((current) =>
+            upsertContextCompactionNotice(current, {
+                id,
+                role: "tool",
+                title: String(payload.toolName || "工具执行"),
+                text: text || "工具已接单，正在后台执行",
+                detail: { ...payload, eventType: event.type },
+            }),
+        );
+        return;
+    }
     if (event.type.startsWith("tool_")) {
-        const message: CloudAgentChatMessage = { id: event.eventId, role: "tool", title: String(payload.toolName || payload.title || "工具执行"), text: text || event.type, detail: { ...payload, eventType: event.type } };
+        const message: CloudAgentChatMessage = {
+            id: event.eventId,
+            role: "tool",
+            title: String(payload.toolName || payload.title || "工具执行"),
+            text: text || event.type,
+            detail: { ...payload, eventType: event.type },
+        };
         if (payload.toolName === "generate_media") {
             setMessages((current) => upsertMediaToolTrace(current, message));
-        } else {
-            setMessages((current) => appendUniqueMessage(current, message));
+            return;
         }
+        // 历史回放对老 checkpoint 依赖事件键 id；只有同 callId 的"已接单"行存在时
+        // 才把结果就地升级到接单气泡上，避免同一次调用挂两条。
+        const pendingId = payload.callId ? `tool-${event.runId}-${payload.callId}` : "";
+        if (pendingId) {
+            setMessages((current) => (current.some((item) => item.id === pendingId) ? upsertContextCompactionNotice(current, { ...message, id: pendingId }) : appendUniqueMessage(current, message)));
+            return;
+        }
+        setMessages((current) => appendUniqueMessage(current, message));
         return;
     }
     if (event.type === "model_failure_recovered") {

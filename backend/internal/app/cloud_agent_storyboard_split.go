@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -216,7 +217,7 @@ func (s *Service) executeCloudAgentStoryboardSplit(run *model.CloudAgentExecutio
 	if remaining < 0 {
 		return s.recordStoryboardResult(run, state, call, nil, BadAuthRequest("Agent 累计预算已耗尽"))
 	}
-	logical, channel, key, err := s.cloudAgentResolveSplitModelSelection(run, fields)
+	logical, channel, key, fallback, err := s.cloudAgentResolveSplitModelSelection(run, state, fields)
 	if err != nil {
 		return s.recordStoryboardResult(run, state, call, nil, err)
 	}
@@ -229,7 +230,9 @@ func (s *Service) executeCloudAgentStoryboardSplit(run *model.CloudAgentExecutio
 		approvalID = state.Approval.ID
 	}
 	admission := &taskAdmission{ID: cloudAgentID(run.UserID, fmt.Sprintf("%s:task:%d", run.ID, len(state.TaskIDs))), MaxCharge: remaining, AgentRunID: run.ID, ApprovalID: approvalID}
+	prepareStart := time.Now()
 	plan, err := s.prepareCanvasStoryboardSplit(run.UserID, state.Request.CanvasID, req, admission)
+	log.Printf("agent storyboard split prepare: run=%s call=%s action=%s fallback=%t duration=%s err=%v", run.ID, call.ID, action, fallback, time.Since(prepareStart), err)
 	if err != nil {
 		return s.recordStoryboardResult(run, state, call, nil, err)
 	}
@@ -239,8 +242,10 @@ func (s *Service) executeCloudAgentStoryboardSplit(run *model.CloudAgentExecutio
 		}
 	}
 	s.storageMu.Lock()
-	err = s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, s.cloudAgentCommitStoryboardSplitMutation(run, state, call, action, req, plan))
+	commitStart := time.Now()
+	err = s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, s.cloudAgentCommitStoryboardSplitMutation(run, state, call, action, req, plan, fallback))
 	s.storageMu.Unlock()
+	log.Printf("agent storyboard split commit: run=%s call=%s action=%s duration=%s err=%v", run.ID, call.ID, action, time.Since(commitStart), err)
 	if err != nil {
 		return s.recordStoryboardResult(run, state, call, nil, err)
 	}
@@ -261,25 +266,66 @@ func cloudAgentSplitRowAndBudgetGate(state *cloudAgentRuntime, action string, ro
 }
 
 // cloudAgentResolveSplitModelSelection 解析拆镜的模型选择：selectionId 与显式
-// logicalModelId/channel 三元组互斥，selectionId 展开成三元组。
-func (s *Service) cloudAgentResolveSplitModelSelection(run *model.CloudAgentExecution, fields map[string]any) (string, string, string, error) {
+// logicalModelId/channel 三元组互斥，selectionId 展开成三元组。三种凭证完全
+// 省略时回退本轮运行的系统渠道模型对——同一个模型对就是模型步骤用的写作
+// 模型（cloud_agent_pi_model_step 的 config），必然存在且是文本模型；没有它的
+// 运行连模型步都走不了，所以不给第三层兜底，缺渠道对时明确报错。
+func (s *Service) cloudAgentResolveSplitModelSelection(run *model.CloudAgentExecution, state *cloudAgentRuntime, fields map[string]any) (string, string, string, bool, error) {
 	logical, channel, key := stringValue(fields["logicalModelId"]), stringValue(fields["channelId"]), stringValue(fields["channelModelKey"])
+	fallback := false
 	if token := stringValue(fields["selectionId"]); token != "" {
 		if logical != "" || channel != "" || key != "" {
-			return "", "", "", cloudAgentFieldError("selectionId", "mutually_exclusive", "selectionId 与其他模型选择不能并用")
+			return "", "", "", fallback, cloudAgentFieldError("selectionId", "mutually_exclusive", "selectionId 与其他模型选择不能并用")
 		}
 		selected, err := s.resolveCloudAgentSelectionID(run.UserID, token)
 		if err != nil {
-			return "", "", "", err
+			return "", "", "", fallback, err
 		}
 		logical, channel, key = selected.LogicalModelID, selected.ChannelID, selected.ChannelModelKey
+	} else if logical == "" && channel == "" && key == "" {
+		fallback = true
+		channel, key = state.Request.ChannelID, state.Request.ChannelModelKey
+		if channel == "" || key == "" {
+			return "", "", "", fallback, InvalidModelSelection("本轮运行缺少系统渠道模型，无法回退拆镜；请重新发起运行或显式提供文本模型凭证")
+		}
 	}
-	return logical, channel, key, nil
+	if err := s.cloudAgentAssertSplitModelCapability(channel, key, fallback); err != nil {
+		return "", "", "", fallback, err
+	}
+	return logical, channel, key, fallback, nil
+}
+
+// cloudAgentAssertSplitModelCapability 把能力不匹配拦在任务准入之前：拆镜任务
+// 固定 mode=text，图像/音频模型凭证即使过了 schema 也必然在 CreateTask 被拒，
+// 提前报错才能让模型在下一步自纠（省略选择即回退本轮模型）。
+func (s *Service) cloudAgentAssertSplitModelCapability(channelID, modelKey string, fallback bool) error {
+	if channelID == "" || modelKey == "" {
+		return nil
+	}
+	models, err := s.repo.ChannelModels(channelID, false)
+	if err != nil {
+		return err
+	}
+	for i := range models {
+		item := &models[i]
+		if item.ModelKey != modelKey {
+			continue
+		}
+		if normalizeCapability(item.Capability) == "text" {
+			return nil
+		}
+		if fallback {
+			return InvalidModelSelection(fmt.Sprintf("本轮运行的渠道模型 %s 能力是 %s，不支持文本拆镜；请确认写作模型，或显式提供文本模型凭证", modelKey, item.Capability))
+		}
+		return cloudAgentFieldError("selectionId", "capability_mismatch",
+			fmt.Sprintf("拆镜使用文本模型：渠道模型 %s 的能力是 %s；请省略模型选择由服务端使用本轮文本模型，或改用文本模型凭证", modelKey, item.Capability))
+	}
+	return InvalidModelSelection(fmt.Sprintf("渠道模型 %s 不存在或已停用，无法用于拆镜；请省略模型选择由服务端使用本轮文本模型", modelKey))
 }
 
 // cloudAgentCommitStoryboardSplitMutation 在 Agent 存储事务里落地拆镜：首次执行
 // 请求审批，已批准则提交计费任务并登记待回执生成。
-func (s *Service) cloudAgentCommitStoryboardSplitMutation(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, action string, req CanvasStoryboardSplitRequest, plan *canvasStoryboardSplitPlan) func(current *model.CloudAgentExecution, repo *repository.Repository) error {
+func (s *Service) cloudAgentCommitStoryboardSplitMutation(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, action string, req CanvasStoryboardSplitRequest, plan *canvasStoryboardSplitPlan, fallback bool) func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 	return func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 		if state.Request.PermissionMode == "request_approval" && state.Approval == nil {
 			preview := cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认分镜拆镜", Description: fmt.Sprintf("从画布剧情和风格执行%s，预计费用 %.4f 积分；结果由服务端写回。", action, float64(plan.Result.Quote.AmountMicrocredits)/float64(CreditScale))}
@@ -297,13 +343,17 @@ func (s *Service) cloudAgentCommitStoryboardSplitMutation(run *model.CloudAgentE
 		state.PendingGenerations = append(state.PendingGenerations, pending)
 		state.MediaTaskID = handle.TaskID
 		state.event(run.ID, "generation_task_created", map[string]any{"toolName": "storyboard", "taskId": handle.TaskID, "nodeId": req.NodeID, "mode": "storyboard", "canvasId": state.Request.CanvasID})
-		cloudAgentRecordToolResult(current, state, call, cloudAgentStoryboardSubmittedReceipt(&plan.Result, action, req.NodeID, len(state.PendingGenerations)), nil)
+		cloudAgentRecordToolResult(current, state, call, cloudAgentStoryboardSubmittedReceipt(&plan.Result, action, req.NodeID, len(state.PendingGenerations), fallback), nil)
 		return cloudAgentSave(current, state)
 	}
 }
 
-func cloudAgentStoryboardSubmittedReceipt(result *CanvasStoryboardSplitResult, action, nodeID string, pending int) map[string]any {
-	return map[string]any{"status": "submitted", "taskSubmitted": true, "taskId": result.TaskID, "nodeId": nodeID, "action": action, "partial": result.Partial, "rowIds": result.RowIDs, "pendingGenerations": pending, "next": "拆镜在后台执行；写回后在同一任务的下一步通过系统通知告知结果。依赖结果时调用 wait_generations，不要轮询 task_get"}
+func cloudAgentStoryboardSubmittedReceipt(result *CanvasStoryboardSplitResult, action, nodeID string, pending int, fallback bool) map[string]any {
+	next := "拆镜在后台执行；写回后在同一任务的下一步通过系统通知告知结果。依赖结果时调用 wait_generations，不要轮询 task_get"
+	if fallback {
+		next = "未传模型选择，服务端使用本轮运行的文本模型拆镜。" + next
+	}
+	return map[string]any{"status": "submitted", "taskSubmitted": true, "taskId": result.TaskID, "nodeId": nodeID, "action": action, "partial": result.Partial, "rowIds": result.RowIDs, "pendingGenerations": pending, "modelFallback": fallback, "next": next}
 }
 func cloudAgentStoryboardMarkdown(result map[string]any) string {
 	board, _ := result["storyboard"].(map[string]any)

@@ -4460,3 +4460,11 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 - 已实现：Agent 画布写入提交后经实时通道推送带 revision 与 actor 的 `canvas_changed`；浏览器以 `applyAgentCanvasChange` 按 revision 增量合并，实时在线时 Agent 事件不再触发整份刷新，断线时退回整份刷新。
 - 已实现：Agent 工具读写节点前推送 `agent_presence`，画布在对应节点显示“Agent 正在读取/编辑”标记，运行结束发 `idle`；客户端 45 秒未更新自动清除。
 - [ ] 浏览器验收：Agent 运行时在另一节点本地编辑未保存，确认两者都保留；断开 Redis/WebSocket 后 Agent 写入仍能刷新；明暗主题、0px/非零圆角皮肤及减少动态效果下的标记显示。
+
+## Agent 拆镜省略选择回退与工具执行可观测
+
+- 已实现：storyboard 的 split/resplit 模型选择凭证可完全省略，服务端回退本轮运行的文本模型并回执 modelFallback:true；显式三选一凭证互斥，且新增前置能力断言（非文本模型凭证在 Agent 侧直接回字段级 capability_mismatch，不再漏到任务准入才失败）。
+- 已实现：split/resplit 的 schema 预检对"只差必填键"组合给出 required_union 组合清单报错，对"传了禁用字段"命中具体字段；凭证混用报错指向具体字段。
+- 已实现：Agent 工具 op 入队写 tool_pending 事件（前端可见"已接单"）；op 标记 succeeded 当且仅当工具回执已持久化，终态无回执的 op 按失败收尾并兜底写 tool_failed 回执；非等待/非挂起 op 超过 5 分钟补失败回执结束，不出现"永远 Pending"。
+- 已实现：agent tool operation 的 claim/advance 耗时日志与拆镜 prepare/commit 分段耗时日志。
+- [ ] 真实模型验收：composer 拆镜不传模型凭证，拆镜任务秒级回执 submitted；错误选择（图像凭证）预检字段级报错可自纠；前端 tool_pending 提示展示。

@@ -277,25 +277,18 @@ func validateCloudAgentSchemaEnum(path string, schema map[string]any, value any)
 	return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 只能是 %s 之一；本次调用未执行", path, cloudAgentSchemaChoices(values)))
 }
 
-// 条件分支递归校验必填、常量、范围与禁用字段；匹配操作类型时保留字段级错误。
+// 条件分支递归校验必填、常量、范围与禁用字段；匹配操作类型时保留字段级错误，
+// 只差必填键的组合失败合成一条可行动的"组合清单"错误，而不是通用文案。
 func validateCloudAgentSchemaOneOf(path string, schema map[string]any, value any, depth int) error {
 	for _, keyword := range []string{"oneOf", "anyOf"} {
-		branches, ok := schema[keyword].([]map[string]any)
-		if !ok {
-			if generic, ok := schema[keyword].([]any); ok {
-				for _, item := range generic {
-					if branch, ok := item.(map[string]any); ok {
-						branches = append(branches, branch)
-					}
-				}
-			}
-		}
+		branches := cloudAgentSchemaBranchList(schema[keyword])
 		if len(branches) == 0 {
 			continue
 		}
 		object, _ := value.(map[string]any)
 		matches := 0
-		var selectedError error
+		var selectedError, forbiddenError, otherError error
+		combos := [][]string{}
 		for _, branch := range branches {
 			err := validateCloudAgentSchemaValue(path, branch, value, depth+1)
 			if err == nil {
@@ -303,23 +296,140 @@ func validateCloudAgentSchemaOneOf(path string, schema map[string]any, value any
 				continue
 			}
 			// A matching discriminator preserves the useful field-level error.
-			properties, _ := branch["properties"].(map[string]any)
-			for _, key := range []string{"type", "mode", "action"} {
-				if property, ok := properties[key].(map[string]any); ok {
-					if constant, exists := property["const"]; exists && cloudAgentSchemaEqual(constant, object[key]) {
-						selectedError = err
-					}
+			if cloudAgentSchemaBranchDiscriminated(branch, object) {
+				selectedError = err
+				continue
+			}
+			missing, forbiddenField := cloudAgentSchemaBranchFailureKeys(path, branch, object, err, depth)
+			switch {
+			case missing == nil && forbiddenField != "":
+				if forbiddenError == nil {
+					forbiddenError = err
+				}
+			case missing != nil && forbiddenField == "":
+				// 只差必填键、没有隐藏禁用冲突的分支才有资格做"组合清单"候选。
+				required := cloudAgentSchemaStrings(branch["required"])
+				if len(required) > 0 {
+					combos = append(combos, required)
+				}
+			default:
+				if otherError == nil {
+					otherError = err
 				}
 			}
 		}
 		if matches == 0 || (keyword == "oneOf" && matches != 1) {
-			if selectedError != nil {
+			switch {
+			case selectedError != nil:
 				return selectedError
+			case len(combos) > 0:
+				return cloudAgentFieldError(path, "required_union",
+					fmt.Sprintf("工具参数 %s 需要满足以下组合之一：%s；组合之外已传入的字段不予受理，多余字段请移除或改用其中一个组合。本次调用未执行，请对照本轮工具契约修正后重试",
+						path, cloudAgentSchemaCombosMessage(combos)))
+			case forbiddenError != nil:
+				return forbiddenError
+			default:
+				if otherError != nil {
+					return otherError
+				}
+				return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 不满足允许的组合；本次调用未执行，请按本轮契约检查字段组合", path))
 			}
-			return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 不满足允许的组合；本次调用未执行，请按本轮契约检查字段组合", path))
 		}
 	}
 	return nil
+}
+
+// cloudAgentSchemaBranchList 读出 oneOf/anyOf 的分支数组，兼容 []map 与 []any 两种编码。
+func cloudAgentSchemaBranchList(raw any) []map[string]any {
+	if branches, ok := raw.([]map[string]any); ok && len(branches) > 0 {
+		return branches
+	}
+	generic, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	branches := []map[string]any{}
+	for _, item := range generic {
+		if branch, ok := item.(map[string]any); ok {
+			branches = append(branches, branch)
+		}
+	}
+	return branches
+}
+
+// cloudAgentSchemaBranchDiscriminated 判断分支是否因 type/mode/action 常量命中而失败。
+func cloudAgentSchemaBranchDiscriminated(branch, object map[string]any) bool {
+	if object == nil {
+		return false
+	}
+	properties, _ := branch["properties"].(map[string]any)
+	for _, key := range []string{"type", "mode", "action"} {
+		if property, ok := properties[key].(map[string]any); ok {
+			if constant, exists := property["const"]; exists && cloudAgentSchemaEqual(constant, object[key]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cloudAgentSchemaBranchFailureKeys 找出分支失败的原因键：要么缺了分支 required 声明的键
+// （且报错正是这些键的 required 错误），要么传了被该分支 not 禁止的字段。
+// 返回值 missing 为本分支全部缺失键（按声明顺序），forbiddenField 为踩中的禁用字段名。
+func cloudAgentSchemaBranchFailureKeys(path string, branch, object map[string]any, err error, depth int) (missing []string, forbiddenField string) {
+	if object == nil {
+		return nil, ""
+	}
+	for _, key := range cloudAgentSchemaStrings(branch["required"]) {
+		item, exists := object[key]
+		if !exists || item == nil {
+			missing = append(missing, key)
+		}
+	}
+	hitsForbiddenProperty := func() string {
+		properties, ok := branch["properties"].(map[string]any)
+		if !ok {
+			return ""
+		}
+		for name, child := range properties {
+			property, _ := child.(map[string]any)
+			notSchema, _ := property["not"].(map[string]any)
+			if notSchema == nil {
+				continue
+			}
+			item, exists := object[name]
+			if !exists || item == nil {
+				continue
+			}
+			if validateCloudAgentSchemaValue(cloudAgentSchemaPath(path, name), notSchema, item, depth+1) == nil {
+				return name
+			}
+		}
+		return ""
+	}
+	if len(missing) > 0 {
+		var fieldErr *cloudAgentFieldArgumentError
+		if !errors.As(err, &fieldErr) || fieldErr.Issue != "required" || fieldErr.Field != cloudAgentSchemaPath(path, missing[0]) {
+			return nil, ""
+		}
+		if hitsForbiddenProperty() != "" {
+			// 分支既缺字段又踩了禁用键：不做组合候选，由其他分支或通用文案裁决。
+			return nil, ""
+		}
+		return missing, ""
+	}
+	return nil, hitsForbiddenProperty()
+}
+
+func cloudAgentSchemaCombosMessage(set [][]string) string {
+	comboLabels := make([]string, 0, len(set))
+	for _, keys := range set {
+		if len(keys) == 0 {
+			continue
+		}
+		comboLabels = append(comboLabels, strings.Join(keys, "+"))
+	}
+	return strings.Join(comboLabels, "／")
 }
 
 func cloudAgentSchemaTypeError(path, expected string) error {

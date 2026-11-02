@@ -129,6 +129,19 @@ describe("Agent cloud conversation history", () => {
         expect(result.messages.find((item) => item.id === "terminal-second")?.text).toBe("模型额度不足");
     });
 
+    test("tool pending row upgrades into the result row without duplicates", () => {
+        const live = run("live", {
+            events: [
+                event("live", 1, "tool_pending", { callId: "call-1", toolName: "storyboard", text: "工具已接单，正在后台执行" }),
+                event("live", 2, "tool_completed", { callId: "call-1", toolName: "storyboard", text: "拆镜已提交", result: { taskId: "st-1" } }),
+            ],
+        });
+        const result = projectCloudAgentConversation(conversationId, [live]);
+        const rows = result.messages.filter((item) => item.role === "tool" && item.detail && (item.detail as Record<string, unknown>).callId === "call-1");
+        expect(rows).toHaveLength(1);
+        expect(rows[0].text).toBe("拆镜已提交");
+    });
+
     test("orders parent before child with equal timestamps and deduplicates event identity", () => {
         const answer = event("z-parent", 1, "assistant_message", { messageId: "answer", text: "父轮" });
         const result = projectCloudAgentConversation(conversationId, [run("a-child", { parentId: "z-parent" }), run("z-parent", { events: [answer, answer, event("foreign", 2, "assistant_message", { text: "他人消息" })] })]);

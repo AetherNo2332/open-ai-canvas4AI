@@ -55,10 +55,13 @@ func cloudAgentStoryboardContracts(schema map[string]any) {
 			required = append(required, "rowIds")
 		}
 		b := branch(action, allowed, required)
-		b["oneOf"] = []map[string]any{
+		// 拆镜的模型选择可选：完全省略时服务端回退本轮运行的文本模型；
+		// 三种凭证互斥，与"全部省略"一起构成四个互斥分支。
+		b["anyOf"] = []map[string]any{
 			{"required": []string{"selectionId"}, "properties": cloudAgentForbiddenFields("logicalModelId", "channelId", "channelModelKey")},
 			{"required": []string{"logicalModelId"}, "properties": cloudAgentForbiddenFields("selectionId", "channelId", "channelModelKey")},
 			{"required": []string{"channelId", "channelModelKey"}, "properties": cloudAgentForbiddenFields("selectionId", "logicalModelId")},
+			{"properties": cloudAgentForbiddenFields("selectionId", "logicalModelId", "channelId", "channelModelKey")},
 		}
 	}
 	u := branch("update", append(append([]string{}, write...), "rowId", "rowIds", "patch", "updates", "storyboardRevision"), []string{"snapshotHash"})
