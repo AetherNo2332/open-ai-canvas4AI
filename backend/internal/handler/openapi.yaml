@@ -3280,8 +3280,6 @@ components:
           type: boolean
         subagentWriteEnabled:
           type: boolean
-        storyboardDisabled:
-          type: boolean
         reasoningMode:
           type: string
           enum: [off, auto, deep]
