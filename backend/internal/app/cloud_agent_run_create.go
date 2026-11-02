@@ -104,7 +104,7 @@ func (s *Service) checkCloudAgentRunRequest(draft *cloudAgentRunDraft) error {
 		return err
 	}
 	draft.canvas = canvas
-	if draft.req.SubagentEnabled {
+	if draft.req.SubagentEnabled || draft.req.SubagentWriteEnabled {
 		if err := s.RequireFeature(FeatureAgentSubagents); err != nil {
 			return err
 		}
@@ -112,8 +112,16 @@ func (s *Service) checkCloudAgentRunRequest(draft *cloudAgentRunDraft) error {
 		if consentErr != nil {
 			return consentErr
 		}
-		if !consent.Enabled {
+		if draft.req.SubagentEnabled && !consent.Enabled {
 			return kernel.Forbidden("当前画布未开启子代理授权")
+		}
+		if draft.req.SubagentWriteEnabled {
+			if !draft.req.SubagentEnabled || !consent.Enabled {
+				return kernel.Forbidden("子代理写入授权依赖子代理授权，请先开启子代理")
+			}
+			if !consent.WriteEnabled {
+				return kernel.Forbidden("当前画布未开启子代理写入授权")
+			}
 		}
 	}
 	return nil

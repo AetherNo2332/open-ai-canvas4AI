@@ -170,7 +170,7 @@ func (s *Service) ChangeCloudAgentPermission(userID, id, mode, requestID string)
 			return nil, &kernel.AppError{Status: 409, Code: 409, Reason: kernel.ReasonAgentRunFinished, Message: "本轮已经结束，权限将用于下一轮"}
 		}
 		if state.Subagent != nil {
-			return nil, &kernel.AppError{Status: 409, Code: 409, Reason: kernel.ReasonAgentSubagentPermissionFixed, Message: "子代理固定为只读，不能切换执行权限"}
+			return nil, &kernel.AppError{Status: 409, Code: 409, Reason: kernel.ReasonAgentSubagentPermissionFixed, Message: "子代理权限在 spawn 时定型，不能切换执行权限"}
 		}
 		from := state.Request.PermissionMode
 		if from == mode {

@@ -66,7 +66,7 @@ func (s *Service) executeCloudAgentStoryboard(run *model.CloudAgentExecution, st
 		}
 		return s.recordStoryboardResult(run, state, call, result, err)
 	}
-	if state.Request.PermissionMode == "read_only" || state.Subagent != nil {
+	if state.Request.PermissionMode == "read_only" || (state.Subagent != nil && !state.Subagent.WriteGranted) {
 		return s.recordStoryboardResult(run, state, call, nil, kernel.Forbidden("当前权限只允许读取分镜"))
 	}
 	if action == "split" || action == "resplit" {

@@ -11,14 +11,16 @@ import (
 )
 
 type AgentSubagentPolicyView struct {
-	CanvasID string `json:"canvasId"`
-	Enabled  bool   `json:"enabled"`
-	Revision int64  `json:"revision"`
+	CanvasID     string `json:"canvasId"`
+	Enabled      bool   `json:"enabled"`
+	WriteEnabled bool   `json:"writeEnabled"`
+	Revision     int64  `json:"revision"`
 }
 
 type AgentSubagentPolicyRequest struct {
 	CanvasID         string `json:"canvasId"`
 	Enabled          bool   `json:"enabled"`
+	WriteEnabled     bool   `json:"writeEnabled"`
 	ExpectedRevision int64  `json:"expectedRevision"`
 }
 
@@ -30,6 +32,7 @@ type AgentSubagentView struct {
 	RoleLabel      string                     `json:"roleLabel"`
 	Objective      string                     `json:"objective"`
 	Depth          int                        `json:"depth"`
+	WriteGranted   bool                       `json:"writeGranted"`
 	Status         string                     `json:"status"`
 	FailureMessage string                     `json:"failureMessage,omitempty"`
 	Messages       []AgentSubagentMessageView `json:"messages"`
@@ -68,7 +71,7 @@ func agentSubagentViews(repo *repository.Repository, userID, runID string) ([]Ag
 		if childErr != nil {
 			return nil, childErr
 		}
-		view := AgentSubagentView{ID: link.ID, ParentRunID: link.ParentRunID, ChildRunID: link.ChildRunID, DisplayName: link.DisplayName, RoleLabel: link.RoleLabel, Objective: link.Objective, Depth: link.Depth, Status: child.Status, FailureMessage: child.FailureMessage, Messages: []AgentSubagentMessageView{}}
+		view := AgentSubagentView{ID: link.ID, ParentRunID: link.ParentRunID, ChildRunID: link.ChildRunID, DisplayName: link.DisplayName, RoleLabel: link.RoleLabel, Objective: link.Objective, Depth: link.Depth, WriteGranted: link.WriteGranted, Status: child.Status, FailureMessage: child.FailureMessage, Messages: []AgentSubagentMessageView{}}
 		for _, message := range messages {
 			if message.LinkID != link.ID {
 				continue
@@ -121,7 +124,7 @@ func (s *Service) AgentSubagentPolicy(userID, canvasID string) (*AgentSubagentPo
 	if err != nil {
 		return nil, err
 	}
-	return &AgentSubagentPolicyView{CanvasID: row.CanvasID, Enabled: row.Enabled, Revision: row.Revision}, nil
+	return &AgentSubagentPolicyView{CanvasID: row.CanvasID, Enabled: row.Enabled, WriteEnabled: row.WriteEnabled, Revision: row.Revision}, nil
 }
 
 func (s *Service) UpdateAgentSubagentPolicy(userID string, req AgentSubagentPolicyRequest) (*AgentSubagentPolicyView, error) {
@@ -132,18 +135,21 @@ func (s *Service) UpdateAgentSubagentPolicy(userID string, req AgentSubagentPoli
 	if req.CanvasID == "" {
 		return nil, BadAuthRequest("画布 ID 不能为空")
 	}
+	if req.WriteEnabled && !req.Enabled {
+		return nil, BadAuthRequest("子代理写入权限必须先开启子代理授权")
+	}
 	if _, err := s.repo.CanvasProjectForUser(userID, req.CanvasID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, NewAppError(404, "画布不存在")
 		}
 		return nil, err
 	}
-	row, err := s.repo.SaveAgentSubagentPolicy(userID, req.CanvasID, req.Enabled, req.ExpectedRevision)
+	row, err := s.repo.SaveAgentSubagentPolicy(userID, req.CanvasID, req.Enabled, req.WriteEnabled, req.ExpectedRevision)
 	if err != nil {
 		if errors.Is(err, repository.ErrTaskStateConflict) {
 			return nil, creationConflict("子代理授权版本已变化，请刷新后重试")
 		}
 		return nil, err
 	}
-	return &AgentSubagentPolicyView{CanvasID: row.CanvasID, Enabled: row.Enabled, Revision: row.Revision}, nil
+	return &AgentSubagentPolicyView{CanvasID: row.CanvasID, Enabled: row.Enabled, WriteEnabled: row.WriteEnabled, Revision: row.Revision}, nil
 }

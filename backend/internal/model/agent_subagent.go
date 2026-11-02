@@ -5,13 +5,15 @@ import "time"
 // AgentSubagentPolicy is the durable per-canvas consent switch. Enabled stays
 // effective for later turns until the user explicitly disables it.
 type AgentSubagentPolicy struct {
-	ID        string    `json:"id" gorm:"primaryKey;size:80"`
-	UserID    string    `json:"userId" gorm:"uniqueIndex:idx_agent_subagent_policy_owner_canvas,priority:1;size:36;not null"`
-	CanvasID  string    `json:"canvasId" gorm:"uniqueIndex:idx_agent_subagent_policy_owner_canvas,priority:2;size:80;not null"`
-	Enabled   bool      `json:"enabled"`
-	Revision  int64     `json:"revision" gorm:"not null;default:0"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID       string `json:"id" gorm:"primaryKey;size:80"`
+	UserID   string `json:"userId" gorm:"uniqueIndex:idx_agent_subagent_policy_owner_canvas,priority:1;size:36;not null"`
+	CanvasID string `json:"canvasId" gorm:"uniqueIndex:idx_agent_subagent_policy_owner_canvas,priority:2;size:80;not null"`
+	Enabled  bool   `json:"enabled"`
+	// WriteEnabled 允许该画布的写型子代理（spawn write=true）落库生效；Enabled 是它的前置。
+	WriteEnabled bool      `json:"writeEnabled"`
+	Revision     int64     `json:"revision" gorm:"not null;default:0"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // AgentSubagentLink is the explicit business hierarchy between parent and child runs.
@@ -28,6 +30,7 @@ type AgentSubagentLink struct {
 	Objective           string    `json:"objective" gorm:"type:text;not null"`
 	Instructions        string    `json:"instructions" gorm:"type:text"`
 	Depth               int       `json:"depth" gorm:"not null;default:1"`
+	WriteGranted        bool      `json:"writeGranted"`
 	Status              string    `json:"status" gorm:"index;size:24;not null"`
 	BudgetJSON          string    `json:"-" gorm:"type:text"`
 	ContextSnapshotJSON string    `json:"-" gorm:"type:text"`

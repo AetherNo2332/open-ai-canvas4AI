@@ -100,19 +100,22 @@ type cloudAgentApproval struct {
 	QuoteHash string                    `json:"quoteHash,omitempty"`
 }
 type cloudAgentRuntime struct {
-	ToolSchemaVersion string                   `json:"toolSchemaVersion,omitempty"`
-	ActiveSubagents   int                      `json:"activeSubagents,omitempty"`
-	Subagent          *SubagentRuntime         `json:"subagent,omitempty"`
-	Workspace         *WorkspaceSnapshot       `json:"workspace,omitempty"`
-	RuntimeRunID      string                   `json:"-"`
-	SkillRuntimeMode  string                   `json:"skillRuntimeMode,omitempty"`
-	Request           CloudAgentRequest        `json:"request"`
-	Policy            cloudAgentPolicySnapshot `json:"policy"`
-	ParentID          string                   `json:"parentId,omitempty"`
-	Fingerprint       string                   `json:"fingerprint,omitempty"`
-	CreativeAnchor    cloudAgentCreativeAnchor `json:"creativeAnchor,omitempty"`
-	TextHistory       []providerTextMessage    `json:"textHistory,omitempty"`
-	Skills            []cloudAgentSkill        `json:"skills"`
+	ToolSchemaVersion string           `json:"toolSchemaVersion,omitempty"`
+	ActiveSubagents   int              `json:"activeSubagents,omitempty"`
+	Subagent          *SubagentRuntime `json:"subagent,omitempty"`
+	// SubagentBudgetCarves 记录父运行给仍在运行的子代理切分的积分份额，
+	// 计算父剩余预算时扣减；子代理终态后释放（键为 linkId，单位积分）。
+	SubagentBudgetCarves map[string]float64       `json:"subagentBudgetCarves,omitempty"`
+	Workspace            *WorkspaceSnapshot       `json:"workspace,omitempty"`
+	RuntimeRunID         string                   `json:"-"`
+	SkillRuntimeMode     string                   `json:"skillRuntimeMode,omitempty"`
+	Request              CloudAgentRequest        `json:"request"`
+	Policy               cloudAgentPolicySnapshot `json:"policy"`
+	ParentID             string                   `json:"parentId,omitempty"`
+	Fingerprint          string                   `json:"fingerprint,omitempty"`
+	CreativeAnchor       cloudAgentCreativeAnchor `json:"creativeAnchor,omitempty"`
+	TextHistory          []providerTextMessage    `json:"textHistory,omitempty"`
+	Skills               []cloudAgentSkill        `json:"skills"`
 	// Memory 是建 run 时冻结的长期记忆快照（只读参考数据）；本轮内的修改只体现在工具回执里。
 	Memory            cloudAgentMemorySnapshot `json:"memory,omitempty"`
 	SkillReads        map[string]bool          `json:"skillReads,omitempty"`
