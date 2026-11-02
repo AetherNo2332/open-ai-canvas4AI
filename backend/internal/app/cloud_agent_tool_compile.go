@@ -45,7 +45,7 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 	if req.PermissionMode != "read_only" && req.subagent == nil && (req.MemoryMode == model.AgentMemoryDocumentModeAuto || req.MemoryMode == model.AgentMemoryDocumentModeReview) {
 		c.addMemoryTool()
 	}
-	if len(req.ContextScope) > 0 {
+	if len(req.ContextScope) > 0 && !req.StoryboardDisabled {
 		c.addStoryboardTools(req)
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {

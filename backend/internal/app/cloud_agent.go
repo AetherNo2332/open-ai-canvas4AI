@@ -30,8 +30,11 @@ type CloudAgentRequest struct {
 	// SubagentEnabled is the frozen per-canvas consent for this turn.
 	SubagentEnabled bool `json:"subagentEnabled,omitempty"`
 	// SubagentWriteEnabled 冻结本画布"写型子代理"授权；仍需 spawn 显式申请。
-	SubagentWriteEnabled bool   `json:"subagentWriteEnabled,omitempty"`
-	Model                string `json:"model,omitempty"`
+	SubagentWriteEnabled bool `json:"subagentWriteEnabled,omitempty"`
+	// StoryboardDisabled 冻结 Agent 设置里的分镜表工具开关：关闭时 storyboard
+	// 工具不披露、调用被拒；分镜行仍可经 canvas_get_state / canvas_read_content 读取。
+	StoryboardDisabled bool `json:"storyboardDisabled,omitempty"`
+	Model               string `json:"model,omitempty"`
 	LogicalModelID       string `json:"logicalModelId,omitempty"`
 	ChannelID            string `json:"channelId,omitempty"`
 	ChannelModelKey      string `json:"channelModelKey,omitempty"`
