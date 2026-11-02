@@ -22,7 +22,7 @@ export type CloudAgentConversationMessage = {
 };
 
 export type CloudAgentConversation = {
-	archived?: boolean;
+    archived?: boolean;
     id: string;
     serverConversationId?: string;
     runs?: AgentRun[];
@@ -35,6 +35,7 @@ export type CloudAgentConversation = {
     contextUsage?: AgentContextUsage;
     model?: string;
     permissionMode: AgentPermissionMode;
+    storyboardDisabled?: boolean;
     skillIds?: string[];
     createdAt: string;
     updatedAt: string;
@@ -67,9 +68,7 @@ const CLOUD_AGENT_CONVERSATIONS_KEY = "cloud-agent-conversations-v1";
 export const CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID = "cloud-history-error";
 
 function withoutTransientMessages(conversation: CloudAgentConversation): CloudAgentConversation {
-    return conversation.messages.some((message) => message.id === CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID)
-        ? { ...conversation, messages: conversation.messages.filter((message) => message.id !== CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID) }
-        : conversation;
+    return conversation.messages.some((message) => message.id === CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID) ? { ...conversation, messages: conversation.messages.filter((message) => message.id !== CLOUD_AGENT_SYNC_ERROR_MESSAGE_ID) } : conversation;
 }
 
 export async function loadCloudAgentConversations(canvasId: string, scope = getActiveUserScope()): Promise<CloudAgentConversationDocument> {
@@ -117,8 +116,27 @@ export async function loadCloudAgentPendingSubmission(canvasId: string, conversa
         if (parsed.messageId !== undefined && typeof parsed.messageId !== "string") throw new Error("invalid message");
         if (parsed.composerDraft !== undefined && typeof parsed.composerDraft !== "string") throw new Error("invalid composer draft");
         const delivery = parsed.conversationMessage;
-        if (delivery !== undefined && (!delivery || !parsed.request || typeof delivery.conversationId !== "string" || !delivery.conversationId || (delivery.mode !== "interject" && delivery.mode !== "queue") || typeof delivery.expectedRunId !== "string" || delivery.expectedRunId !== parsed.parentRunId || (delivery.replyToQuestionId !== undefined && (typeof delivery.replyToQuestionId !== "string" || delivery.mode !== "interject")))) throw new Error("invalid delivery");
-        return { fingerprint: parsed.fingerprint, key: parsed.key, request: parsed.request, parentRunId: parsed.parentRunId, messageId: parsed.messageId, ...(parsed.composerDraft !== undefined ? { composerDraft: parsed.composerDraft } : {}), ...(delivery ? { conversationMessage: delivery } : {}) } satisfies CloudAgentPendingSubmission;
+        if (
+            delivery !== undefined &&
+            (!delivery ||
+                !parsed.request ||
+                typeof delivery.conversationId !== "string" ||
+                !delivery.conversationId ||
+                (delivery.mode !== "interject" && delivery.mode !== "queue") ||
+                typeof delivery.expectedRunId !== "string" ||
+                delivery.expectedRunId !== parsed.parentRunId ||
+                (delivery.replyToQuestionId !== undefined && (typeof delivery.replyToQuestionId !== "string" || delivery.mode !== "interject")))
+        )
+            throw new Error("invalid delivery");
+        return {
+            fingerprint: parsed.fingerprint,
+            key: parsed.key,
+            request: parsed.request,
+            parentRunId: parsed.parentRunId,
+            messageId: parsed.messageId,
+            ...(parsed.composerDraft !== undefined ? { composerDraft: parsed.composerDraft } : {}),
+            ...(delivery ? { conversationMessage: delivery } : {}),
+        } satisfies CloudAgentPendingSubmission;
     } catch {
         throw new Error("待确认请求记录损坏，已暂停本对话发送；请先在任务中心核对原运行，不要直接重复生成");
     }
@@ -162,11 +180,13 @@ function isConversationDocument(value: unknown): value is CloudAgentConversation
     return document.conversations.every((conversation) => {
         if (!conversation || typeof conversation !== "object") return false;
         const candidate = conversation as Partial<CloudAgentConversation>;
-        return typeof candidate.id === "string"
-            && typeof candidate.title === "string"
-            && Array.isArray(candidate.messages)
-            && typeof candidate.createdAt === "string"
-            && typeof candidate.updatedAt === "string"
-            && ["read_only", "auto", "request_approval"].includes(candidate.permissionMode || "");
+        return (
+            typeof candidate.id === "string" &&
+            typeof candidate.title === "string" &&
+            Array.isArray(candidate.messages) &&
+            typeof candidate.createdAt === "string" &&
+            typeof candidate.updatedAt === "string" &&
+            ["read_only", "auto", "request_approval"].includes(candidate.permissionMode || "")
+        );
     });
 }

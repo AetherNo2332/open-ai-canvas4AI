@@ -306,6 +306,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     const [stopping, setStopping] = useState(false);
     const [approval, setApproval] = useState<ApprovalState | null>(null);
     const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("auto");
+    const [storyboardDisabled, setStoryboardDisabled] = useState(false);
     const [contextScope, setContextScope] = useState<AgentContextKey[]>(["canvas"]);
     const [maxCredits, setMaxCredits] = useState("200");
     const [maxGenerationTasks, setMaxGenerationTasks] = useState("0");
@@ -778,6 +779,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                     setRun(current.run);
                     setContextUsage(current.contextUsage || emptyAgentContextUsage(current.run?.id || ""));
                     setPermissionMode(current.permissionMode);
+                    setStoryboardDisabled(current.storyboardDisabled === true);
                     setPrompt(current.draft || "");
                     setSelectedSkillIds(current.skillIds || []);
                     if (current.model) setModel(current.model);
@@ -822,6 +824,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                 contextUsage,
                 model: selectedModel || undefined,
                 permissionMode,
+                storyboardDisabled,
                 skillIds: selectedSkillIds,
                 createdAt: existing?.createdAt || now,
                 updatedAt: now,
@@ -830,7 +833,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
             if (existing && current[0] === existing && sameJsonData({ ...existing, updatedAt: undefined }, { ...next, updatedAt: undefined })) return current;
             return [next, ...current.filter((conversation) => conversation.id !== activeConversationId)];
         });
-    }, [activeConversationId, canvasId, historyHydrated, messages, permissionMode, run, selectedModel, selectedSkillIds, contextUsage, prompt]);
+    }, [activeConversationId, canvasId, historyHydrated, messages, permissionMode, storyboardDisabled, run, selectedModel, selectedSkillIds, contextUsage, prompt]);
 
     useEffect(() => {
         if (!historyHydrated || !canvasId) return;
@@ -1052,6 +1055,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                     permissionMode,
                     subagentEnabled: subagentsAvailable && subagentPolicy?.enabled === true,
                     subagentWriteEnabled: subagentsAvailable && subagentPolicy?.enabled === true && subagentPolicy?.writeEnabled === true,
+                    storyboardDisabled,
                     contextScope,
                     focusNodeIds: options.focusNodeIds?.slice(0, 8) ?? (selectedNodeIds.length <= 8 ? selectedNodeIds : []),
                     budget: { maxCredits: positiveNumber(maxCredits), maxGenerationTasks: permissionMode === "read_only" ? 0 : Number(maxGenerationTasks), maxVideoSeconds: permissionMode === "read_only" ? 0 : Number(maxVideoSeconds) },
@@ -1485,6 +1489,8 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                     reasoningMode={reasoningMode}
                                     onReasoningModeChange={setReasoningMode}
                                     canvasId={canvasId}
+                                    storyboardDisabled={storyboardDisabled}
+                                    onStoryboardDisabledChange={setStoryboardDisabled}
                                     subagents={
                                         subagentsAvailable
                                             ? {
