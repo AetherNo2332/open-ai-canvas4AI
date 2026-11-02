@@ -3,6 +3,9 @@ package app
 import (
 	"strings"
 	"testing"
+
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // 分镜表工具开关：运行请求冻结 StoryboardDisabled，关闭时工具不披露、
@@ -51,12 +54,36 @@ func TestStoryboardDisabledRejectsExecution(t *testing.T) {
 	}
 	_, state = agentInterjectionState(t, s, run.ID)
 	receipt := cloudAgentToolMessageForTest(t, state, call.ID)
-	// 第一道闸是工具披露预检（permission_violation）；执行前的显式拒绝
-	// （"分镜表工具已在 Agent 设置中关闭"）是绕过披露路径的纵深防御。
-	if !strings.Contains(receipt, "未获本轮权限或能力授权") && !strings.Contains(receipt, "分镜表工具已在 Agent 设置中关闭") {
-		t.Fatalf("disabled storyboard execution not rejected: %s", receipt)
+	// 第一道闸是工具披露预检（permission_violation）。
+	if !strings.Contains(receipt, "未获本轮权限或能力授权") {
+		t.Fatalf("disabled storyboard disclosure gate missing: %s", receipt)
 	}
-	if strings.Contains(receipt, `"status":"submitted"`) || strings.Contains(receipt, "markdown") {
-		t.Fatalf("disabled storyboard must not execute: %s", receipt)
+	// 第二道闸：直接调用执行入口（绕过披露预检的内部路径）必须被强制闸拒绝。
+	// 先刷新 run/state——第一道闸的拒绝回执已推进 revision；把调用游标归零，
+	// 让强制闸像"本批仍待执行"一样走完整记录路径。
+	run, state = agentInterjectionState(t, s, run.ID)
+	state.CallIndex = 0
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run, state = agentInterjectionState(t, s, run.ID)
+	if err := s.executeCloudAgentStoryboard(run, &state, call); err != nil {
+		t.Fatal(err)
+	}
+	_, state = agentInterjectionState(t, s, run.ID)
+	// 同 callId 有两条工具消息（预检拒绝 + 强制闸拒绝）；取最后一条核对强制闸。
+	var forced string
+	for _, message := range state.Canonical.Messages {
+		if stringField(message, "role") == "tool" && stringField(message, "tool_call_id") == call.ID {
+			forced = stringField(message, "content")
+		}
+	}
+	if !strings.Contains(forced, "分镜表工具已在 Agent 设置中关闭") {
+		t.Fatalf("forced gate missing: %s", forced)
+	}
+	if strings.Contains(forced, `"status":"submitted"`) || strings.Contains(forced, "markdown") {
+		t.Fatalf("disabled storyboard must not execute: %s", forced)
 	}
 }

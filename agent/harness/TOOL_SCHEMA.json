@@ -1003,6 +1003,169 @@
     },
     {
       "function": {
+        "description": "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "canvas_undo",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "snapshotHash": {
+              "description": "当前画布快照",
+              "type": "string"
+            }
+          },
+          "required": [
+            "snapshotHash"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "canvas_redo",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "snapshotHash": {
+              "description": "当前画布快照",
+              "type": "string"
+            }
+          },
+          "required": [
+            "snapshotHash"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "用当前用户素材库的 assetId 替换匹配类型节点的内容；先读取画布并查询素材，不接受任意 URL。运行中的生成节点不能替换。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "canvas_bind_asset",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "assetId": {
+              "description": "素材库 ID",
+              "type": "string"
+            },
+            "nodeId": {
+              "description": "目标节点 ID",
+              "type": "string"
+            },
+            "snapshotHash": {
+              "description": "最新画布快照",
+              "type": "string"
+            }
+          },
+          "required": [
+            "snapshotHash",
+            "nodeId",
+            "assetId"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "读取生成模型目录、能力与价格。生成前传 mode 和实际 referenceNodeIds，按真实素材与操作筛选；素材或模式变化后重新查询，空列表表示无匹配项。优先原样复制返回的 selectionId 字符串到生成工具，不传嵌套 selection 对象，不混用选择字段。再按能力核对时长、画幅、音频和价格。 分镜可传 storyboardRowIds 批量查询；相同实际输入能力合并为一份模型列表，逐行返回问题。",
+        "name": "model_list",
+        "parameters": {
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "properties": {
+                "storyboardNodeId": {
+                  "not": {}
+                },
+                "storyboardRowId": {
+                  "not": {}
+                },
+                "storyboardRowIds": {
+                  "not": {}
+                }
+              }
+            },
+            {
+              "properties": {
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "storyboardRowIds": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "mode",
+                "storyboardNodeId",
+                "storyboardRowId"
+              ]
+            },
+            {
+              "properties": {
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "storyboardRowId": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "mode",
+                "storyboardNodeId",
+                "storyboardRowIds"
+              ]
+            }
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "audio",
+                "image",
+                "video"
+              ],
+              "type": "string"
+            },
+            "referenceNodeIds": {
+              "items": {
+                "description": "本次实际使用的画布媒体参考节点ID；文生媒体传空数组",
+                "type": "string"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            "storyboardNodeId": {
+              "description": "分镜表节点 ID，与 storyboardRowId 或 storyboardRowIds 同时传入，输入从行读取",
+              "type": "string"
+            },
+            "storyboardRowId": {
+              "description": "分镜行 ID",
+              "type": "string"
+            },
+            "storyboardRowIds": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
         "description": "统一分镜：read 读 Markdown、分页与引用；split/resplit 异步调用服务端从剧情、风格和相邻镜头拆镜，不手填整表。写回后在同一运行的下一模型步骤通知，依赖结果用 wait_generations。update 小范围改行，lock/unlock 保护镜头；资产和绑定 action 维护引用。写动作拒绝锁定目标，unlock 除外。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "storyboard",
         "parameters": {
@@ -2080,169 +2243,6 @@
             "action",
             "nodeId"
           ],
-          "type": "object"
-        }
-      },
-      "type": "function"
-    },
-    {
-      "function": {
-        "description": "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
-        "name": "canvas_undo",
-        "parameters": {
-          "additionalProperties": false,
-          "properties": {
-            "snapshotHash": {
-              "description": "当前画布快照",
-              "type": "string"
-            }
-          },
-          "required": [
-            "snapshotHash"
-          ],
-          "type": "object"
-        }
-      },
-      "type": "function"
-    },
-    {
-      "function": {
-        "description": "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
-        "name": "canvas_redo",
-        "parameters": {
-          "additionalProperties": false,
-          "properties": {
-            "snapshotHash": {
-              "description": "当前画布快照",
-              "type": "string"
-            }
-          },
-          "required": [
-            "snapshotHash"
-          ],
-          "type": "object"
-        }
-      },
-      "type": "function"
-    },
-    {
-      "function": {
-        "description": "用当前用户素材库的 assetId 替换匹配类型节点的内容；先读取画布并查询素材，不接受任意 URL。运行中的生成节点不能替换。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
-        "name": "canvas_bind_asset",
-        "parameters": {
-          "additionalProperties": false,
-          "properties": {
-            "assetId": {
-              "description": "素材库 ID",
-              "type": "string"
-            },
-            "nodeId": {
-              "description": "目标节点 ID",
-              "type": "string"
-            },
-            "snapshotHash": {
-              "description": "最新画布快照",
-              "type": "string"
-            }
-          },
-          "required": [
-            "snapshotHash",
-            "nodeId",
-            "assetId"
-          ],
-          "type": "object"
-        }
-      },
-      "type": "function"
-    },
-    {
-      "function": {
-        "description": "读取生成模型目录、能力与价格。生成前传 mode 和实际 referenceNodeIds，按真实素材与操作筛选；素材或模式变化后重新查询，空列表表示无匹配项。优先原样复制返回的 selectionId 字符串到生成工具，不传嵌套 selection 对象，不混用选择字段。再按能力核对时长、画幅、音频和价格。 分镜可传 storyboardRowIds 批量查询；相同实际输入能力合并为一份模型列表，逐行返回问题。",
-        "name": "model_list",
-        "parameters": {
-          "additionalProperties": false,
-          "oneOf": [
-            {
-              "properties": {
-                "storyboardNodeId": {
-                  "not": {}
-                },
-                "storyboardRowId": {
-                  "not": {}
-                },
-                "storyboardRowIds": {
-                  "not": {}
-                }
-              }
-            },
-            {
-              "properties": {
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "storyboardRowIds": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "mode",
-                "storyboardNodeId",
-                "storyboardRowId"
-              ]
-            },
-            {
-              "properties": {
-                "referenceNodeIds": {
-                  "not": {}
-                },
-                "storyboardRowId": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "mode",
-                "storyboardNodeId",
-                "storyboardRowIds"
-              ]
-            }
-          ],
-          "properties": {
-            "mode": {
-              "enum": [
-                "audio",
-                "image",
-                "video"
-              ],
-              "type": "string"
-            },
-            "referenceNodeIds": {
-              "items": {
-                "description": "本次实际使用的画布媒体参考节点ID；文生媒体传空数组",
-                "type": "string"
-              },
-              "maxItems": 16,
-              "type": "array"
-            },
-            "storyboardNodeId": {
-              "description": "分镜表节点 ID，与 storyboardRowId 或 storyboardRowIds 同时传入，输入从行读取",
-              "type": "string"
-            },
-            "storyboardRowId": {
-              "description": "分镜行 ID",
-              "type": "string"
-            },
-            "storyboardRowIds": {
-              "items": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "maxItems": 100,
-              "minItems": 1,
-              "type": "array",
-              "uniqueItems": true
-            }
-          },
-          "required": [],
           "type": "object"
         }
       },

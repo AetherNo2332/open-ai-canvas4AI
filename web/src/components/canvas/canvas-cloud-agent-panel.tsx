@@ -884,6 +884,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                         currentScope.current = `${userScope}:${canvasId}:${selected.id}`;
                         setActiveConversationId(selected.id);
                         setPermissionMode(selected.permissionMode);
+                        setStoryboardDisabled(selected.storyboardDisabled === true);
                         setSelectedSkillIds(selected.skillIds || []);
                     }
                     const changedRun = state.run?.id !== selected.run?.id;
@@ -1299,6 +1300,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     const newConversation = () => {
         const id = nanoid();
         autoRestoreRef.current = false;
+        setStoryboardDisabled(false);
         currentScope.current = `${userScope}:${canvasId}:${id}`;
         submissionControllerRef.current?.abort();
         submissionControllerRef.current = null;
@@ -1343,6 +1345,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
             setRun(null);
             setMessages(conversation.messages);
             setPermissionMode(conversation.permissionMode);
+            setStoryboardDisabled(conversation.storyboardDisabled === true);
             setSelectedSkillIds(conversation.skillIds || []);
             setApproval(null);
             setPrompt(conversation.draft || "");
@@ -1359,6 +1362,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         setRun(conversation.run);
         setMessages(conversation.messages);
         setPermissionMode(conversation.permissionMode);
+        setStoryboardDisabled(conversation.storyboardDisabled === true);
         setSelectedSkillIds(conversation.skillIds || []);
         setApproval(null);
         setPrompt(conversation.draft || "");
