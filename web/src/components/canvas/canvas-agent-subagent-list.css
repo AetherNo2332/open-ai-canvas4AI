@@ -93,3 +93,14 @@
     background: var(--agent-subagent-surface);
     font-variant-numeric: tabular-nums;
 }
+
+.agent-subagent-write {
+    margin-left: 4px;
+    padding: 0 3px;
+    border-radius: 4px;
+    font-size: 9px;
+    line-height: 14px;
+    vertical-align: 1px;
+    color: var(--agent-subagent-text);
+    background: color-mix(in srgb, var(--agent-subagent-text) 12%, transparent);
+}

@@ -19,7 +19,7 @@ type AgentSettingsProps = {
     sendModeError?: string;
     onSendModeChange: (mode: AgentSendMode) => void | Promise<void>;
     onSendModeRetry: () => void | Promise<void>;
-    subagents?: { enabled: boolean; disabled: boolean; saving: boolean; error: string; onToggle: () => void; onReload: () => void };
+    subagents?: { enabled: boolean; writeEnabled: boolean; disabled: boolean; saving: boolean; error: string; onToggle: () => void; onToggleWrite: () => void; onReload: () => void };
     theme: CanvasTheme;
     config: AiConfig;
     selectedModel: string;
@@ -104,22 +104,42 @@ function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; the
             <section aria-label="默认发送方式">
                 <SettingLabel label="默认发送方式" hint={props.sendModeSaving ? "保存中…" : props.sendMode ? "账号同步" : "加载中…"} />
                 <div className="grid grid-cols-2 gap-2">
-                    {([
-                        { value: "interject", label: "插队", description: "优先把新要求交给当前任务。", icon: CornerUpLeft },
-                        { value: "queue", label: "排队", description: "等当前任务结束，再按顺序发送。", icon: ListOrdered },
-                    ] as const).map(({ value, label, description, icon: Icon }) => (
-                        <button type="button" key={value} aria-pressed={props.sendMode === value}
+                    {(
+                        [
+                            { value: "interject", label: "插队", description: "优先把新要求交给当前任务。", icon: CornerUpLeft },
+                            { value: "queue", label: "排队", description: "等当前任务结束，再按顺序发送。", icon: ListOrdered },
+                        ] as const
+                    ).map(({ value, label, description, icon: Icon }) => (
+                        <button
+                            type="button"
+                            key={value}
+                            aria-pressed={props.sendMode === value}
                             disabled={props.sendModeSaving || !props.sendMode}
                             onClick={() => void props.onSendModeChange(value)}
                             className="rounded-xl p-3 text-left disabled:opacity-50"
-                            style={{ background: theme.node.fill, border: `1px solid ${props.sendMode === value ? theme.accent.primary : "transparent"}` }}>
-                            <span className="flex items-center gap-2 text-xs font-semibold"><Icon aria-hidden="true" className="size-4" />{label}</span>
-                            <span className="mt-2 block text-xs leading-5" style={{ color: theme.node.muted }}>{description}</span>
+                            style={{ background: theme.node.fill, border: `1px solid ${props.sendMode === value ? theme.accent.primary : "transparent"}` }}
+                        >
+                            <span className="flex items-center gap-2 text-xs font-semibold">
+                                <Icon aria-hidden="true" className="size-4" />
+                                {label}
+                            </span>
+                            <span className="mt-2 block text-xs leading-5" style={{ color: theme.node.muted }}>
+                                {description}
+                            </span>
                         </button>
                     ))}
                 </div>
-                <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>Enter 或点击发送使用默认方式；Ctrl/⌘+Enter 仅本次使用相反方式，Shift+Enter 换行。没有运行中的任务时会直接开始。</p>
-                {props.sendModeError ? <div role="alert" className="mt-2 text-xs"><span>{props.sendModeError}</span><Button type="link" size="small" onClick={() => void props.onSendModeRetry()}>重试</Button></div> : null}
+                <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>
+                    Enter 或点击发送使用默认方式；Ctrl/⌘+Enter 仅本次使用相反方式，Shift+Enter 换行。没有运行中的任务时会直接开始。
+                </p>
+                {props.sendModeError ? (
+                    <div role="alert" className="mt-2 text-xs">
+                        <span>{props.sendModeError}</span>
+                        <Button type="link" size="small" onClick={() => void props.onSendModeRetry()}>
+                            重试
+                        </Button>
+                    </div>
+                ) : null}
             </section>
             <section>
                 <SettingLabel label="推理模式" hint="新运行生效" />
@@ -207,7 +227,27 @@ function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; the
     );
 }
 
-export function SubagentAuthorization({ enabled, disabled, saving, error, theme, onToggle, onReload }: { enabled: boolean; disabled: boolean; saving: boolean; error: string; theme: CanvasTheme; onToggle: () => void; onReload: () => void }) {
+export function SubagentAuthorization({
+    enabled,
+    writeEnabled,
+    disabled,
+    saving,
+    error,
+    theme,
+    onToggle,
+    onToggleWrite,
+    onReload,
+}: {
+    enabled: boolean;
+    writeEnabled: boolean;
+    disabled: boolean;
+    saving: boolean;
+    error: string;
+    theme: CanvasTheme;
+    onToggle: () => void;
+    onToggleWrite: () => void;
+    onReload: () => void;
+}) {
     return (
         <section aria-label="Agent 子代理授权">
             <SettingLabel label="子代理协作" hint="按画布保存" />
@@ -217,8 +257,14 @@ export function SubagentAuthorization({ enabled, disabled, saving, error, theme,
                 </label>
                 <Switch id="agent-subagent-authorization" aria-label="允许 Agent 自动召唤子代理" checked={enabled} disabled={disabled} loading={saving} onChange={onToggle} />
             </div>
+            <div className="flex items-center justify-between gap-4 p-3" style={{ background: theme.node.fill, borderRadius: "var(--card-radius)" }}>
+                <label htmlFor="agent-subagent-write" className={`min-w-0 text-xs leading-5 ${enabled ? "cursor-pointer" : "opacity-60"}`}>
+                    允许子代理修改画布
+                </label>
+                <Switch id="agent-subagent-write" aria-label="允许子代理修改画布" checked={enabled && writeEnabled} disabled={disabled || !enabled} loading={saving} onChange={onToggleWrite} />
+            </div>
             <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>
-                开启后持续生效，直到关闭；Agent 自动命名、分配角色与任务。设置从下一次新运行开始生效。
+                开启后持续生效，直到关闭；Agent 自动命名、分配角色与任务，spawn 时显式申请写入的子代理才能修改画布（预算由父切分）。设置从下一次新运行开始生效。
             </p>
             {error ? (
                 <div role="alert" className="mt-2 text-xs" style={{ color: theme.node.text }}>
@@ -470,14 +516,14 @@ function sectionSubtitle(section: SettingsSection) {
     return section === "rules"
         ? "全局提示词与当前画布规则，新运行生效"
         : section === "memories"
-            ? "只属于你，批准后才会注入会话"
-            : section === "skills"
-              ? "搜索、安装并选择本轮技能"
-              : section === "mcp"
-                ? "云端工具与连接状态"
-                : section === "context"
-                  ? "控制 Agent 能读取的范围"
-                  : "控制本轮积分与生成消耗";
+          ? "只属于你，批准后才会注入会话"
+          : section === "skills"
+            ? "搜索、安装并选择本轮技能"
+            : section === "mcp"
+              ? "云端工具与连接状态"
+              : section === "context"
+                ? "控制 Agent 能读取的范围"
+                : "控制本轮积分与生成消耗";
 }
 
 export function agentPermissionLabel(mode: AgentPermissionMode) {
