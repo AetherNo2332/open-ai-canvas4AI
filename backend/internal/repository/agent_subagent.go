@@ -185,7 +185,7 @@ func (r *Repository) AgentSubagentPolicy(userID, canvasID string) (*model.AgentS
 }
 
 // SaveAgentSubagentPolicy updates the persistent switch with optimistic locking.
-func (r *Repository) SaveAgentSubagentPolicy(userID, canvasID string, enabled bool, expectedRevision int64) (*model.AgentSubagentPolicy, error) {
+func (r *Repository) SaveAgentSubagentPolicy(userID, canvasID string, enabled, writeEnabled bool, expectedRevision int64) (*model.AgentSubagentPolicy, error) {
 	var out model.AgentSubagentPolicy
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var current model.AgentSubagentPolicy
@@ -194,7 +194,7 @@ func (r *Repository) SaveAgentSubagentPolicy(userID, canvasID string, enabled bo
 			if expectedRevision != 0 {
 				return ErrTaskStateConflict
 			}
-			current = model.AgentSubagentPolicy{ID: kernel.NewID(), UserID: userID, CanvasID: canvasID, Enabled: enabled, Revision: 1, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+			current = model.AgentSubagentPolicy{ID: kernel.NewID(), UserID: userID, CanvasID: canvasID, Enabled: enabled, WriteEnabled: enabled && writeEnabled, Revision: 1, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 			if err := tx.Create(&current).Error; err != nil {
 				return err
 			}
@@ -207,14 +207,14 @@ func (r *Repository) SaveAgentSubagentPolicy(userID, canvasID string, enabled bo
 		if current.Revision != expectedRevision {
 			return ErrTaskStateConflict
 		}
-		result := tx.Model(&model.AgentSubagentPolicy{}).Where("id = ? AND revision = ?", current.ID, expectedRevision).Updates(map[string]any{"enabled": enabled, "revision": expectedRevision + 1, "updated_at": time.Now()})
+		result := tx.Model(&model.AgentSubagentPolicy{}).Where("id = ? AND revision = ?", current.ID, expectedRevision).Updates(map[string]any{"enabled": enabled, "write_enabled": enabled && writeEnabled, "revision": expectedRevision + 1, "updated_at": time.Now()})
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
 			return ErrTaskStateConflict
 		}
-		current.Enabled, current.Revision = enabled, expectedRevision+1
+		current.Enabled, current.WriteEnabled, current.Revision = enabled, enabled && writeEnabled, expectedRevision+1
 		current.UpdatedAt = time.Now()
 		out = current
 		return nil

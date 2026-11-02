@@ -248,6 +248,11 @@ func (s *Service) piModelStepTaskInput(run *model.CloudAgentExecution, state *cl
 	deliveredNodes := deliveredImageNodeIDs(request.Canonical)
 	state.cloudAgentSettleImageDelivery(deliveredNodes, len(deliveredNodes))
 	remaining := int64(math.Floor(state.Request.Budget.MaxCredits * float64(CreditScale)))
+	if holdbacks, err := s.cloudAgentSubagentBudgetHoldbacks(state); err != nil {
+		return nil, cloudAgentContextBudget{}, err
+	} else {
+		remaining -= holdbacks
+	}
 	if remaining <= 0 {
 		return nil, cloudAgentContextBudget{}, BadAuthRequest("Agent 累计预算已耗尽")
 	}

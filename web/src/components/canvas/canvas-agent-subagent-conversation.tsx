@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ArrowLeft, Check, RefreshCw, X } from "lucide-react";
 import type { CanvasTheme } from "@/lib/canvas-theme";
-import { getAgentRun, subscribeAgentEvents, type AgentEvent } from "@/services/api/agent";
+import { decideAgentApproval, getAgentRun, subscribeAgentEvents, type AgentEvent } from "@/services/api/agent";
 import type { AgentSubagent } from "@/services/api/agent-subagent";
 import { AgentChatMessage, AgentOperationFeed, type CloudAgentChatMessage } from "./canvas-cloud-agent-chat-ui";
 import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
@@ -43,6 +43,25 @@ export function AgentSubagentConversation({ agent, theme, onBack }: { agent: Age
     const [truncated, setTruncated] = useState(false);
     const [reload, setReload] = useState(0);
     const [runMeta, setRunMeta] = useState<{ status: string; failureMessage?: string } | null>(null);
+    const [approvalBusy, setApprovalBusy] = useState(false);
+    const [approvalError, setApprovalError] = useState("");
+    const pendingApproval = (agent.messages || [])
+        .slice()
+        .sort((a, b) => b.sequence - a.sequence)
+        .find((message) => message.kind === "approval" && message.approvalId);
+    const decideApproval = async (decision: "approve" | "reject") => {
+        if (!pendingApproval?.approvalId || approvalBusy) return;
+        setApprovalBusy(true);
+        setApprovalError("");
+        try {
+            await decideAgentApproval(agent.childRunId, pendingApproval.approvalId, decision);
+            setReload((value) => value + 1);
+        } catch {
+            setApprovalError("审批提交失败，请重试");
+        } finally {
+            setApprovalBusy(false);
+        }
+    };
     useEffect(() => {
         const controller = new AbortController();
         let active = true;
@@ -98,6 +117,9 @@ export function AgentSubagentConversation({ agent, theme, onBack }: { agent: Age
             loading={loading}
             error={error}
             truncated={truncated}
+            approvalBusy={approvalBusy}
+            approvalError={approvalError}
+            onApproval={(decision) => void decideApproval(decision)}
             onBack={onBack}
             onRefresh={() => setReload((value) => value + 1)}
         />
@@ -111,6 +133,9 @@ export function AgentSubagentConversationView({
     loading,
     error,
     truncated,
+    approvalBusy,
+    approvalError,
+    onApproval,
     onBack,
     onRefresh,
 }: {
@@ -120,6 +145,9 @@ export function AgentSubagentConversationView({
     loading: boolean;
     error: string;
     truncated?: boolean;
+    approvalBusy?: boolean;
+    approvalError?: string;
+    onApproval?: (decision: "approve" | "reject") => void;
     onBack: () => void;
     onRefresh: () => void;
 }) {
@@ -148,6 +176,20 @@ export function AgentSubagentConversationView({
                     <span>任务目标</span>
                     <p>{agent.objective}</p>
                 </div>
+                {agent.status === "waiting_approval" && onApproval && agent.messages?.some((message) => message.kind === "approval" && message.approvalId) ? (
+                    <div role="alert" className="agent-subagent-approval">
+                        <p>子代理在等待你的审批后才能继续写入或生成。</p>
+                        <div className="agent-subagent-approval-actions">
+                            <button type="button" onClick={() => onApproval("approve")} disabled={approvalBusy}>
+                                <Check size={14} aria-hidden="true" /> 批准
+                            </button>
+                            <button type="button" onClick={() => onApproval("reject")} disabled={approvalBusy}>
+                                <X size={14} aria-hidden="true" /> 拒绝
+                            </button>
+                        </div>
+                        {approvalError ? <p>{approvalError}</p> : null}
+                    </div>
+                ) : null}
                 {agent.failureMessage ? <p role="alert">{agent.failureMessage}</p> : null}
                 {agent.messages?.length ? (
                     <details className="agent-subagent-reports" open={!messages.length}>

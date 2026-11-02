@@ -41,6 +41,11 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 	for _, order := range orders {
 		remaining -= order.AmountMicrocredits
 	}
+	if holdbacks, err := s.cloudAgentSubagentBudgetHoldbacks(state); err != nil {
+		return err
+	} else {
+		remaining -= holdbacks
+	}
 	if remaining < 0 {
 		return s.failCloudAgent(run, state, "Agent 累计预算已耗尽")
 	}

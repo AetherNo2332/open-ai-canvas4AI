@@ -50,7 +50,7 @@ func dynamicSpawn(t *testing.T, s *Service, parent, id string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := s.spawnDynamicSubagent(run, &state, dynamicToolCall("spawn_subagent", id, `{"name":"研究员","role":"资料核对","objective":"回报三条事实"}`))
+	result, _, err := s.spawnDynamicSubagent(run, &state, dynamicToolCall("spawn_subagent", id, `{"name":"研究员","role":"资料核对","objective":"回报三条事实"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestDynamicSubagentSpawnSessionsReplayAndBounds(t *testing.T) {
 	dynamicSpawn(t, s, parent, "spawn-2")
 	dynamicSpawn(t, s, parent, "spawn-3")
 	state, _ := cloudAgentDecode(parentRun)
-	if _, err := s.spawnDynamicSubagent(parentRun, &state, dynamicToolCall("spawn_subagent", "spawn-4", `{"name":"第四个","role":"检查","objective":"不应越过并发限制"}`)); err == nil {
+	if _, _, err := s.spawnDynamicSubagent(parentRun, &state, dynamicToolCall("spawn_subagent", "spawn-4", `{"name":"第四个","role":"检查","objective":"不应越过并发限制"}`)); err == nil {
 		t.Fatal("concurrency cap not enforced")
 	}
 }
@@ -182,7 +182,7 @@ func TestDynamicSubagentSpawnAdmissionRollsBackLinkFailure(t *testing.T) {
 	}
 	run, _ := s.repo.CloudAgent("user", parent)
 	state, _ := cloudAgentDecode(run)
-	if _, err := s.spawnDynamicSubagent(run, &state, dynamicToolCall("spawn_subagent", "rollback", `{"name":"检查员","role":"核查","objective":"不能产生孤儿"}`)); err == nil {
+	if _, _, err := s.spawnDynamicSubagent(run, &state, dynamicToolCall("spawn_subagent", "rollback", `{"name":"检查员","role":"核查","objective":"不能产生孤儿"}`)); err == nil {
 		t.Fatal("injected link failure ignored")
 	}
 	childID := cloudAgentID("user", "subagent:"+parent+":rollback")

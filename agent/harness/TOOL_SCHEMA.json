@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v20",
+  "schemaVersion": "cloud-agent-tools/v21",
   "tools": [
     {
       "function": {
@@ -3947,7 +3947,7 @@
     },
     {
       "function": {
-        "description": "Create one independent child Agent with a name, role label and concrete objective.",
+        "description": "Create one independent child Agent with a name, role label and concrete objective. write=true 申请写入权限：仅当父运行权限为 auto/request_approval 且画布开启子代理写授权时授予；授予后子代理继承父权限模式，预算按父剩余积分切分（maxCredits 可进一步收紧）。",
         "name": "spawn_subagent",
         "parameters": {
           "additionalProperties": false,
@@ -3955,6 +3955,12 @@
             "instructions": {
               "maxLength": 4000,
               "type": "string"
+            },
+            "maxCredits": {
+              "description": "可选：为子代理单独收紧积分预算上限，不超过父当前可划份额",
+              "maximum": 10000000,
+              "minimum": 0,
+              "type": "number"
             },
             "maxSteps": {
               "maximum": 20,
@@ -3972,6 +3978,10 @@
             "role": {
               "maxLength": 80,
               "type": "string"
+            },
+            "write": {
+              "description": "申请写入权限；默认 false（只读）。回执 writeGranted/writeReason 说明授予结果",
+              "type": "boolean"
             }
           },
           "required": [

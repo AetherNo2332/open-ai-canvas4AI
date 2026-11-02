@@ -28,11 +28,13 @@ type CloudAgentRequest struct {
 	Prompt        string `json:"prompt"`
 	Workflow      string `json:"workflow,omitempty"`
 	// SubagentEnabled is the frozen per-canvas consent for this turn.
-	SubagentEnabled bool   `json:"subagentEnabled,omitempty"`
-	Model           string `json:"model,omitempty"`
-	LogicalModelID  string `json:"logicalModelId,omitempty"`
-	ChannelID       string `json:"channelId,omitempty"`
-	ChannelModelKey string `json:"channelModelKey,omitempty"`
+	SubagentEnabled bool `json:"subagentEnabled,omitempty"`
+	// SubagentWriteEnabled 冻结本画布"写型子代理"授权；仍需 spawn 显式申请。
+	SubagentWriteEnabled bool   `json:"subagentWriteEnabled,omitempty"`
+	Model                string `json:"model,omitempty"`
+	LogicalModelID       string `json:"logicalModelId,omitempty"`
+	ChannelID            string `json:"channelId,omitempty"`
+	ChannelModelKey      string `json:"channelModelKey,omitempty"`
 	// VisionEnabled is server-derived from the selected model input contract and persisted for the run.
 	VisionEnabled bool `json:"visionEnabled,omitempty"`
 	// MemoryMode 是建 run 时从用户记忆文件冻结的模式（auto / review / off），服务端推导，

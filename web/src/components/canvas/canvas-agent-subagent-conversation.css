@@ -88,3 +88,33 @@
 .agent-subagent-transcript > * {
     margin-top: var(--space-4);
 }
+
+.agent-subagent-approval {
+    margin: 8px 12px;
+    padding: 10px 12px;
+    border-radius: var(--card-radius);
+    background: color-mix(in srgb, var(--palette-status-warning, #d97706) 10%, transparent);
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.agent-subagent-approval-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.agent-subagent-approval-actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: var(--card-radius);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.agent-subagent-approval-actions button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}

@@ -119,13 +119,16 @@ func (s *Service) requestCloudAgentPlanApproval(run *model.CloudAgentExecution, 
 
 // executeCloudAgentSpawnSubagent 在检查点事务外创建子代理，再把回执和 subagent_spawned 事件写入检查点。
 func (s *Service) executeCloudAgentSpawnSubagent(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
-	result, spawnErr := s.spawnDynamicSubagent(run, state, call)
+	result, plan, spawnErr := s.spawnDynamicSubagent(run, state, call)
 	if spawnErr != nil && !cloudAgentToolErrorIsBusiness(spawnErr) {
 		return spawnErr
 	}
 	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		cloudAgentRecordToolResult(current, state, call, result, spawnErr)
 		if spawnErr == nil {
+			// carve 份额必须在回执的同一检查点事务里登记：单独事务会把父
+			// revision +1，让这条回执的 CAS 保存必然冲突（v125 审查阻塞 4）。
+			applySubagentBudgetCarve(state, result["linkId"].(string), *plan)
 			state.event(run.ID, "subagent_spawned", result)
 		}
 		return cloudAgentSave(current, state)

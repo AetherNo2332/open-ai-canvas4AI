@@ -56,7 +56,7 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 		c.addSubagentParentTools()
 	}
 	if req.subagent != nil {
-		c.addSubagentChildTools()
+		c.addSubagentChildTools(req.subagent.WriteGranted)
 	}
 	return c.tools
 }
@@ -248,12 +248,14 @@ func (c *cloudAgentToolCompiler) addGenerationTools() {
 
 // addSubagentParentTools adds the tools a parent Agent uses to manage children.
 func (c *cloudAgentToolCompiler) addSubagentParentTools() {
-	c.add("spawn_subagent", "Create one independent child Agent with a name, role label and concrete objective.", map[string]any{
+	c.add("spawn_subagent", "Create one independent child Agent with a name, role label and concrete objective. write=true 申请写入权限：仅当父运行权限为 auto/request_approval 且画布开启子代理写授权时授予；授予后子代理继承父权限模式，预算按父剩余积分切分（maxCredits 可进一步收紧）。", map[string]any{
 		"name":         map[string]any{"type": "string", "maxLength": maxDynamicSubagentNameRunes},
 		"role":         map[string]any{"type": "string", "maxLength": maxDynamicSubagentRoleRunes},
 		"objective":    map[string]any{"type": "string", "maxLength": maxDynamicSubagentObjectiveRunes},
 		"instructions": map[string]any{"type": "string", "maxLength": maxDynamicSubagentObjectiveRunes},
 		"maxSteps":     map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
+		"write":        map[string]any{"type": "boolean", "description": "申请写入权限；默认 false（只读）。回执 writeGranted/writeReason 说明授予结果"},
+		"maxCredits":   map[string]any{"type": "number", "minimum": 0, "maximum": 1e7, "description": "可选：为子代理单独收紧积分预算上限，不超过父当前可划份额"},
 	}, "name", "role", "objective")
 	c.add("wait_subagents", "Wait until the parent Agent's active children report a result.", map[string]any{})
 	c.add("message_subagent", "Send a bounded instruction or clarification to one child Agent.", map[string]any{
@@ -262,8 +264,9 @@ func (c *cloudAgentToolCompiler) addSubagentParentTools() {
 	c.add("subagent_status", "Read the current status of the parent Agent's children.", map[string]any{})
 }
 
-// addSubagentChildTools adds child-to-parent tools and removes tools a child may not call.
-func (c *cloudAgentToolCompiler) addSubagentChildTools() {
+// addSubagentChildTools adds child-to-parent tools and removes tools a child may
+// not call. 写型子代理（WriteGranted）保留画布写入与生成工具，其余照旧剔除。
+func (c *cloudAgentToolCompiler) addSubagentChildTools(writeGranted bool) {
 	c.add("send_parent_message", "Send a structured progress, question or result message to the parent Agent.", map[string]any{
 		"kind": map[string]any{"type": "string", "enum": []any{"progress", "question", "partial_result", "final_result", "error"}},
 		"text": map[string]any{"type": "string", "maxLength": 4000},
@@ -274,7 +277,10 @@ func (c *cloudAgentToolCompiler) addSubagentChildTools() {
 	filtered := c.tools[:0]
 	for _, tool := range c.tools {
 		name := stringField(tool["function"].(map[string]any), "name")
-		if name == "finish_run" || name == "ask_user" || cloudAgentWrite(name) || name == "spawn_subagent" || name == "wait_subagents" || name == "message_subagent" || name == "subagent_status" {
+		if name == "finish_run" || name == "ask_user" || name == "spawn_subagent" || name == "wait_subagents" || name == "message_subagent" || name == "subagent_status" {
+			continue
+		}
+		if !writeGranted && cloudAgentWrite(name) {
 			continue
 		}
 		filtered = append(filtered, tool)
