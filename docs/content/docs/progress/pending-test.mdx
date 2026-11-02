@@ -4468,3 +4468,12 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 - 已实现：Agent 工具 op 入队写 tool_pending 事件（前端可见"已接单"）；op 标记 succeeded 当且仅当工具回执已持久化，终态无回执的 op 按失败收尾并兜底写 tool_failed 回执；非等待/非挂起 op 超过 5 分钟补失败回执结束，不出现"永远 Pending"。
 - 已实现：agent tool operation 的 claim/advance 耗时日志与拆镜 prepare/commit 分段耗时日志。
 - [ ] 真实模型验收：composer 拆镜不传模型凭证，拆镜任务秒级回执 submitted；错误选择（图像凭证）预检字段级报错可自纠；前端 tool_pending 提示展示。
+
+
+## 子代理写入权限（P0）
+
+- 已实现：`spawn_subagent` 新增 `write`/`maxCredits`；写型子代理继承父 `auto`/`request_approval` 权限与切分预算（回执 `writeGranted/permissionMode/budgetCredits`），画布策略新增 `writeEnabled`（控制台子代理授权区双开关），父运行冻结 `subagentWriteEnabled`。
+- 已实现：写型子代理披露画布写入与生成工具（仍无 spawn/wait/status/memory），只读子代理行为不变；storyboard 拆镜等写闸按 `WriteGranted` 放行；子代理权限仍不可运行中切换。
+- 已实现：父预算 carve——spawn 时按剩余积分 `1/(1+活跃兄弟数)` 切分（`maxCredits` 可收紧），父剩余计算扣减活跃子代理份额，子代理终态释放；写型子代理等待审批时以 `kind=approval` 消息幂等上浮父会话。
+- 已实现：子代理列表/卡片显示"写"徽标；`spawn_subagent` 工具描述与 `agent-tool-descriptions.md`、工具合同 v21 同步。
+- [ ] 真模型与浏览器验收：写型子代理实际改分镜行并回收预算；request_approval 父的子审批卡上浮与批准；两个并行子写同一行的 CAS 冲突恢复；子代理面板"写"徽标与双开关展示。
