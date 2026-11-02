@@ -1076,7 +1076,7 @@
             },
             {
               "additionalProperties": false,
-              "oneOf": [
+              "anyOf": [
                 {
                   "properties": {
                     "channelId": {
@@ -1122,6 +1122,22 @@
                     "channelId",
                     "channelModelKey"
                   ]
+                },
+                {
+                  "properties": {
+                    "channelId": {
+                      "not": {}
+                    },
+                    "channelModelKey": {
+                      "not": {}
+                    },
+                    "logicalModelId": {
+                      "not": {}
+                    },
+                    "selectionId": {
+                      "not": {}
+                    }
+                  }
                 }
               ],
               "properties": {
@@ -1141,7 +1157,7 @@
             },
             {
               "additionalProperties": false,
-              "oneOf": [
+              "anyOf": [
                 {
                   "properties": {
                     "channelId": {
@@ -1187,6 +1203,22 @@
                     "channelId",
                     "channelModelKey"
                   ]
+                },
+                {
+                  "properties": {
+                    "channelId": {
+                      "not": {}
+                    },
+                    "channelModelKey": {
+                      "not": {}
+                    },
+                    "logicalModelId": {
+                      "not": {}
+                    },
+                    "selectionId": {
+                      "not": {}
+                    }
+                  }
                 }
               ],
               "properties": {

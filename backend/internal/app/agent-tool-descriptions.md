@@ -28,7 +28,7 @@ summary 必填，内容为给用户的最终答复全文。通过后持久化回
 
 ## storyboard
 
-统一分镜工具。read 默认返回 Markdown 分镜表，同时保留 view、rows、offset、rowIds、fields 和 missingAnyFields 的结构化读取能力。split 整表提交服务端拆镜任务；resplit 只重拆连续且未锁定的 rowIds，request 尽量使用用户原话。服务端自己读取剧情、风格要求、角色、画布素材和前后镜头，不要手填分镜行。split/resplit 返回 submitted/taskId，任务完成后在下一步以系统通知告知写回结果；需要结果才能继续时调用 wait_generations，恢复后重新 read。update 和资产/产物 action 使用真实 rowId 与 snapshotHash；lock/unlock 管理镜头保护，锁定镜头不能被其他写 action 修改。模型选择优先原样复制 model_list 的 selectionId，或 logicalModelId，或系统 channelId+channelModelKey，不能混用。update 可用 updates:[{rowId,patch}] 做逐行不同的少量修改。所有写动作拒绝锁定行，只有 unlock 例外；共享引用涉及锁定行也拒绝。完成通知和 task_get 返回新行←旧行对应关系。拆镜和媒体都在同一运行的下一模型步骤通知，不另起用户轮次、不打断流式响应。
+统一分镜工具。read 默认返回 Markdown 分镜表，同时保留 view、rows、offset、rowIds、fields 和 missingAnyFields 的结构化读取能力。split 整表提交服务端拆镜任务；resplit 只重拆连续且未锁定的 rowIds，request 尽量使用用户原话。服务端自己读取剧情、风格要求、角色、画布素材和前后镜头，不要手填分镜行。split/resplit 返回 submitted/taskId，任务完成后在下一步以系统通知告知写回结果；需要结果才能继续时调用 wait_generations，恢复后重新 read。update 和资产/产物 action 使用真实 rowId 与 snapshotHash；lock/unlock 管理镜头保护，锁定镜头不能被其他写 action 修改。拆镜是文本任务：三种模型选择凭证可以完全省略，服务端回退本轮运行的文本模型并回执 modelFallback：true；需要指定时 selectionId、logicalModelId、channelId+channelModelKey 三选一互斥，且必须是文本模型，混用或用图像模型凭证都会在预检被拒。model_list 只返回生成媒体的模型目录，不要拿图像模型凭证调用 split/resplit。update 可用 updates:[{rowId,patch}] 做逐行不同的少量修改。所有写动作拒绝锁定行，只有 unlock 例外；共享引用涉及锁定行也拒绝。完成通知和 task_get 返回新行←旧行对应关系。拆镜和媒体都在同一运行的下一模型步骤通知，不另起用户轮次、不打断流式响应。
 
 ## task_get
 
