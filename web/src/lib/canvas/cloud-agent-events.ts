@@ -266,7 +266,7 @@ export function applyAgentEvent(
     }
     if (event.type.startsWith("tool_")) {
         const message: CloudAgentChatMessage = {
-            id: `tool-${event.runId}-${payload.callId || event.eventId}`,
+            id: event.eventId,
             role: "tool",
             title: String(payload.toolName || payload.title || "工具执行"),
             text: text || event.type,
@@ -274,9 +274,16 @@ export function applyAgentEvent(
         };
         if (payload.toolName === "generate_media") {
             setMessages((current) => upsertMediaToolTrace(current, message));
-        } else {
-            setMessages((current) => upsertContextCompactionNotice(current, message));
+            return;
         }
+        // 历史回放对老 checkpoint 依赖事件键 id；只有同 callId 的"已接单"行存在时
+        // 才把结果就地升级到接单气泡上，避免同一次调用挂两条。
+        const pendingId = payload.callId ? `tool-${event.runId}-${payload.callId}` : "";
+        if (pendingId) {
+            setMessages((current) => (current.some((item) => item.id === pendingId) ? upsertContextCompactionNotice(current, { ...message, id: pendingId }) : appendUniqueMessage(current, message)));
+            return;
+        }
+        setMessages((current) => appendUniqueMessage(current, message));
         return;
     }
     if (event.type === "model_failure_recovered") {
