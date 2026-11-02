@@ -255,7 +255,7 @@ func (c *cloudAgentToolCompiler) addSubagentParentTools() {
 		"instructions": map[string]any{"type": "string", "maxLength": maxDynamicSubagentObjectiveRunes},
 		"maxSteps":     map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
 		"write":        map[string]any{"type": "boolean", "description": "申请写入权限；默认 false（只读）。回执 writeGranted/writeReason 说明授予结果"},
-		"maxCredits":   map[string]any{"type": "number", "minimum": 0, "description": "可选：为子代理单独收紧积分预算上限，不超过父当前可划份额"},
+		"maxCredits":   map[string]any{"type": "number", "minimum": 0, "maximum": 1e7, "description": "可选：为子代理单独收紧积分预算上限，不超过父当前可划份额"},
 	}, "name", "role", "objective")
 	c.add("wait_subagents", "Wait until the parent Agent's active children report a result.", map[string]any{})
 	c.add("message_subagent", "Send a bounded instruction or clarification to one child Agent.", map[string]any{

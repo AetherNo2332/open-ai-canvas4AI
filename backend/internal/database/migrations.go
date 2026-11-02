@@ -12,15 +12,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// CurrentSchemaVersion：v1–v77 归上游迁移（v75–v77 随上游合并引入）；v78 起是 fork 云端 Agent 子系统（见 migrations_agent.go），
-// v79 退役服务端预演渲染任务（见 migrations_previs_render.go），v80 把媒体版本表迁入节点 metadata，
-// v81 为 canvas_task_bindings 增加媒体版本快照列 media_version_json（均见 migrations_media_versions.go），
-// v82 把已批准的 fork 经验并入各用户的长期记忆文件并退役经验压缩任务（见 migrations_lessons_memory.go）。
+// CurrentSchemaVersion：v1–v77 归上游迁移；v78 起是 fork 云端 Agent 子系统，v79–v83 见各 migrations_*_go 文件。
 // 迁移计划按列表逐项执行，不要求版本连续（v44 与上游合并前的 v75–v77 均为空号）。
-const CurrentSchemaVersion int64 = lessonsToMemoryMigrationVersion
+const CurrentSchemaVersion int64 = subagentWritePermissionsMigrationVersion
 
-const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
-const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
+const (
+	baselineSchemaChecksum                = "sha256:open-ai-canvas-schema-v1-20260830"
+	schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
+)
 const assetTaxonomyCandidateIdentityChecksum = "sha256:asset-taxonomy-candidate-identity-v3-20260831-r1"
 const resourceUploadKeyChecksum = "sha256:resource-upload-key-v4-20260901"
 const paymentTopupChecksum = "sha256:payment-topup-v5-20260902"
@@ -284,6 +283,7 @@ var schemaMigrations = []migration{
 	{version: mediaVersionsMigrationVersion, name: "media_versions_to_metadata", checksum: mediaVersionsChecksum, apply: migrateMediaVersionsToMetadata},
 	{version: mediaVersionBindingMigrationVersion, name: "canvas_task_binding_media_version", checksum: mediaVersionBindingChecksum, apply: migrateMediaVersionBinding},
 	{version: lessonsToMemoryMigrationVersion, name: "fork_lessons_to_memory_document", checksum: lessonsToMemoryChecksum, apply: migrateLessonsToMemoryDocument},
+	{version: subagentWritePermissionsMigrationVersion, name: "fork_subagent_write_permissions", checksum: subagentWritePermissionsChecksum, apply: migrateSubagentWritePermissions},
 }
 
 // migrateAgentMemoryDocumentColumns 补齐记忆文件的条目序号与修订的工具调用 ID。

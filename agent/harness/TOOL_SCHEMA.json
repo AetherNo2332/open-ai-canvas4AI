@@ -3958,6 +3958,7 @@
             },
             "maxCredits": {
               "description": "可选：为子代理单独收紧积分预算上限，不超过父当前可划份额",
+              "maximum": 10000000,
               "minimum": 0,
               "type": "number"
             },

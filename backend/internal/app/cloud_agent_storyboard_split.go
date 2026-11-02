@@ -214,6 +214,11 @@ func (s *Service) executeCloudAgentStoryboardSplit(run *model.CloudAgentExecutio
 	for _, order := range orders {
 		remaining -= order.AmountMicrocredits
 	}
+	if holdbacks, err := s.cloudAgentSubagentBudgetHoldbacks(state); err != nil {
+		return s.recordStoryboardResult(run, state, call, nil, err)
+	} else {
+		remaining -= holdbacks
+	}
 	if remaining < 0 {
 		return s.recordStoryboardResult(run, state, call, nil, BadAuthRequest("Agent 累计预算已耗尽"))
 	}
@@ -259,7 +264,7 @@ func cloudAgentSplitRowAndBudgetGate(state *cloudAgentRuntime, action string, ro
 	if (action == "resplit" && len(rowIDs) == 0) || (action == "split" && len(rowIDs) > 0) {
 		return cloudAgentFieldError("rowIds", "invalid_value", "resplit 必须指定连续镜头；split 不接受 rowIds")
 	}
-	if len(state.PendingGenerations) >= cloudAgentMaxPendingGenerations || (state.Request.Budget.MaxGenerationTasks > 0 && state.Generations >= state.Request.Budget.MaxGenerationTasks) {
+	if len(state.PendingGenerations) >= cloudAgentMaxPendingGenerations || (state.Request.Budget.MaxGenerationTasks > 0 && cloudAgentParentGenerationAllowance(state) <= 0) {
 		return BadAuthRequest("本轮生成数量已达到上限，请等待已有任务完成或调整预算")
 	}
 	return nil

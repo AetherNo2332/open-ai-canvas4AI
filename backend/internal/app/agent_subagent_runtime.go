@@ -65,6 +65,12 @@ type subagentMessageInput struct {
 }
 
 func appendSubagentMessage(repo *repository.Repository, userID string, runtime *SubagentRuntime, direction, kind, text, idempotencyKey string) (*model.AgentSubagentMessage, error) {
+	return appendSubagentMessageWithExtra(repo, userID, runtime, direction, kind, text, idempotencyKey, nil)
+}
+
+// appendSubagentMessageWithExtra 在标准 {text, kind} payload 上附加结构化字段
+// （如审批上浮的 approvalId/preview/quoteHash），供前端渲染决策入口。
+func appendSubagentMessageWithExtra(repo *repository.Repository, userID string, runtime *SubagentRuntime, direction, kind, text, idempotencyKey string, extra map[string]any) (*model.AgentSubagentMessage, error) {
 	if runtime == nil || runtime.LinkID == "" {
 		return nil, kernel.Forbidden("子代理通信身份缺失")
 	}
@@ -77,7 +83,14 @@ func appendSubagentMessage(repo *repository.Repository, userID string, runtime *
 	default:
 		return nil, BadAuthRequest("子代理消息类型无效")
 	}
-	payload, err := json.Marshal(map[string]string{"text": text, "kind": kind})
+	payloadBody := map[string]any{"text": text, "kind": kind}
+	for key, value := range extra {
+		if key == "text" || key == "kind" || value == nil {
+			continue
+		}
+		payloadBody[key] = value
+	}
+	payload, err := json.Marshal(payloadBody)
 	if err != nil {
 		return nil, err
 	}
@@ -240,8 +253,11 @@ func (s *Service) reconcileDynamicSubagents(ctx context.Context, userID, parentR
 			}
 			continue
 		}
-		// 子代理终态：归还未用完的 carve 份额，父剩余预算恢复。
-		s.releaseSubagentBudgetCarve(link.UserID, link.ParentRunID, link.ID)
+		// 子代理终态：先结算预算（释放 carve 份额、把实际花费计入父 holdback），
+		// 失败则本条 link 保持未结算，下次 reconcile 重试。
+		if err := s.settleSubagentBudget(link.UserID, link.ParentRunID, link.ID, child); err != nil {
+			return err
+		}
 		if err := s.repo.WithAgentSubagentFamily(link.UserID, parent.ID, child.ID, func(repo *repository.Repository) error {
 			current, err := repo.AgentSubagentLinkForUser(link.UserID, link.ID)
 			if err != nil {
@@ -314,7 +330,7 @@ func (s *Service) resolveSpawnDynamicSubagent(run *model.CloudAgentExecution, st
 		return spawnSubagentInput{}, nil, err
 	}
 	if existing, err := s.repo.AgentSubagentLinkByIdempotency(run.UserID, key); err == nil {
-		return input, agentSubagentReplayReceipt(existing), nil
+		return input, s.agentSubagentReplayReceipt(existing), nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return spawnSubagentInput{}, nil, err
 	}
@@ -324,22 +340,22 @@ func (s *Service) resolveSpawnDynamicSubagent(run *model.CloudAgentExecution, st
 	return input, nil, nil
 }
 
-func (s *Service) spawnDynamicSubagent(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) (map[string]any, error) {
+func (s *Service) spawnDynamicSubagent(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) (map[string]any, *cloudAgentSubagentWritePlan, error) {
 	key := "subagent:" + run.ID + ":" + call.ID
 	input, replay, err := s.resolveSpawnDynamicSubagent(run, state, call, key)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if replay != nil {
-		return replay, nil
+		return replay, nil, nil
 	}
 	siblings, capErr := s.agentSubagentCapacityCheck(run)
 	if capErr != nil {
-		return nil, capErr
+		return nil, nil, capErr
 	}
 	plan, planErr := s.planSubagentWrite(run, state, input, siblings)
 	if planErr != nil {
-		return nil, planErr
+		return nil, nil, planErr
 	}
 	childReq := dynamicSubagentChildRequest(state.Request, input, key, plan)
 	childID := cloudAgentID(run.UserID, key)
@@ -348,40 +364,52 @@ func (s *Service) spawnDynamicSubagent(run *model.CloudAgentExecution, state *cl
 	prepared := repository.CloudAgentAdmission{}
 	child, err := s.createCloudAgentRunScoped(run.UserID, childReq, "", &cloudAgentRunScope{Workspace: state.Workspace, Skills: state.Skills, ConversationID: childID, ParentID: run.ID, Subagent: runtime, Prepared: &prepared})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if child.ID != childID {
-		return nil, BadAuthRequest("子代理运行身份生成不一致")
+		return nil, nil, BadAuthRequest("子代理运行身份生成不一致")
 	}
 	runtime.ChildRunID = child.ID
 	policy, err := s.RuntimePolicy()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	budgetSnapshot, err := json.Marshal(childReq.Budget)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	contextSnapshot, err := json.Marshal(map[string]any{"workspace": state.Workspace, "skills": state.Skills})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	link := &model.AgentSubagentLink{ID: linkID, UserID: run.UserID, CanvasID: run.CanvasID, ParentRunID: run.ID, ChildRunID: child.ID, TaskID: prepared.Task.ID, IdempotencyKey: key, DisplayName: runtime.DisplayName, RoleLabel: runtime.RoleLabel, Objective: runtime.Objective, Instructions: childReq.Prompt, Depth: runtime.Depth, WriteGranted: runtime.WriteGranted, BudgetJSON: string(budgetSnapshot), ContextSnapshotJSON: string(contextSnapshot), Status: repository.SubagentStatusQueued}
 	if replay, err := s.admitDynamicSubagent(run, key, prepared, link, policy); replay != nil || err != nil {
-		return replay, err
+		return replay, nil, err
 	}
 	if link.ID != runtime.LinkID {
-		return nil, BadAuthRequest("子代理 Link 身份不一致")
+		return nil, nil, BadAuthRequest("子代理 Link 身份不一致")
 	}
-	if plan.Granted {
-		// carve 份额记到父状态（best-effort）：父剩余预算计算会扣减活跃份额。
-		s.recordSubagentBudgetCarve(run.UserID, run.ID, link.ID, plan.CarveCredits)
-	}
-	return map[string]any{"linkId": link.ID, "childRunId": child.ID, "displayName": link.DisplayName, "role": link.RoleLabel, "objective": link.Objective, "accepted": true, "writeGranted": plan.Granted, "writeReason": plan.Reason, "permissionMode": plan.Permission, "budgetCredits": plan.CarveCredits}, nil
+	return map[string]any{"linkId": link.ID, "childRunId": child.ID, "displayName": link.DisplayName, "role": link.RoleLabel, "objective": link.Objective, "accepted": true, "writeGranted": plan.Granted, "writeReason": plan.Reason, "permissionMode": plan.Permission, "budgetCredits": plan.CarveCredits}, &plan, nil
 }
 
-func agentSubagentReplayReceipt(existing *model.AgentSubagentLink) map[string]any {
-	return map[string]any{"linkId": existing.ID, "childRunId": existing.ChildRunID, "displayName": existing.DisplayName, "role": existing.RoleLabel, "accepted": true, "replayed": true}
+func (s *Service) agentSubagentReplayReceipt(existing *model.AgentSubagentLink) map[string]any {
+	receipt := map[string]any{"linkId": existing.ID, "childRunId": existing.ChildRunID, "displayName": existing.DisplayName, "role": existing.RoleLabel, "accepted": true, "replayed": true, "writeGranted": existing.WriteGranted}
+	// 重放路径补齐授予事实：权限模式从子运行请求读取，预算从链接快照读取；
+	// 读取失败不阻塞回执（writeGranted 已来自链接行，是授予事实的权威）。
+	if child, err := s.repo.CloudAgent(existing.UserID, existing.ChildRunID); err == nil {
+		if state, err := cloudAgentDecode(child); err == nil && state.Request.PermissionMode != "" {
+			receipt["permissionMode"] = state.Request.PermissionMode
+		}
+	}
+	if existing.BudgetJSON != "" {
+		var budget struct {
+			MaxCredits float64 `json:"maxCredits"`
+		}
+		if json.Unmarshal([]byte(existing.BudgetJSON), &budget) == nil && budget.MaxCredits > 0 {
+			receipt["budgetCredits"] = budget.MaxCredits
+		}
+	}
+	return receipt
 }
 
 // agentSubagentCapacityCheck rejects a new child when the parent has reached
@@ -423,6 +451,9 @@ func dynamicSubagentChildRequest(parent CloudAgentRequest, input spawnSubagentIn
 	if plan.Granted {
 		childReq.PermissionMode = plan.Permission
 		childReq.Budget.MaxCredits = plan.CarveCredits
+		if parent.Budget.MaxGenerationTasks > 0 {
+			childReq.Budget.MaxGenerationTasks = plan.GenAllowance
+		}
 	}
 	childReq.Budget.MaxSteps = input.MaxSteps
 	if childReq.Budget.MaxSteps == 0 {
@@ -446,7 +477,7 @@ func (s *Service) admitDynamicSubagent(run *model.CloudAgentExecution, key strin
 	}
 	if err := s.repo.CreateDynamicSubagentAdmission(prepared, link, policy.Task.ActiveTaskLimit, maxDynamicSubagents, maxDynamicSubagentConcurrent); err != nil {
 		if existing, replayErr := s.repo.AgentSubagentLinkByIdempotency(run.UserID, key); replayErr == nil {
-			return agentSubagentReplayReceipt(existing), nil
+			return s.agentSubagentReplayReceipt(existing), nil
 		}
 		if errors.Is(err, repository.ErrTaskStateConflict) {
 			return nil, creationConflict("子代理数量或并发上限已达到")

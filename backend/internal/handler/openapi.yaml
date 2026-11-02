@@ -3276,6 +3276,12 @@ components:
         permissionMode:
           type: string
           enum: [read_only, request_approval, auto]
+        subagentEnabled:
+          type: boolean
+        subagentWriteEnabled:
+          type: boolean
+        storyboardDisabled:
+          type: boolean
         reasoningMode:
           type: string
           enum: [off, auto, deep]

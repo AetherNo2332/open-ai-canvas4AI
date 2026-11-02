@@ -39,11 +39,12 @@ type AgentSubagentView struct {
 }
 
 type AgentSubagentMessageView struct {
-	ID        string `json:"id"`
-	Direction string `json:"direction"`
-	Kind      string `json:"kind"`
-	Text      string `json:"text"`
-	Sequence  int64  `json:"sequence"`
+	ID         string `json:"id"`
+	Direction  string `json:"direction"`
+	Kind       string `json:"kind"`
+	Text       string `json:"text"`
+	Sequence   int64  `json:"sequence"`
+	ApprovalID string `json:"approvalId,omitempty"`
 }
 
 func (s *Service) ListAgentSubagents(userID, runID string) ([]AgentSubagentView, error) {
@@ -77,12 +78,13 @@ func agentSubagentViews(repo *repository.Repository, userID, runID string) ([]Ag
 				continue
 			}
 			var payload struct {
-				Text string `json:"text"`
+				Text       string `json:"text"`
+				ApprovalID string `json:"approvalId"`
 			}
 			if err := json.Unmarshal([]byte(message.PayloadJSON), &payload); err != nil {
 				return nil, err
 			}
-			view.Messages = append(view.Messages, AgentSubagentMessageView{ID: message.ID, Direction: message.Direction, Kind: message.Kind, Text: payload.Text, Sequence: message.Sequence})
+			view.Messages = append(view.Messages, AgentSubagentMessageView{ID: message.ID, Direction: message.Direction, Kind: message.Kind, Text: payload.Text, Sequence: message.Sequence, ApprovalID: payload.ApprovalID})
 		}
 		views = append(views, view)
 	}
