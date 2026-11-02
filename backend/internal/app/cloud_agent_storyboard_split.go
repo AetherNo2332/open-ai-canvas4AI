@@ -55,6 +55,11 @@ func storyboardCallFields(call cloudAgentCall, fields map[string]any, keys ...st
 }
 
 func (s *Service) executeCloudAgentStoryboard(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
+	// 披露之外的强制闸：运行请求冻结了"分镜表工具关闭"时，即便模型凭历史上下文
+	// 猜出 storyboard 调用，也在执行前拒绝；行内容仍可经 canvas_get_state 读取。
+	if state.Request.StoryboardDisabled {
+		return s.recordStoryboardResult(run, state, call, nil, kernel.Forbidden("分镜表工具已在 Agent 设置中关闭；请用画布节点读写分镜内容，或请用户在 Agent 设置中重新开启"))
+	}
 	fields, action, err := storyboardArguments(call)
 	if err != nil {
 		return s.recordStoryboardResult(run, state, call, nil, err)
