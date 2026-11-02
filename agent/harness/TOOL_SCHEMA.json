@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v19",
+  "schemaVersion": "cloud-agent-tools/v20",
   "tools": [
     {
       "function": {
