@@ -151,7 +151,8 @@ export function CanvasViewport({
             scaleRef.current = next.k;
             onViewportPreviewChange?.(next);
             const container = containerRef.current;
-            if (container) container.dataset.canvasViewportInteracting = "true";
+            // 每个 pointermove 都会进入；同值重复 setAttribute 仍会产生 mutation 记录，先判再写。
+            if (container && container.dataset.canvasViewportInteracting !== "true") container.dataset.canvasViewportInteracting = "true";
             nextViewportRef.current = next;
             if (!frameRef.current)
                 frameRef.current = requestAnimationFrame((now) => {

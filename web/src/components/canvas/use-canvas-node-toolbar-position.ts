@@ -57,8 +57,11 @@ export function useCanvasNodeToolbarPosition(node: CanvasNodeData | null, viewpo
                 bounds,
                 canvasNodePanelBounds(container),
             );
-            if (toolbarRef.current) toolbarRef.current.style.transform = `translate3d(${position.left}px, ${position.top}px, 0)`;
-            else setAnchor(position);
+            if (toolbarRef.current) {
+                // 多个订阅源在同一帧都可能触发 update；同值守卫跳过未变化的重复写。
+                const transform = `translate3d(${position.left}px, ${position.top}px, 0)`;
+                if (toolbarRef.current.style.transform !== transform) toolbarRef.current.style.transform = transform;
+            } else setAnchor(position);
         };
         const scheduleUpdate = (nextViewport?: ViewportTransform) => {
             if (nextViewport) liveViewport = nextViewport;

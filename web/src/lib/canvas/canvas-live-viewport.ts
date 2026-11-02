@@ -30,6 +30,9 @@ export type CanvasNodeSelectionPreview = {
 const nodeDragPreviewDomStates = new WeakMap<HTMLDivElement, NodeDragPreviewDomState>();
 const nodeSelectionPreviewDomStates = new WeakMap<HTMLDivElement, NodeSelectionPreviewDomState>();
 const liveViewportElements = new WeakMap<HTMLDivElement, { worldLayer: HTMLElement | null; gridLayer: HTMLElement | null }>();
+// transformOrigin 是常量：只在世界层首次接入时写一次。每帧写恒定值也会把样式标记为脏，
+// 累积成全文档重算前的固定失效源。
+const worldLayersWithOrigin = new WeakSet<HTMLElement>();
 
 /** 网格层向左上多铺的像素，需大于最大网格间距，保证平移取模后仍覆盖视口。 */
 export const CANVAS_GRID_BLEED = 64;
@@ -52,7 +55,9 @@ function applyCanvasGridViewport(gridLayer: HTMLElement, viewport: ViewportTrans
     const { spacing, offsetX, offsetY } = canvasGridMetrics(viewport, base);
     const size = `${spacing}px ${spacing}px`;
     if (gridLayer.style.backgroundSize !== size) gridLayer.style.backgroundSize = size;
-    gridLayer.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0)`;
+    // 慢速平移落在同一网格单元内时字符串不变；同值守卫让这些帧完全不触样式。
+    const transform = `translate3d(${offsetX}px, ${offsetY}px, 0)`;
+    if (gridLayer.style.transform !== transform) gridLayer.style.transform = transform;
 }
 
 export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewport: ViewportTransform, notify = true) {
@@ -69,8 +74,13 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
     const worldLayer = elements.worldLayer;
     if (worldLayer) {
         // 平移期间直接更新合成层，避免修改容器继承变量导致所有节点重新计算样式。
-        worldLayer.style.transformOrigin = "0 0";
-        worldLayer.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k / committedScale})`;
+        if (!worldLayersWithOrigin.has(worldLayer)) {
+            worldLayer.style.transformOrigin = "0 0";
+            worldLayersWithOrigin.add(worldLayer);
+        }
+        // 提交路径可能带着与当前合成值相同的 transform 重复进入；同值守卫让这些调用不触样式。
+        const worldTransform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k / committedScale})`;
+        if (worldLayer.style.transform !== worldTransform) worldLayer.style.transform = worldTransform;
         const willChange = container.dataset.canvasViewportInteracting === "true" ? "transform" : "";
         if (worldLayer.style.willChange !== willChange) worldLayer.style.willChange = willChange;
     }
@@ -79,8 +89,11 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
     // 触发样式重算；交互结束后由 CanvasViewport 的 committed render 一次性校正。
     // 标题和选框在交互期暂时跟随世界层缩放，换取连续帧的合成路径。
     if (container.dataset.canvasViewportInteracting !== "true") {
-        container.style.setProperty("--canvas-live-scale", String(viewport.k));
-        container.style.setProperty("--canvas-live-inverse-scale", String(1 / Math.max(viewport.k, 0.05)));
+        // 纯平移的提交 k 不变，同值重写继承变量仍会打穿整棵子树，跳过。
+        const liveScale = String(viewport.k);
+        if (container.style.getPropertyValue("--canvas-live-scale") !== liveScale) container.style.setProperty("--canvas-live-scale", liveScale);
+        const liveInverseScale = String(1 / Math.max(viewport.k, 0.05));
+        if (container.style.getPropertyValue("--canvas-live-inverse-scale") !== liveInverseScale) container.style.setProperty("--canvas-live-inverse-scale", liveInverseScale);
     }
     // 图形层必须逐帧跟随 DOM 世界层；浮层和滚动通知仍可按原频率节流。
     container.dispatchEvent(new CustomEvent<ViewportTransform>(CANVAS_GRAPHICS_VIEWPORT_PREVIEW_EVENT, { detail: viewport }));

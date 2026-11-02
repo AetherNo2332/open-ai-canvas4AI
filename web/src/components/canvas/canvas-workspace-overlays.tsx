@@ -45,8 +45,11 @@ export function CanvasSelectionToolbar({ anchorRef, containerRef, count, childre
             const placement = boundsTop - toolbarHeight - 8 >= 68 ? "above" : "below";
             const top = placement === "above" ? boundsTop - 8 : Math.min(boundsBottom + 8, containerBounds.height - toolbarHeight - 12);
             if (toolbarRef.current) {
-                toolbarRef.current.style.left = `${left}px`;
-                toolbarRef.current.style.top = `${top}px`;
+                // 世界层每次 style 写都会触发上面的 MutationObserver 重跑 update；同值跳过写避免重复失效。
+                const leftStyle = `${left}px`;
+                if (toolbarRef.current.style.left !== leftStyle) toolbarRef.current.style.left = leftStyle;
+                const topStyle = `${top}px`;
+                if (toolbarRef.current.style.top !== topStyle) toolbarRef.current.style.top = topStyle;
                 toolbarRef.current.classList.toggle("-translate-y-full", placement === "above");
                 return;
             }
@@ -143,13 +146,18 @@ export function CanvasNodePanelOverlay({
             const visualNode = resizeMotion?.resolveNode(node) || node;
             const nextWidth = Math.min(resolveNodePanelWidth(visualNode, nextViewport, panelWidth), Math.max(0, availableBounds.right - availableBounds.left));
             const availableHeight = Math.max(0, availableBounds.bottom - availableBounds.top);
-            panel.style.width = `${nextWidth}px`;
-            panel.style.maxHeight = `${availableHeight}px`;
-            panel.style.overflowY = measuredHeight > availableHeight || !allowOverflow ? "auto" : "visible";
+            // 图形层预览每帧到达；平移期间宽高与溢出都不随 x/y 变化，同值守卫跳过重复写。
+            const widthStyle = `${nextWidth}px`;
+            if (panel.style.width !== widthStyle) panel.style.width = widthStyle;
+            const maxHeightStyle = `${availableHeight}px`;
+            if (panel.style.maxHeight !== maxHeightStyle) panel.style.maxHeight = maxHeightStyle;
+            const overflowY = measuredHeight > availableHeight || !allowOverflow ? "auto" : "visible";
+            if (panel.style.overflowY !== overflowY) panel.style.overflowY = overflowY;
             // 视口预览期间世界层刚写入 transform，读取节点布局会强制浏览器同步
             // layout。节点位置和拖拽偏移已经在这里可用，直接用世界坐标计算浮层位置。
             const position = placeCanvasNodePanel(visualNode, nextViewport, availableBounds, { width: nextWidth, height: measuredHeight }, liveDragOffset);
-            panel.style.transform = `translate3d(${position.left}px, ${position.top}px, 0)`;
+            const panelTransform = `translate3d(${position.left}px, ${position.top}px, 0)`;
+            if (panel.style.transform !== panelTransform) panel.style.transform = panelTransform;
             updateCanvasNodePanelBounds(container, panel, { left: position.left, top: position.top, right: position.left + nextWidth, bottom: position.top + Math.min(measuredHeight, availableHeight) });
         };
         update(viewport);
@@ -268,8 +276,11 @@ export function CanvasConnectionCreateMenu({
         if (!container || !menu) return;
         const update = (nextViewport: ViewportTransform) => {
             const position = getConnectionMenuPosition(pending.position, nextViewport, { width: container.clientWidth, height: container.clientHeight }, menu.offsetWidth || menuWidth, menu.offsetHeight || menuHeight, gap);
-            menu.style.left = `${position.left}px`;
-            menu.style.top = `${position.top}px`;
+            // 同值守卫：视口未把菜单位置推出边界时，重复写只追加失效。
+            const leftStyle = `${position.left}px`;
+            if (menu.style.left !== leftStyle) menu.style.left = leftStyle;
+            const topStyle = `${position.top}px`;
+            if (menu.style.top !== topStyle) menu.style.top = topStyle;
         };
         update(viewport);
         return subscribeCanvasViewportPreview(container, update);

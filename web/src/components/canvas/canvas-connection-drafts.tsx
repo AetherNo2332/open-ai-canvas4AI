@@ -29,7 +29,9 @@ export function CanvasConnectionDrafts(props: CanvasConnectionDraftsProps) {
         if (!world || !container) return;
         const sync = (viewport: ViewportTransform) => {
             const scale = Number(container.style.getPropertyValue("--canvas-committed-scale")) || props.viewport.k;
-            world.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k / scale})`;
+            // 图形层预览每帧到达；同值守卫跳过未变化的重复写。
+            const transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k / scale})`;
+            if (world.style.transform !== transform) world.style.transform = transform;
         };
         sync(props.viewport);
         return subscribeCanvasGraphicsViewportPreview(container as HTMLDivElement, sync);
