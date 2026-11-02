@@ -1,7 +1,7 @@
 import { http } from "@/services/api/request";
 
 export type AgentSubagentPolicy = { canvasId: string; enabled: boolean; writeEnabled: boolean; revision: number };
-export type AgentSubagentMessage = { id: string; direction: string; kind: string; text: string; sequence: number };
+export type AgentSubagentMessage = { id: string; direction: string; kind: string; text: string; sequence: number; approvalId?: string };
 export type AgentSubagent = {
     id: string;
     parentRunId: string;
