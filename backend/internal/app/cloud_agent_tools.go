@@ -33,6 +33,7 @@ func cloudAgentPromptCacheKey(req CloudAgentRequest) string {
 		cloudAgentCompilerVersion,
 		cloudAgentCapabilitySetVersion,
 		req.PermissionMode,
+		fmt.Sprint(req.StoryboardDisabled),
 		cloudAgentReasoningMode(req),
 		strings.Join(req.ContextScope, ","),
 		strings.Join(sortedCloudAgentIDs(req.SkillIDs), ","),

@@ -20,6 +20,8 @@ type AgentSettingsProps = {
     onSendModeChange: (mode: AgentSendMode) => void | Promise<void>;
     onSendModeRetry: () => void | Promise<void>;
     subagents?: { enabled: boolean; writeEnabled: boolean; disabled: boolean; saving: boolean; error: string; onToggle: () => void; onToggleWrite: () => void; onReload: () => void };
+    storyboardDisabled: boolean;
+    onStoryboardDisabledChange: (value: boolean) => void;
     theme: CanvasTheme;
     config: AiConfig;
     selectedModel: string;
@@ -212,6 +214,7 @@ function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; the
                 </p>
             </section>
             {props.subagents ? <SubagentAuthorization {...props.subagents} theme={theme} /> : null}
+            <StoryboardToolSwitch disabled={false} storyboardDisabled={props.storyboardDisabled} onStoryboardDisabledChange={props.onStoryboardDisabledChange} theme={theme} />
             <section>
                 <SettingLabel label="能力与范围" />
                 <div className="space-y-1">
@@ -274,6 +277,23 @@ export function SubagentAuthorization({
                     </Button>
                 </div>
             ) : null}
+        </section>
+    );
+}
+
+function StoryboardToolSwitch({ disabled, storyboardDisabled, onStoryboardDisabledChange, theme }: { disabled: boolean; storyboardDisabled: boolean; onStoryboardDisabledChange: (value: boolean) => void; theme: CanvasTheme }) {
+    return (
+        <section aria-label="分镜表工具">
+            <SettingLabel label="分镜表工具" hint="按会话保存" />
+            <div className="flex items-center justify-between gap-4 p-3" style={{ background: theme.node.fill, borderRadius: "var(--card-radius)" }}>
+                <label htmlFor="agent-storyboard-tool" className="min-w-0 cursor-pointer text-xs leading-5">
+                    允许 Agent 读写分镜表（含拆镜）
+                </label>
+                <Switch id="agent-storyboard-tool" aria-label="允许 Agent 读写分镜表" checked={!storyboardDisabled} disabled={disabled} onChange={(value) => onStoryboardDisabledChange(!value)} />
+            </div>
+            <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>
+                关闭后 Agent 不再获得分镜表工具（含拆镜与行编辑），分镜内容仍可经画布节点读写；对下一次新运行生效。
+            </p>
         </section>
     );
 }

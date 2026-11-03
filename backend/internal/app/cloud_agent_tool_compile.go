@@ -46,7 +46,13 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 		c.addMemoryTool()
 	}
 	if len(req.ContextScope) > 0 {
-		c.addStoryboardTools(req)
+		if req.StoryboardDisabled {
+			// 分镜表开关关闭：只剔除 storyboard 本体；撤销/绑定/模型目录等
+			// 通用工具照常提供（它们随 addStoryboardTools 注册但与分镜无关）。
+			c.addStoryboardIndependentTools(req)
+		} else {
+			c.addStoryboardTools(req)
+		}
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
 		c.addCanvasWriteTools()
@@ -132,8 +138,16 @@ func (c *cloudAgentToolCompiler) addMemoryTool() {
 		"operations")
 }
 
-// addStoryboardTools adds storyboard plus history, asset binding and model listing tools.
+// addStoryboardTools adds the storyboard tool plus the independent canvas
+// workflow tools (undo/redo, asset binding, model listing) that historically
+// registered alongside it.
 func (c *cloudAgentToolCompiler) addStoryboardTools(req CloudAgentRequest) {
+	c.addStoryboardIndependentTools(req)
+	c.addStoryboardPlanTool(req)
+}
+
+// addStoryboardPlanTool adds only the storyboard tool itself.
+func (c *cloudAgentToolCompiler) addStoryboardPlanTool(req CloudAgentRequest) {
 	str := cloudAgentToolStringSchema
 	readFields := append([]string{"durationSeconds", "locked", "mediaReview"}, cloudAgentStoryboardTextFields...)
 	c.add("storyboard", "统一分镜：read 读 Markdown、分页与引用；split/resplit 异步调用服务端从剧情、风格和相邻镜头拆镜，不手填整表。写回后在同一运行的下一模型步骤通知，依赖结果用 wait_generations。update 小范围改行，lock/unlock 保护镜头；资产和绑定 action 维护引用。写动作拒绝锁定目标，unlock 除外。", map[string]any{
@@ -155,13 +169,21 @@ func (c *cloudAgentToolCompiler) addStoryboardTools(req CloudAgentRequest) {
 	if req.PermissionMode == "read_only" {
 		c.tools[len(c.tools)-1]["function"].(map[string]any)["parameters"].(map[string]any)["properties"].(map[string]any)["action"] = map[string]any{"type": "string", "enum": []string{"read"}}
 	}
-	if req.PermissionMode != "read_only" {
-		for _, name := range []string{"canvas_undo", "canvas_redo"} {
-			c.add(name, "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。", map[string]any{"snapshotHash": str("当前画布快照")}, "snapshotHash")
-		}
-		c.add("canvas_bind_asset", "用当前用户素材库的 assetId 替换匹配类型节点的内容；先读取画布并查询素材，不接受任意 URL。运行中的生成节点不能替换。", map[string]any{"snapshotHash": str("最新画布快照"), "nodeId": str("目标节点 ID"), "assetId": str("素材库 ID")}, "snapshotHash", "nodeId", "assetId")
-		c.add("model_list", cloudAgentToolText("model_list")+" 分镜可传 storyboardRowIds 批量查询；相同实际输入能力合并为一份模型列表，逐行返回问题。", map[string]any{"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_045"))}, "storyboardNodeId": str("分镜表节点 ID，与 storyboardRowId 或 storyboardRowIds 同时传入，输入从行读取"), "storyboardRowId": str("分镜行 ID"), "storyboardRowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": map[string]any{"type": "string", "minLength": 1}}})
+}
+
+// addStoryboardIndependentTools adds the tools that registered alongside the
+// storyboard tool but do not depend on it: undo/redo, asset binding and the
+// model catalog. 分镜表开关关闭时它们必须照常提供。
+func (c *cloudAgentToolCompiler) addStoryboardIndependentTools(req CloudAgentRequest) {
+	str := cloudAgentToolStringSchema
+	if req.PermissionMode == "read_only" {
+		return
 	}
+	for _, name := range []string{"canvas_undo", "canvas_redo"} {
+		c.add(name, "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。", map[string]any{"snapshotHash": str("当前画布快照")}, "snapshotHash")
+	}
+	c.add("canvas_bind_asset", "用当前用户素材库的 assetId 替换匹配类型节点的内容；先读取画布并查询素材，不接受任意 URL。运行中的生成节点不能替换。", map[string]any{"snapshotHash": str("最新画布快照"), "nodeId": str("目标节点 ID"), "assetId": str("素材库 ID")}, "snapshotHash", "nodeId", "assetId")
+	c.add("model_list", cloudAgentToolText("model_list")+" 分镜可传 storyboardRowIds 批量查询；相同实际输入能力合并为一份模型列表，逐行返回问题。", map[string]any{"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_045"))}, "storyboardNodeId": str("分镜表节点 ID，与 storyboardRowId 或 storyboardRowIds 同时传入，输入从行读取"), "storyboardRowId": str("分镜行 ID"), "storyboardRowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": map[string]any{"type": "string", "minLength": 1}}})
 }
 
 // addCanvasWriteTools adds character, batch table, canvas ops and arrange tools.

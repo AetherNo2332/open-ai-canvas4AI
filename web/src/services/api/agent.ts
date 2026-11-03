@@ -177,6 +177,9 @@ export type CreateAgentRunInput = {
     focusNodeIds?: string[];
     permissionMode?: AgentPermissionMode;
     contextScope?: string[];
+    subagentEnabled?: boolean;
+    subagentWriteEnabled?: boolean;
+    storyboardDisabled?: boolean;
     budget?: { maxCredits?: number; maxGenerationTasks?: number; maxVideoSeconds?: number; maxSteps?: number };
     idempotencyKey: string;
 };
