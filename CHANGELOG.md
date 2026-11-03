@@ -1,3 +1,7 @@
+## v1.7.3.3(0a2f114)
+
+- 新增：内置技能 storyboard-md（Markdown 分镜）。分镜表工具被 Agent 设置关闭时，Agent 改用该技能在画布 Markdown 节点写分镜：一场一节点、镜头卡固定字段（画面/台词/首帧/运动/结尾状态/必备）、连续性成链、生成衔接普通模式；明确产物是文档不是分镜表，重新开启分镜表工具后可迁回。canvas-tools-guide 与系统策略同步指向。
+
 ## v1.7.3.3(323c259)
 
 - 新增：子代理写入权限（P0）。画布设置新增"允许子代理修改画布"开关；父 Agent 用 `spawn_subagent write=true` 显式申请，授予时子代理继承父权限模式（回执 `writeGranted/permissionMode/budgetCredits`），可修改画布、维护分镜行并提交生成。预算按父剩余积分切分（活跃兄弟越多份额越小，`maxCredits` 可收紧），父剩余计算扣减活跃子代理份额与已终态子代理实际花费，终态自动归还；预算耗尽返回 `budget_exhausted` 不再让子代理带 0 预算撞准入。写型子代理等待审批时以 `kind=approval` 消息上浮父会话，子代理会话内可批准/拒绝。数据库结构版本升级到 83（`agent_subagent_policies.write_enabled`、`agent_subagent_links.write_granted`，旧行回填 false，升级由启动迁移自动完成）。

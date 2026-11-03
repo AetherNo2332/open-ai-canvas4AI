@@ -4483,3 +4483,9 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 
 - 已实现：Agent 设置新增"分镜表工具"开关（按会话保存，默认开启）；关闭时下一次新运行不披露 `storyboard` 工具（含拆镜与行编辑），预检 `permission_violation` 拒绝、执行前强制闸兜底；分镜行仍可经画布节点读取。提示缓存键含该开关。
 - [ ] 浏览器验收：关闭开关后新运行模型不再调用 storyboard（试图调用收到字段级拒绝），重新开启后恢复；开关状态跨会话刷新保持。
+
+
+## 分镜表关闭时的 Markdown 分镜技能
+
+- 已实现：内置技能 `storyboard-md`（yingce-storyboard-md v1.0.0）：分镜表工具关闭时指导 Agent 在画布 Markdown 节点写分镜——一场一节点、镜头卡固定字段（画面/台词/首帧/运动/结尾状态/必备）、连续性成链、生成走普通模式；明确不伪装分镜表、不造行 ID，重新开启后可迁回 split。canvas-tools-guide 与系统策略同步指向该技能。
+- [ ] 验收：关闭分镜表工具后新运行让 Agent 写分镜，确认其调用 storyboard-md 技能、产出 Markdown 镜头卡且不调用 storyboard；重新开启后拆镜链路照常。
