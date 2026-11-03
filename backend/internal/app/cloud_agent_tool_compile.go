@@ -55,7 +55,7 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 		}
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
-		c.addCanvasWriteTools()
+		c.addCanvasWriteTools(req)
 		c.addGenerationTools()
 	}
 	if req.SubagentEnabled && req.subagent == nil {
@@ -187,7 +187,7 @@ func (c *cloudAgentToolCompiler) addStoryboardIndependentTools(req CloudAgentReq
 }
 
 // addCanvasWriteTools adds character, batch table, canvas ops and arrange tools.
-func (c *cloudAgentToolCompiler) addCanvasWriteTools() {
+func (c *cloudAgentToolCompiler) addCanvasWriteTools(req CloudAgentRequest) {
 	str := cloudAgentToolStringSchema
 	c.add("canvas_create_character", "把就绪图片打包成角色卡并保存媒体来源；自动分配节点 ID 和位置。可分别指定定妆主图和三视图，单图时明确复用。按权限审批。已有同名卡先复用；definition 只填有依据的设定。", cloudAgentCharacterCreateSchema(), "name")
 	c.add("canvas_edit_batch_table", cloudAgentToolText("canvas_edit_batch_table"), map[string]any{
@@ -205,7 +205,7 @@ func (c *cloudAgentToolCompiler) addCanvasWriteTools() {
 		"versionId":    str("media_versions 返回的版本 id"),
 		"nodeId":       str("extract_media_version 新节点 ID"),
 		"id":           str(cloudAgentToolText("parameter_057")),
-		"nodeType":     map[string]any{"type": "string", "enum": cloudAgentNodeTypeNames()},
+		"nodeType":     map[string]any{"type": "string", "enum": cloudAgentAddNodeTypeNames(req.StoryboardDisabled)},
 		"title":        str(cloudAgentToolText("parameter_058")),
 		"content":      str(cloudAgentToolText("parameter_059")),
 		"patch":        cloudAgentPatchSchema(),

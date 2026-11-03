@@ -64,3 +64,46 @@ func cloudAgentCapabilitySetHash() string { return canvasCapabilityRegistry.Hash
 func CloudAgentCapabilitySetInfo() CloudAgentCapabilitySet {
 	return CloudAgentCapabilitySet{Version: cloudAgentCapabilitySetVersion, Hash: cloudAgentCapabilitySetHash(), Nodes: cloudAgentNodeTypeNames()}
 }
+
+// cloudAgentAddNodeTypeNames 返回 add_node 可创建的节点类型；分镜表工具关闭时
+// 剔除 script（分镜节点），Agent 以文本/Markdown 节点承载分镜内容，不能绕过
+// 开关用画布写入变相重建分镜。
+func cloudAgentAddNodeTypeNames(storyboardDisabled bool) []string {
+	names := cloudAgentNodeTypeNames()
+	if !storyboardDisabled {
+		return names
+	}
+	filtered := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "script" {
+			continue
+		}
+		filtered = append(filtered, name)
+	}
+	return filtered
+}
+
+// validateCloudAgentStoryboardCreateGate 分镜功能关闭时的创建闸：禁止用
+// canvas_apply_ops 绕过开关创建分镜（script）节点，包括复制已有分镜节点。
+// 已有 script 节点的正文更新不受影响。Agent 端被披露+执行双闸拦截；UI 侧
+// 用户手工创建仍走前端能力不受此约束。
+func validateCloudAgentStoryboardCreateGate(ops []agentCanvasOp, storyboardDisabled bool, doc map[string]any) error {
+	if !storyboardDisabled {
+		return nil
+	}
+	nodes := creationMaps(doc["nodes"])
+	for _, op := range ops {
+		switch op.Type {
+		case "add_node":
+			if op.NodeType == "script" {
+				return cloudAgentFieldError("ops", "storyboard_disabled", "分镜功能已关闭：不能创建分镜（脚本）节点；请用文本节点或 Markdown 节点承载分镜内容，或请用户在 Agent 设置重新开启分镜")
+			}
+		case "duplicate_node":
+			index := cloudAgentNodeIndex(nodes, op.SourceNodeID)
+			if index < 0 || stringValue(nodes[index]["type"]) == "script" {
+				return cloudAgentFieldError("ops.sourceNodeId", "storyboard_disabled", "分镜功能已关闭：不能复制分镜（脚本）节点；分镜内容请落在新文本节点或 Markdown 节点上")
+			}
+		}
+	}
+	return nil
+}

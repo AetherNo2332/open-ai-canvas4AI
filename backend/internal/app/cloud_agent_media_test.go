@@ -899,7 +899,7 @@ func TestCloudAgentCanvasCreatesTypedNodes(t *testing.T) {
 	}}
 	raw, _ := json.Marshal(args)
 	call.Function.Arguments = string(raw)
-	if _, err = applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy); err != nil {
+	if _, err = applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy, false); err != nil {
 		t.Fatal(err)
 	}
 	canvas, _ := s.repo.CanvasProjectForUser("user", "agent-canvas")
@@ -953,7 +953,7 @@ func TestCloudAgentCanvasUpdatesExistingVideoDraftThroughCapabilityContract(t *t
 		}},
 	})
 	call.Function.Arguments = string(arguments)
-	if _, err := applyCloudAgentCanvas(s.repo, "user", canvas.ID, call, policy); err != nil {
+	if _, err := applyCloudAgentCanvas(s.repo, "user", canvas.ID, call, policy, false); err != nil {
 		t.Fatal(err)
 	}
 

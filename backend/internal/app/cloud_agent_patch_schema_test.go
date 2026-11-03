@@ -113,7 +113,7 @@ func TestCloudAgentPatchValuesStillValidatedByNodeDescriptor(t *testing.T) {
 			if err := validateCloudAgentToolArguments(cloudAgentToolParameters(t, "canvas_apply_ops"), call.Function.Arguments); err != nil {
 				t.Fatalf("type-valid patch must pass preflight: %v", err)
 			}
-			_, err := prepareCloudAgentCanvasMutation(s.repo, "user", "agent-canvas", call)
+			_, err := prepareCloudAgentCanvasMutation(s.repo, "user", "agent-canvas", call, false)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("descriptor must reject %s with a field-specific error, got %v", test.patch, err)
 			}

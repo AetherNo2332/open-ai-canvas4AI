@@ -309,7 +309,7 @@ func runCloudAgentCanvasWriteTool(tc *cloudAgentToolCheckpoint, repo *repository
 	var toolErr error
 	switch {
 	case call.Function.Name == "canvas_apply_ops":
-		result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+		result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, state.Request.StoryboardDisabled, cloudAgentCanvasEventRecorder(run.ID, state))
 	case call.Function.Name == "canvas_bind_asset":
 		result, toolErr = applyCloudAgentAssetBinding(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 	case call.Function.Name == "canvas_undo", call.Function.Name == "canvas_redo":

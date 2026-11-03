@@ -30,7 +30,7 @@ func TestCanvasWriteRollsBackWhenRecorderFails(t *testing.T) {
 	// ① 修复后的行为：基础设施错误向上返回 → 事务回滚 → 画布不变。
 	call := addNodeCall(t, "call-fail", args.SnapshotHash, "atomic-fail", "注入失败")
 	err = s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(_ *model.CloudAgentExecution, repo *repository.Repository) error {
-		_, writeErr := applyCloudAgentCanvas(repo, "user", canvasID, call, policy, failRecorder)
+		_, writeErr := applyCloudAgentCanvas(repo, "user", canvasID, call, policy, false, failRecorder)
 		if writeErr != nil && !cloudAgentToolErrorIsBusiness(writeErr) {
 			return writeErr // 与 advanceCloudAgentTool 的新分类一致
 		}
@@ -54,7 +54,7 @@ func TestCanvasWriteRollsBackWhenRecorderFails(t *testing.T) {
 	}
 	swallowed := addNodeCall(t, "call-swallow", args.SnapshotHash, "atomic-swallow", "被吞掉的写入")
 	if err := s.repo.MutateCloudAgent("user", run.ID, current.Revision, func(_ *model.CloudAgentExecution, repo *repository.Repository) error {
-		_, _ = applyCloudAgentCanvas(repo, "user", canvasID, swallowed, policy, failRecorder)
+		_, _ = applyCloudAgentCanvas(repo, "user", canvasID, swallowed, policy, false, failRecorder)
 		return nil // 吞掉基础设施错误
 	}); err != nil {
 		t.Fatal(err)

@@ -59,7 +59,7 @@ func TestCloudAgentStoryboardPlotCreatedThroughToolsCanSplit(t *testing.T) {
 	call := agentCanvasOpsCall(t, "create-plot", cloudAgentCanvasHash(doc), []map[string]any{
 		{"type": "add_node", "id": "board", "nodeType": "script", "content": "雨夜，她推开书店的门。"},
 	})
-	if _, err := applyCloudAgentCanvas(s.repo, "user", canvas.ID, call, policy); err != nil {
+	if _, err := applyCloudAgentCanvas(s.repo, "user", canvas.ID, call, policy, false); err != nil {
 		t.Fatal(err)
 	}
 	read := piAgentTestCall("read-plot", "canvas_read_content", `{"nodeId":"board","field":"composerContent"}`)

@@ -359,7 +359,7 @@ func TestAgentRejectsLegacyConnectionOperations(t *testing.T) {
 			call := cloudAgentCall{ID: "legacy-call"}
 			call.Function.Name, call.Function.Arguments = "canvas_apply_ops", arguments
 			// 审批预览入口：拒绝发生在读取画布之前（repo 为 nil 也能得到同一结论）。
-			if _, err := prepareCloudAgentCanvasMutation(nil, "user", "canvas", call); err != nil {
+			if _, err := prepareCloudAgentCanvasMutation(nil, "user", "canvas", call, false); err != nil {
 				agentAssertConnectionOpsDisabled(t, err)
 			} else {
 				t.Fatal("预览入口接受了旧连线操作")
@@ -381,7 +381,7 @@ func TestAgentRejectsLegacyConnectionOperations(t *testing.T) {
 		call.Function.Name = "canvas_apply_ops"
 		call.Function.Arguments = fmt.Sprintf(`{"snapshotHash":%q,"ops":[{"type":%q,"id":"edge","fromNodeId":"cat","toNodeId":"blank-video"}]}`, args.SnapshotHash, legacy)
 		// 真实执行入口。
-		if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy); err != nil {
+		if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy, false); err != nil {
 			agentAssertConnectionOpsDisabled(t, err)
 		} else {
 			t.Fatalf("执行入口接受了旧连线操作 %s", legacy)
@@ -409,7 +409,7 @@ func TestAgentRejectsLegacyConnectionOperations(t *testing.T) {
 		raw, _ := json.Marshal(map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "ops": []map[string]any{{"type": "update_node", "id": "cat", "patch": patch}}})
 		call := cloudAgentCall{ID: "bypass-call"}
 		call.Function.Name, call.Function.Arguments = "canvas_apply_ops", string(raw)
-		if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy); err == nil {
+		if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy, false); err == nil {
 			t.Fatalf("通用 patch 绕过字段未被拒绝：%v", patch)
 		}
 	}
@@ -465,7 +465,7 @@ func TestAgentReferenceContractSnapshotDrift(t *testing.T) {
 	call := cloudAgentCall{ID: "mixed-call"}
 	call.Function.Name = "canvas_apply_ops"
 	call.Function.Arguments = fmt.Sprintf(`{"snapshotHash":%q,"ops":[{"type":"update_node","id":"cat","patch":{"title":"改名未生效"}},{"type":"connect_nodes","id":"edge","fromNodeId":"cat","toNodeId":"hero"}]}`, args.SnapshotHash)
-	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy); err != nil {
+	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy, false); err != nil {
 		agentAssertConnectionOpsDisabled(t, err)
 	} else {
 		t.Fatal("执行入口接受了混有旧连线操作的批次")
@@ -588,12 +588,12 @@ func TestAgentLegacyCanvasRequiresMigration(t *testing.T) {
 
 	ops := agentReferenceFieldOps()
 	call := agentCanvasOpsCall(t, "legacy-field", args.SnapshotHash, ops)
-	if _, err := prepareCloudAgentCanvasMutation(s.repo, "user", "agent-canvas", call); err != nil {
+	if _, err := prepareCloudAgentCanvasMutation(s.repo, "user", "agent-canvas", call, false); err != nil {
 		agentAssertMigrationRequired(t, err)
 	} else {
 		t.Fatal("审批预览接受了历史画布上的引用字段写入")
 	}
-	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy); err != nil {
+	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy, false); err != nil {
 		agentAssertMigrationRequired(t, err)
 	} else {
 		t.Fatal("真实执行接受了历史画布上的引用字段写入")
@@ -606,7 +606,7 @@ func TestAgentLegacyCanvasRequiresMigration(t *testing.T) {
 	plain := agentCanvasOpsCall(t, "legacy-plain", args.SnapshotHash, []map[string]any{
 		{"type": "update_node", "id": "cat", "patch": map[string]any{"title": "历史画布改名"}},
 	})
-	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", plain, policy); err != nil {
+	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", plain, policy, false); err != nil {
 		t.Fatalf("历史画布上的普通编辑被过度拦截：%v", err)
 	}
 
@@ -629,7 +629,7 @@ func TestAgentLegacyCanvasRequiresMigration(t *testing.T) {
 	}
 	args.SnapshotHash = cloudAgentCanvasHash(doc)
 	migrated := agentCanvasOpsCall(t, "v1-field", args.SnapshotHash, agentReferenceFieldOps())
-	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", migrated, policy); err != nil {
+	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", migrated, policy, false); err != nil {
 		t.Fatalf("v1 画布拒绝了同一引用字段操作：%v", err)
 	}
 	after, err := creationDocument(agentCanvasPayload(t, s, "agent-canvas"))

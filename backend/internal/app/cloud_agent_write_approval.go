@@ -227,7 +227,7 @@ func cloudAgentWriteApprovalPreview(repo *repository.Repository, run *model.Clou
 		}
 		return arrangePlan.Preview, nil
 	}
-	canvasPlan, err := prepareCloudAgentCanvasMutation(repo, run.UserID, canvasID, call)
+	canvasPlan, err := prepareCloudAgentCanvasMutation(repo, run.UserID, canvasID, call, state.Request.StoryboardDisabled)
 	if err != nil {
 		return cloudAgentApprovalPreview{}, err
 	}

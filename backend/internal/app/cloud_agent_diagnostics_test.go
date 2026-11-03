@@ -23,7 +23,7 @@ func TestCloudAgentCanvasArgumentFeedbackIdentifiesFailingOperation(t *testing.T
 			call := cloudAgentCall{ID: "write"}
 			call.Function.Name, call.Function.Arguments = "canvas_apply_ops", `{"snapshotHash":"snapshot","ops":[`+tc.op+`]}`
 			// Malformed calls must fail before reading, approving, or writing.
-			_, err := prepareCloudAgentCanvasMutation(nil, "user", "canvas", call)
+			_, err := prepareCloudAgentCanvasMutation(nil, "user", "canvas", call, false)
 			if err == nil {
 				t.Fatal("invalid operation accepted")
 			}
@@ -48,7 +48,7 @@ func TestCloudAgentCanvasArgumentFeedbackIdentifiesFailingOperation(t *testing.T
 	call := cloudAgentCall{ID: "corrected"}
 	call.Function.Name = "canvas_apply_ops"
 	call.Function.Arguments = `{"snapshotHash":"` + cloudAgentCanvasHash(doc) + `","ops":[{"type":"add_node","id":"note","nodeType":"text"}]}`
-	plan, err := prepareCloudAgentCanvasMutation(s.repo, "user", "agent-canvas", call)
+	plan, err := prepareCloudAgentCanvasMutation(s.repo, "user", "agent-canvas", call, false)
 	if err != nil || plan == nil {
 		t.Fatalf("corrected call failed: %v", err)
 	}
