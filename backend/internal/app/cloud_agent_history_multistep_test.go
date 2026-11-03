@@ -51,7 +51,7 @@ func (f parityHistoryFixture) add(t *testing.T, id string) string {
 	t.Helper()
 	call := parityCall("canvas_apply_ops", map[string]any{"snapshotHash": f.hash(t), "ops": []any{map[string]any{"type": "add_node", "id": id, "nodeType": "text", "content": id}}})
 	call.ID = "add-" + id
-	if _, err := applyCloudAgentCanvas(f.s.repo, "user", f.canvasID, call, f.policy, cloudAgentMutationRecorderForRun(f.runID)); err != nil {
+	if _, err := applyCloudAgentCanvas(f.s.repo, "user", f.canvasID, call, f.policy, false, cloudAgentMutationRecorderForRun(f.runID)); err != nil {
 		t.Fatal(err)
 	}
 	return f.hash(t)

@@ -28,6 +28,81 @@ func TestStoryboardDisabledRemovesToolFromCatalog(t *testing.T) {
 	}
 }
 
+func TestStoryboardDisabledHidesScriptNodeType(t *testing.T) {
+	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SubagentEnabled: true, SubagentWriteEnabled: true}
+	addNodeType := ""
+	for _, tool := range cloudAgentToolsListOf(req) {
+		nt := canvasApplyOpsNodeTypeEnum(tool)
+		if nt == nil {
+			continue
+		}
+		for _, v := range nt {
+			if v == "script" {
+				addNodeType = "found"
+			}
+		}
+	}
+	if addNodeType == "found" {
+		t.Fatal("enabled run must keep script nodeType")
+	}
+	off := req
+	off.StoryboardDisabled = true
+	found := ""
+	for _, tool := range cloudAgentToolsListOf(off) {
+		nt := canvasApplyOpsNodeTypeEnum(tool)
+		if nt == nil {
+			continue
+		}
+		for _, v := range nt {
+			if v == "script" {
+				found = "script"
+			}
+		}
+	}
+	if found == "script" {
+		t.Fatal("disabled run must hide script nodeType")
+	}
+}
+
+// canvasApplyOpsNodeTypeEnum 取 canvas_apply_ops 的 nodeType 枚举；非该工具返回 nil。
+func cloudAgentToolsListOf(req CloudAgentRequest) []map[string]any {
+	return compileCloudAgentTools(req)
+}
+
+func canvasApplyOpsNodeTypeEnum(tool map[string]any) []any {
+	function, ok := tool["function"].(map[string]any)
+	if !ok || function["name"] != "canvas_apply_ops" {
+		return nil
+	}
+	parameters, ok := function["parameters"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	properties, ok := parameters["properties"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	nodeType, ok := properties["nodeType"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	enum, _ := nodeType["enum"].([]any)
+	return enum
+}
+
+func docForGate(t *testing.T, s *Service, canvasID string) map[string]any {
+	t.Helper()
+	canvas, err := s.repo.CanvasProjectForUser("user", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
 func TestStoryboardDisabledChangesPromptCacheKey(t *testing.T) {
 	base := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, CanvasID: "c"}
 	off := base
@@ -58,6 +133,22 @@ func TestStoryboardDisabledRejectsExecution(t *testing.T) {
 	if !strings.Contains(receipt, "未获本轮权限或能力授权") {
 		t.Fatalf("disabled storyboard disclosure gate missing: %s", receipt)
 	}
+	// 创建闸：闸禁止 add_node script / duplicate script；text/md 与已有 script 正文可写。
+	gateOps := []agentCanvasOp{
+		{Type: "add_node", ID: "st1", NodeType: "script"},
+		{Type: "duplicate_node", ID: "dup1", SourceNodeID: "board"},
+	}
+	if err := validateCloudAgentStoryboardCreateGate(gateOps, true, docForGate(t, s, "split-canvas")); err == nil {
+		t.Fatal("gate must reject script creation/duplication")
+	}
+	textOps := []agentCanvasOp{{Type: "add_node", ID: "note1", NodeType: "text"}, {Type: "add_node", ID: "md1", NodeType: "markdown"}}
+	if err := validateCloudAgentStoryboardCreateGate(textOps, true, docForGate(t, s, "split-canvas")); err != nil {
+		t.Fatalf("text/markdown creation must pass gate: %v", err)
+	}
+	if err := validateCloudAgentStoryboardCreateGate(gateOps, false, docForGate(t, s, "split-canvas")); err != nil {
+		t.Fatalf("enabled run must allow script creation: %v", err)
+	}
+
 	// 第二道闸：直接调用执行入口（绕过披露预检的内部路径）必须被强制闸拒绝。
 	// 先刷新 run/state——第一道闸的拒绝回执已推进 revision；把调用游标归零，
 	// 让强制闸像"本批仍待执行"一样走完整记录路径。

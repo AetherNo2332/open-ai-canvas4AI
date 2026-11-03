@@ -137,7 +137,7 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err = applyCloudAgentCanvas(s.repo, "user", "agent-canvas", selectCall, policy); err != nil {
+				if _, err = applyCloudAgentCanvas(s.repo, "user", "agent-canvas", selectCall, policy, false); err != nil {
 					t.Fatal(err)
 				}
 			}

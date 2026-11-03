@@ -338,7 +338,7 @@ type agentCanvasOp struct {
 }
 
 // Explicit node creation and edges only; no generic metadata, media URL or deletion.
-func applyCloudAgentCanvas(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {
+func applyCloudAgentCanvas(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, storyboardDisabled bool, recorder ...cloudAgentMutationRecorder) (any, error) {
 	// 真实执行入口的独立复核：审批记录可能是关闭连线操作之前留下的，恢复后不能靠旧批准
 	// 把已停用的操作写进画布。预览入口的校验不能替写入路径背书。
 	pending, err := decodeCloudAgentCanvasArgs(call.Function.Arguments)
@@ -348,7 +348,7 @@ func applyCloudAgentCanvas(repo *repository.Repository, userID, canvasID string,
 	if err = validateCloudAgentReferenceOperations(pending.Ops); err != nil {
 		return nil, err
 	}
-	plan, err := prepareCloudAgentCanvasMutation(repo, userID, canvasID, call)
+	plan, err := prepareCloudAgentCanvasMutation(repo, userID, canvasID, call, storyboardDisabled)
 	if err != nil {
 		return nil, err
 	}

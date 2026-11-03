@@ -54,7 +54,7 @@ func (f agentUndoFixture) apply(t *testing.T, callID string, ops ...map[string]a
 		t.Fatal(err)
 	}
 	if err := f.s.repo.MutateCloudAgent("user", f.runID, execution.Revision, func(_ *model.CloudAgentExecution, repo *repository.Repository) error {
-		_, err := applyCloudAgentCanvas(repo, "user", "agent-canvas", call, f.policy, cloudAgentMutationRecorderForRun(f.runID))
+		_, err := applyCloudAgentCanvas(repo, "user", "agent-canvas", call, f.policy, false, cloudAgentMutationRecorderForRun(f.runID))
 		return err
 	}); err != nil {
 		t.Fatal(err)

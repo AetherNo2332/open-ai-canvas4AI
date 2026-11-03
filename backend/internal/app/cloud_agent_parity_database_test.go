@@ -88,7 +88,7 @@ func TestAgentParityDatabaseHistoryRedoAndConflict(t *testing.T) {
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	before := cloudAgentCanvasHash(doc)
 	call := parityCall("canvas_apply_ops", map[string]any{"snapshotHash": before, "ops": []any{map[string]any{"type": "add_node", "id": "note", "nodeType": "text", "content": "Original"}}})
-	if _, err := applyCloudAgentCanvas(s.repo, "user", canvas.ID, call, policy, cloudAgentMutationRecorderForRun(run.ID)); err != nil {
+	if _, err := applyCloudAgentCanvas(s.repo, "user", canvas.ID, call, policy, false, cloudAgentMutationRecorderForRun(run.ID)); err != nil {
 		t.Fatal(err)
 	}
 	saved, _ := s.repo.CanvasProjectForUser("user", canvas.ID)

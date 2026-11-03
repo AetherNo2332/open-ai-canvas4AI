@@ -52,11 +52,12 @@ type cloudAgentCanvasMutationPlan struct {
 // prepareCloudAgentCanvasMutation is the single dry-run and execution planner.
 // Approval previews and the eventual write therefore share the exact same
 // parser, snapshot check and capability validation instead of drifting apart.
-func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall) (*cloudAgentCanvasMutationPlan, error) {
+func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, storyboardDisabled bool) (*cloudAgentCanvasMutationPlan, error) {
 	args, err := decodeCloudAgentCanvasArgs(call.Function.Arguments)
 	if err != nil {
 		return nil, err
 	}
+
 	// 审批预览入口的守卫：关闭连线操作后，旧操作在这里就被拒绝，既不读画布也不产生审批卡。
 	if err := validateCloudAgentReferenceOperations(args.Ops); err != nil {
 		return nil, err
@@ -70,6 +71,9 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 		return nil, err
 	}
 	beforeHash := cloudAgentCanvasHash(doc)
+	if err := validateCloudAgentStoryboardCreateGate(args.Ops, storyboardDisabled, doc); err != nil {
+		return nil, err
+	}
 	if beforeHash != args.SnapshotHash {
 		// 上游按字段/原因归类这个错误（模型据此知道是 snapshotHash 过期），我方运行期还要靠
 		// errCloudAgentSnapshotConflict 走"重新读取画布再申请审批"的可恢复分支，因此两层都保留。
