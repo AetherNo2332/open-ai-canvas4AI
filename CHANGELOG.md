@@ -1,3 +1,7 @@
+## v1.7.3.3(615afc3)
+
+- 修复：storyboard-md 技能改用脚本节点承载 Markdown 镜头卡（composerContent）：拆镜重新开启后直接 split 直读、生成按文本来源路由；纠正 Markdown 节点在画布被提示图片生成的错位。
+
 ## v1.7.3.3(0a2f114)
 
 - 新增：内置技能 storyboard-md（Markdown 分镜）。分镜表工具被 Agent 设置关闭时，Agent 改用该技能在画布 Markdown 节点写分镜：一场一节点、镜头卡固定字段（画面/台词/首帧/运动/结尾状态/必备）、连续性成链、生成衔接普通模式；明确产物是文档不是分镜表，重新开启分镜表工具后可迁回。canvas-tools-guide 与系统策略同步指向。
