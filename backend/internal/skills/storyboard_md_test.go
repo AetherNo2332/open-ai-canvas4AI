@@ -61,8 +61,8 @@ func TestStoryboardMdFrozenPackageReads(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// 技能定位声明：触发词覆盖"分镜表关闭"场景，且明确不伪装结构化分镜。
-		for _, keyword := range []string{"分镜表工具", "Markdown", "不要把 Markdown 节点伪装成分镜表", "continuityOut"} {
+		// 技能定位声明：触发词覆盖"分镜表关闭"场景、脚本节点直读拆镜、不伪装结构化分镜。
+		for _, keyword := range []string{"分镜表工具", "脚本节点", "composerContent", "不要把节点伪装成分镜表", "continuityOut"} {
 			if !strings.Contains(string(raw), keyword) {
 				t.Fatalf("skill body missing keyword %s", keyword)
 			}
