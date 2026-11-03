@@ -4488,4 +4488,4 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 ## 分镜表关闭时的 Markdown 分镜技能
 
 - 已实现：内置技能 `storyboard-md`（yingce-storyboard-md v1.0.0）：分镜表工具关闭时指导 Agent 在画布 Markdown 节点写分镜——一场一节点、镜头卡固定字段（画面/台词/首帧/运动/结尾状态/必备）、连续性成链、生成走普通模式；明确不伪装分镜表、不造行 ID，重新开启后可迁回 split。canvas-tools-guide 与系统策略同步指向该技能。
-- [ ] 验收：关闭分镜表工具后新运行让 Agent 写分镜，确认其调用 storyboard-md 技能、产出 Markdown 镜头卡且不调用 storyboard；重新开启后拆镜链路照常。
+- [ ] 验收：关闭分镜表工具后新运行让 Agent 写分镜，确认其调用 storyboard-md 技能、产出脚本节点（composerContent 镜头卡）且不调用 storyboard、不用 Markdown 节点当生成来源；重新开启后 split 直读该节点照常。
