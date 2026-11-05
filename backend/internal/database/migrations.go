@@ -12,9 +12,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// CurrentSchemaVersion：v1–v77 归上游迁移；v78 起是 fork 云端 Agent 子系统，v79–v83 见各 migrations_*_go 文件。
+// CurrentSchemaVersion：v1–v77 归上游迁移；v78 起是 fork 云端 Agent 子系统，v79 起见各 migrations_*_go 文件。
 // 迁移计划按列表逐项执行，不要求版本连续（v44 与上游合并前的 v75–v77 均为空号）。
-const CurrentSchemaVersion int64 = subagentWritePermissionsMigrationVersion
+const CurrentSchemaVersion int64 = creationPlatformEventsMigrationVersion
 
 const (
 	baselineSchemaChecksum                = "sha256:open-ai-canvas-schema-v1-20260830"
@@ -284,36 +284,6 @@ var schemaMigrations = []migration{
 	{version: mediaVersionBindingMigrationVersion, name: "canvas_task_binding_media_version", checksum: mediaVersionBindingChecksum, apply: migrateMediaVersionBinding},
 	{version: lessonsToMemoryMigrationVersion, name: "fork_lessons_to_memory_document", checksum: lessonsToMemoryChecksum, apply: migrateLessonsToMemoryDocument},
 	{version: subagentWritePermissionsMigrationVersion, name: "fork_subagent_write_permissions", checksum: subagentWritePermissionsChecksum, apply: migrateSubagentWritePermissions},
-}
-
-// migrateAgentMemoryDocumentColumns 补齐记忆文件的条目序号与修订的工具调用 ID。
-// 早期构建执行 v76 时这两列还不存在，v76 已记为完成不会重跑；新库由 v76 建全，这里是空操作。
-func migrateAgentMemoryDocumentColumns(tx *gorm.DB) error {
-	if err := tx.AutoMigrate(&model.AgentMemoryDocument{}, &model.AgentMemoryDocumentRevision{}); err != nil {
-		return err
-	}
-	// 新增列对旧行是 NULL；写成零值，与新建行一致。
-	if err := tx.Model(&model.AgentMemoryDocument{}).Where("next_entry_seq IS NULL").Update("next_entry_seq", 0).Error; err != nil {
-		return err
-	}
-	return tx.Model(&model.AgentMemoryDocumentRevision{}).Where("call_id IS NULL").Update("call_id", "").Error
-}
-
-// migrateAgentMemoryDocumentSkillDiscovery 新建用户记忆文件及其修订表，并给用户技能状态补
-// Agent 自动发现模式与读取统计列。旧状态 agent_mode 为空，按 auto 处理，行为与“已安装即可发现”一致。
-func migrateAgentMemoryDocumentSkillDiscovery(tx *gorm.DB) error {
-	if err := tx.AutoMigrate(&model.AgentMemoryDocument{}, &model.AgentMemoryDocumentRevision{}); err != nil {
-		return err
-	}
-	for _, field := range []string{"AgentMode", "AgentUseCount", "AgentLastUsedAt"} {
-		if tx.Migrator().HasColumn(&model.UserSkillState{}, field) {
-			continue
-		}
-		if err := tx.Migrator().AddColumn(&model.UserSkillState{}, field); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // migrateUserGroupsPricingCurrency 增加用户分组、分组渠道绑定，以及模型计价货币、充值商品货币和账单分组快照列。
@@ -824,7 +794,7 @@ func MigrateSchema(db *gorm.DB) error {
 				return fmt.Errorf("记录数据库迁移 %d：%w", item.version, err)
 			}
 		}
-		return RequireSchemaVersion(tx)
+		return finishSchemaMigration(tx)
 	})
 }
 

@@ -1,0 +1,24 @@
+{
+  "contractVersion": 1,
+  "capability": "video",
+  "operation": "image_to_video",
+  "model": { "channelId": "ch-video", "modelKey": "seedance-pro" },
+  "prompt": "镜头缓慢推进，人物回头",
+  "parameters": {
+    "videoSeconds": 5,
+    "size": "9:16",
+    "vquality": "720p",
+    "videoGenerateAudio": true
+  },
+  "references": [
+    { "resourceId": "res-frame-1", "kind": "image", "role": "first_frame" }
+  ],
+  "business": {
+    "application": "canvas",
+    "projectId": "canvas-9",
+    "objectType": "node",
+    "objectId": "video-node-4",
+    "operationId": "client-1:op-77"
+  },
+  "idempotencyKey": "canvas:canvas-9:client-1:op-77"
+}

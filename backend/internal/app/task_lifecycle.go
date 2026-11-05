@@ -80,7 +80,7 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if err := s.requireCustomChannelsForTaskInput(billingInput); err != nil {
 		return nil, err
 	}
-	billingOrder, err := s.taskBillingOrder(userID, task, billingInput)
+	billingOrder, err := s.cappedRetryBillingOrder(userID, task, billingInput)
 	if err != nil {
 		return nil, err
 	}

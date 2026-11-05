@@ -1,9 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 
 	"yingce/backend/internal/assets"
+	cp "yingce/backend/internal/creationplatform"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/workbench"
 )
@@ -131,7 +133,15 @@ func (s *Service) CreateWorkbenchTask(userID string, req WorkbenchTaskInput, tra
 		return nil, BadAuthRequest("所选系统模型不可用")
 	}
 	resolved.Model = modelName
-	return s.CreateTask(userID, CreateTaskRequest{Type: resolved.TaskType, Operation: resolved.Operation, Prompt: resolved.Prompt, Model: resolved.Model, LogicalModelID: resolved.LogicalModelID, Input: resolved.Input, TraceID: traceID, RequestID: requestID, workbenchKind: req.Kind})
+	taskReq := CreateTaskRequest{Type: resolved.TaskType, Operation: resolved.Operation, Prompt: resolved.Prompt, Model: resolved.Model, LogicalModelID: resolved.LogicalModelID, Input: resolved.Input, TraceID: traceID, RequestID: requestID, workbenchKind: req.Kind}
+	submission := adapterSubmission{UserID: userID, TaskReq: taskReq, Business: cp.BusinessRef{Application: "ecommerce", ObjectType: "workbench_" + req.Kind, ObjectID: req.ToolID}}
+	// 批次项按“批次 + 序号”幂等：整批重提时已接受的项回放原任务，不重新建任务或冻结费用。
+	if req.Batch != nil && workbench.ValidTaskBatch(req.Batch.ID, req.Batch.Index, req.Batch.Count) {
+		operation := fmt.Sprintf("%s:%d", req.Batch.ID, req.Batch.Index)
+		submission.Key, submission.Business.ProjectID, submission.Business.OperationID = "workbench:"+operation, req.Batch.ID, operation
+	}
+	task, _, err := (&creationPlatform{s: s}).submitResolved(submission)
+	return task, err
 }
 
 func (s *Service) WorkbenchTasks(userID, kind string, activeOnly bool, limit int) ([]TaskSummary, error) {

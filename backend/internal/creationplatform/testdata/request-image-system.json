@@ -1,0 +1,21 @@
+{
+  "contractVersion": 1,
+  "capability": "image",
+  "operation": "text_to_image",
+  "model": { "channelId": "ch-image", "modelKey": "gpt-image-2" },
+  "prompt": "白底商品主图，一只陶瓷杯",
+  "parameters": { "size": "1:1", "quality": "high" },
+  "references": [
+    { "resourceId": "res-cup", "kind": "image", "role": "reference" }
+  ],
+  "business": {
+    "application": "ecommerce",
+    "projectId": "batch-7",
+    "objectType": "batch_item",
+    "objectId": "item-2",
+    "operationId": "batch-7:item-2"
+  },
+  "cost": { "maxMicrocredits": 120000, "quoteHash": "q-3f2a" },
+  "idempotencyKey": "workbench:batch-7:item-2",
+  "traceId": "trace-abc"
+}
