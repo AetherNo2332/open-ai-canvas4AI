@@ -205,7 +205,7 @@ type dramaSyncDeferred struct{ err error }
 func (e *dramaSyncDeferred) Error() string { return e.err.Error() }
 
 func (r *dramaRun) syncRunningJob(job *model.DramaJob) error {
-	task, err := r.s.repo.Task(job.TaskID)
+	task, err := r.taskFor(job)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return r.failJob(job, "任务记录丢失")
 	}

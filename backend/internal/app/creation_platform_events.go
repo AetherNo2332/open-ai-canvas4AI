@@ -48,6 +48,14 @@ func (p *creationPlatform) Events(_ context.Context, caller cp.Caller, query cp.
 	if err != nil {
 		return cp.EventPage{}, err
 	}
+	// 清理可能发生在两次读取之间：读完事件后再看一次水位，越过了起始游标就说明这一页可能缺事件。
+	current, prunedBefore, err = p.s.repo.PlatformEventWatermarks()
+	if err != nil {
+		return cp.EventPage{}, err
+	}
+	if after < prunedBefore {
+		return cp.EventPage{Events: []cp.TaskEvent{}, NextCursor: strconv.FormatInt(current, 10), ResyncRequired: true}, nil
+	}
 	page := cp.EventPage{Events: make([]cp.TaskEvent, 0, len(rows)), NextCursor: strconv.FormatInt(after, 10)}
 	for _, row := range rows {
 		page.Events = append(page.Events, platformEvent(row))

@@ -148,8 +148,10 @@ export function createCreationPlatformClient(options: CreationPlatformClientOpti
             while (!settled(current)) {
                 const page = await this.events({ taskId, after: cursor }, wait.signal);
                 if (page.resyncRequired || page.events.some((event) => event.revision > current.revision)) {
+                    // 服务端先读 revision 再读状态，所以快照状态不会比 revision 旧，可能更新；
+                    // 重新读到的快照只要不回退修订号就采用，不能因为 revision 未变而丢弃更新的状态。
                     const next = await snapshot(taskId, wait.signal);
-                    if (next.revision > current.revision || page.resyncRequired) {
+                    if (next.revision >= current.revision || page.resyncRequired) {
                         current = next;
                         wait.onSnapshot?.(current);
                     }

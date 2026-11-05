@@ -130,22 +130,27 @@ func (p *creationPlatform) Submit(_ context.Context, caller cp.Caller, req cp.Ge
 	if err != nil {
 		return cp.SubmitReceipt{}, err
 	}
-	if replay, err := p.existingPlatformSubmission(caller.UserID, application, req.IdempotencyKey, req.Fingerprint()); replay != nil || err != nil {
+	lookup := func() (*cp.SubmitReceipt, error) {
+		return p.existingPlatformSubmission(caller.UserID, application, req.IdempotencyKey, req.Fingerprint())
+	}
+	if replay, err := lookup(); replay != nil || err != nil {
 		return derefReceipt(replay), err
 	}
-	task, order, err := p.preparePlatformTask(caller.UserID, req)
-	if err != nil {
-		return cp.SubmitReceipt{}, err
-	}
-	if err := p.applyCostAuthorization(caller.UserID, req, task, order); err != nil {
-		return cp.SubmitReceipt{}, err
-	}
-	if err := p.commitPlatformTask(task, order, platformSubmissionRecord(caller.UserID, application, req)); err != nil {
-		// 并发同键：输家的事务整体回滚（任务、冻结、提交记录都不留下），再按赢家的记录回放或判冲突。
-		if replay, lookupErr := p.existingPlatformSubmission(caller.UserID, application, req.IdempotencyKey, req.Fingerprint()); replay != nil || lookupErr != nil {
-			return derefReceipt(replay), lookupErr
+	var task *model.Task
+	err = func() error {
+		var order *model.BillingOrder
+		var err error
+		if task, order, err = p.preparePlatformTask(caller.UserID, req); err != nil {
+			return err
 		}
-		return cp.SubmitReceipt{}, platformError(err)
+		if err := p.applyCostAuthorization(caller.UserID, req, task, order); err != nil {
+			return err
+		}
+		return p.commitPlatformTask(task, order, platformSubmissionRecord(caller.UserID, application, req))
+	}()
+	if err != nil {
+		replay, lookupErr := replayConcurrentWinner(lookup, err)
+		return derefReceipt(replay), lookupErr
 	}
 	snapshot, err := p.snapshot(caller.UserID, task.ID)
 	if err != nil {
@@ -170,6 +175,12 @@ func (p *creationPlatform) snapshot(userID, taskID string) (cp.TaskSnapshot, err
 	if err != nil {
 		return cp.TaskSnapshot{}, err
 	}
+	// 先读 revision 再读状态：状态只会比 revision 新，不会更旧。之后任何状态变化都会产生比它大的事件，
+	// 消费者从这个 revision 续读一定能看到；反过来读会把旧状态配上新 revision，让续读永久错过终态。
+	revision, err := p.s.repo.PlatformTaskRevision(taskID)
+	if err != nil {
+		return cp.TaskSnapshot{}, err
+	}
 	task, err := p.s.repo.TaskForUser(userID, taskID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return cp.TaskSnapshot{}, cp.NewError(cp.CodeNotFound, "任务不存在")
@@ -182,10 +193,6 @@ func (p *creationPlatform) snapshot(userID, taskID string) (cp.TaskSnapshot, err
 		if order, err = p.s.repo.BillingOrder(task.BillingOrderID); err != nil {
 			return cp.TaskSnapshot{}, err
 		}
-	}
-	revision, err := p.s.repo.PlatformTaskRevision(task.ID)
-	if err != nil {
-		return cp.TaskSnapshot{}, err
 	}
 	snapshot := platformSnapshot(*submission, *task, order)
 	snapshot.Revision = revision

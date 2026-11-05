@@ -34,19 +34,22 @@ func (p *creationPlatform) submitResolved(in adapterSubmission) (*model.Task, bo
 	if err != nil {
 		return nil, false, err
 	}
-	if replay, err := p.existingPlatformSubmission(in.UserID, application, key, fingerprint); replay != nil || err != nil {
+	lookup := func() (*cp.SubmitReceipt, error) {
+		return p.existingPlatformSubmission(in.UserID, application, key, fingerprint)
+	}
+	if replay, err := lookup(); replay != nil || err != nil {
 		return p.replayedTask(in.UserID, replay, err)
 	}
 	task, order, err := p.prepareResolvedTask(in.UserID, in.TaskReq)
-	if err != nil {
-		return nil, false, err
+	if err == nil {
+		err = p.commitPlatformTask(task, order, adapterSubmissionRecord(in, application, key, fingerprint))
 	}
-	record := adapterSubmissionRecord(in, application, key, fingerprint)
-	if err := p.commitPlatformTask(task, order, record); err != nil {
-		if replay, lookupErr := p.existingPlatformSubmission(in.UserID, application, key, fingerprint); replay != nil || lookupErr != nil {
-			return p.replayedTask(in.UserID, replay, lookupErr)
+	if err != nil {
+		replay, lookupErr := replayConcurrentWinner(lookup, err)
+		if replay == nil && lookupErr != nil {
+			return nil, false, lookupErr
 		}
-		return nil, false, platformError(err)
+		return p.replayedTask(in.UserID, replay, lookupErr)
 	}
 	return taskForOutput(*task), false, nil
 }

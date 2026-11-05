@@ -1,6 +1,14 @@
 package repository
 
-import "yingce/backend/internal/model"
+import (
+	"encoding/json"
+	"time"
+
+	"yingce/backend/internal/model"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
 
 // PlatformSubmissionForTask 只返回属于该用户的平台提交记录。
 func (r *Repository) PlatformSubmissionForTask(userID, taskID string) (*model.PlatformSubmission, error) {
@@ -68,4 +76,67 @@ func (r *Repository) PlatformBillingTotals(userID, application, projectRef strin
 // InsertPlatformSubmission 供已在事务中的调用方（画布命令提交）登记平台记录与提交事件。
 func (r *Repository) InsertPlatformSubmission(submission *model.PlatformSubmission) error {
 	return insertPlatformSubmission(r, submission, submission.TaskID)
+}
+
+// PlatformSettledSubmissionCount 统计某业务操作前缀下、任务已到终态的平台提交数。
+// 短剧用它作为作业的提交序号：在途任务不计数（崩溃后重放同一序号），终态任务计数（重试与续作得到新序号）。
+func (r *Repository) PlatformSettledSubmissionCount(userID, application, operationPrefix string) (int64, error) {
+	var count int64
+	err := r.db.Table("platform_submissions AS ps").Joins("JOIN tasks AS t ON t.id = ps.task_id").
+		Where("ps.user_id = ? AND ps.application = ? AND ps.operation_id LIKE ? AND t.status IN ?", userID, application, operationPrefix+"%",
+			[]model.TaskStatus{model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled}).
+		Count(&count).Error
+	return count, err
+}
+
+// PlatformPriceSignature 是平台报价签名。系统渠道模型沿用 CreationPriceSignature；逻辑模型对整个逻辑模型签名
+// （当前修订、全部启用线路及其渠道模型、渠道与价格档、计费设置），不包含本次随机选中的线路，
+// 因此同价多线路下报价与提交选到不同线路不会误判过期，而任一线路的价格或配置变化仍会让签名改变。
+func (r *Repository) PlatformPriceSignature(task *model.Task, channelID, modelKey string) (string, error) {
+	if task.LogicalModelID == "" {
+		return r.CreationPriceSignature(task, channelID, modelKey)
+	}
+	db := r.db.Clauses(clause.Locking{Strength: "SHARE"}).Session(&gorm.Session{})
+	var logical model.LogicalModel
+	if err := db.First(&logical, "id = ?", task.LogicalModelID).Error; err != nil {
+		return "", err
+	}
+	var routes []model.LogicalModelRoute
+	if err := db.Where("logical_model_revision_id = ? AND enabled = ?", logical.ActiveRevisionID, true).Order("id").Find(&routes).Error; err != nil {
+		return "", err
+	}
+	values := map[string]any{"logical": logical}
+	var revision model.LogicalModelRevision
+	if err := db.First(&revision, "id = ?", logical.ActiveRevisionID).Error; err != nil {
+		return "", err
+	}
+	values["revision"] = revision
+	lines := make([]map[string]any, 0, len(routes))
+	for _, route := range routes {
+		var cm model.ChannelModel
+		if err := db.First(&cm, "id = ?", route.ChannelModelID).Error; err != nil {
+			return "", err
+		}
+		var channel struct {
+			ID        string
+			Enabled   bool
+			UpdatedAt time.Time
+		}
+		if err := db.Model(&model.ModelChannel{}).Select("id, enabled, updated_at").First(&channel, "id = ?", cm.ChannelID).Error; err != nil {
+			return "", err
+		}
+		var tiers []model.ChannelModelPriceTier
+		if err := db.Where("channel_model_id = ?", cm.ID).Order("id").Find(&tiers).Error; err != nil {
+			return "", err
+		}
+		lines = append(lines, map[string]any{"route": route, "channelModel": cm, "channel": channel, "tiers": tiers})
+	}
+	values["routes"] = lines
+	var settings []model.SystemSetting
+	if err := db.Where("key IN ?", []string{"credit_policy", "feature_availability"}).Order("key").Find(&settings).Error; err != nil {
+		return "", err
+	}
+	values["pricingSettings"] = settings
+	encoded, err := json.Marshal(values)
+	return string(encoded), err
 }

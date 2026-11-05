@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	cp "yingce/backend/internal/creationplatform"
@@ -71,7 +72,10 @@ func TestDramaPlatformJobReplay(t *testing.T) {
 	if got := platformCount(t, f.db, &model.BillingOrder{}, "user_id = ?", "user-a"); got != 1 {
 		t.Fatalf("job replay reserved credits again: %d orders", got)
 	}
-	// 记录过一次尝试后（失败重试），同一作业的下一次提交是新的尝试：新任务、新冻结。
+	// 原任务失败后（失败重试），同一作业的下一次提交是新的尝试：新任务、新冻结。提交序号以任务真实终态为准。
+	if err := f.db.Model(&model.Task{}).Where("id = ?", first.ID).Update("status", model.TaskStatusFailed).Error; err != nil {
+		t.Fatal(err)
+	}
 	recordDramaAttempt(restarted.submitting, first.ID, string(model.TaskStatusFailed), "上游失败", 0)
 	retry, err := restarted.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "白衣少女站在大厅中央", dramaImageInput())
 	if err != nil {
@@ -111,5 +115,58 @@ func TestDramaPlatformBudgetAggregation(t *testing.T) {
 	}
 	if totals.ChargedMicrocredits()+totals.HeldMicrocredits() != 200_000 {
 		t.Fatalf("drama budget totals = charged %d + held %d, want 200000", totals.ChargedMicrocredits(), totals.HeldMicrocredits())
+	}
+}
+
+// 审查 F4：同步阶段的自动精简续作也必须有稳定的作业身份：提交后、作业保存前崩溃，下一轮重放不能再建一个精简任务。
+func TestDramaPlatformCondenseContinuationReplays(t *testing.T) {
+	f := newPlatformImageFixture(t)
+	run, job := dramaPlatformRun(t, f)
+	first, err := run.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "撰写", dramaImageInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.runQueued(t) // 首个任务成功，同步阶段据此提交续作。
+	// 同步阶段：每轮新建 dramaRun，派发字段为空；续作必须仍带作业身份。
+	sync := &dramaRun{s: f.svc, project: run.project, production: run.production, settings: run.settings}
+	sync.submitting = &model.DramaJob{ID: job.ID, ProjectID: job.ProjectID, Kind: job.Kind, CastID: job.CastID, TaskID: first.ID, Status: model.DramaJobRunning}
+	condense, err := sync.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "精简", dramaImageInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 崩溃：作业行没保存 TaskID=condense。下一轮同步再次处理同一个成功任务、再次提交同样的续作。
+	again := &dramaRun{s: f.svc, project: run.project, production: run.production, settings: run.settings}
+	again.submitting = &model.DramaJob{ID: job.ID, ProjectID: job.ProjectID, Kind: job.Kind, CastID: job.CastID, TaskID: first.ID, Status: model.DramaJobRunning}
+	replayed, err := again.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "精简", dramaImageInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ID != condense.ID || condense.ID == first.ID {
+		t.Fatalf("condense continuation not idempotent: first=%s condense=%s replay=%s", first.ID, condense.ID, replayed.ID)
+	}
+}
+
+// 审查 F5：作业历史只保留 20 条，提交身份不能依赖它的长度；第 21 次之后的重试仍是新的尝试。
+func TestDramaPlatformRetryIdentityIgnoresHistoryTrim(t *testing.T) {
+	f := newPlatformImageFixture(t)
+	run, job := dramaPlatformRun(t, f)
+	for index := 0; index < 20; index++ {
+		recordDramaAttempt(job, fmt.Sprintf("old-%d", index), string(model.TaskStatusFailed), "旧失败", 0)
+	}
+	previous := ""
+	for round := 0; round < 3; round++ {
+		task, err := run.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "白衣少女", dramaImageInput())
+		if err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if task.ID == previous {
+			t.Fatalf("round %d reused the previous task %s after the history window was full", round, task.ID)
+		}
+		previous = task.ID
+		// 本轮失败并记录；历史仍被裁剪在 20 条。
+		if err := f.db.Model(&model.Task{}).Where("id = ?", task.ID).Update("status", model.TaskStatusFailed).Error; err != nil {
+			t.Fatal(err)
+		}
+		recordDramaAttempt(job, task.ID, string(model.TaskStatusFailed), "上游失败", 0)
 	}
 }

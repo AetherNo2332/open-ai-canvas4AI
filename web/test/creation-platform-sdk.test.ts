@@ -165,6 +165,28 @@ describe("creation platform SDK", () => {
         expect(new URLSearchParams(eventCall!.path.split("?")[1]).get("after")).toBe("5");
     });
 
+    // 服务端先读 revision 再读状态：快照的状态可能比 revision 新。SDK 不能因为 revision 没变就丢弃更新的状态。
+    test("a fresher state with an unchanged revision still replaces the previous snapshot", async () => {
+        let reads = 0;
+        const { transport } = fakeTransport({
+            "GET /platform/v1/tasks/task-1": () => {
+                reads += 1;
+                return ok(
+                    reads === 1
+                        ? snapshot({ revision: 5, execution: "running" })
+                        : snapshot({ revision: 5, execution: "succeeded", resources: "ready", actions: [], billing: { status: "settled", reservedMicrocredits: 100, chargedMicrocredits: 100, refundedMicrocredits: 0 } }),
+                );
+            },
+            "GET /platform/v1/events": (call) => {
+                const after = new URLSearchParams(call.path.split("?")[1]).get("after");
+                return ok(after === "5" ? { events: [event(6, "succeeded")], nextCursor: "6" } : { events: [], nextCursor: after ?? "0" });
+            },
+        });
+        const client = createCreationPlatformClient({ transport, pollIntervalMs: 0 });
+        const done = await client.waitForTask("task-1", { signal: AbortSignal.timeout(2000) });
+        expect(done.execution).toBe("succeeded");
+    });
+
     test("expired cursor triggers a snapshot resync instead of losing state", async () => {
         let resynced = false;
         const { transport } = fakeTransport({

@@ -85,9 +85,13 @@ const postgresBillingEventSelect = `INSERT INTO platform_task_events (` + platfo
 
 var postgresPlatformEventTriggers = []string{
 	// 游标在提交时分配：计数器行只在事务最后被锁，持有期间不再等待其他锁，回滚的事务不消耗游标。
+	// 已带游标的行（SQLite → PostgreSQL 导入的历史事件）保持原值，计数器随导入的计数器行一起复制。
 	`CREATE OR REPLACE FUNCTION platform_task_event_assign_position() RETURNS trigger AS $$
 	DECLARE next_position BIGINT;
 	BEGIN
+	  IF NEW.position IS NOT NULL THEN
+	    RETURN NULL;
+	  END IF;
 	  INSERT INTO platform_event_counters (id, value, pruned_before) VALUES (1, 0, 0) ON CONFLICT (id) DO NOTHING;
 	  UPDATE platform_event_counters SET value = value + 1 WHERE id = 1 RETURNING value INTO next_position;
 	  UPDATE platform_task_events SET position = next_position WHERE id = NEW.id;

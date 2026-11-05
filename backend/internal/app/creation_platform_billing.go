@@ -71,8 +71,7 @@ func (p *creationPlatform) applyCostAuthorization(userID string, req cp.Generati
 
 // quoteFor 计算与提交同口径的报价：同一次模型解析、同一份费用订单与价格签名。
 func (p *creationPlatform) quoteFor(_ string, req cp.GenerationRequest, task *model.Task, order *model.BillingOrder) (cp.Quote, error) {
-	// 签名按 task.ChannelModelID 定位渠道模型（逻辑模型同样记录了选中的路由），不依赖请求里的渠道字段。
-	signature, err := p.s.repo.CreationPriceSignature(task, strings.TrimSpace(req.Model.ChannelID), strings.TrimSpace(req.Model.ModelKey))
+	signature, err := p.s.repo.PlatformPriceSignature(task, strings.TrimSpace(req.Model.ChannelID), strings.TrimSpace(req.Model.ModelKey))
 	if err != nil {
 		return cp.Quote{}, platformError(err)
 	}
@@ -155,9 +154,49 @@ func platformSubmissionRecord(userID, application string, req cp.GenerationReque
 	return record
 }
 
+// replayConcurrentWinner 处理查过幂等记录之后的任何失败：同键的并发请求可能已经成功提交，
+// 它占用的活动名额或额度会让本请求在准备、授权或提交阶段被拒。此时按同一指纹回放赢家，
+// 内容不同则返回冲突；没有赢家才把原错误映射为合同错误返回。
+func replayConcurrentWinner(lookup func() (*cp.SubmitReceipt, error), cause error) (*cp.SubmitReceipt, error) {
+	if replay, err := lookup(); replay != nil || err != nil {
+		return replay, err
+	}
+	return nil, platformError(cause)
+}
+
 func derefReceipt(receipt *cp.SubmitReceipt) cp.SubmitReceipt {
 	if receipt == nil {
 		return cp.SubmitReceipt{}
 	}
 	return *receipt
+}
+
+// applyPlatformRetryCap 让平台任务的重试沿用提交时授权的单次费用上限：新订单写入同样的上限，
+// 报价超过上限时拒绝。它挂在既有 retryTask 上，平台重试与 /api/tasks/:id/retry 都会经过。
+func (s *Service) applyPlatformRetryCap(userID string, task *model.Task, order *model.BillingOrder) error {
+	submission, err := s.repo.PlatformSubmissionForTask(userID, task.ID)
+	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && !submission.MaxChargeSet) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if order == nil {
+		return nil
+	}
+	if order.AmountMicrocredits > submission.MaxChargeMicrocredits {
+		return cp.NewError(cp.CodeCostLimitExceeded, "当前价格超过提交时授权的费用上限，未重试、未冻结")
+	}
+	order.ChargeLimitSet, order.ChargeLimitMicrocredits = true, submission.MaxChargeMicrocredits
+	task.AuthorizedChargeMicrocredits = submission.MaxChargeMicrocredits
+	return nil
+}
+
+// cappedRetryBillingOrder 为重试重新计价，并对平台任务套用提交时的费用上限。
+func (s *Service) cappedRetryBillingOrder(userID string, task *model.Task, input map[string]any) (*model.BillingOrder, error) {
+	order, err := s.taskBillingOrder(userID, task, input)
+	if err != nil {
+		return nil, err
+	}
+	return order, s.applyPlatformRetryCap(userID, task, order)
 }

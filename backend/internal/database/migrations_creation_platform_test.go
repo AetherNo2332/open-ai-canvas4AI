@@ -2,9 +2,14 @@ package database
 
 import (
 	"fmt"
+	"net/url"
+	"os"
 	"testing"
+	"time"
 
 	"yingce/backend/internal/model"
+
+	"gorm.io/gorm"
 )
 
 // SQLite 改列会重建表（建临时表→删旧表→改名）。重建 tasks 或 billing_orders 后，平台事件触发器必须仍在，
@@ -58,5 +63,71 @@ func TestPlatformEventTriggersSurviveSQLiteTableRebuild(t *testing.T) {
 		if event.Position == nil || *event.Position != int64(index+1) {
 			t.Fatalf("positions must be 1..n: %+v", events)
 		}
+	}
+}
+
+// 审查 F3：SQLite → PostgreSQL 导入时，事件行已带源库游标；PostgreSQL 的提交时取号触发器不能重写它们，
+// 否则历史顺序会倒退、旧游标语义改变、迁移工具的逐字段校验在重复执行时失败。
+func TestPostgresPlatformEventTriggerKeepsImportedPositions(t *testing.T) {
+	dsn := os.Getenv("CANVAS_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("CANVAS_TEST_POSTGRES_DSN is not configured")
+	}
+	base, err := Open(Config{Driver: "postgres", DSN: dsn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseSQL, _ := base.DB()
+	t.Cleanup(func() { _ = baseSQL.Close() })
+	schema := fmt.Sprintf("platform_import_%d", time.Now().UnixNano())
+	if err := base.Exec(`CREATE SCHEMA "` + schema + `"`).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = base.Exec(`DROP SCHEMA IF EXISTS "` + schema + `" CASCADE`).Error })
+	parsed, _ := url.Parse(dsn)
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	db, err := Open(Config{Driver: "postgres", DSN: parsed.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟迁移工具：在一个事务里按主键复制带游标的事件与计数器。主键顺序与游标顺序故意相反。
+	two, one := int64(2), int64(1)
+	imported := []model.PlatformTaskEvent{
+		{ID: "a-final", Position: &two, TaskID: "t", UserID: "u", Application: "test", Type: "task.state_changed", TaskStatus: "succeeded", OccurredAtMs: 2},
+		{ID: "z-submitted", Position: &one, TaskID: "t", UserID: "u", Application: "test", Type: "task.submitted", TaskStatus: "queued", OccurredAtMs: 1},
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&imported).Error; err != nil {
+			return err
+		}
+		return tx.Create(&model.PlatformEventCounter{ID: 1, Value: 2}).Error
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var events []model.PlatformTaskEvent
+	if err := db.Order("id").Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || *events[0].Position != 2 || *events[1].Position != 1 {
+		t.Fatalf("imported positions were rewritten at commit: a=%d z=%d", *events[0].Position, *events[1].Position)
+	}
+	var counter model.PlatformEventCounter
+	if err := db.First(&counter, "id = 1").Error; err != nil || counter.Value != 2 {
+		t.Fatalf("counter after import = %+v %v, want 2", counter, err)
+	}
+	// 导入后的运行时事件继续从计数器之后取号。
+	runtime := model.PlatformTaskEvent{ID: "runtime", TaskID: "t", UserID: "u", Application: "test", Type: "task.state_changed", OccurredAtMs: 3}
+	if err := db.Create(&runtime).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&runtime, "id = ?", "runtime").Error; err != nil || runtime.Position == nil || *runtime.Position != 3 {
+		t.Fatalf("runtime event after import got position %v", runtime.Position)
 	}
 }
