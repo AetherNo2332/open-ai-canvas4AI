@@ -5,6 +5,24 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 创作平台 SDK（S5–S7：电商、短剧、画布接入）
+
+- 已实现：三类业务保留各自的解析、编排与结果采用，最终提交统一走平台。电商工作台按“批次 ID + 序号”幂等：批次中途失败后“继续提交”不会重建已接受项或再冻结费用（`TestWorkbenchBatchRetryDoesNotDuplicateAcceptedItems`）。短剧调度在 Go 内经平台提交，按“作业 ID + 已提交次数”幂等：调度器在提交后、作业保存前重启不会重复生成或冻结（`TestDramaPlatformJobReplay`），平台汇总与短剧预算口径一致。画布命令提交在同一事务里写任务、冻结、画布绑定与平台记录，任一写失败整体回滚（`TestCanvasSubmitRollsBackWithPlatformRecord`）。
+- [ ] 电商工作台：一次 3 张图的批次，在第二张积分不足时充值后点“继续提交”，确认只补交未完成项，费用流水只多两次冻结。
+- [ ] 短剧：生产中途重启后端，确认队列里没有重复的生成任务、预算统计不变。
+- [ ] 画布：拆镜与节点生成照常完成；任务中心与平台事件都能看到这条任务。
+
+## 创作平台 SDK（S4：TypeScript SDK）
+
+- 已实现：`web/src/sdk/creation-platform` 内部 SDK，覆盖模型目录、报价、上传、提交、等待、事件续读、取消/重试/恢复、额度与汇总。核心不依赖 window、React、store 或 axios，传输由调用方注入；提交在网络中断时用同一幂等键重投；等待以快照 revision 为起点续读事件，游标过期时重读快照，中止只结束本地等待。真实后端 + 本地假上游下，SDK 各完成一次文本、图片、视频、音频生成和一次带参考图的生成（`TestPlatformSDKFourCapabilitiesAgainstRealBackend` 驱动 Bun 端到端用例）。新增 `GET /api/platform/v1/models`。
+- [ ] 在浏览器控制台用 `createCreationPlatformClient({ transport: webTransport })` 生成一张图，确认 Cookie 登录态、错误码与资源访问正常。
+
+## 创作平台 SDK（S3：任务事件与媒体结果）
+
+- 已实现：平台任务的提交、执行、媒体交付、终态与费用变化都写持久事件（Schema 85，状态与事件同事务），`GET /api/platform/v1/events` 按游标续读；快照带 `revision` 与服务端允许动作；新增取消、重试、恢复保存三个动作接口。SQLite 与隔离 PostgreSQL + Redis 下验证：断线续读、重复读、进程重启后可接上，修订号严格递增；过期游标返回 `resyncRequired`；上游成功但下载失败时快照为“执行成功、资源交付失败、费用待核对”，恢复保存后同一任务交付且不再调用生成接口；运行中取消后费用待核对、实收缺失而不是 0，管理员核对退款后消费者能读到费用事件。
+- [ ] 真实渠道生成一张图后断网再恢复，用事件游标续读能拿到成功事件；刷新页面后按快照 `revision` 继续订阅。
+- [ ] 让作品地址下载失败（如临时限制出网），确认任务中心显示“可重试保存”，恢复后不产生第二次生成费用。
+
 ## 创作平台 SDK（S2：幂等提交与费用授权）
 
 - 已实现：平台提交改为“准备（解析与计价，不落库）→ 单事务冻结、写任务与提交记录 → 提交后唤醒 worker”。新增报价 `POST /api/platform/v1/quotes`、额度 `GET .../billing/balance`、按归属汇总 `GET .../billing/aggregate`。SQLite 与隔离 PostgreSQL + Redis 下验证：20 个并发同键请求只产生 1 个任务、1 份冻结、1 条记录；同键改内容冲突、跨用户与跨 application 互不影响；在任务、订单、记录、流水写入处分别注入失败均整体回滚；上限低于报价、涨价后旧报价、余额不足均在写库前拒绝；成功结算、上游拒绝退款、待核对三种结局与汇总分列正确。

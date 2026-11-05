@@ -383,7 +383,7 @@ func verifyMigrationCoverage(db *gorm.DB) error {
 }
 
 func migrations() []tableMigration {
-	return []tableMigration{
+	return append([]tableMigration{
 		migrateTable[model.Tool]("tools"),
 		migrateTable[model.ToolFavorite]("tool_favorites"),
 		migrateTable[model.User]("users"),
@@ -423,7 +423,6 @@ func migrations() []tableMigration {
 		migrateTable[model.ReferralBinding]("referral_bindings"),
 		migrateTable[model.ReferralCommission]("referral_commissions"),
 		migrateTable[model.BillingOrder]("billing_orders"),
-		migrateTable[model.PlatformSubmission]("platform_submissions"),
 		migrateTable[model.TopupProduct]("topup_products"),
 		migrateTable[model.PaymentProviderConfig]("payment_provider_configs"),
 		migrateTable[model.PaymentOrder]("payment_orders"),
@@ -542,5 +541,5 @@ func migrations() []tableMigration {
 		migrateTable[model.TaskTextDelta]("task_text_delta"),
 		migrateTable[model.TaskLog]("task_logs"),
 		migrateTable[model.Result]("results"),
-	}
+	}, creationPlatformTableMigrations()...)
 }

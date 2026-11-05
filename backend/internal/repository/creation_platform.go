@@ -20,7 +20,10 @@ func insertPlatformSubmission(r *Repository, submission *model.PlatformSubmissio
 	if submission.ID == "" {
 		submission.ID = newRepositoryID()
 	}
-	return r.db.Create(submission).Error
+	if err := r.db.Create(submission).Error; err != nil {
+		return err
+	}
+	return insertPlatformSubmittedEvent(r.db, submission, taskID)
 }
 
 // PlatformSubmissionByKey 按幂等作用域（用户 + application + 幂等键）读取提交记录。
@@ -46,13 +49,13 @@ func (r *Repository) PlatformBillingTotals(userID, application, projectRef strin
 	var totals PlatformBillingTotals
 	query := r.db.Table("platform_submissions AS ps").
 		Joins("JOIN tasks AS t ON t.id = ps.task_id").
-		Joins("LEFT JOIN billing_orders AS bo ON bo.id = t.billing_order_id").
+		Joins("LEFT JOIN billing_orders AS bo ON bo.task_id = t.id").
 		Where("ps.user_id = ? AND ps.application = ?", userID, application)
 	if projectRef != "" {
 		query = query.Where("ps.project_ref = ?", projectRef)
 	}
 	err := query.Select(
-		"COUNT(ps.id) AS task_count, "+
+		"COUNT(DISTINCT ps.id) AS task_count, "+
 			"COALESCE(SUM(bo.amount_microcredits), 0) AS reserved_microcredits, "+
 			"COALESCE(SUM(CASE WHEN bo.status = ? THEN bo.actual_amount_microcredits ELSE 0 END), 0) AS charged_microcredits, "+
 			"COALESCE(SUM(bo.refunded_amount_microcredits), 0) AS refunded_microcredits, "+
@@ -60,4 +63,9 @@ func (r *Repository) PlatformBillingTotals(userID, application, projectRef strin
 		model.BillingStatusSettled, model.BillingStatusUncertain,
 	).Scan(&totals).Error
 	return totals, err
+}
+
+// InsertPlatformSubmission 供已在事务中的调用方（画布命令提交）登记平台记录与提交事件。
+func (r *Repository) InsertPlatformSubmission(submission *model.PlatformSubmission) error {
+	return insertPlatformSubmission(r, submission, submission.TaskID)
 }

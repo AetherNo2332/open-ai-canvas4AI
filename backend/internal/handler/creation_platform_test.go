@@ -182,6 +182,14 @@ func TestPlatformImageSubmitViaHTTP(t *testing.T) {
 		t.Fatalf("conflict: %d %s", w.Code, w.Body.String())
 	}
 
+	w = call(http.MethodGet, "/api/platform/v1/models?capability=image", nil, "session-a.token-a")
+	var models platformEnvelope[cp.ModelCatalog]
+	if err := json.Unmarshal(w.Body.Bytes(), &models); err != nil || w.Code != http.StatusOK || len(models.Data.Models) != 1 || models.Data.Models[0].Selection.ChannelID != "http-channel" {
+		t.Fatalf("models: %d %s", w.Code, w.Body.String())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte("upstream-http-key")) || bytes.Contains(w.Body.Bytes(), []byte(upstream.URL)) {
+		t.Fatal("model catalog leaked upstream configuration")
+	}
 	w = call(http.MethodPost, "/api/platform/v1/quotes", request, "session-a.token-a")
 	var quote platformEnvelope[cp.Quote]
 	if err := json.Unmarshal(w.Body.Bytes(), &quote); err != nil || w.Code != http.StatusOK || quote.Data.AmountMicrocredits != 100_000 || quote.Data.QuoteHash == "" {
@@ -202,5 +210,36 @@ func TestPlatformImageSubmitViaHTTP(t *testing.T) {
 	}
 	if w = call(http.MethodGet, "/api/platform/v1/billing/balance", nil, ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous balance: %d", w.Code)
+	}
+
+	// 事件：按任务续读，游标单调；他人读不到；动作不被允许时返回 409。
+	w = call(http.MethodGet, "/api/platform/v1/events?taskId="+taskID, nil, "session-a.token-a")
+	var events platformEnvelope[cp.EventPage]
+	if err := json.Unmarshal(w.Body.Bytes(), &events); err != nil || w.Code != http.StatusOK || len(events.Data.Events) < 3 || events.Data.Events[0].Type != cp.EventSubmitted {
+		t.Fatalf("events: %d %s", w.Code, w.Body.String())
+	}
+	w = call(http.MethodGet, "/api/platform/v1/events?taskId="+taskID+"&after="+events.Data.NextCursor, nil, "session-a.token-a")
+	var tail platformEnvelope[cp.EventPage]
+	if err := json.Unmarshal(w.Body.Bytes(), &tail); err != nil || w.Code != http.StatusOK || len(tail.Data.Events) != 0 || tail.Data.NextCursor != events.Data.NextCursor {
+		t.Fatalf("events tail: %d %s", w.Code, w.Body.String())
+	}
+	w = call(http.MethodGet, "/api/platform/v1/events?taskId="+taskID, nil, "session-b.token-b")
+	var foreign platformEnvelope[cp.EventPage]
+	if err := json.Unmarshal(w.Body.Bytes(), &foreign); err != nil || w.Code != http.StatusOK || len(foreign.Data.Events) != 0 {
+		t.Fatalf("user B events: %d %s", w.Code, w.Body.String())
+	}
+	if w = call(http.MethodGet, "/api/platform/v1/events?after=x&taskId="+taskID, nil, "session-a.token-a"); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad cursor: %d %s", w.Code, w.Body.String())
+	}
+	w = call(http.MethodPost, "/api/platform/v1/tasks/"+taskID+"/cancel", nil, "session-a.token-a")
+	var refused platformEnvelope[any]
+	_ = json.Unmarshal(w.Body.Bytes(), &refused)
+	if w.Code != http.StatusConflict || refused.Reason != string(cp.CodeActionNotAllowed) {
+		t.Fatalf("cancel succeeded task: %d %s", w.Code, w.Body.String())
+	}
+	for _, action := range []string{"retry", "recover-media"} {
+		if w = call(http.MethodPost, "/api/platform/v1/tasks/"+taskID+"/"+action, nil, "session-a.token-a"); w.Code != http.StatusConflict {
+			t.Fatalf("%s on succeeded task: %d %s", action, w.Code, w.Body.String())
+		}
 	}
 }

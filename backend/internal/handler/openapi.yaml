@@ -2956,6 +2956,27 @@ paths:
           $ref: "#/components/responses/PlatformError"
         "429":
           $ref: "#/components/responses/PlatformError"
+  /platform/v1/models:
+    get:
+      tags: [creation-platform]
+      summary: 列出当前用户可提交的模型选择
+      description: 复用用户分组可见的系统渠道目录；开放前台模型时附带逻辑模型。返回的 selection 可直接放进生成请求的 model。
+      parameters:
+        - in: query
+          name: capability
+          required: true
+          schema: { type: string, enum: [text, image, video, audio] }
+      responses:
+        "200":
+          description: "data 为 { models: [{ selection, capability, label, billingMode, available }] }"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/PlatformError"
+        "401":
+          $ref: "#/components/responses/Error"
   /platform/v1/quotes:
     post:
       tags: [creation-platform]
@@ -2984,7 +3005,7 @@ paths:
       summary: 读取当前用户可用与冻结额度
       responses:
         "200":
-          description: data 为 { availableMicrocredits, reservedMicrocredits }
+          description: "data 为 { availableMicrocredits, reservedMicrocredits }"
           content:
             application/json:
               schema:
@@ -3015,6 +3036,97 @@ paths:
           $ref: "#/components/responses/PlatformError"
         "401":
           $ref: "#/components/responses/Error"
+  /platform/v1/events:
+    get:
+      tags: [creation-platform]
+      summary: 按游标续读平台任务事件
+      description: 按 taskId，或按 application（可选 projectId）读取本人事件。游标是提交顺序，after 取上一页 nextCursor；事件至少交付一次，按 id 去重。游标早于已清理水位时返回 resyncRequired=true，须先读快照再从 nextCursor 继续。
+      parameters:
+        - { in: query, name: taskId, schema: { type: string } }
+        - { in: query, name: application, schema: { type: string, enum: [canvas, drama, ecommerce, test] } }
+        - { in: query, name: projectId, schema: { type: string } }
+        - { in: query, name: after, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          description: "data 为 { events, nextCursor, resyncRequired }"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/PlatformError"
+        "401":
+          $ref: "#/components/responses/Error"
+  /platform/v1/tasks/{id}/cancel:
+    post:
+      tags: [creation-platform]
+      summary: 取消平台任务（上游已提交后普通用户不可取消）
+      description: 只有快照 actions 包含该动作时才会执行；否则返回 409（action_not_allowed，费用待核对时重试返回 billing_pending_review）。返回执行后的快照。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为 TaskSnapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/PlatformError"
+        "409":
+          $ref: "#/components/responses/PlatformError"
+  /platform/v1/tasks/{id}/retry:
+    post:
+      tags: [creation-platform]
+      summary: 重试失败或已取消的平台任务（重新冻结费用）
+      description: 只有快照 actions 包含该动作时才会执行；否则返回 409（action_not_allowed，费用待核对时重试返回 billing_pending_review）。返回执行后的快照。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为 TaskSnapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/PlatformError"
+        "409":
+          $ref: "#/components/responses/PlatformError"
+  /platform/v1/tasks/{id}/recover-media:
+    post:
+      tags: [creation-platform]
+      summary: 重试保存已生成但交付失败的作品，不重新生成或扣费
+      description: 只有快照 actions 包含该动作时才会执行；否则返回 409（action_not_allowed，费用待核对时重试返回 billing_pending_review）。返回执行后的快照。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为 TaskSnapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/PlatformError"
+        "409":
+          $ref: "#/components/responses/PlatformError"
   /platform/v1/tasks/{id}:
     get:
       tags: [creation-platform]

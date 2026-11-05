@@ -508,3 +508,12 @@ Schema 84 新增 `platform_submissions`，记录经创作平台合同（`/api/pl
 - `business_json` 只是归属标签，不参与授权；任务归属仍是 `tasks.user_id`。
 - 写入顺序：先在事务外完成模型解析与计价，再在一个事务里冻结费用、写 `tasks` 与 `platform_submissions`；唯一约束冲突让整个事务回滚，不留扣费、任务或记录孤儿。SQLite 与 PostgreSQL 都已用并发与逐表故障注入验证。
 - 只新增表，不改既有表。回退旧代码可保留此表；删除会丢失平台任务的幂等映射，删除前须先备份。
+
+Schema 85 新增 `platform_task_events` 与 `platform_event_counters`，以及 `tasks`（UPDATE）、`billing_orders`（INSERT、UPDATE OF status）上的触发器。SQLite 与 PostgreSQL 各一套 DDL，见 `migrations_creation_platform_triggers.go`；每次 `MigrateSchema` 结束都会幂等重建触发器。
+
+- `platform_task_events`：`id`、`position`（对外游标，唯一）、`task_id`、`user_id`、`application`、`project_ref`、`type`、`task_status`、`media_stage`、`media_pending`、`has_resources`、`billing_status`、`occurred_at_ms`。只记录原始状态，合同状态由后端按快照同一规则映射。
+- 触发条件：任务的 `status`、`media_stage`、`billing_order_id` 或“是否有媒体恢复检查点”变化，费用订单新建（重试冻结）或 `status` 变化；只对有 `platform_submissions` 记录的任务写事件，旧入口任务不受影响。
+- SQLite 约束：触发器只读触发表本身与平台三张表，不跨表读 `tasks` / `billing_orders`。gorm 在 SQLite 上改列会“建临时表 → 删旧表 → 改名”，跨表引用会让重建报 `no such table`，被重建表上的触发器也会随旧表一起删除。因此 SQLite 上任务事件里的费用状态、费用事件里的任务状态沿用该任务上一条事件；PostgreSQL 不重建表，触发器直接读另一张表的当前值。新增迁移若在 SQLite 上重建这两张表，迁移结束时触发器会自动恢复。
+- 游标分配：PostgreSQL 用 `DEFERRABLE INITIALLY DEFERRED` 约束触发器在提交时从 `platform_event_counters` 取号，游标按提交顺序递增、回滚不留空洞；SQLite 写事务串行，写入时取号。计数器行只在事务末尾加锁，不与业务锁形成环。
+- 清理：后台每小时删除 7 天前的事件，但保留每个任务最新一条，并把清理水位写入 `platform_event_counters.pruned_before`。
+- SQLite → PostgreSQL 迁移工具已包含两张新表；目标库触发器由迁移 v85 建立。回退旧代码时触发器仍会写事件但无人读取，可保留；需要移除时先备份，再删除触发器与两张表。

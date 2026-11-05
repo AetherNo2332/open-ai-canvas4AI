@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -38,6 +39,18 @@ func RegisterCreationPlatformRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, receipt)
+	})
+	group.GET("/models", func(c *gin.Context) {
+		caller, authenticated := platformCaller(c, svc)
+		if !authenticated {
+			return
+		}
+		catalog, err := service.CreationPlatformFor(svc).Models(c.Request.Context(), caller, cp.Capability(c.Query("capability")))
+		if err != nil {
+			failPlatform(c, err)
+			return
+		}
+		ok(c, catalog)
 	})
 	group.POST("/quotes", func(c *gin.Context) {
 		caller, authenticated := platformCaller(c, svc)
@@ -82,12 +95,51 @@ func RegisterCreationPlatformRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, aggregate)
 	})
+	group.GET("/events", func(c *gin.Context) {
+		caller, authenticated := platformCaller(c, svc)
+		if !authenticated {
+			return
+		}
+		limit, err := parsePositiveQueryInt(c.Query("limit"), 0)
+		if err != nil {
+			failPlatform(c, cp.NewError(cp.CodeInvalidRequest, "limit 无效"))
+			return
+		}
+		query := cp.EventQuery{TaskID: c.Query("taskId"), Application: c.Query("application"), ProjectID: c.Query("projectId"), After: c.Query("after"), Limit: limit}
+		page, err := service.CreationPlatformFor(svc).Events(c.Request.Context(), caller, query)
+		if err != nil {
+			failPlatform(c, err)
+			return
+		}
+		ok(c, page)
+	})
+	platformTaskAction(group, svc, "cancel", func(p cp.Platform) platformAction { return p.Cancel })
+	platformTaskAction(group, svc, "retry", func(p cp.Platform) platformAction { return p.Retry })
+	platformTaskAction(group, svc, "recover-media", func(p cp.Platform) platformAction { return p.RecoverMedia })
 	group.GET("/tasks/:id", func(c *gin.Context) {
 		caller, authenticated := platformCaller(c, svc)
 		if !authenticated {
 			return
 		}
 		snapshot, err := service.CreationPlatformFor(svc).Task(c.Request.Context(), caller, c.Param("id"))
+		if err != nil {
+			failPlatform(c, err)
+			return
+		}
+		ok(c, snapshot)
+	})
+}
+
+type platformAction func(ctx context.Context, caller cp.Caller, taskID string) (cp.TaskSnapshot, error)
+
+// platformTaskAction 注册任务动作路由；是否允许由服务端快照的 actions 与既有入口共同决定。
+func platformTaskAction(group *gin.RouterGroup, svc *service.Service, name string, pick func(cp.Platform) platformAction) {
+	group.POST("/tasks/:id/"+name, func(c *gin.Context) {
+		caller, authenticated := platformCaller(c, svc)
+		if !authenticated {
+			return
+		}
+		snapshot, err := pick(service.CreationPlatformFor(svc))(c.Request.Context(), caller, c.Param("id"))
 		if err != nil {
 			failPlatform(c, err)
 			return

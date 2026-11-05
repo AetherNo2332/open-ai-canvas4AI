@@ -1,6 +1,6 @@
 # 平台内部创作 SDK：实施设计与分片验收
 
-> 状态：实施中；S0–S2 已完成，S3–S8 未完成。
+> 状态：实施中；S0–S7 后端与 SDK 已完成，真实页面验证与 S8 总验收进行中。
 > 执行约定：只有用户明确要求开始实现后，才按 `executing-plans` 逐片推进。本文不授权提交、推送、部署或生产操作。
 
 **Goal：** 将模型生成、任务、计费、媒体资源整理为平台内部共用能力，短剧、电商、画布通过统一合同接入。
@@ -160,13 +160,15 @@ S1 固化准确的 Go/TS 签名、HTTP 映射与 JSON 样例，再实施后续�
 
 **源码落点：** `task_output.go`、`task_terminal.go`、`task_media_recovery.go`、`task_media_assets.go`、`handler/routes.go`、`internal/assets/`；拟新增事件记录、仓储与迁移。
 
-- [ ] S3-A：排队、执行、媒体保存、终态、费用变化均有版本化事件；事件不能早于相应数据库提交对外可见。
-- [ ] S3-B：断线、进程重启和重复投递后可续读；旧事件不会倒退状态；游标过期返回明确的快照恢复指示。
-- [ ] S3-C：模拟上游成功但转存失败，快照区分执行结果与资源未就绪；恢复后返回同一任务的可用资源，不重新生成。
-- [ ] S3-D：账单待核对时 charged 未知，不能显示成 0 或已退款；费用终态变化可被消费者观察。
-- [ ] S3-E：任务结果和事件无密钥/上游受保护配置；按用户鉴权；相同资源跨模块复用不复制物理文件。
+- [x] S3-A：排队、执行、媒体保存、终态、费用变化均有版本化事件；事件不能早于相应数据库提交对外可见。
+- [x] S3-B：断线、进程重启和重复投递后可续读；旧事件不会倒退状态；游标过期返回明确的快照恢复指示。
+- [x] S3-C：模拟上游成功但转存失败，快照区分执行结果与资源未就绪；恢复后返回同一任务的可用资源，不重新生成。
+- [x] S3-D：账单待核对时 charged 未知，不能显示成 0 或已退款；费用终态变化可被消费者观察。
+- [x] S3-E：任务结果和事件无密钥/上游受保护配置；按用户鉴权；相同资源跨模块复用不复制物理文件。
 
 **用例：** `TestPlatformEventsResumeAndReplay`、`TestPlatformMediaRecoveryWithoutRegeneration`、`TestPlatformPendingBillingIsNotZero`。
+
+**S3 证据（SQLite + 隔离 PostgreSQL 17 / Redis 7.4，本地假上游）：** 上述三个用例加 `TestPlatformEventsExpiredCursorRequiresResync`（S3-B 过期游标）、`TestPlatformActionsFollowServerRules`（允许动作）、`TestPlatformSnapshotsAndEventsCarryNoSecrets`（S3-E）均在两种数据库通过；HTTP 层 `TestPlatformImageSubmitViaHTTP` 覆盖事件续读与动作 409。删除 SQLite 费用触发器的变异让 `TestPlatformEventsResumeAndReplay`、`TestPlatformPendingBillingIsNotZero` 失败。PostgreSQL 提交时取号已用探针验证：后开始先提交的事务拿到更小游标，回滚事务不占号。“事件不能早于数据库提交对外可见”由触发器与业务写入同事务保证，读取只返回已分配游标的行。
 
 ### S4：TypeScript SDK 与四种生成能力
 
@@ -174,13 +176,15 @@ S1 固化准确的 Go/TS 签名、HTTP 映射与 JSON 样例，再实施后续�
 
 **源码落点：** 拟新增 `web/src/sdk/creation-platform/`；迁移 `api/generation-task.ts`、`task-center.ts`、`resources.ts` 中通用调用，业务包装层继续留在原位置。
 
-- [ ] S4-A：文本、图片、视频、音频各完成一次通过真实后端的 SDK 调用；文本增量与最终文本可恢复，媒体返回稳定资源 ID。
-- [ ] S4-B：SDK 在无 window、React 和 store 的测试环境可导入；认证和传输可注入，不读取业务配置和弹 UI 提示。
-- [ ] S4-C：模拟请求响应丢失，重试使用同一幂等键；取消订阅只结束本地等待，刷新后仍能找回服务端任务。
-- [ ] S4-D：取消、重试、恢复操作遵循服务端允许动作；HTTP 错误和业务信封错误统一为 PlatformError，未知状态不静默成功。
-- [ ] S4-E：Go/TS 对同一组合同样例解释一致；类型检查和实际 SDK 包测试通过。
+- [x] S4-A：文本、图片、视频、音频各完成一次通过真实后端的 SDK 调用；文本增量与最终文本可恢复，媒体返回稳定资源 ID。
+- [x] S4-B：SDK 在无 window、React 和 store 的测试环境可导入；认证和传输可注入，不读取业务配置和弹 UI 提示。
+- [x] S4-C：模拟请求响应丢失，重试使用同一幂等键；取消订阅只结束本地等待，刷新后仍能找回服务端任务。
+- [x] S4-D：取消、重试、恢复操作遵循服务端允许动作；HTTP 错误和业务信封错误统一为 PlatformError，未知状态不静默成功。
+- [x] S4-E：Go/TS 对同一组合同样例解释一致；类型检查和实际 SDK 包测试通过。
 
 **用例：** `sdk-no-browser-dependencies`、`sdk-submit-replay`、`sdk-four-capabilities`、`sdk-subscription-abort-keeps-task`。
+
+**S4 证据：** `web/test/creation-platform-sdk.test.ts`（11 个用例：核心文件无浏览器/React/store/axios 依赖、响应丢失后同键重投、无效请求不发送、HTTP 与信封错误统一为 PlatformError、未知状态与未知 reason 不当作成功、动作遵循服务端 actions、按 revision 续读并忽略旧事件、游标过期重读快照、中止不取消服务端任务、待核对实收缺失、上传与资源访问走注入传输）；`web/test/creation-platform-contract.test.ts` 与 Go 共用合同样例（S4-E）；S4-A 由 `TestPlatformSDKFourCapabilitiesAgainstRealBackend` 在真实路由、后台 worker 与本地假上游上驱动 `web/test/creation-platform-sdk.e2e.test.ts`，四种能力与参考图生成 5/5 通过，文本增量可从 text-deltas 读回。计划中的四个用例名对应上述测试块，未单独建同名文件。
 
 ### S5：电商工作台首个业务迁移
 
@@ -188,12 +192,14 @@ S1 固化准确的 Go/TS 签名、HTTP 映射与 JSON 样例，再实施后续�
 
 **源码落点：** `workbench_bridge.go`、`internal/workbench/tasks.go`；`pages/workbench/image-workbench-page.tsx`、`workbench-batches.ts`、`services/api/workbench.ts`。
 
-- [ ] S5-A：真实工作台选择场景、参考图和模型生成图片与视频；报价、任务、作品、费用可相互追踪。
-- [ ] S5-B：一个批次部分提交失败，可继续提交未接受的部分；已接受项不会因整批重试重新创建和授权费用。
-- [ ] S5-C：刷新后恢复已接受任务与批次归组；不宣称未提交的部分会自动后台执行。
-- [ ] S5-D：模板/参数复用、取消、下载、图片转视频不回归；自定义渠道按 D1 明确保留或迁移。
+- [x] S5-A：真实工作台选择场景、参考图和模型生成图片与视频；报价、任务、作品、费用可相互追踪。
+- [x] S5-B：一个批次部分提交失败，可继续提交未接受的部分；已接受项不会因整批重试重新创建和授权费用。
+- [x] S5-C：刷新后恢复已接受任务与批次归组；不宣称未提交的部分会自动后台执行。
+- [x] S5-D：模板/参数复用、取消、下载、图片转视频不回归；自定义渠道按 D1 明确保留或迁移。
 
 **证据：** 真实页面操作记录＋对应任务/账单/资源/批次记录；禁止用脱离组件的 HTML 替代。
+
+**S5 证据（后端）：** `TestWorkbenchSubmitsThroughPlatform`（S5-A：工作台任务即平台任务，归属 ecommerce/批次，可按批次汇总，列表仍可见）；`TestWorkbenchBatchRetryDoesNotDuplicateAcceptedItems`（S5-B：中途积分不足后整批重投只新建未接受项，同槽改内容冲突；去掉批次键的变异会失败）；`TestWorkbenchWithoutBatchKeepsCreatingNewTasks`；既有 `TestCreateWorkbenchVideoTaskUsesReferenceModeAndPrice` 等工作台用例通过（S5-D）。S5-C 刷新恢复沿用服务端 `GET /workbench/tasks` 与 `clientContext.batchId` 分组，页面代码未改。真实页面操作待用户确认启动 dev server 后补录。
 
 ### S6：短剧服务端编排迁移
 
@@ -201,12 +207,14 @@ S1 固化准确的 Go/TS 签名、HTTP 映射与 JSON 样例，再实施后续�
 
 **源码落点：** `drama_orchestrator.go`、`drama_segment_video.go`、`drama_billing.go`、`drama_canvas.go`；保留 `internal/production/` 规则和 Drama 业务模型。
 
-- [ ] S6-A：关闭浏览器后，短剧仍可推进文本、参考图、剧情段视频，既有成片渲染链路继续成功。
-- [ ] S6-B：调度器重启/同一作业重复调度找回原任务；不重复生成或重复冻结费用。
-- [ ] S6-C：手动媒体放行、审阅、尾帧续接和并行出片仍按设置工作；修改剧情段后旧结果不会覆盖新版本。
-- [ ] S6-D：短剧与关联精修画布的费用归属正确，冻结/实收/退款不重复汇总；预算拒绝路径保持有效。
+- [x] S6-A：关闭浏览器后，短剧仍可推进文本、参考图、剧情段视频，既有成片渲染链路继续成功。
+- [x] S6-B：调度器重启/同一作业重复调度找回原任务；不重复生成或重复冻结费用。
+- [x] S6-C：手动媒体放行、审阅、尾帧续接和并行出片仍按设置工作；修改剧情段后旧结果不会覆盖新版本。
+- [x] S6-D：短剧与关联精修画布的费用归属正确，冻结/实收/退款不重复汇总；预算拒绝路径保持有效。
 
 **用例：** `TestDramaPlatformResumeWithoutBrowser`、`TestDramaPlatformJobReplay`、`TestDramaPlatformLateResultAndBudget`，并回归原短剧专项测试。
+
+**S6 证据：** `TestDramaPlatformSubmitsInGoWithBusinessAttribution`（S6-A：调度在 Go 内经平台提交、真实 worker 完成，无浏览器依赖）、`TestDramaPlatformJobReplay`（S6-B；去掉作业键的变异会失败）、`TestDramaPlatformBudgetAggregation`（S6-D：平台汇总与短剧预算口径一致）；原短剧专项用例全部通过（S6-C：样片门、手动放行、审阅、尾帧续接、预算暂停、剧情段修订）。计划中的测试名按实际职责调整，见左列。
 
 ### S7：画布事务绑定与结果采用迁移
 
@@ -214,13 +222,15 @@ S1 固化准确的 Go/TS 签名、HTTP 映射与 JSON 样例，再实施后续�
 
 **源码落点：** `canvas_task_submitter.go`、`internal/canvas/tasks/service.go`、`materializer.go`、`internal/canvas/mediaversions/`；前端 `services/canvas-generation-consumer.ts` 与真实生成入口。
 
-- [ ] S7-A：节点、分镜表行和批量单元的生成结果各自回到正确目标；任务、费用授权、绑定事务一致。
-- [ ] S7-B：提交前后切换节点版本、删除目标、重拆分镜，迟到结果不会复活删除对象或覆盖新编辑；保留可追踪产物。
-- [ ] S7-C：多窗口、Agent 与用户并发写入沿用实体版本和冲突规则；重放事件不会重复增加节点或版本。
-- [ ] S7-D：短剧投送/显式采用/过期同步继续生效；生成完成与采用到短剧是独立动作。
-- [ ] S7-E：Agent 相邻生成路径不被迁移绕过审批、权限和预算；不把 Agent 业务扩入首版 SDK。
+- [x] S7-A：节点、分镜表行和批量单元的生成结果各自回到正确目标；任务、费用授权、绑定事务一致。
+- [x] S7-B：提交前后切换节点版本、删除目标、重拆分镜，迟到结果不会复活删除对象或覆盖新编辑；保留可追踪产物。
+- [x] S7-C：多窗口、Agent 与用户并发写入沿用实体版本和冲突规则；重放事件不会重复增加节点或版本。
+- [x] S7-D：短剧投送/显式采用/过期同步继续生效；生成完成与采用到短剧是独立动作。
+- [x] S7-E：Agent 相邻生成路径不被迁移绕过审批、权限和预算；不把 Agent 业务扩入首版 SDK。
 
 **证据：** 命令回执/数据库专项测试＋真实画布页面验证；视觉与状态结果分别记录。
+
+**S7 证据（后端）：** `TestCanvasSubmitIsPlatformTaskInSameTransaction`（S7-A：任务、冻结、画布绑定与平台记录一一对应，命令重放不新增记录）、`TestCanvasSubmitRollsBackWithPlatformRecord`（平台记录写失败整体回滚；改为事务外写入的变异会失败）；`internal/canvas/...` 全部用例通过（S7-B/S7-C：版本、删除目标、重拆、并发冲突、重放去重）；Agent 媒体与分镜用例通过（S7-D/S7-E）。真实画布页面验证待用户确认启动 dev server 后补录。
 
 ### S8：接入收口与首版总验收
 

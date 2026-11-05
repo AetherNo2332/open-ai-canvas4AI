@@ -119,7 +119,11 @@ func (d *canvasTaskSubmitter) Commit(ctx context.Context, tx *repository.Reposit
 	if policy.Task.ActiveTaskLimit < 1 {
 		return fmt.Errorf("invalid task admission limit")
 	}
-	return tx.CommitPreparedTask(&prepared.Task, prepared.BillingOrder, policy.Task.ActiveTaskLimit)
+	if err := tx.CommitPreparedTask(&prepared.Task, prepared.BillingOrder, policy.Task.ActiveTaskLimit); err != nil {
+		return err
+	}
+	// 画布任务同时登记为平台任务：与任务、冻结和画布绑定同一事务，结果放置与版本仍由画布任务服务负责。
+	return tx.InsertPlatformSubmission(canvasPlatformSubmission(prepared.Task))
 }
 func (d *canvasTaskSubmitter) Wake() { d.s.wakeTaskDispatcher() }
 func strValue(v any) string          { s, _ := v.(string); return strings.TrimSpace(s) }

@@ -48,11 +48,14 @@ func (p *creationPlatform) platformTaskRequest(userID string, req cp.GenerationR
 		config["channelId"], config["model"] = strings.TrimSpace(req.Model.ChannelID), strings.TrimSpace(req.Model.ModelKey)
 	}
 	options := map[string]any{}
-	textOptions := map[string]any{"stream": false}
+	// 文本默认流式：worker 把增量写入既有文本回放存储，SDK 可从 /tasks/:id/text-deltas 断线续读。
+	textOptions := map[string]any{"stream": true}
 	for key, value := range req.Parameters {
 		switch {
 		case capability == "text" && key == "maxTokens":
 			textOptions["maxOutputTokens"] = value
+		case capability == "text" && key == "stream":
+			textOptions["stream"] = value
 		case capability == "text" && key == "systemPrompt":
 			config["systemPrompt"] = providerConfigOptionValue(value)
 		case isCapabilityOptionFor(capability, canonicalModelOptionName(capability, key)):
@@ -73,17 +76,31 @@ func (p *creationPlatform) platformTaskRequest(userID string, req cp.GenerationR
 	if capability == "text" {
 		input["textOptions"] = textOptions
 	}
+	if err := p.attachPlatformReferences(userID, req.References, input); err != nil {
+		return CreateTaskRequest{}, err
+	}
+	// 未指定 operation 时留空，由模型能力声明的默认操作决定（例如视频的 text_to_video），不拿能力名充当操作名。
+	operation := strings.TrimSpace(req.Operation)
+	return CreateTaskRequest{
+		Type: "canvas_" + capability, Operation: operation, Prompt: strings.TrimSpace(req.Prompt),
+		Model: strings.TrimSpace(req.Model.ModelKey), LogicalModelID: strings.TrimSpace(req.Model.LogicalModelID),
+		Input: input, TraceID: req.TraceID,
+	}, nil
+}
+
+// attachPlatformReferences 只接受调用者本人、已就绪且类型一致的资源，并按既有任务输入的分组写入。
+func (p *creationPlatform) attachPlatformReferences(userID string, references []cp.ReferenceResource, input map[string]any) error {
 	groups := map[string][]any{}
-	for _, ref := range req.References {
+	for _, ref := range references {
 		resource, err := p.s.repo.ResourceForUser(userID, strings.TrimSpace(ref.ResourceID))
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return CreateTaskRequest{}, cp.NewError(cp.CodeReferenceUnavailable, "参考素材不存在或不属于当前账号")
+			return cp.NewError(cp.CodeReferenceUnavailable, "参考素材不存在或不属于当前账号")
 		}
 		if err != nil {
-			return CreateTaskRequest{}, err
+			return err
 		}
 		if resource.Status != model.ResourceStatusReady || resource.Kind != ref.Kind {
-			return CreateTaskRequest{}, cp.NewError(cp.CodeReferenceUnavailable, "参考素材尚未就绪或类型不符")
+			return cp.NewError(cp.CodeReferenceUnavailable, "参考素材尚未就绪或类型不符")
 		}
 		media := map[string]any{"id": resource.ID, "type": resource.Kind, "storageKey": "resource:" + resource.ID, "mimeType": resource.MimeType, "bytes": resource.Size, "width": resource.Width, "height": resource.Height, "durationMs": resource.DurationMs}
 		if ref.Role != "" {
@@ -99,15 +116,7 @@ func (p *creationPlatform) platformTaskRequest(userID string, req cp.GenerationR
 	for key, list := range groups {
 		input[key] = list
 	}
-	operation := strings.TrimSpace(req.Operation)
-	if operation == "" {
-		operation = capability
-	}
-	return CreateTaskRequest{
-		Type: "canvas_" + capability, Operation: operation, Prompt: strings.TrimSpace(req.Prompt),
-		Model: strings.TrimSpace(req.Model.ModelKey), LogicalModelID: strings.TrimSpace(req.Model.LogicalModelID),
-		Input: input, TraceID: req.TraceID,
-	}, nil
+	return nil
 }
 
 func (p *creationPlatform) Submit(_ context.Context, caller cp.Caller, req cp.GenerationRequest) (cp.SubmitReceipt, error) {
@@ -121,7 +130,7 @@ func (p *creationPlatform) Submit(_ context.Context, caller cp.Caller, req cp.Ge
 	if err != nil {
 		return cp.SubmitReceipt{}, err
 	}
-	if replay, err := p.existingPlatformSubmission(caller.UserID, application, req); replay != nil || err != nil {
+	if replay, err := p.existingPlatformSubmission(caller.UserID, application, req.IdempotencyKey, req.Fingerprint()); replay != nil || err != nil {
 		return derefReceipt(replay), err
 	}
 	task, order, err := p.preparePlatformTask(caller.UserID, req)
@@ -133,7 +142,7 @@ func (p *creationPlatform) Submit(_ context.Context, caller cp.Caller, req cp.Ge
 	}
 	if err := p.commitPlatformTask(task, order, platformSubmissionRecord(caller.UserID, application, req)); err != nil {
 		// 并发同键：输家的事务整体回滚（任务、冻结、提交记录都不留下），再按赢家的记录回放或判冲突。
-		if replay, lookupErr := p.existingPlatformSubmission(caller.UserID, application, req); replay != nil || lookupErr != nil {
+		if replay, lookupErr := p.existingPlatformSubmission(caller.UserID, application, req.IdempotencyKey, req.Fingerprint()); replay != nil || lookupErr != nil {
 			return derefReceipt(replay), lookupErr
 		}
 		return cp.SubmitReceipt{}, platformError(err)
@@ -174,11 +183,14 @@ func (p *creationPlatform) snapshot(userID, taskID string) (cp.TaskSnapshot, err
 			return cp.TaskSnapshot{}, err
 		}
 	}
-	return platformSnapshot(*submission, *task, order), nil
-}
-
-func (p *creationPlatform) Models(context.Context, cp.Caller, cp.Capability) (cp.ModelCatalog, error) {
-	return cp.ModelCatalog{}, cp.NewError(cp.CodeUnavailable, "模型目录将在 S4 接入")
+	revision, err := p.s.repo.PlatformTaskRevision(task.ID)
+	if err != nil {
+		return cp.TaskSnapshot{}, err
+	}
+	snapshot := platformSnapshot(*submission, *task, order)
+	snapshot.Revision = revision
+	snapshot.Actions = platformActions(*task, snapshot)
+	return snapshot, nil
 }
 
 func (p *creationPlatform) Quote(_ context.Context, caller cp.Caller, req cp.GenerationRequest) (cp.Quote, error) {
@@ -199,22 +211,6 @@ func (p *creationPlatform) Quote(_ context.Context, caller cp.Caller, req cp.Gen
 		return cp.Quote{}, err
 	}
 	return p.quoteFor(caller.UserID, req, task, order)
-}
-
-func (p *creationPlatform) Events(context.Context, cp.Caller, cp.EventQuery) (cp.EventPage, error) {
-	return cp.EventPage{}, cp.NewError(cp.CodeUnavailable, "事件将在 S3 接入")
-}
-
-func (p *creationPlatform) Cancel(context.Context, cp.Caller, string) (cp.TaskSnapshot, error) {
-	return cp.TaskSnapshot{}, cp.NewError(cp.CodeUnavailable, "取消将在 S3 接入")
-}
-
-func (p *creationPlatform) Retry(context.Context, cp.Caller, string) (cp.TaskSnapshot, error) {
-	return cp.TaskSnapshot{}, cp.NewError(cp.CodeUnavailable, "重试将在 S3 接入")
-}
-
-func (p *creationPlatform) RecoverMedia(context.Context, cp.Caller, string) (cp.TaskSnapshot, error) {
-	return cp.TaskSnapshot{}, cp.NewError(cp.CodeUnavailable, "媒体恢复将在 S3 接入")
 }
 
 func (p *creationPlatform) Balance(_ context.Context, caller cp.Caller) (cp.CreditBalance, error) {

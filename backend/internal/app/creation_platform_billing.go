@@ -21,15 +21,15 @@ type platformSubmission struct {
 }
 
 // existingPlatformSubmission 处理同一幂等作用域的已有记录：同内容返回原任务，异内容返回冲突。
-func (p *creationPlatform) existingPlatformSubmission(userID, application string, req cp.GenerationRequest) (*cp.SubmitReceipt, error) {
-	existing, err := p.s.repo.PlatformSubmissionByKey(userID, application, strings.TrimSpace(req.IdempotencyKey))
+func (p *creationPlatform) existingPlatformSubmission(userID, application, key, fingerprint string) (*cp.SubmitReceipt, error) {
+	existing, err := p.s.repo.PlatformSubmissionByKey(userID, application, strings.TrimSpace(key))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if existing.Fingerprint != req.Fingerprint() {
+	if existing.Fingerprint != fingerprint {
 		return nil, cp.NewError(cp.CodeIdempotencyConflict, "同一幂等键已用于不同内容的请求")
 	}
 	snapshot, err := p.snapshot(userID, existing.TaskID)
@@ -99,6 +99,11 @@ func (p *creationPlatform) preparePlatformTask(userID string, req cp.GenerationR
 	if err != nil {
 		return nil, nil, platformError(err)
 	}
+	return p.prepareResolvedTask(userID, taskReq)
+}
+
+// prepareResolvedTask 对已解析的任务请求做准入与计价，不写库、不冻结；业务适配器（如工作台）直接调用它。
+func (p *creationPlatform) prepareResolvedTask(userID string, taskReq CreateTaskRequest) (*model.Task, *model.BillingOrder, error) {
 	prepared := &creationTaskPreparation{}
 	taskReq.creationPrepare = prepared
 	task, err := p.s.CreateTask(userID, taskReq)

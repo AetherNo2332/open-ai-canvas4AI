@@ -12,9 +12,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// CurrentSchemaVersion：v1–v77 归上游迁移；v78 起是 fork 云端 Agent 子系统，v79–v84 见各 migrations_*_go 文件。
+// CurrentSchemaVersion：v1–v77 归上游迁移；v78 起是 fork 云端 Agent 子系统，v79 起见各 migrations_*_go 文件。
 // 迁移计划按列表逐项执行，不要求版本连续（v44 与上游合并前的 v75–v77 均为空号）。
-const CurrentSchemaVersion int64 = creationPlatformMigrationVersion
+const CurrentSchemaVersion int64 = creationPlatformEventsMigrationVersion
 
 const (
 	baselineSchemaChecksum                = "sha256:open-ai-canvas-schema-v1-20260830"
@@ -284,7 +284,6 @@ var schemaMigrations = []migration{
 	{version: mediaVersionBindingMigrationVersion, name: "canvas_task_binding_media_version", checksum: mediaVersionBindingChecksum, apply: migrateMediaVersionBinding},
 	{version: lessonsToMemoryMigrationVersion, name: "fork_lessons_to_memory_document", checksum: lessonsToMemoryChecksum, apply: migrateLessonsToMemoryDocument},
 	{version: subagentWritePermissionsMigrationVersion, name: "fork_subagent_write_permissions", checksum: subagentWritePermissionsChecksum, apply: migrateSubagentWritePermissions},
-	{version: creationPlatformMigrationVersion, name: "creation_platform_submissions", checksum: creationPlatformChecksum, apply: migrateCreationPlatform},
 }
 
 // migrateUserGroupsPricingCurrency 增加用户分组、分组渠道绑定，以及模型计价货币、充值商品货币和账单分组快照列。
@@ -795,7 +794,7 @@ func MigrateSchema(db *gorm.DB) error {
 				return fmt.Errorf("记录数据库迁移 %d：%w", item.version, err)
 			}
 		}
-		return RequireSchemaVersion(tx)
+		return finishSchemaMigration(tx)
 	})
 }
 

@@ -27,9 +27,16 @@ type platformImageFixture struct {
 	calls    *atomic.Int32
 	// failStatus 非 0 时假上游返回该 HTTP 状态，用于覆盖失败与费用待核对路径。
 	failStatus *atomic.Int32
-	channelID  string
-	modelKey   string
-	logicalID  string
+	// urlResults 为 true 时生成接口返回作品地址而不是内联数据，走媒体转存与恢复路径；
+	// downloadFailures 是作品地址前若干次下载返回 503 的次数。
+	urlResults       *atomic.Bool
+	downloadFailures *atomic.Int32
+	downloads        *atomic.Int32
+	// referenceID 是夹具中真实存储的参考图资源（工作台用例使用）。
+	referenceID string
+	channelID   string
+	modelKey    string
+	logicalID   string
 }
 
 func newPlatformImageFixture(t *testing.T) *platformImageFixture {
@@ -46,9 +53,28 @@ func newPlatformImageFixtureOn(t *testing.T, db *gorm.DB) *platformImageFixture 
 	}
 	svc := &Service{repo: repository.New(db), dataDir: t.TempDir(), activeCancels: make(map[string]context.CancelFunc), coordinator: platformTestCoordinator(t, db.Dialector.Name())}
 	calls, failStatus := &atomic.Int32{}, &atomic.Int32{}
-	png := base64.StdEncoding.EncodeToString(mediaTestPNG(t))
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	urlResults, downloadFailures, downloads := &atomic.Bool{}, &atomic.Int32{}, &atomic.Int32{}
+	picture := mediaTestPNG(t)
+	png := base64.StdEncoding.EncodeToString(picture)
+	var upstream *httptest.Server
+	upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/files/") {
+			downloads.Add(1)
+			if downloadFailures.Load() > 0 {
+				downloadFailures.Add(-1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(picture)
+			return
+		}
 		calls.Add(1)
+		if urlResults.Load() {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"url":"` + upstream.URL + `/files/result.png"}]}`))
+			return
+		}
 		if status := failStatus.Load(); status != 0 {
 			w.WriteHeader(int(status))
 			_, _ = w.Write([]byte(`{"error":{"message":"injected upstream failure"}}`))
@@ -68,7 +94,7 @@ func newPlatformImageFixtureOn(t *testing.T, db *gorm.DB) *platformImageFixture 
 		t.Fatal(err)
 	}
 	specJSON, _ := json.Marshal(spec)
-	f := &platformImageFixture{svc: svc, db: db, upstream: upstream, calls: calls, failStatus: failStatus, channelID: "platform-channel", modelKey: "gpt-image-2", logicalID: "platform-logical-image"}
+	f := &platformImageFixture{svc: svc, db: db, upstream: upstream, calls: calls, failStatus: failStatus, urlResults: urlResults, downloadFailures: downloadFailures, downloads: downloads, channelID: "platform-channel", modelKey: "gpt-image-2", logicalID: "platform-logical-image"}
 	rows := []any{
 		&model.User{ID: "user-a", Username: "user-a", Role: model.UserRoleUser, Status: model.UserStatusActive},
 		&model.User{ID: "user-b", Username: "user-b", Role: model.UserRoleUser, Status: model.UserStatusActive},

@@ -26,9 +26,14 @@ description: 信封、错误码与 OpenAPI
 - `POST /api/platform/v1/generations`：提交 `GenerationRequest`，data 为 `{ snapshot, replayed }`。身份来自登录会话；`business` 只是归属标签。参数按能力白名单接收，未知参数返回 `invalid_request`；参考素材只按本人已就绪的资源 ID 引用，否则返回 `reference_unavailable`。模型解析、能力匹配与报价在写库前完成，失败不创建任务、不冻结费用、不调用上游。
 - `GET /api/platform/v1/tasks/:id`：返回 `TaskSnapshot`。`execution`、`resources`、`billing.status` 分别表达执行、资源交付与费用；上游成功但转存未完成时 `execution=succeeded`、`resources=delivering/failed`。`billing.chargedMicrocredits` 只在 `settled` 时出现，待核对（`pending_review`）不填 0。只返回本人经平台提交的任务，其余一律 404。
 - 幂等：作用域为 用户 + `business.application` + `idempotencyKey`。同键同内容（指纹不含 `traceId`）返回原任务且 `replayed=true`；同键不同内容返回 409 `idempotency_conflict`；不同用户或不同 application 的同键互不影响。并发同键只有一个事务成功，其余整体回滚后按成功者回放。
+- `GET /api/platform/v1/models?capability=`：当前用户分组可见、可直接提交的模型选择（系统渠道模型；开放前台模型时附带逻辑模型），`selection` 原样放进请求的 `model`。
+- 未给 `operation` 时由模型能力声明的默认操作决定（例如视频为 `text_to_video`）。文本默认流式，增量写入既有文本回放存储，可用 `GET /api/tasks/:id/text-deltas` 续读；`parameters.stream=false` 关闭。
 - `POST /api/platform/v1/quotes`：与提交同口径解析模型与价格，不冻结、不建任务。`quoteHash` 绑定价格签名（渠道模型、价格档、分组与计费设置）和生成规格；提交时带上它，价格或规格已变化返回 409 `quote_expired`。
 - `cost.maxMicrocredits` 是单次费用上限：报价超过上限返回 `cost_limit_exceeded`；上限写入费用订单，冻结与结算按它校验，后台不能静默突破。
 - `GET /api/platform/v1/billing/balance` 读取当前可用与冻结额度；`GET /api/platform/v1/billing/aggregate?application=&projectId=` 按归属汇总本人平台任务的冻结、实收、退款与待核对数。
+- `GET /api/platform/v1/events?taskId=|application=&projectId=&after=&limit=`：按提交顺序续读本人平台任务事件（`task.submitted` / `task.state_changed` / `task.billing_changed`），事件与状态在同一事务写入，回滚的事务不产生事件。`after` 取上一页 `nextCursor`，交付至少一次，消费者按事件 `id` 去重；快照 `revision` 等于该任务最新事件的游标，用于丢弃旧状态。事件保留 7 天（每个任务的最新事件永久保留）；游标早于清理水位时返回 `resyncRequired=true`，须先读快照再从 `nextCursor` 继续。
+- `POST /api/platform/v1/tasks/:id/cancel|retry|recover-media`：只在快照 `actions` 包含该动作时执行，否则返回 409 `action_not_allowed`（费用待核对时重试返回 `billing_pending_review`）。上游已提交后普通用户不能取消；交付失败只能恢复保存，不能重试生成；恢复不调用生成接口、不新建费用订单。
+- 业务接入（不新增 HTTP 路由）：电商工作台 `POST /api/workbench/tasks`、短剧调度与画布命令提交产生的任务同样是平台任务，可用上述 `tasks/:id`、`events` 与 `billing/aggregate`（`application=ecommerce|drama|canvas`，`projectId` 分别为批次 ID、短剧作品 ID、画布 ID）读取。工作台同一批次同一序号重投返回原任务，改了内容返回 `idempotency_conflict`；无批次的单次提交仍每次新建任务。
 - 失败信封的 `reason` 为合同错误码（`invalid_request`、`model_unavailable`、`model_not_supported`、`reference_unavailable`、`insufficient_credits`、`active_task_limit` 等），`details.retryable` 表示是否可重试。
 
 ## 画布实时会话
