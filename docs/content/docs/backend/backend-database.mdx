@@ -506,4 +506,5 @@ Schema 84 新增 `platform_submissions`，记录经创作平台合同（`/api/pl
 - 字段：`id`、`user_id`、`application`（canvas/drama/ecommerce/test）、`idempotency_key`（≤160）、`fingerprint`（请求内容 SHA-256，不含 traceId）、`task_id`、`capability`、`business_json`、`project_ref`、`object_type`、`object_id`、`operation_id`、`max_charge_set`、`max_charge_microcredits`、`created_at`。
 - 约束：`(user_id, application, idempotency_key)` 唯一；`task_id` 唯一；`(user_id, application, project_ref)` 普通索引用于按业务汇总。
 - `business_json` 只是归属标签，不参与授权；任务归属仍是 `tasks.user_id`。
+- 写入顺序：先在事务外完成模型解析与计价，再在一个事务里冻结费用、写 `tasks` 与 `platform_submissions`；唯一约束冲突让整个事务回滚，不留扣费、任务或记录孤儿。SQLite 与 PostgreSQL 都已用并发与逐表故障注入验证。
 - 只新增表，不改既有表。回退旧代码可保留此表；删除会丢失平台任务的幂等映射，删除前须先备份。

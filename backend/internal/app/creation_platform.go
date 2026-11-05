@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 
@@ -122,24 +121,21 @@ func (p *creationPlatform) Submit(_ context.Context, caller cp.Caller, req cp.Ge
 	if err != nil {
 		return cp.SubmitReceipt{}, err
 	}
-	if _, err := p.s.userGroupAccess(caller.UserID); err != nil {
-		return cp.SubmitReceipt{}, platformError(err)
+	if replay, err := p.existingPlatformSubmission(caller.UserID, application, req); replay != nil || err != nil {
+		return derefReceipt(replay), err
 	}
-	taskReq, err := p.platformTaskRequest(caller.UserID, req)
+	task, order, err := p.preparePlatformTask(caller.UserID, req)
 	if err != nil {
-		return cp.SubmitReceipt{}, platformError(err)
+		return cp.SubmitReceipt{}, err
 	}
-	business, _ := json.Marshal(req.Business)
-	taskReq.platformSubmission = &model.PlatformSubmission{
-		UserID: caller.UserID, Application: application, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
-		Fingerprint: req.Fingerprint(), Capability: string(req.Capability), BusinessJSON: string(business),
-		ProjectRef: req.Business.ProjectID, ObjectType: req.Business.ObjectType, ObjectID: req.Business.ObjectID, OperationID: req.Business.OperationID,
+	if err := p.applyCostAuthorization(caller.UserID, req, task, order); err != nil {
+		return cp.SubmitReceipt{}, err
 	}
-	if req.Cost.MaxMicrocredits != nil {
-		taskReq.platformSubmission.MaxChargeSet, taskReq.platformSubmission.MaxChargeMicrocredits = true, *req.Cost.MaxMicrocredits
-	}
-	task, err := p.s.CreateTask(caller.UserID, taskReq)
-	if err != nil {
+	if err := p.commitPlatformTask(task, order, platformSubmissionRecord(caller.UserID, application, req)); err != nil {
+		// 并发同键：输家的事务整体回滚（任务、冻结、提交记录都不留下），再按赢家的记录回放或判冲突。
+		if replay, lookupErr := p.existingPlatformSubmission(caller.UserID, application, req); replay != nil || lookupErr != nil {
+			return derefReceipt(replay), lookupErr
+		}
 		return cp.SubmitReceipt{}, platformError(err)
 	}
 	snapshot, err := p.snapshot(caller.UserID, task.ID)
@@ -185,8 +181,24 @@ func (p *creationPlatform) Models(context.Context, cp.Caller, cp.Capability) (cp
 	return cp.ModelCatalog{}, cp.NewError(cp.CodeUnavailable, "模型目录将在 S4 接入")
 }
 
-func (p *creationPlatform) Quote(context.Context, cp.Caller, cp.GenerationRequest) (cp.Quote, error) {
-	return cp.Quote{}, cp.NewError(cp.CodeUnavailable, "报价将在 S2 接入")
+func (p *creationPlatform) Quote(_ context.Context, caller cp.Caller, req cp.GenerationRequest) (cp.Quote, error) {
+	if err := requireCaller(caller); err != nil {
+		return cp.Quote{}, err
+	}
+	if strings.TrimSpace(req.IdempotencyKey) == "" {
+		req.IdempotencyKey = "quote"
+	}
+	if err := req.Validate(); err != nil {
+		return cp.Quote{}, err
+	}
+	if _, err := platformApplication(req.Business.Application); err != nil {
+		return cp.Quote{}, err
+	}
+	task, order, err := p.preparePlatformTask(caller.UserID, req)
+	if err != nil {
+		return cp.Quote{}, err
+	}
+	return p.quoteFor(caller.UserID, req, task, order)
 }
 
 func (p *creationPlatform) Events(context.Context, cp.Caller, cp.EventQuery) (cp.EventPage, error) {
@@ -205,12 +217,35 @@ func (p *creationPlatform) RecoverMedia(context.Context, cp.Caller, string) (cp.
 	return cp.TaskSnapshot{}, cp.NewError(cp.CodeUnavailable, "媒体恢复将在 S3 接入")
 }
 
-func (p *creationPlatform) Balance(context.Context, cp.Caller) (cp.CreditBalance, error) {
-	return cp.CreditBalance{}, cp.NewError(cp.CodeUnavailable, "额度查询将在 S2 接入")
+func (p *creationPlatform) Balance(_ context.Context, caller cp.Caller) (cp.CreditBalance, error) {
+	if err := requireCaller(caller); err != nil {
+		return cp.CreditBalance{}, err
+	}
+	account, err := p.s.repo.CreditAccount(caller.UserID)
+	if err != nil {
+		return cp.CreditBalance{}, err
+	}
+	return cp.CreditBalance{AvailableMicrocredits: account.AvailableMicrocredits, ReservedMicrocredits: account.ReservedMicrocredits}, nil
 }
 
-func (p *creationPlatform) BillingAggregate(context.Context, cp.Caller, cp.BusinessRef) (cp.BillingAggregate, error) {
-	return cp.BillingAggregate{}, cp.NewError(cp.CodeUnavailable, "费用汇总将在 S2 接入")
+func (p *creationPlatform) BillingAggregate(_ context.Context, caller cp.Caller, business cp.BusinessRef) (cp.BillingAggregate, error) {
+	if err := requireCaller(caller); err != nil {
+		return cp.BillingAggregate{}, err
+	}
+	application, err := platformApplication(business.Application)
+	if err != nil {
+		return cp.BillingAggregate{}, err
+	}
+	projectRef := strings.TrimSpace(business.ProjectID)
+	totals, err := p.s.repo.PlatformBillingTotals(caller.UserID, application, projectRef)
+	if err != nil {
+		return cp.BillingAggregate{}, err
+	}
+	return cp.BillingAggregate{
+		Application: application, ProjectID: projectRef, TaskCount: totals.TaskCount,
+		ReservedMicrocredits: totals.ReservedMicrocredits, ChargedMicrocredits: totals.ChargedMicrocredits,
+		RefundedMicrocredits: totals.RefundedMicrocredits, PendingReviewCount: totals.PendingReviewCount,
+	}, nil
 }
 
 // CreationPlatformError 供 HTTP 适配层把任意错误收敛为合同错误；无法归类时原样返回。

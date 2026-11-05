@@ -39,6 +39,49 @@ func RegisterCreationPlatformRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, receipt)
 	})
+	group.POST("/quotes", func(c *gin.Context) {
+		caller, authenticated := platformCaller(c, svc)
+		if !authenticated {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		var req cp.GenerationRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			failPlatform(c, cp.NewError(cp.CodeInvalidRequest, "请求格式错误"))
+			return
+		}
+		quote, err := service.CreationPlatformFor(svc).Quote(c.Request.Context(), caller, req)
+		if err != nil {
+			failPlatform(c, err)
+			return
+		}
+		ok(c, quote)
+	})
+	group.GET("/billing/balance", func(c *gin.Context) {
+		caller, authenticated := platformCaller(c, svc)
+		if !authenticated {
+			return
+		}
+		balance, err := service.CreationPlatformFor(svc).Balance(c.Request.Context(), caller)
+		if err != nil {
+			failPlatform(c, err)
+			return
+		}
+		ok(c, balance)
+	})
+	group.GET("/billing/aggregate", func(c *gin.Context) {
+		caller, authenticated := platformCaller(c, svc)
+		if !authenticated {
+			return
+		}
+		business := cp.BusinessRef{Application: c.Query("application"), ProjectID: c.Query("projectId")}
+		aggregate, err := service.CreationPlatformFor(svc).BillingAggregate(c.Request.Context(), caller, business)
+		if err != nil {
+			failPlatform(c, err)
+			return
+		}
+		ok(c, aggregate)
+	})
 	group.GET("/tasks/:id", func(c *gin.Context) {
 		caller, authenticated := platformCaller(c, svc)
 		if !authenticated {

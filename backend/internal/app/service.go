@@ -120,8 +120,6 @@ type CreateTaskRequest struct {
 	creationPrepare *creationTaskPreparation
 	admission       *taskAdmission
 	workbenchKind   string
-	// platformSubmission 由创作平台入口设置，与任务、费用冻结在同一事务写入。
-	platformSubmission *model.PlatformSubmission
 	// callerHoldsStorageMu 只给已经持有 Service.storageMu 的内部调用设置。
 	// 文件容量检查不能再锁一次，否则审批改参数会自锁。
 	callerHoldsStorageMu bool

@@ -15,35 +15,45 @@ import (
 	cp "yingce/backend/internal/creationplatform"
 	"yingce/backend/internal/database"
 	"yingce/backend/internal/model"
-	"yingce/backend/internal/platform"
 	"yingce/backend/internal/repository"
 )
 
 // platformImageFixture 是一个真实迁移的 SQLite 库：系统渠道指向本地假上游，同一个渠道模型
 // 也挂在一个逻辑模型路由下，用于覆盖两条模型选择路线。
 type platformImageFixture struct {
-	svc       *Service
-	db        *gorm.DB
-	upstream  *httptest.Server
-	calls     *atomic.Int32
-	channelID string
-	modelKey  string
-	logicalID string
+	svc      *Service
+	db       *gorm.DB
+	upstream *httptest.Server
+	calls    *atomic.Int32
+	// failStatus 非 0 时假上游返回该 HTTP 状态，用于覆盖失败与费用待核对路径。
+	failStatus *atomic.Int32
+	channelID  string
+	modelKey   string
+	logicalID  string
 }
 
 func newPlatformImageFixture(t *testing.T) *platformImageFixture {
 	t.Helper()
+	return newPlatformImageFixtureOn(t, newSQLiteTestDB(t))
+}
+
+func newPlatformImageFixtureOn(t *testing.T, db *gorm.DB) *platformImageFixture {
+	t.Helper()
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
-	db := newSQLiteTestDB(t)
 	if err := database.MigrateSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	svc := &Service{repo: repository.New(db), dataDir: t.TempDir(), activeCancels: make(map[string]context.CancelFunc), coordinator: platform.NewCoordinatorWithRedis(nil, "platform-test")}
-	calls := &atomic.Int32{}
+	svc := &Service{repo: repository.New(db), dataDir: t.TempDir(), activeCancels: make(map[string]context.CancelFunc), coordinator: platformTestCoordinator(t, db.Dialector.Name())}
+	calls, failStatus := &atomic.Int32{}, &atomic.Int32{}
 	png := base64.StdEncoding.EncodeToString(mediaTestPNG(t))
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		if status := failStatus.Load(); status != 0 {
+			w.WriteHeader(int(status))
+			_, _ = w.Write([]byte(`{"error":{"message":"injected upstream failure"}}`))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[{"b64_json":"` + png + `"}]}`))
 	}))
@@ -58,7 +68,7 @@ func newPlatformImageFixture(t *testing.T) *platformImageFixture {
 		t.Fatal(err)
 	}
 	specJSON, _ := json.Marshal(spec)
-	f := &platformImageFixture{svc: svc, db: db, upstream: upstream, calls: calls, channelID: "platform-channel", modelKey: "gpt-image-2", logicalID: "platform-logical-image"}
+	f := &platformImageFixture{svc: svc, db: db, upstream: upstream, calls: calls, failStatus: failStatus, channelID: "platform-channel", modelKey: "gpt-image-2", logicalID: "platform-logical-image"}
 	rows := []any{
 		&model.User{ID: "user-a", Username: "user-a", Role: model.UserRoleUser, Status: model.UserStatusActive},
 		&model.User{ID: "user-b", Username: "user-b", Role: model.UserRoleUser, Status: model.UserStatusActive},
@@ -91,16 +101,22 @@ func (f *platformImageFixture) systemRequest(key string) cp.GenerationRequest {
 	}
 }
 
-// runQueued 用真实 worker 领取并执行队列中的一个任务。
+// runQueued 用真实 worker 领取并执行队列中的一个任务，要求执行成功。
 func (f *platformImageFixture) runQueued(t *testing.T) {
+	t.Helper()
+	if err := f.runQueuedResult(t); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+}
+
+// runQueuedResult 执行一个任务并返回 worker 的执行错误，供预期失败的用例断言终态。
+func (f *platformImageFixture) runQueuedResult(t *testing.T) error {
 	t.Helper()
 	claimed, err := f.svc.repo.ClaimNextTask("platform-worker", time.Minute)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: %v %v", claimed, err)
 	}
-	if err := f.svc.taskWorker().processClaimedTask(claimed, nil); err != nil {
-		t.Fatalf("process: %v", err)
-	}
+	return f.svc.taskWorker().processClaimedTask(claimed, nil)
 }
 
 func platformErrorCode(err error) cp.ErrorCode {

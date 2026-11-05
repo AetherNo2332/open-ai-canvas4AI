@@ -25,6 +25,10 @@ description: 信封、错误码与 OpenAPI
 
 - `POST /api/platform/v1/generations`：提交 `GenerationRequest`，data 为 `{ snapshot, replayed }`。身份来自登录会话；`business` 只是归属标签。参数按能力白名单接收，未知参数返回 `invalid_request`；参考素材只按本人已就绪的资源 ID 引用，否则返回 `reference_unavailable`。模型解析、能力匹配与报价在写库前完成，失败不创建任务、不冻结费用、不调用上游。
 - `GET /api/platform/v1/tasks/:id`：返回 `TaskSnapshot`。`execution`、`resources`、`billing.status` 分别表达执行、资源交付与费用；上游成功但转存未完成时 `execution=succeeded`、`resources=delivering/failed`。`billing.chargedMicrocredits` 只在 `settled` 时出现，待核对（`pending_review`）不填 0。只返回本人经平台提交的任务，其余一律 404。
+- 幂等：作用域为 用户 + `business.application` + `idempotencyKey`。同键同内容（指纹不含 `traceId`）返回原任务且 `replayed=true`；同键不同内容返回 409 `idempotency_conflict`；不同用户或不同 application 的同键互不影响。并发同键只有一个事务成功，其余整体回滚后按成功者回放。
+- `POST /api/platform/v1/quotes`：与提交同口径解析模型与价格，不冻结、不建任务。`quoteHash` 绑定价格签名（渠道模型、价格档、分组与计费设置）和生成规格；提交时带上它，价格或规格已变化返回 409 `quote_expired`。
+- `cost.maxMicrocredits` 是单次费用上限：报价超过上限返回 `cost_limit_exceeded`；上限写入费用订单，冻结与结算按它校验，后台不能静默突破。
+- `GET /api/platform/v1/billing/balance` 读取当前可用与冻结额度；`GET /api/platform/v1/billing/aggregate?application=&projectId=` 按归属汇总本人平台任务的冻结、实收、退款与待核对数。
 - 失败信封的 `reason` 为合同错误码（`invalid_request`、`model_unavailable`、`model_not_supported`、`reference_unavailable`、`insufficient_credits`、`active_task_limit` 等），`details.retryable` 表示是否可重试。
 
 ## 画布实时会话

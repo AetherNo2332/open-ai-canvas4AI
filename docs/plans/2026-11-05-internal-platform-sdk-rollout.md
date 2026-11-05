@@ -1,6 +1,6 @@
 # 平台内部创作 SDK：实施设计与分片验收
 
-> 状态：实施中；S0、S1 已完成，S2–S8 未完成。
+> 状态：实施中；S0–S2 已完成，S3–S8 未完成。
 > 执行约定：只有用户明确要求开始实现后，才按 `executing-plans` 逐片推进。本文不授权提交、推送、部署或生产操作。
 
 **Goal：** 将模型生成、任务、计费、媒体资源整理为平台内部共用能力，短剧、电商、画布通过统一合同接入。
@@ -143,14 +143,16 @@ S1 固化准确的 Go/TS 签名、HTTP 映射与 JSON 样例，再实施后续�
 
 **源码落点：** `task_creation.go`、`creation.go`、`task_billing.go`、`canvas_task_submitter.go`；`repository/billing_authorization.go`、`repository/creation.go` 及新提交记录/迁移。
 
-- [ ] S2-A：20 个并发同键同内容请求只产生 1 个任务、1 份费用授权、1 个业务绑定；所有成功响应指向同一任务。
-- [ ] S2-B：同键改提示词/模型/资源返回冲突；其他用户同键互不影响；响应丢失后重投仍取得原任务。
-- [ ] S2-C：分别在任务、账单、业务绑定写入处注入失败，整个事务回滚，无扣费孤儿、任务孤儿或提前执行。
-- [ ] S2-D：余额不足、模型变更、授权超限被拒绝；授权与报价价格版本一致，余额变化不被估价缓存掩盖。
-- [ ] S2-E：成功、未提交失败、费用不明分别进入结算、退款、待核对；媒体恢复不再次生成和扣一笔新生成费。
+- [x] S2-A：20 个并发同键同内容请求只产生 1 个任务、1 份费用授权、1 个业务绑定；所有成功响应指向同一任务。
+- [x] S2-B：同键改提示词/模型/资源返回冲突；其他用户同键互不影响；响应丢失后重投仍取得原任务。
+- [x] S2-C：分别在任务、账单、业务绑定写入处注入失败，整个事务回滚，无扣费孤儿、任务孤儿或提前执行。
+- [x] S2-D：余额不足、模型变更、授权超限被拒绝；授权与报价价格版本一致，余额变化不被估价缓存掩盖。
+- [x] S2-E：成功、未提交失败、费用不明分别进入结算、退款、待核对；媒体恢复不再次生成和扣一笔新生成费。
 
 **用例：** `TestPlatformConcurrentIdempotentSubmit`、`TestPlatformSubmitRollbackAtEachWrite`、`TestPlatformQuoteAuthorizationAndBillingStates`。
 **数据库门槛：** SQLite 与隔离 PostgreSQL 上都验证唯一约束和事务；PostgreSQL 协调使用隔离 Redis。
+
+**S2 证据（SQLite + 隔离 PostgreSQL 17 / Redis 7.4 容器，本地假图片上游）：** `TestPlatformConcurrentIdempotentSubmit`（S2-A）、`TestPlatformIdempotencyScopeAndConflict`（S2-B）、`TestPlatformSubmitRollbackAtEachWrite`（S2-C，四张表逐一注入写入失败）、`TestPlatformQuoteAuthorizationAndBillingStates`（S2-D）、`TestPlatformBillingOutcomesAndAggregate`（S2-E）每个都在两种数据库上通过。把提交记录移出任务事务的变异会让 S2-A、S2-C 失败。S2-E 的“媒体恢复不再次扣费”由既有 `TestMediaRecoveryDownloadFailureResumesSameTaskAfterRestart` 覆盖，平台快照对恢复中状态的投影在 S3 补专项用例。
 
 ### S3：可恢复的任务事件与媒体结果
 

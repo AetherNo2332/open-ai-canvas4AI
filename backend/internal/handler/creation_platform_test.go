@@ -166,4 +166,41 @@ func TestPlatformImageSubmitViaHTTP(t *testing.T) {
 	if bytes.Contains(w.Body.Bytes(), []byte("upstream-http-key")) {
 		t.Fatal("response leaked upstream key")
 	}
+
+	// 重投同一请求返回原任务；同键改内容返回 409 idempotency_conflict。
+	w = call(http.MethodPost, "/api/platform/v1/generations", request, "session-a.token-a")
+	var replayed platformEnvelope[cp.SubmitReceipt]
+	if err := json.Unmarshal(w.Body.Bytes(), &replayed); err != nil || w.Code != http.StatusOK || !replayed.Data.Replayed || replayed.Data.Snapshot.TaskID != taskID {
+		t.Fatalf("replay: %d %s", w.Code, w.Body.String())
+	}
+	changed := request
+	changed.Prompt = "另一个提示词"
+	w = call(http.MethodPost, "/api/platform/v1/generations", changed, "session-a.token-a")
+	var conflict platformEnvelope[any]
+	_ = json.Unmarshal(w.Body.Bytes(), &conflict)
+	if w.Code != http.StatusConflict || conflict.Reason != string(cp.CodeIdempotencyConflict) {
+		t.Fatalf("conflict: %d %s", w.Code, w.Body.String())
+	}
+
+	w = call(http.MethodPost, "/api/platform/v1/quotes", request, "session-a.token-a")
+	var quote platformEnvelope[cp.Quote]
+	if err := json.Unmarshal(w.Body.Bytes(), &quote); err != nil || w.Code != http.StatusOK || quote.Data.AmountMicrocredits != 100_000 || quote.Data.QuoteHash == "" {
+		t.Fatalf("quote: %d %s", w.Code, w.Body.String())
+	}
+	w = call(http.MethodGet, "/api/platform/v1/billing/balance", nil, "session-a.token-a")
+	var balance platformEnvelope[cp.CreditBalance]
+	if err := json.Unmarshal(w.Body.Bytes(), &balance); err != nil || w.Code != http.StatusOK || balance.Data.AvailableMicrocredits != 10_000_000-100_000 {
+		t.Fatalf("balance: %d %s", w.Code, w.Body.String())
+	}
+	w = call(http.MethodGet, "/api/platform/v1/billing/aggregate?application=ecommerce", nil, "session-a.token-a")
+	var aggregate platformEnvelope[cp.BillingAggregate]
+	if err := json.Unmarshal(w.Body.Bytes(), &aggregate); err != nil || w.Code != http.StatusOK || aggregate.Data.TaskCount != 1 || aggregate.Data.ChargedMicrocredits != 100_000 {
+		t.Fatalf("aggregate: %d %s", w.Code, w.Body.String())
+	}
+	if w = call(http.MethodGet, "/api/platform/v1/billing/aggregate", nil, "session-a.token-a"); w.Code != http.StatusBadRequest {
+		t.Fatalf("aggregate without application: %d %s", w.Code, w.Body.String())
+	}
+	if w = call(http.MethodGet, "/api/platform/v1/billing/balance", nil, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous balance: %d", w.Code)
+	}
 }

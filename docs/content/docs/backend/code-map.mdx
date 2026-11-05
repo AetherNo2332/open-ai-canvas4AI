@@ -256,7 +256,7 @@ HTTP 请求 -> handler -> service（稳定导入面 / 别名）-> app（组合�
 
 `internal/service` 只再导出 `internal/app` 的类型、常量和包级函数，handler/cmd 仍 import `internal/service`。组合根和尚未拆出的业务实现在 `internal/app`。已抽出的域包不得 import `service` 或 `app`（防回环），由 `internal/architecture` 的依赖规则强制。共享错误码与 ID/字符串工具在 `internal/kernel`。
 
-创作平台：合同与端口在 `internal/creationplatform`（不导入 app/service/repository/model）；组合根实现在 `app/creation_platform.go`（合同 → 既有 `CreateTask` 输入、错误映射）与 `app/creation_platform_snapshot.go`（任务行 + 费用订单 → 快照）；提交记录在 `repository/creation_platform.go`，经 `CreateTaskWithCreditReservation` / `CreateTaskWithActiveLimit` 与任务同事务写入；HTTP 适配在 `handler/creation_platform.go`。
+创作平台：合同与端口在 `internal/creationplatform`（不导入 app/service/repository/model）；组合根实现在 `app/creation_platform.go`（合同 → 既有 `CreateTask` 输入、错误映射）与 `app/creation_platform_snapshot.go`（任务行 + 费用订单 → 快照）；报价、费用上限与幂等回放在 `app/creation_platform_billing.go`（准备阶段复用 `CreateTask` 的不落库模式，提交阶段显式写库）；提交记录与按归属汇总在 `repository/creation_platform.go`，经 `CreateTaskWithCreditReservation` / `CreateTaskWithActiveLimit` 与任务同事务写入；HTTP 适配在 `handler/creation_platform.go`。
 
 ### 目标业务域
 

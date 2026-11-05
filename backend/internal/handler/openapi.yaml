@@ -2956,6 +2956,65 @@ paths:
           $ref: "#/components/responses/PlatformError"
         "429":
           $ref: "#/components/responses/PlatformError"
+  /platform/v1/quotes:
+    post:
+      tags: [creation-platform]
+      summary: 按平台合同报价，不冻结费用、不创建任务
+      description: 与提交同口径解析模型与价格；返回的 quoteHash 绑定价格签名与生成规格，提交时带上可防止价格变化后被静默按新价冻结。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformGenerationRequest"
+      responses:
+        "200":
+          description: 报价，data 为 Quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/PlatformError"
+        "401":
+          $ref: "#/components/responses/Error"
+  /platform/v1/billing/balance:
+    get:
+      tags: [creation-platform]
+      summary: 读取当前用户可用与冻结额度
+      responses:
+        "200":
+          description: data 为 { availableMicrocredits, reservedMicrocredits }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+  /platform/v1/billing/aggregate:
+    get:
+      tags: [creation-platform]
+      summary: 按业务归属汇总平台任务费用
+      description: 只汇总当前用户经平台提交的任务；冻结、实收、退款与待核对分列。
+      parameters:
+        - in: query
+          name: application
+          required: true
+          schema: { type: string, enum: [canvas, drama, ecommerce, test] }
+        - in: query
+          name: projectId
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为 BillingAggregate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/PlatformError"
+        "401":
+          $ref: "#/components/responses/Error"
   /platform/v1/tasks/{id}:
     get:
       tags: [creation-platform]
