@@ -394,7 +394,7 @@
     {"id":"internal/canvas/user_data.go:func:Service.ApplyUserCanvasOperations:complexity","max":24,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/canvas/user_data.go:func:Service.ApplyUserCanvasOperations:lines","max":168,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/canvas/user_data.go:func:Service.upsertUserCanvasProjectWithHistory.func1:complexity","max":23,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/database/migrations.go:file_lines","max":995,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
+    {"id":"internal/database/migrations.go:file_lines","max":966,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
     {"id":"internal/database/migrations.go:func:migrateDramaSegmentProduction:complexity","max":27,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/database/migrations_lessons_memory.go:func:migrateOwnerLessons:complexity","max":21,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/database/migrations_media_versions.go:func:migrateCanvasMediaVersions:complexity","max":28,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},

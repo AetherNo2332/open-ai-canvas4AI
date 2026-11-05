@@ -19,6 +19,14 @@ description: 信封、错误码与 OpenAPI
 
 统一 `storyboard` 工具的 split/resplit 与 generate_media 使用相同的审批、预算与异步合同：当前工具步骤只返回 submitted/taskId，写回后在同一运行的下一模型步骤通知；依赖结果时 wait_generations 释放 Worker 并在完成后恢复。通知不打断正在流式输出的响应，也不新建用户轮次。
 
+## 创作平台合同（v1）
+
+平台内部创作合同统一短剧、电商与画布的生成调用，合同类型在 `backend/internal/creationplatform`，TS 类型在 `web/src/sdk/creation-platform/contract.ts`。只接受逻辑模型（`model.logicalModelId`）或系统渠道模型（`model.channelId + model.modelKey`），二者同时给出或缺一半返回 `invalid_request`；自定义渠道继续使用 `/api/tasks` 与 `/api/ai/custom`。
+
+- `POST /api/platform/v1/generations`：提交 `GenerationRequest`，data 为 `{ snapshot, replayed }`。身份来自登录会话；`business` 只是归属标签。参数按能力白名单接收，未知参数返回 `invalid_request`；参考素材只按本人已就绪的资源 ID 引用，否则返回 `reference_unavailable`。模型解析、能力匹配与报价在写库前完成，失败不创建任务、不冻结费用、不调用上游。
+- `GET /api/platform/v1/tasks/:id`：返回 `TaskSnapshot`。`execution`、`resources`、`billing.status` 分别表达执行、资源交付与费用；上游成功但转存未完成时 `execution=succeeded`、`resources=delivering/failed`。`billing.chargedMicrocredits` 只在 `settled` 时出现，待核对（`pending_review`）不填 0。只返回本人经平台提交的任务，其余一律 404。
+- 失败信封的 `reason` 为合同错误码（`invalid_request`、`model_unavailable`、`model_not_supported`、`reference_unavailable`、`insufficient_credits`、`active_task_limit` 等），`details.retryable` 表示是否可重试。
+
 ## 画布实时会话
 
 `GET /api/canvas-projects/:id/realtime` 使用登录 Cookie 升级为 WebSocket，握手校验当前用户对画布的归属和请求 Origin。首帧 `welcome` 提供服务端分配的 `selfId` 和窗口 Presence；客户端发送 `presence`，服务端推送 `peer`、`leave`、`invalidate`、`canvas_changed`、`agent_presence` 和 `heartbeat`。Presence 只含有界世界坐标和拖拽矩形，不包含密钥、编辑租约 token、画布正文或实际保存指令。

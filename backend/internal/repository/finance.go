@@ -115,7 +115,7 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 	return count > 0, err
 }
 
-func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int) error {
+func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int, submission ...*model.PlatformSubmission) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
 		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
@@ -130,6 +130,11 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 		if err := tx.Create(task).Error; err != nil {
 			return err
 		}
+		for _, item := range submission {
+			if err := insertPlatformSubmission(repo, item, task.ID); err != nil {
+				return err
+			}
+		}
 		if task.Operation == "cloud_agent" && task.ProjectID != "" {
 			repo.canvasChanged(task.UserID, task.ProjectID)
 		}
@@ -137,7 +142,7 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 	})
 }
 
-func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int) error {
+func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int, submission ...*model.PlatformSubmission) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
 		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
@@ -148,6 +153,11 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit
 		}
 		if err := tx.Create(task).Error; err != nil {
 			return err
+		}
+		for _, item := range submission {
+			if err := insertPlatformSubmission(repo, item, task.ID); err != nil {
+				return err
+			}
 		}
 		if task.Operation == "cloud_agent" && task.ProjectID != "" {
 			repo.canvasChanged(task.UserID, task.ProjectID)

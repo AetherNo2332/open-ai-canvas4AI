@@ -1,6 +1,6 @@
 # 平台内部创作 SDK：实施设计与分片验收
 
-> 状态：实施中；S0 已完成（设计通过），S1–S8 未完成。
+> 状态：实施中；S0、S1 已完成，S2–S8 未完成。
 > 执行约定：只有用户明确要求开始实现后，才按 `executing-plans` 逐片推进。本文不授权提交、推送、部署或生产操作。
 
 **Goal：** 将模型生成、任务、计费、媒体资源整理为平台内部共用能力，短剧、电商、画布通过统一合同接入。
@@ -128,12 +128,14 @@ S1 固化准确的 Go/TS 签名、HTTP 映射与 JSON 样例，再实施后续�
 
 **源码落点：** `task_creation.go`、`canvas_task_submitter.go`、`generation/`、`handler/routes.go`；拟新增 `internal/creationplatform/contract.go`、`ports.go` 及按 S0 确定的 app/handler 适配文件。
 
-- [ ] S1-A：通过 Go 与 HTTP 分别提交图片任务，均能查到可访问的资源结果；真实调用链到达现有 Worker 与媒体保存逻辑。
-- [ ] S1-B：逻辑模型和系统渠道模型各有有效用例；无效参数、模型停用或无权限在调用上游前拒绝。
-- [ ] S1-C：用户 B 不能提交用户 A 的参考资源，不能读取其任务和资源；伪造 BusinessRef 不产生越权绑定。
-- [ ] S1-D：现有模型分组、能力及额度规则仍生效；未被迁移的旧入口仍可工作。
+- [x] S1-A：通过 Go 与 HTTP 分别提交图片任务，均能查到可访问的资源结果；真实调用链到达现有 Worker 与媒体保存逻辑。
+- [x] S1-B：逻辑模型和系统渠道模型各有有效用例；无效参数、模型停用或无权限在调用上游前拒绝。
+- [x] S1-C：用户 B 不能提交用户 A 的参考资源，不能读取其任务和资源；伪造 BusinessRef 不产生越权绑定。
+- [x] S1-D：现有模型分组、能力及额度规则仍生效；未被迁移的旧入口仍可工作。
 
 **用例：** `TestPlatformImageSubmitViaHTTPAndGo`、`TestPlatformRejectsForeignReference`、`TestPlatformRejectsInvalidModelBeforeProviderCall`。
+
+**S1 证据（隔离 SQLite + 本地假图片上游，未用真实供应商）：** Go 入口 `TestPlatformImageSubmitViaGoReachesWorkerAndStoredResource`（系统渠道、逻辑模型各一次，真实 `ClaimNextTask` + `processClaimedTask`）；HTTP 入口 `TestPlatformImageSubmitViaHTTP`（真实 `StartWorker` 后台派发，资源按本人可读、他人不可读）；`TestPlatformRejectsInvalidModelBeforeProviderCall`（6 种拒绝，零任务、零冻结、零上游调用）；`TestPlatformRejectsForeignReferenceAndForeignReads`（已用移除归属校验的变异验证会失败）；`TestPlatformLegacyTaskEntryStillWorks`。实际测试名与计划拟定名不同：Go 与 HTTP 分成两个用例，因为 HTTP 用例需要 handler 包。
 
 ### S2：重复提交与费用授权闭环
 

@@ -498,3 +498,12 @@ Schema 32 为 `channel_models` 新增 `tags`（TEXT、NOT NULL、默认 `'[]'`�
 迁移 46 新增 skill_curation_settings、skill_curation_categories、skill_curation_assignments；默认关闭，不导入技能内容。表结构与事务规则见 [平台技能策展](./skill-curation)。
 
 迁移 47 依赖 46，新增 skill_curation_roots 与 skill_curation_root_assignments；保留原五个根 ID，根停用时使用派生默认桶，根表为空回落固定五类。
+
+## 创作平台提交记录
+
+Schema 84 新增 `platform_submissions`，记录经创作平台合同（`/api/platform/v1/*` 与 Go 内部 `CreationPlatform()`）提交的任务。它与任务、费用冻结在同一事务写入；写入失败时三者一起回滚。
+
+- 字段：`id`、`user_id`、`application`（canvas/drama/ecommerce/test）、`idempotency_key`（≤160）、`fingerprint`（请求内容 SHA-256，不含 traceId）、`task_id`、`capability`、`business_json`、`project_ref`、`object_type`、`object_id`、`operation_id`、`max_charge_set`、`max_charge_microcredits`、`created_at`。
+- 约束：`(user_id, application, idempotency_key)` 唯一；`task_id` 唯一；`(user_id, application, project_ref)` 普通索引用于按业务汇总。
+- `business_json` 只是归属标签，不参与授权；任务归属仍是 `tasks.user_id`。
+- 只新增表，不改既有表。回退旧代码可保留此表；删除会丢失平台任务的幂等映射，删除前须先备份。
