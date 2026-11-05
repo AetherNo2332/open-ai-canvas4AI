@@ -25,6 +25,7 @@ tags:
   - name: assets
   - name: models
   - name: agent
+  - name: agent-service
   - name: admin
   - name: skills
   - name: workbench
@@ -3036,6 +3037,137 @@ paths:
           $ref: "#/components/responses/PlatformError"
         "401":
           $ref: "#/components/responses/Error"
+  /agent/v2/definitions:
+    get:
+      tags: [agent-service]
+      summary: 列出服务端注册的 Agent 定义
+      description: 定义随代码注册，前端与模型都不能新增定义或扩大工具范围。
+      parameters:
+        - in: query
+          name: application
+          schema: { type: string, enum: [canvas, drama, ecommerce, orchestration] }
+      responses:
+        "200":
+          description: "data 为 { definitions: [DefinitionView] }"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+  /agent/v2/sessions:
+    post:
+      tags: [agent-service]
+      summary: 在指定业务空间创建 Agent 会话
+      description: 所有者来自登录会话；Scope（application、spaceType、spaceId）创建后不可变，服务端校验空间存在且属于当前用户。同一幂等键同内容回放原会话，异内容返回 idempotency_conflict。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentCreateSessionRequest"
+      responses:
+        "200":
+          description: data 为 SessionView
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/AgentServiceError"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/AgentServiceError"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+        "409":
+          $ref: "#/components/responses/AgentServiceError"
+    get:
+      tags: [agent-service]
+      summary: 分页列出当前用户的 Agent 会话
+      description: 不带范围时列出全部会话（含映射后的画布对话）；带范围时三个参数必须同时提供。按创建时间倒序，nextCursor 为空表示没有更多。
+      parameters:
+        - in: query
+          name: application
+          schema: { type: string }
+        - in: query
+          name: spaceType
+          schema: { type: string }
+        - in: query
+          name: spaceId
+          schema: { type: string }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: "data 为 { sessions: [SessionView], nextCursor }"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/AgentServiceError"
+        "401":
+          $ref: "#/components/responses/Error"
+  /agent/v2/sessions/{id}:
+    get:
+      tags: [agent-service]
+      summary: 读取一个 Agent 会话的元信息
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为 SessionView
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+  /agent/v2/sessions/{id}/archive:
+    post:
+      tags: [agent-service]
+      summary: 按修订号归档 Agent 会话
+      description: 修订号不一致或会话正在被写入时返回 session_conflict。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: data 为归档后的 SessionView
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/AgentServiceError"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+        "409":
+          $ref: "#/components/responses/AgentServiceError"
   /platform/v1/events:
     get:
       tags: [creation-platform]
@@ -3598,6 +3730,36 @@ components:
             quoteHash: { type: string }
         idempotencyKey: { type: string, minLength: 1, maxLength: 160 }
         traceId: { type: string }
+    AgentCreateSessionRequest:
+      type: object
+      required: [definitionId, scope, idempotencyKey]
+      properties:
+        definitionId: { type: string }
+        scope:
+          type: object
+          required: [application, spaceType, spaceId]
+          properties:
+            application: { type: string }
+            spaceType: { type: string }
+            spaceId: { type: string }
+        title: { type: string, maxLength: 240 }
+        idempotencyKey: { type: string, maxLength: 160 }
+    AgentServiceErrorEnvelope:
+      type: object
+      required: [code, data, msg, reason]
+      properties:
+        code: { type: integer }
+        data: { nullable: true }
+        msg: { type: string }
+        reason:
+          type: string
+          description: Agent 服务合同错误码
+          enum: [invalid_request, unauthorized, forbidden, not_found, scope_mismatch, session_conflict, stale_lease, idempotency_conflict, work_stopped, stale_assignment, budget_exceeded, internal]
+        details:
+          type: object
+          properties:
+            retryable: { type: boolean }
+            requestId: { type: string }
     PlatformErrorEnvelope:
       type: object
       required: [code, data, msg, reason]
@@ -3674,6 +3836,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Envelope"
+    AgentServiceError:
+      description: Agent 服务失败信封，reason 为合同错误码
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AgentServiceErrorEnvelope"
     PlatformError:
       description: 创作平台失败信封，reason 为合同错误码
       content:

@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"yingce/backend/internal/agentservice"
 	"yingce/backend/internal/auth"
 	"yingce/backend/internal/canvas"
 	"yingce/backend/internal/canvas/commands"
@@ -98,6 +99,8 @@ type Service struct {
 	observability            *observability.Aggregator
 	observabilityExporter    *observability.Exporter
 	providerCatalogOnce      sync.Once
+	agentServiceOnce         sync.Once
+	agentDefinitions         *agentservice.Registry
 	providerCatalog          *providercatalog.Source
 	creditPolicyMu           sync.RWMutex
 	creditPolicyCache        *CreditPolicy

@@ -10,3 +10,12 @@ func creationPlatformTableMigrations() []tableMigration {
 		migrateTable[model.PlatformEventCounter]("platform_event_counters"),
 	}
 }
+
+// agentServiceTableMigrations 是 Agent 服务的表（schema v86 起），放在平台表之后。
+func agentServiceTableMigrations() []tableMigration {
+	return []tableMigration{
+		migrateTable[model.AgentSession]("agent_sessions"),
+		migrateTable[model.AgentSessionMessage]("agent_session_messages"),
+		migrateTable[model.AgentMemoryNote]("agent_memory_notes"),
+	}
+}

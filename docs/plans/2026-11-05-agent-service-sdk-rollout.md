@@ -96,13 +96,15 @@
 **新增：** `agentservice/contract.go`、`ports.go`、`registry.go`、`session.go`；`model/agent_session.go`、`repository/agent_session.go`、`app/agent_service_host.go`、`handler/agent_sessions.go` 及对应 `*_test.go`。
 **调整：** `model/cloud_agent_pi_session.go`、`repository/cloud_agent_pi_session.go`、`app/cloud_agent_conversations.go`、实际迁移注册、service 别名面。
 
-- [ ] A1-A：通过真实 HTTP 创建/查询同用户、同空间两个 Session，历史独立；相同外部短 ID 跨业务不会碰撞。
-- [ ] A1-B：跨用户、跨业务空间的会话/Run/事件/附件访问被拒绝；伪造 Scope 不获得权限。
-- [ ] A1-C：20 个并发续轮只有一个活跃写入者，其余得到明确冲突或队列回执；旧 lease epoch 写入被拒绝。
-- [ ] A1-D：现有画布 conversation 一对一映射新 Session，Pi 存储 ID 和事件序号保留，重复迁移不复制历史。
-- [ ] A1-E：非画布 Session 不需要空 CanvasID 或假画布；未知 AgentDefinition 在产生模型费用前拒绝。
+- [x] A1-A：通过真实 HTTP 创建/查询同用户、同空间两个 Session，历史独立；相同外部短 ID 跨业务不会碰撞。
+- [x] A1-B：跨用户、跨业务空间的会话/Run/事件/附件访问被拒绝；伪造 Scope 不获得权限。
+- [x] A1-C：20 个并发续轮只有一个活跃写入者，其余得到明确冲突或队列回执；旧 lease epoch 写入被拒绝。
+- [x] A1-D：现有画布 conversation 一对一映射新 Session，Pi 存储 ID 和事件序号保留，重复迁移不复制历史。
+- [x] A1-E：非画布 Session 不需要空 CanvasID 或假画布；未知 AgentDefinition 在产生模型费用前拒绝。
 
 **用例：** `TestAgentSessionScopeIsolation`、`TestAgentSessionSingleWriter`、`TestAgentSessionLegacyMapping`。此片尚未切新 Runtime，不声称非画布 Agent 已能执行。
+
+**A1 证据：** `TestAgentSessionScopeIsolation`、`TestAgentSessionSingleWriter`（20 并发只 1 个写入者）、`TestAgentSessionLegacyMapping`（4 路并发映射只留 1 行）在 SQLite 与 PostgreSQL 17 下通过；`TestAgentSessionNonCanvasNeedsNoCanvas`；HTTP `TestAgentSessionHTTPScopeAndOwnership`。按 R-A0-1，`cloud_agent_pi_session*` 与 `cloud_agent_conversations.go` 未改：画布执行链不变，映射只新增会话根记录。
 
 ### A2：Context、记忆和工具读取隔离
 
@@ -111,13 +113,15 @@
 **新增：** `agentservice/context.go` 及测试；按 A0 冻结的 scoped memory 模型/仓储和提供器。
 **调整：** `app/agent_workspace.go`、`cloud_agent_run_create.go`、`cloud_agent_context_frame.go`、`cloud_agent_memory_document*.go`、`cloud_agent_tools_memory.go`、`internal/agentcontext/checkpoint.go`、`agentmemory/` 的可复用规则。
 
-- [ ] A2-A：短剧与电商各放独有标识，捕获最终模型请求，其他业务标识不出现在消息、摘要、工具结果或附件中。
-- [ ] A2-B：同空间两 Session 的私有笔记/压缩摘要互不可见；显式发布业务文档后只在指定空间可读。
-- [ ] A2-C：旧用户级工作记忆保留在 legacy 区，新合同不注入；旧摘要不会作为新 Session 的起点；用户可查看旧记录。
-- [ ] A2-D：每个上下文块和缓存可追溯 Scope/Session/来源版本；恢复或压缩不换 Scope，缺身份时拒绝而非回退全局。
-- [ ] A2-E：工具可见不等于可执行；context-only 资料、引用文本和总控摘要不能提升权限或变成收费授权。
+- [x] A2-A：短剧与电商各放独有标识，捕获最终模型请求，其他业务标识不出现在消息、摘要、工具结果或附件中。
+- [x] A2-B：同空间两 Session 的私有笔记/压缩摘要互不可见；显式发布业务文档后只在指定空间可读。
+- [x] A2-C：旧用户级工作记忆保留在 legacy 区，新合同不注入；旧摘要不会作为新 Session 的起点；用户可查看旧记录。
+- [x] A2-D：每个上下文块和缓存可追溯 Scope/Session/来源版本；恢复或压缩不换 Scope，缺身份时拒绝而非回退全局。
+- [x] A2-E：工具可见不等于可执行；context-only 资料、引用文本和总控摘要不能提升权限或变成收费授权。
 
 **用例：** `TestAgentContextScopeCanaries`、`TestAgentMemoryPublicationBoundary`、`TestAgentLegacyMemoryQuarantine`、`TestAgentContextRestoreScope`。以最终请求捕获验证，不能只检查 UI 没显示其他会话。
+
+**A2 证据：** 上述 4 个用例在 SQLite 与 PostgreSQL 下通过，断言对象是 Context Builder 产出的最终上下文快照；领域包 `agentservice/context_test.go` 覆盖跨会话、跨空间、跨用户条目一律 `scope_mismatch`。差额：A2-A 的“最终模型请求”在 A4 接上模型步后再以真实请求复验；A2-E 的“工具可执行校验”在 A4 落地，本片只保证上下文资料不改变工具集合。按 R-A0-1，画布记忆与压缩文件未改。
 
 ### A3：基础计费层的层级预算与费用归属
 

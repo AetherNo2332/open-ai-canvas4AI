@@ -15,7 +15,8 @@ import (
 
 // Models 是应用持久化表的唯一清单，服务启动和跨数据库迁移必须共用它。
 func Models() []any {
-	return append(append(appModels(), AgentRuntimeModels()...), &model.PlatformSubmission{}, &model.PlatformTaskEvent{}, &model.PlatformEventCounter{})
+	models := append(append(appModels(), AgentRuntimeModels()...), &model.PlatformSubmission{}, &model.PlatformTaskEvent{}, &model.PlatformEventCounter{})
+	return append(models, AgentServiceModels()...)
 }
 
 func appModels() []any {

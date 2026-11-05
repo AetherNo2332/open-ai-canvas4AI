@@ -17,8 +17,11 @@ const creationPlatformEventsMigrationVersion int64 = 85
 
 const creationPlatformEventsChecksum = "sha256:creation-platform-task-events-v85-20261106"
 
-// creationPlatformMigrations 追加在 schemaMigrations 末尾；版本号沿用迁移序列，不挪用既有编号。
-func init() { schemaMigrations = append(schemaMigrations, creationPlatformMigrations...) }
+// creationPlatformMigrations 与 agentServiceMigrations 追加在 schemaMigrations 末尾；版本号沿用迁移序列，不挪用既有编号。
+// 两份清单在同一个 init 里按版本顺序登记：init 按文件名执行，分开登记会让 v86 排到 v84 之前。
+func init() {
+	schemaMigrations = append(append(schemaMigrations, creationPlatformMigrations...), agentServiceMigrations...)
+}
 
 var creationPlatformMigrations = []migration{
 	{version: creationPlatformMigrationVersion, name: "creation_platform_submissions", checksum: creationPlatformChecksum, apply: migrateCreationPlatform},

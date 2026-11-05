@@ -517,3 +517,20 @@ Schema 85 新增 `platform_task_events` 与 `platform_event_counters`，以及 `
 - 游标分配：PostgreSQL 用 `DEFERRABLE INITIALLY DEFERRED` 约束触发器在提交时从 `platform_event_counters` 取号，游标按提交顺序递增、回滚不留空洞；SQLite 写事务串行，写入时取号。计数器行只在事务末尾加锁，不与业务锁形成环。
 - 清理：后台每小时删除 7 天前的事件，但保留每个任务最新一条，并把清理水位写入 `platform_event_counters.pruned_before`。
 - SQLite → PostgreSQL 迁移工具已包含两张新表；目标库触发器由迁移 v85 建立。回退旧代码时触发器仍会写事件但无人读取，可保留；需要移除时先备份，再删除触发器与两张表。
+
+### Agent 服务会话（Schema 86 起）
+
+Schema 86 `agent_service_sessions`（`database/migrations_agent_service.go`）新增 `agent_sessions`：短剧、电商、画布与总控共用的会话根记录。只新增表，不改 `cloud_agent_executions`、`cloud_agent_pi_sessions` 与既有历史。
+
+- 字段：`id`、`owner_id`、`idempotency_key`（API 创建为 `api:<键>`，画布映射为 `canvas-conversation:<对话 ID>`）、`fingerprint`、`definition_id`、`definition_version`、`role`（business/supervisor）、`application`、`space_type`、`space_id`、`work_item_id`、`conversation_id`（画布对话的原 ID，非画布会话为空）、`title`、`status`（active/archived）、`revision`、`active_run_id`、`lease_owner`、`lease_epoch`、`lease_expires_at`、`archived_at`、`created_at`、`updated_at`。
+- 约束：`(owner_id, idempotency_key)` 唯一，同一画布对话重复映射或并发映射只留一行；`(owner_id, application, space_type, space_id)`、`(owner_id, conversation_id)`、`(owner_id, created_at)` 普通索引。
+- 所有者、定义、业务与空间只在插入时写入，仓储没有修改这些列的写路径。单写者：获取租约以读到的 `lease_epoch` 为条件更新并让 epoch +1，写入要求租约所有者、epoch、未过期与 `revision` 同时匹配；释放租约保留 epoch，旧写入者之后的写入仍被拒绝。
+- 画布映射：列出目录时为该用户每个画布对话补一行 `canvas.agent` 会话，`space_id` 为对话所在画布；临时子代理对话不映射，保留不可直聊的限制。Pi 存储 ID、条目与事件序号不变。
+- SQLite → PostgreSQL 迁移工具已包含此表。回退旧代码时此表无人读取，可保留；删除会丢失非画布会话，删除前须先备份。
+
+Schema 87 `agent_service_context` 新增两张表，只服务非画布会话；画布会话的历史仍在 Pi 表中，不复制。
+
+- `agent_session_messages`：`id`、`owner_id`、`session_id`、`message_id`、`sequence`、`kind`（message/summary）、`actor`（user/supervisor/executor/system，由服务端写入）、`role`、`body`、`run_id`、`created_at`。`(owner_id, session_id, message_id)` 唯一，同一消息重放不会写第二条；`(session_id, sequence)` 唯一。追加与会话 `revision` +1 在同一事务，条件是当前租约所有者、epoch、未过期且 revision 一致。
+- `agent_memory_notes`：`id`、`owner_id`、`kind`（session/business_space/user_preference）、`session_id`、`application`、`space_type`、`space_id`、`published_from`、`body`、`revision`。会话笔记只被本会话读取；业务文档由用户显式发布会话笔记生成，只在完全相同的业务空间可读，`(owner_id, published_from)` 唯一保证重复发布返回同一文档；用户偏好由用户写入，所有会话可读。
+- 旧的 `agent_memory_documents`（每用户一份）保持原样，仍可在原记忆页面查看和撤销；新会话的上下文不注入它。
+- SQLite → PostgreSQL 迁移工具已包含两张表。回退旧代码时两张表无人读取，可保留；删除前须先备份。
