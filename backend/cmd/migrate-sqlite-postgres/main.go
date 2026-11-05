@@ -423,6 +423,7 @@ func migrations() []tableMigration {
 		migrateTable[model.ReferralBinding]("referral_bindings"),
 		migrateTable[model.ReferralCommission]("referral_commissions"),
 		migrateTable[model.BillingOrder]("billing_orders"),
+		migrateTable[model.PlatformSubmission]("platform_submissions"),
 		migrateTable[model.TopupProduct]("topup_products"),
 		migrateTable[model.PaymentProviderConfig]("payment_provider_configs"),
 		migrateTable[model.PaymentOrder]("payment_orders"),
