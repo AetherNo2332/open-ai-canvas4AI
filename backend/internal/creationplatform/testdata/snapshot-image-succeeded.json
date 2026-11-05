@@ -1,0 +1,39 @@
+{
+  "contractVersion": 1,
+  "taskId": "task-1",
+  "revision": 6,
+  "capability": "image",
+  "execution": "succeeded",
+  "stage": "任务完成",
+  "progress": 100,
+  "resources": "ready",
+  "billing": {
+    "status": "settled",
+    "reservedMicrocredits": 120000,
+    "chargedMicrocredits": 100000,
+    "refundedMicrocredits": 20000,
+    "authorizedMaxMicrocredits": 120000
+  },
+  "actions": [],
+  "business": {
+    "application": "ecommerce",
+    "projectId": "batch-7",
+    "objectType": "batch_item",
+    "objectId": "item-2",
+    "operationId": "batch-7:item-2"
+  },
+  "result": {
+    "resources": [
+      {
+        "resourceId": "res-out-1",
+        "kind": "image",
+        "mimeType": "image/png",
+        "bytes": 482113,
+        "width": 1024,
+        "height": 1024
+      }
+    ]
+  },
+  "createdAt": "2026-11-05T08:00:00Z",
+  "updatedAt": "2026-11-05T08:00:31Z"
+}

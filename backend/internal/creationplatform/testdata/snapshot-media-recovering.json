@@ -1,0 +1,32 @@
+{
+  "contractVersion": 1,
+  "taskId": "task-2",
+  "revision": 5,
+  "capability": "video",
+  "execution": "succeeded",
+  "stage": "作品已生成，保存失败",
+  "progress": 95,
+  "resources": "failed",
+  "billing": {
+    "status": "running",
+    "reservedMicrocredits": 300000,
+    "refundedMicrocredits": 0
+  },
+  "actions": ["recover_media"],
+  "business": {
+    "application": "drama",
+    "projectId": "proj-1",
+    "objectType": "segment",
+    "objectId": "seg-8",
+    "operationId": "job-51:attempt-1"
+  },
+  "error": {
+    "code": "media_delivery_failed",
+    "reason": "failed_precondition",
+    "message": "作品已生成，保存失败，可重试保存",
+    "retryable": true,
+    "taskId": "task-2"
+  },
+  "createdAt": "2026-11-05T08:00:00Z",
+  "updatedAt": "2026-11-05T08:03:10Z"
+}

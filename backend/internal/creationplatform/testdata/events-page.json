@@ -1,0 +1,35 @@
+{
+  "events": [
+    {
+      "id": 101,
+      "taskId": "task-1",
+      "revision": 1,
+      "type": "task.submitted",
+      "execution": "queued",
+      "resources": "none",
+      "billing": "reserved",
+      "occurredAt": "2026-11-05T08:00:00Z"
+    },
+    {
+      "id": 102,
+      "taskId": "task-1",
+      "revision": 2,
+      "type": "task.state_changed",
+      "execution": "running",
+      "resources": "none",
+      "billing": "running",
+      "occurredAt": "2026-11-05T08:00:02Z"
+    },
+    {
+      "id": 109,
+      "taskId": "task-1",
+      "revision": 6,
+      "type": "task.state_changed",
+      "execution": "succeeded",
+      "resources": "ready",
+      "billing": "settled",
+      "occurredAt": "2026-11-05T08:00:31Z"
+    }
+  ],
+  "nextCursor": "109"
+}
