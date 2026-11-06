@@ -40,8 +40,8 @@ description: 信封、错误码与 OpenAPI
 
 `/api/agent/v2` 是短剧、电商与总控共用的会话与工作接口；画布 Agent 仍使用 `/api/agent/runs` 与 `/api/agent/conversations`。所有接口只按登录会话识别用户；失败信封的 `reason` 为 Agent 服务错误码（`scope_mismatch`、`session_conflict`、`stale_lease`、`work_stopped`、`stale_assignment`、`version_conflict` 等）。
 
-- 会话：`GET /definitions`、`POST /sessions`、`GET /sessions`、`GET /sessions/:id`、`POST /sessions/:id/archive`、`GET /sessions/:id/messages?after=`、`POST /sessions/:id/messages`。发送消息只给 `messageId` 与 `text`，发送者身份由服务端写入；同一 `messageId` 重投不重复受理。
-- 工作：`POST /work`、`GET /work/:id`、`GET /work/:id/reports`、`POST /work/:id/stop`、`GET /work/:id/approvals`、`POST /approvals/:id/decision`。派工、补充输入与报告由服务端 Agent 调用，不对浏览器开放。
+- 会话：`GET /definitions`、`POST /sessions`、`GET /sessions`、`GET /sessions/:id`、`POST /sessions/:id/archive`、`GET /sessions/:id/messages?after=`、`POST /sessions/:id/messages`。发送消息只给 `messageId` 与 `text`，发送者身份由服务端写入；同一 `messageId` 重投不重复受理。业务 Session 收到用户消息后由后台运行器异步回复，前端按消息 `sequence` 增量读取；关闭页面或面板不取消服务端工作。
+- 工作：`POST /work`、`GET /work/:id`、`GET /work/:id/reports`、`POST /work/:id/stop`、`GET /work/:id/approvals`、`POST /approvals/:id/decision`。派工、补充输入与报告由服务端 Agent 调用，不对浏览器开放。未绑定工作的业务 Session 在第一条用户消息时由服务端原子创建独立根工作和固定上限的预算授权；前端不能提交或提高该额度。
 - 预算只读：`GET /api/platform/v1/budget-grants/:id`，返回额度、可用额与子树用量（实收、在途、待核对、退回分列）。
 
 前端通过 `web/src/sdk/agent` 调用；浏览器传输复用 `http.raw`（`web/src/sdk/creation-platform/http-transport.ts`）。

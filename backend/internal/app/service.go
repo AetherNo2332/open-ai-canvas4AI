@@ -209,6 +209,7 @@ func (s *Service) StartWorker() {
 	s.startPaymentWorker(ctx)
 	s.startBillingAutoRefundWorker()
 	s.startDramaScheduler()
+	s.startAgentRunner()
 	if s.canvasTasks != nil {
 		s.startCanvasMaterializer()
 	}

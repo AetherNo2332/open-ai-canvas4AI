@@ -31,6 +31,11 @@ const agentApprovalMigrationVersion int64 = 90
 
 const agentApprovalChecksum = "sha256:agent-service-approvals-v90-20261106"
 
+// agentTurnMigrationVersion 建立业务会话的待回复轮次队列。
+const agentTurnMigrationVersion int64 = 91
+
+const agentTurnChecksum = "sha256:agent-service-turns-v91-20261106"
+
 // agentServiceMigrations 由 migrations_creation_platform.go 的 init 接在平台迁移之后登记。
 var agentServiceMigrations = []migration{
 	{version: agentSessionsMigrationVersion, name: "agent_service_sessions", checksum: agentSessionsChecksum, apply: migrateAgentSessions},
@@ -38,11 +43,12 @@ var agentServiceMigrations = []migration{
 	{version: platformBudgetMigrationVersion, name: "creation_platform_budget_grants", checksum: platformBudgetChecksum, apply: migratePlatformBudget},
 	{version: agentWorkMigrationVersion, name: "agent_service_work", checksum: agentWorkChecksum, apply: migrateAgentWork},
 	{version: agentApprovalMigrationVersion, name: "agent_service_approvals", checksum: agentApprovalChecksum, apply: migrateAgentApprovals},
+	{version: agentTurnMigrationVersion, name: "agent_service_turns", checksum: agentTurnChecksum, apply: migrateAgentTurns},
 }
 
 // AgentServiceModels 是 Agent 服务的持久结构，顺序即迁移与复制顺序。
 func AgentServiceModels() []any {
-	return []any{&model.AgentSession{}, &model.AgentSessionMessage{}, &model.AgentMemoryNote{}, &model.AgentWorkItem{}, &model.AgentAssignment{}, &model.AgentWorkReport{}, &model.AgentWorkInput{}, &model.AgentOutbox{}, &model.AgentApproval{}}
+	return []any{&model.AgentSession{}, &model.AgentSessionMessage{}, &model.AgentMemoryNote{}, &model.AgentWorkItem{}, &model.AgentAssignment{}, &model.AgentWorkReport{}, &model.AgentWorkInput{}, &model.AgentOutbox{}, &model.AgentApproval{}, &model.AgentTurn{}}
 }
 
 func migrateAgentSessions(tx *gorm.DB) error {
@@ -68,4 +74,8 @@ func migrateAgentWork(tx *gorm.DB) error {
 
 func migrateAgentApprovals(tx *gorm.DB) error {
 	return tx.AutoMigrate(&model.AgentApproval{})
+}
+
+func migrateAgentTurns(tx *gorm.DB) error {
+	return tx.AutoMigrate(&model.AgentTurn{})
 }

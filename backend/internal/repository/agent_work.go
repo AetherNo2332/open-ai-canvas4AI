@@ -145,6 +145,48 @@ func (t *WorkTx) CreateSession(session *model.AgentSession) (*model.AgentSession
 	return &stored, err
 }
 
+// LockSessionForWork serializes the one-time binding of an independent
+// business Session to its work item. Scope and definition remain immutable.
+func (t *WorkTx) LockSessionForWork(ownerID, sessionID string) (*model.AgentSession, error) {
+	locked := t.db.Exec("UPDATE agent_sessions SET revision = revision WHERE id = ? AND owner_id = ?", sessionID, ownerID)
+	if locked.Error != nil {
+		return nil, locked.Error
+	}
+	if locked.RowsAffected != 1 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var session model.AgentSession
+	if err := t.db.First(&session, "id = ? AND owner_id = ?", sessionID, ownerID).Error; err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+// BindSessionWork sets the optional work identity exactly once.
+func (t *WorkTx) BindSessionWork(ownerID, sessionID, workID string, now time.Time) error {
+	updated := t.db.Model(&model.AgentSession{}).
+		Where("id = ? AND owner_id = ? AND work_item_id = ''", sessionID, ownerID).
+		Updates(map[string]any{"work_item_id": workID, "revision": gorm.Expr("revision + 1"), "updated_at": now})
+	return agentSessionSwapResult(updated)
+}
+
+// AppendSessionMessage appends idempotently inside the caller's work
+// transaction and returns the durable per-Session sequence.
+func (t *WorkTx) AppendSessionMessage(ownerID, sessionID string, message model.AgentSessionMessage, now time.Time) (int64, error) {
+	if err := appendInboxMessage(t.db, ownerID, sessionID, message, now); err != nil {
+		return 0, err
+	}
+	var stored model.AgentSessionMessage
+	if err := t.db.Select("sequence").First(&stored, "owner_id = ? AND session_id = ? AND message_id = ?", ownerID, sessionID, message.MessageID).Error; err != nil {
+		return 0, err
+	}
+	return stored.Sequence, nil
+}
+
+func (t *WorkTx) EnqueueTurn(turn *model.AgentTurn) error {
+	return t.db.Clauses(clause.OnConflict{DoNothing: true}).Create(turn).Error
+}
+
 func (r *Repository) AgentWorkReports(ownerID, workID string) ([]model.AgentWorkReport, error) {
 	rows := []model.AgentWorkReport{}
 	err := r.db.Where("owner_id = ? AND work_item_id = ?", ownerID, workID).Order("created_at ASC, id ASC").Find(&rows).Error
@@ -282,17 +324,27 @@ func appendInboxMessage(tx *gorm.DB, ownerID, sessionID string, message model.Ag
 	return tx.Create(&message).Error
 }
 
-// DeliverAgentOutbox appends one pending item to its target Session's history
-// and marks it delivered, in one transaction. The message ID is the outbox ID,
-// so a redelivered item is a no-op. The Session revision advances like any
-// other append; no writer lease is needed because the inbox is the queue.
-func (r *Repository) DeliverAgentOutbox(item model.AgentOutbox, message model.AgentSessionMessage, now time.Time) error {
+// DeliverAgentOutbox appends one pending item and, for an actionable delivery,
+// queues its turn in the same transaction. A crash can therefore leave either
+// the whole delivery pending or the message and turn both durable, never half.
+func (r *Repository) DeliverAgentOutbox(item model.AgentOutbox, message model.AgentSessionMessage, turn *model.AgentTurn, now time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		marked := tx.Model(&model.AgentOutbox{}).Where("id = ? AND owner_id = ? AND status = ?", item.ID, item.OwnerID, "pending").Updates(map[string]any{"status": "delivered", "delivered_at": now})
 		if marked.Error != nil || marked.RowsAffected != 1 {
 			return marked.Error
 		}
-		return appendInboxMessage(tx, item.OwnerID, item.TargetSessionID, message, now)
+		if err := appendInboxMessage(tx, item.OwnerID, item.TargetSessionID, message, now); err != nil {
+			return err
+		}
+		if turn == nil {
+			return nil
+		}
+		var stored model.AgentSessionMessage
+		if err := tx.Select("sequence").First(&stored, "owner_id = ? AND session_id = ? AND message_id = ?", item.OwnerID, item.TargetSessionID, message.MessageID).Error; err != nil {
+			return err
+		}
+		turn.MessageSeq = stored.Sequence
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(turn).Error
 	})
 }
 
@@ -303,4 +355,13 @@ func (r *Repository) AgentWorkInputByID(ownerID, id string) (*model.AgentWorkInp
 		return nil, err
 	}
 	return &input, nil
+}
+
+// AgentSessionMessageByKey reads one idempotent Session message.
+func (r *Repository) AgentSessionMessageByKey(ownerID, sessionID, messageID string) (*model.AgentSessionMessage, error) {
+	var message model.AgentSessionMessage
+	if err := r.db.First(&message, "owner_id = ? AND session_id = ? AND message_id = ?", ownerID, sessionID, messageID).Error; err != nil {
+		return nil, err
+	}
+	return &message, nil
 }

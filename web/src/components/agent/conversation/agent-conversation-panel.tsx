@@ -63,6 +63,11 @@ export function AgentConversationPanel({ open, onClose, title, definitionId, sco
         };
     }, [open, userId, client, controller, definitionId, application, spaceType, spaceId, message]);
 
+    useEffect(() => {
+        if (!open || !session) return;
+        return controller.subscribe(session.id);
+    }, [open, session, controller]);
+
     const state = session ? controller.state(session.id) : undefined;
 
     async function send() {

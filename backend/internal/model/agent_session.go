@@ -68,3 +68,26 @@ type AgentMemoryNote struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
+
+// AgentTurn is one queued turn of a business Session: a user message (or a
+// delivered work input) waiting for the Agent's reply. The background runner
+// advances it until it is done or failed; the model choice is frozen on the
+// first pass so a resumed turn keeps the same model.
+type AgentTurn struct {
+	ID             string     `gorm:"primaryKey;size:36"`
+	OwnerID        string     `gorm:"not null;size:36;uniqueIndex:idx_agent_turn_message,priority:1"`
+	SessionID      string     `gorm:"not null;size:80;uniqueIndex:idx_agent_turn_message,priority:2;index:idx_agent_turn_session,priority:1"`
+	MessageID      string     `gorm:"not null;size:160;uniqueIndex:idx_agent_turn_message,priority:3"`
+	MessageSeq     int64      `gorm:"not null;index:idx_agent_turn_session,priority:2"`
+	Text           string     `gorm:"type:text;not null"`
+	Status         string     `gorm:"not null;size:16;index"`
+	ModelJSON      string     `gorm:"type:text"`
+	BudgetGrantID  string     `gorm:"not null;size:36;default:''"`
+	Attempts       int        `gorm:"not null;default:0"`
+	Error          string     `gorm:"size:500"`
+	NextAt         *time.Time `gorm:"index"`
+	ClaimOwner     string     `gorm:"size:80;index"`
+	ClaimExpiresAt *time.Time `gorm:"index"`
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}

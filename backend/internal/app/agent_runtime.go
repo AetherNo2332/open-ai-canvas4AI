@@ -8,8 +8,13 @@ import (
 	cp "yingce/backend/internal/creationplatform"
 )
 
-// agentRuntimeWorker names the in-process writer of new-runtime turns.
-const agentRuntimeWorker = "go-runtime"
+// agentRuntimeWorkerPrefix identifies the in-process writer of new-runtime
+// turns. The Service worker ID keeps leases distinct across backend instances.
+const agentRuntimeWorkerPrefix = "go-runtime"
+
+func (s *Service) agentRuntimeOwner() string {
+	return agentRuntimeWorkerPrefix + ":" + s.workerID
+}
 
 // agentTurnRequest is one user turn of a non-canvas Session.
 type agentTurnRequest struct {
@@ -97,10 +102,10 @@ func (s *Service) acquireAgentTurnLease(ownerID, sessionID, runID string) (as.Le
 	if err != nil {
 		return as.Lease{}, err
 	}
-	if session.ActiveRunID == runID && session.LeaseOwner == agentRuntimeWorker {
+	if session.ActiveRunID == runID && session.LeaseOwner == s.agentRuntimeOwner() {
 		return agentSessionLease(*session), nil
 	}
-	return s.acquireAgentSessionWriter(ownerID, sessionID, agentRuntimeWorker, runID)
+	return s.acquireAgentSessionWriter(ownerID, sessionID, s.agentRuntimeOwner(), runID)
 }
 
 // agentStepRequest turns a frozen context into the structured model request.

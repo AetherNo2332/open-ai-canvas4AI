@@ -228,7 +228,7 @@
 
 **用例：** `agent-sdk-no-ui-dependencies`、`agent-controller-scope-switch-race`、`agent-controller-cursor-recovery`、`agent-cost-and-approval-shared-view`；加真实路由操作证据。
 
-**A8 证据：** `web/test/agent-sdk.test.ts` 6 项通过；`TestAgentSDKAgainstRealBackend` 用真实路由驱动 Bun 端到端（建会话幂等、发消息、按范围列表、跨用户拒绝、归档）；`TestAgentWorkHTTPSurface`；`tsc`、`lint`、`build`、改动文件 Prettier 检查通过。真实页面：本地开发环境（`.local/project-workbench-debug`）在短剧制作台打开 Agent 面板，发送消息、刷新后历史仍在、375px 窄屏与暗色主题布局正常。浏览器验收发现两处问题并已修复：面板类名与画布 Agent 样式冲突（改为 `agent-session-panel-*`），刷新后会话历史丢失（控制器改为只从已持有的消息续读，`agent-controller-cursor-recovery` 先失败后通过）。
+**A8 证据：** `web/test/agent-sdk.test.ts` 7 项通过；`TestAgentSDKAgainstRealBackend` 用真实路由驱动 Bun 端到端（建会话幂等、发消息、按范围列表、跨用户拒绝、归档）；`TestAgentWorkHTTPSurface`；`tsc`、`lint`、`build`、改动文件 Prettier 检查通过。真实页面：本地开发环境（`.local/project-workbench-debug`）在短剧制作台打开 Agent 面板，发送消息、刷新后历史仍在、375px 窄屏与暗色主题布局正常。浏览器验收发现两处问题并已修复：面板类名与画布 Agent 样式冲突（改为 `agent-session-panel-*`），刷新后会话历史丢失（控制器改为只从已持有的消息续读，`agent-controller-cursor-recovery` 先失败后通过）。生产运行器接线后补充无 UI 的 Session 增量订阅，`an open Session subscription incrementally reads replies and stops with the panel` 验证面板打开时读取异步回复、关闭时清理本地调度但不取消服务端工作；真实页面仍需用已接线后端复验异步回复。
 
 未勾选：A8-D（从工作卡进入执行会话、总控显示后续变更）：首期未建总控与工作卡页面，后端链路由 A6 用例覆盖。按 R-A0-2，画布面板与历史服务未改；电商工作台入口未接入面板。
 
@@ -244,6 +244,8 @@
 - [x] A9-F：OpenAPI、数据库说明、代码地图、功能/待测试文档和迁移记录同步；未验证外部供应商/存储不能写成上线验收完成。
 
 **A9 证据：** `TestAgentAcceptanceFullChain` 一条用例走完整链路（根工作 → 派短剧与电商 → 用户直聊电商执行会话 → 生成计入电商子预算 → 两份报告 → 总控只读报告不读执行历史 → 每一步重放不重复调用模型或提交 → 第二个用户不可见 → 停止后预算关闭、直聊被拒）。后端全量回归与 PostgreSQL 17 + Redis 7.4 下的全部 Agent/平台用例、Pi Worker `npm test`（200 通过、1 跳过）、工具合同制品比对、Web 全量测试与构建见 [验收记录](../reports/2026-11-06-agent-service-sdk-acceptance.md)（`docs/reports` 不入库）。全量回归在负载下暴露待投递记录同刻写入时按随机 ID 排序，已改为按写入序号 `seq` 投递，`TestAgentOutboxDeliveryOrderIsWriteOrder` 先失败后通过。
+
+生产接线补充：Schema 91 持久化 `agent_turns`，`StartWorker` 启动后台运行器；第一条独立业务消息原子建立根工作、固定 1,000,000 microcredits 服务端预算、派工、Session 绑定与轮次，后续消息沿用授权；`assignment_started` / `work_input` 投递自动唤醒执行方。轮次 claim、Session lease 与平台幂等共同支持多实例接管，模型选择首次写入后冻结，终态按结构化错误决定重试；失败状态与可见提示同事务提交。`TestAgentRunner*`、`TestAgentDirectMessageAndIndependentWorkRollbackTogether`、`TestAgentOutboxDeliveryAndTurnQueueRollbackTogether` 及 PostgreSQL 方言用例覆盖直接回复、派工启动、崩溃窗口、过期接管、迟到写回和费用归属。总控报告/输入仍只作为事实消息，主管模型的确定性派工工具循环不在本轮生产接线范围。
 
 未勾选：A9-D 中“旧 Worker 返回”“媒体恢复”针对 Pi 画布执行链与基础媒体交付，分别由原 Pi 用例与基础 S4 用例覆盖，本轮未新增演练；“派工落库后崩溃、模型成功后断线、预算写失败、报告重复投递、未知费用”已有 A3–A7 用例。A9-E：画布临时子代理、短剧成片与基础三业务路径的回归由全量测试覆盖，但“清理无调用的旧控制逻辑”未做（画布 Agent 未迁移，旧逻辑仍在使用）。真实供应商与对象存储未验证。
 

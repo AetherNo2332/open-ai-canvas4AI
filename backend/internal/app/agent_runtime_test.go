@@ -325,3 +325,25 @@ func (f *structuredFixture) script(replies ...string) {
 	defer f.mu.Unlock()
 	f.queue = append(f.queue, replies...)
 }
+
+// A step without tools must not send tool_choice: OpenAI and Claude reject a
+// tool_choice with no tools.
+func TestStructuredStepWithoutToolsOmitsToolChoice(t *testing.T) {
+	f := newStructuredFixture(t, newSQLiteTestDB(t))
+	req := f.request("no-tools")
+	req.Tools, req.ToolChoice = nil, cp.ToolChoiceNone
+	req.Messages = req.Messages[:1]
+	if _, err := f.svc.SubmitStructuredText(context.Background(), cp.Caller{UserID: "user-a"}, req, ""); err != nil {
+		t.Fatal(err)
+	}
+	f.run(t)
+	body := f.lastBody(t)
+	if _, present := body["tool_choice"]; present {
+		t.Fatalf("tool_choice sent without tools: %#v", body["tool_choice"])
+	}
+	if tools, present := body["tools"]; present {
+		if list, _ := tools.([]any); len(list) != 0 {
+			t.Fatalf("tools sent: %#v", tools)
+		}
+	}
+}

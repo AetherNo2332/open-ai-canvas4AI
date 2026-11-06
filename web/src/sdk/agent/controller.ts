@@ -9,7 +9,14 @@ import type { MessageReceipt, SessionMessage, SessionView } from "./types";
 
 export type SessionState = { session?: SessionView; messages: SessionMessage[]; loading: boolean; error?: string };
 
-export type SessionControllerOptions = { client: AgentClient; userId: string; storage: AgentStorage; onChange?: (sessionId: string) => void };
+export type AgentPollScheduler = (poll: () => Promise<void>, intervalMs: number) => () => void;
+
+export type SessionControllerOptions = { client: AgentClient; userId: string; storage: AgentStorage; onChange?: (sessionId: string) => void; schedulePoll?: AgentPollScheduler };
+
+const defaultPollScheduler: AgentPollScheduler = (poll, intervalMs) => {
+    const timer = setInterval(() => void poll(), intervalMs);
+    return () => clearInterval(timer);
+};
 
 export function createSessionController(options: SessionControllerOptions) {
     const { client, userId, storage } = options;
@@ -47,6 +54,11 @@ export function createSessionController(options: SessionControllerOptions) {
         }
     }
 
+    async function refresh(sessionId: string) {
+        const session = stateOf(sessionId).session;
+        if (session) await load(session);
+    }
+
     return {
         /** 打开会话并加载它的增量消息；返回的 Promise 只影响该会话。 */
         open(session: SessionView) {
@@ -60,9 +72,26 @@ export function createSessionController(options: SessionControllerOptions) {
 
         state: (sessionId: string): Readonly<SessionState> => stateOf(sessionId),
 
-        async refresh(sessionId: string) {
-            const session = stateOf(sessionId).session;
-            if (session) await load(session);
+        refresh,
+
+        /** 增量读取打开会话的异步回复；取消只停止本地读取，不停止服务端工作。 */
+        subscribe(sessionId: string, intervalMs = 1_500) {
+            let stopped = false;
+            let running = false;
+            const poll = async () => {
+                if (stopped || running) return;
+                running = true;
+                try {
+                    await refresh(sessionId);
+                } finally {
+                    running = false;
+                }
+            };
+            const cancel = (options.schedulePoll ?? defaultPollScheduler)(poll, Math.max(250, intervalMs));
+            return () => {
+                stopped = true;
+                cancel();
+            };
         },
 
         async send(sessionId: string, text: string): Promise<MessageReceipt> {

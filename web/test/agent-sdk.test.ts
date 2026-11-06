@@ -113,6 +113,38 @@ describe("agent SDK", () => {
         expect(forU1.draft(sameIdOtherScope)).toBe("");
     });
 
+    test("an open Session subscription incrementally reads replies and stops with the panel", async () => {
+        let page = 0;
+        let poll: (() => Promise<void>) | undefined;
+        let stopped = false;
+        let interval = 0;
+        const { transport } = fakeTransport({
+            "GET /agent/v2/sessions/s1/messages": () => {
+                page++;
+                return page === 1 ? ok({ messages: [message("s1", 1, "用户消息")], nextAfter: 1 }) : ok({ messages: [{ ...message("s1", 2, "Agent 回复"), actor: "executor", role: "assistant" }], nextAfter: 2 });
+            },
+        });
+        const controller = createSessionController({
+            client: createAgentClient({ transport }),
+            userId: "u1",
+            storage: createMemoryStorage(),
+            schedulePoll: (next, intervalMs) => {
+                poll = next;
+                interval = intervalMs;
+                return () => {
+                    stopped = true;
+                };
+            },
+        });
+        await controller.open(session("s1"));
+        const unsubscribe = controller.subscribe("s1", 1_250);
+        expect(interval).toBe(1_250);
+        await poll?.();
+        expect(controller.state("s1").messages.map((item) => item.text)).toEqual(["用户消息", "Agent 回复"]);
+        unsubscribe();
+        expect(stopped).toBe(true);
+    });
+
     test("agent-controller-cursor-recovery: a reloaded page shows the full history, then resumes by sequence without duplicates", async () => {
         const storage = createMemoryStorage();
         const afters: string[] = [];

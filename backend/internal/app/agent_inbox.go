@@ -55,8 +55,23 @@ func (s *Service) SendSessionMessage(ownerID string, req SendSessionMessageReque
 	if session.Status != as.SessionActive {
 		return SessionMessageReceipt{}, as.NewError(as.CodeSessionConflict, "会话已归档")
 	}
+	if stored, storedErr := s.repo.AgentSessionMessageByKey(ownerID, session.ID, messageID); storedErr == nil {
+		if stored.Body != req.Text {
+			return SessionMessageReceipt{}, as.NewError(as.CodeIdempotencyConflict, "消息 ID 已用于不同正文")
+		}
+		if session.Role == as.RoleBusiness {
+			return s.resumeStoredBusinessMessage(session, messageID, req.Text)
+		}
+		return s.storedSessionMessageReceipt(ownerID, session)
+	} else if !errors.Is(storedErr, gorm.ErrRecordNotFound) {
+		return SessionMessageReceipt{}, storedErr
+	}
+	if isIndependentBusinessSession(session) {
+		return s.bindAndQueueIndependentMessage(session, messageID, req.Text)
+	}
 	if session.WorkItemID == "" || session.Role != as.RoleBusiness {
-		// A Session without delegated work keeps the message in its own history.
+		// A non-executor Session keeps the message in its own history. Supervisor
+		// execution is driven by deterministic work commands, not this business loop.
 		if err := s.repo.AppendAgentInboxMessage(ownerID, session.ID, model.AgentSessionMessage{ID: newID(), MessageID: messageID, Kind: as.MessageKindMessage, Actor: as.ActorUser, Role: "user", Body: req.Text}, time.Now()); err != nil {
 			return SessionMessageReceipt{}, err
 		}
@@ -67,6 +82,41 @@ func (s *Service) SendSessionMessage(ownerID string, req SendSessionMessageReque
 		return SessionMessageReceipt{}, err
 	}
 	return SessionMessageReceipt{Accepted: true, WorkItemID: receipt.WorkItemID, WorkVersion: receipt.WorkVersion}, nil
+}
+
+func (s *Service) bindAndQueueIndependentMessage(session *model.AgentSession, messageID, text string) (SessionMessageReceipt, error) {
+	work, err := s.acceptIndependentAgentMessage(session, messageID, text)
+	if err != nil {
+		return SessionMessageReceipt{}, err
+	}
+	return SessionMessageReceipt{Accepted: true, WorkItemID: work.ID, WorkVersion: work.Version}, nil
+}
+
+func (s *Service) resumeStoredBusinessMessage(session *model.AgentSession, messageID, text string) (SessionMessageReceipt, error) {
+	if session.WorkItemID == "" {
+		return s.bindAndQueueIndependentMessage(session, messageID, text)
+	}
+	work, err := s.repo.AgentWorkForOwner(session.OwnerID, session.WorkItemID)
+	if err != nil {
+		return SessionMessageReceipt{}, workNotFound(err)
+	}
+	if independentAgentWork(session, work) {
+		return s.bindAndQueueIndependentMessage(session, messageID, text)
+	}
+	return SessionMessageReceipt{Accepted: true, WorkItemID: work.ID, WorkVersion: work.Version}, nil
+}
+
+func (s *Service) storedSessionMessageReceipt(ownerID string, session *model.AgentSession) (SessionMessageReceipt, error) {
+	receipt := SessionMessageReceipt{Accepted: true, WorkItemID: session.WorkItemID}
+	if session.WorkItemID == "" {
+		return receipt, nil
+	}
+	work, err := s.repo.AgentWorkForOwner(ownerID, session.WorkItemID)
+	if err != nil {
+		return SessionMessageReceipt{}, workNotFound(err)
+	}
+	receipt.WorkVersion = work.Version
+	return receipt, nil
 }
 
 // AppendWorkInput is the supervisor's input command.
@@ -118,7 +168,7 @@ func (s *Service) appendWorkInput(ownerID, workID, actor, sourceMessageID, text,
 		if err := tx.Enqueue(outboxItem(ownerID, current.ID, assignment.ExecutorSessionID, "work_input", map[string]any{"inputId": input.ID, "actor": actor, "workVersion": input.WorkVersion})); err != nil {
 			return err
 		}
-		if actor != as.ActorUser {
+		if actor != as.ActorUser || current.ParentWorkID == "" {
 			return nil
 		}
 		parent, err := tx.Work(ownerID, current.ParentWorkID)

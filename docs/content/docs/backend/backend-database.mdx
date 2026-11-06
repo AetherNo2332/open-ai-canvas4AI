@@ -556,3 +556,11 @@ Schema 90 `agent_service_approvals` 新增 `agent_approvals`：`id`、`owner_id`
 
 投递：`agent_outboxes` 由投递环节按时间顺序写入目标会话的 `agent_session_messages`，消息 ID 为 `outbox:<投递 ID>`，重复投递不会写第二条。用户直聊的补充以用户身份写入执行会话；派工、报告与“用户已补充”通知以 system 身份写入，只陈述事实，不构成授权。
 - SQLite → PostgreSQL 迁移工具已包含两张表。回退旧代码时两张表无人读取，可保留；删除前须先备份。
+
+Schema 91 `agent_service_turns` 新增 `agent_turns`，作为非画布业务 Session 的持久执行队列。`StartWorker` 启动的 Go 后台运行器投递 outbox、认领到期轮次并推进可恢复的模型/工具循环；画布 Agent 仍走原 Pi 队列。
+
+- 字段：`id`、`owner_id`、`session_id`、`message_id`、`message_seq`、`text`、`status`（pending/running/done/failed）、`model_json`（首次选择后冻结）、`budget_grant_id`、`attempts`、`error`、`next_at`、`claim_owner`、`claim_expires_at`、`created_at`、`updated_at`。
+- 约束：`(owner_id, session_id, message_id)` 唯一；`(session_id, message_seq)` 索引用于只推进每个 Session 最早的未完成轮次。有效 claim 不能被另一后端实例抢占，过期后可接管；状态写回要求 claim owner 匹配，迟到实例不能覆盖接管者。
+- 原子边界：第一条独立咨询消息与根工作、固定服务端预算授权、派工、Session 绑定和轮次同事务提交；`assignment_started` / `work_input` 的 outbox 状态、Session 消息与轮次同事务提交；终态 failed 与用户可见失败消息同事务提交。任一步失败都不留下半条可执行链。
+- 独立咨询的根预算上限由服务端固定为 1,000,000 microcredits，前端与模型不能抬高；后续消息沿用同一工作和授权。预算仍只做准入，钱包与账单口径不变。
+- SQLite → PostgreSQL 迁移工具已包含 `agent_turns`。回退旧代码会停止推进这些轮次，但数据可保留；恢复新代码后可继续认领，删除前须先备份。

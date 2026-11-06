@@ -22,10 +22,17 @@ func (s *Service) deliverAgentOutbox(ownerID string, limit int) (int, error) {
 		if err != nil {
 			return delivered, err
 		}
-		if err := s.repo.DeliverAgentOutbox(item, message, time.Now()); err != nil {
+		turn, err := s.deliveredAgentTurn(item, message)
+		if err != nil {
+			return delivered, err
+		}
+		if err := s.repo.DeliverAgentOutbox(item, message, turn, time.Now()); err != nil {
 			return delivered, err
 		}
 		delivered++
+		if turn != nil {
+			s.wakeAgentRunner()
+		}
 	}
 	return delivered, nil
 }
@@ -54,4 +61,26 @@ func (s *Service) outboxMessage(item model.AgentOutbox) (model.AgentSessionMessa
 		message.Body = "工作状态已更新。"
 	}
 	return message, nil
+}
+
+// deliveredAgentTurn builds the executor turn for a new assignment or work
+// input. The repository writes it atomically with delivery. Reports and notices
+// to the supervisor are facts and do not start this business execution loop.
+func (s *Service) deliveredAgentTurn(item model.AgentOutbox, message model.AgentSessionMessage) (*model.AgentTurn, error) {
+	if item.Kind != "assignment_started" && item.Kind != "work_input" {
+		return nil, nil
+	}
+	session, err := s.agentSessionForOwner(item.OwnerID, item.TargetSessionID)
+	if err != nil || session.Role != as.RoleBusiness || session.WorkItemID == "" {
+		return nil, err
+	}
+	work, err := s.repo.AgentWorkForOwner(item.OwnerID, session.WorkItemID)
+	if err != nil {
+		return nil, err
+	}
+	return &model.AgentTurn{
+		ID: newID(), OwnerID: session.OwnerID, SessionID: session.ID,
+		MessageID: message.MessageID, Text: message.Body, Status: "pending",
+		BudgetGrantID: work.BudgetGrantID,
+	}, nil
 }
