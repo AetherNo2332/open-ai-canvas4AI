@@ -347,3 +347,10 @@ func TestStructuredStepWithoutToolsOmitsToolChoice(t *testing.T) {
 		}
 	}
 }
+
+// snapshotBodies returns a copy of every upstream request captured so far.
+func (f *structuredFixture) snapshotBodies() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]map[string]any{}, f.bodies...)
+}
