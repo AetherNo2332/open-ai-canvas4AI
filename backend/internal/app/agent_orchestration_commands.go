@@ -301,6 +301,17 @@ func (s *Service) StopWork(ownerID string, req WorkControlRequest) (WorkView, er
 		if err := tx.CancelPendingOutbox(ownerID, stopped); err != nil {
 			return err
 		}
+		sessions, err := tx.SessionsForWorks(ownerID, stopped)
+		if err != nil {
+			return err
+		}
+		sessionIDs := make([]string, 0, len(sessions))
+		for _, session := range sessions {
+			sessionIDs = append(sessionIDs, session.ID)
+		}
+		if err := tx.CancelPendingTurns(ownerID, sessionIDs, now); err != nil {
+			return err
+		}
 		return tx.CloseBudgets(ownerID, grants, now)
 	})
 	if err != nil {

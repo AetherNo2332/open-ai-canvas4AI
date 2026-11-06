@@ -130,6 +130,24 @@ func (t *WorkTx) CancelPendingOutbox(ownerID string, workIDs []string) error {
 	return t.db.Model(&model.AgentOutbox{}).Where("owner_id = ? AND work_item_id IN ? AND status = ?", ownerID, workIDs, "pending").Update("status", "cancelled").Error
 }
 
+// CancelPendingTurns cancels the queued, unclaimed turns of the given
+// sessions. Claimed turns fail through the work fence when they advance.
+func (t *WorkTx) CancelPendingTurns(ownerID string, sessionIDs []string, now time.Time) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	return t.db.Model(&model.AgentTurn{}).
+		Where("owner_id = ? AND session_id IN ? AND status = ?", ownerID, sessionIDs, "pending").
+		Updates(map[string]any{"status": "cancelled", "error": "工作已停止", "claim_owner": "", "claim_expires_at": nil, "updated_at": now}).Error
+}
+
+// SessionsForWorks returns the sessions bound to the given work items.
+func (t *WorkTx) SessionsForWorks(ownerID string, workIDs []string) ([]model.AgentSession, error) {
+	rows := []model.AgentSession{}
+	err := t.db.Where("owner_id = ? AND work_item_id IN ?", ownerID, workIDs).Find(&rows).Error
+	return rows, err
+}
+
 // CreateSession inserts an executor Session in the work transaction, or
 // returns the one stored under the same owner key.
 func (t *WorkTx) CreateSession(session *model.AgentSession) (*model.AgentSession, error) {

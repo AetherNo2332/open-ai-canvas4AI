@@ -36,6 +36,12 @@ const agentTurnMigrationVersion int64 = 91
 
 const agentTurnChecksum = "sha256:agent-service-turns-v91-20261106"
 
+// agentToolExecutionMigrationVersion 建立工具执行的持久回执与轮次冻结合同：
+// 操作标识隔离复用的 provider call ID，重放与恢复依赖回执状态。
+const agentToolExecutionMigrationVersion int64 = 92
+
+const agentToolExecutionChecksum = "sha256:agent-service-tool-execution-v92-20261107"
+
 // agentServiceMigrations 由 migrations_creation_platform.go 的 init 接在平台迁移之后登记。
 var agentServiceMigrations = []migration{
 	{version: agentSessionsMigrationVersion, name: "agent_service_sessions", checksum: agentSessionsChecksum, apply: migrateAgentSessions},
@@ -44,11 +50,12 @@ var agentServiceMigrations = []migration{
 	{version: agentWorkMigrationVersion, name: "agent_service_work", checksum: agentWorkChecksum, apply: migrateAgentWork},
 	{version: agentApprovalMigrationVersion, name: "agent_service_approvals", checksum: agentApprovalChecksum, apply: migrateAgentApprovals},
 	{version: agentTurnMigrationVersion, name: "agent_service_turns", checksum: agentTurnChecksum, apply: migrateAgentTurns},
+	{version: agentToolExecutionMigrationVersion, name: "agent_service_tool_execution", checksum: agentToolExecutionChecksum, apply: migrateAgentToolExecution},
 }
 
 // AgentServiceModels 是 Agent 服务的持久结构，顺序即迁移与复制顺序。
 func AgentServiceModels() []any {
-	return []any{&model.AgentSession{}, &model.AgentSessionMessage{}, &model.AgentMemoryNote{}, &model.AgentWorkItem{}, &model.AgentAssignment{}, &model.AgentWorkReport{}, &model.AgentWorkInput{}, &model.AgentOutbox{}, &model.AgentApproval{}, &model.AgentTurn{}}
+	return []any{&model.AgentSession{}, &model.AgentSessionMessage{}, &model.AgentMemoryNote{}, &model.AgentWorkItem{}, &model.AgentAssignment{}, &model.AgentWorkReport{}, &model.AgentWorkInput{}, &model.AgentOutbox{}, &model.AgentApproval{}, &model.AgentTurn{}, &model.AgentOperation{}, &model.AgentTurnContract{}}
 }
 
 func migrateAgentSessions(tx *gorm.DB) error {
@@ -78,4 +85,8 @@ func migrateAgentApprovals(tx *gorm.DB) error {
 
 func migrateAgentTurns(tx *gorm.DB) error {
 	return tx.AutoMigrate(&model.AgentTurn{})
+}
+
+func migrateAgentToolExecution(tx *gorm.DB) error {
+	return tx.AutoMigrate(&model.AgentOperation{}, &model.AgentTurnContract{})
 }

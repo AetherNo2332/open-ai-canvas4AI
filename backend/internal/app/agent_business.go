@@ -124,8 +124,10 @@ func (s *Service) registerAgentBusiness(adapter as.BusinessAdapter, def as.Defin
 }
 
 // executeBusinessTool runs one tool call after re-checking, for this call,
-// that the Session exists for the owner, its scope matches the call, the tool
-// belongs to the Session's application, and the space is still the owner's.
+// that the Session exists for the owner, its scope matches the call, the work
+// and assignment are still live, the tool belongs to the Session's
+// application, and the space is still the owner's. An identified call gets a
+// durable receipt; a refused call reaches the model as its tool result.
 func (s *Service) executeBusinessTool(ctx context.Context, call as.ToolInvocation) (as.ToolResult, error) {
 	session, err := s.agentSessionForOwner(call.OwnerID, call.SessionID)
 	if err != nil {
@@ -134,6 +136,9 @@ func (s *Service) executeBusinessTool(ctx context.Context, call as.ToolInvocatio
 	scope := as.Scope{Application: session.Application, SpaceType: session.SpaceType, SpaceID: session.SpaceID}
 	if call.Scope.Normalized() != scope {
 		return as.ToolResult{}, as.NewError(as.CodeScopeMismatch, "工具调用的业务范围与会话不一致")
+	}
+	if err := s.fenceAgentToolExecution(call); err != nil {
+		return as.ToolResult{}, err
 	}
 	adapter, ok := s.agentAdapters().Adapter(scope.Application)
 	if !ok {
@@ -145,9 +150,21 @@ func (s *Service) executeBusinessTool(ctx context.Context, call as.ToolInvocatio
 	if err := adapter.ValidateSpace(ctx, call.OwnerID, scope); err != nil {
 		return as.ToolResult{}, err
 	}
-	result, err := adapter.Execute(ctx, call)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return as.ToolResult{}, as.NewError(as.CodeNotFound, "业务对象不存在")
+	return s.dispatchAgentToolExecution(ctx, call, adapter)
+}
+
+// dispatchAgentToolExecution runs the adapter, normalizing missing business
+// objects into refusals before the receipt records an outcome.
+func (s *Service) dispatchAgentToolExecution(ctx context.Context, call as.ToolInvocation, adapter as.BusinessAdapter) (as.ToolResult, error) {
+	execute := func() (as.ToolResult, error) {
+		result, err := adapter.Execute(ctx, call)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return as.ToolResult{}, as.NewError(as.CodeNotFound, "业务对象不存在")
+		}
+		return result, err
 	}
-	return result, err
+	if call.OperationID == "" {
+		return execute()
+	}
+	return s.executeAgentOperation(ctx, call, execute)
 }

@@ -29,6 +29,17 @@ type ToolInvocation struct {
 	CallID        string
 	Name          string
 	Arguments     json.RawMessage
+	// TurnMessageID, Step and OperationID are the execution identity of this
+	// call inside the Session: the operation key is the turn, the step and the
+	// provider call ID, so a provider reusing call IDs cannot alias two
+	// executions. An empty OperationID marks a direct call without a receipt.
+	TurnMessageID string
+	Step          int
+	OperationID   string
+	// AssignmentID and AssignmentEpoch carry the executing assignment; the
+	// fence rejects the call once the work is stopped or reassigned.
+	AssignmentID    string
+	AssignmentEpoch int64
 }
 
 // ToolResult is what the model sees. Resources and the operation reference

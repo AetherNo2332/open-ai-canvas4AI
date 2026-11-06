@@ -3,8 +3,11 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 
 	ao "yingce/backend/internal/agentorchestration"
 	as "yingce/backend/internal/agentservice"
@@ -199,6 +202,225 @@ func (testBusinessAdapter) Tools() []as.ToolSpec {
 func (a testBusinessAdapter) Execute(context.Context, as.ToolInvocation) (as.ToolResult, error) {
 	*a.executed++
 	return as.ToolResult{Text: "已写入"}, nil
+}
+
+// reviewNotebookWork registers the notebook probe business and delegates one
+// assignment under a fresh root work, the way the PR #131 review probes did.
+func reviewNotebookWork(t *testing.T, f *businessFixture, executed *int) AssignmentView {
+	t.Helper()
+	return registerNotebookWork(t, f, testBusinessAdapter{executed: executed})
+}
+
+// registerNotebookWork registers the notebook business with a custom adapter
+// and delegates one assignment under a fresh root work.
+func registerNotebookWork(t *testing.T, f *businessFixture, adapter as.BusinessAdapter) AssignmentView {
+	t.Helper()
+	if err := f.svc.registerAgentBusiness(adapter, as.Definition{
+		ID: "notebook.agent", Version: "1", Role: as.RoleBusiness,
+		Application: "notebook", SpaceTypes: []string{"notebook_page"}, Title: "Notebook", Tools: []string{"notebook_write"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "review-source", Goal: "write", BudgetMicrocredits: 2_000_000, IdempotencyKey: "review-root-" + newID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := f.svc.DelegateWork("user-a", DelegateRequest{
+		WorkItemID: work.ID, SourceMessageID: "review-source", ActionKey: "notebook", DefinitionID: "notebook.agent",
+		Scope: as.Scope{Application: "notebook", SpaceType: "notebook_page", SpaceID: "page-1"}, Handoff: "write", BudgetMicrocredits: 1_000_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return assignment
+}
+
+// B0-A: two turns of one Session both see the provider call ID "call-0"; each
+// turn executes its own tool operation, replaying either turn executes nothing
+// new, and every charged model step keeps exactly one submission.
+func TestAgentToolCallIdentityAcrossTurns(t *testing.T) {
+	f := newBusinessFixture(t)
+	executed := 0
+	assignment := reviewNotebookWork(t, f, &executed)
+	selection := cp.ModelSelection{ChannelID: f.text.channel, ModelKey: f.text.modelKey}
+	turn := func(messageID string) businessTurn {
+		return businessTurn{Assignment: assignment, MessageID: messageID, Text: "write another", Model: selection}
+	}
+	for _, messageID := range []string{"first-message", "second-message"} {
+		f.text.script(toolCallReply("call-0", "notebook_write", `{}`), textReply("done"))
+		if _, err := f.runTurn(t, turn(messageID)); err != nil {
+			t.Fatalf("message %s failed: %v, actual writes=%d", messageID, err, executed)
+		}
+	}
+	if executed != 2 {
+		t.Fatalf("two independent turns reused provider call ID: expected 2 writes, got %d", executed)
+	}
+	calls := f.text.calls.Load()
+	for _, messageID := range []string{"first-message", "second-message"} {
+		if _, err := f.runTurn(t, turn(messageID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if executed != 2 || f.text.calls.Load() != calls {
+		t.Fatalf("replay re-executed: writes=%d model calls %d->%d", executed, calls, f.text.calls.Load())
+	}
+	if orders := platformCount(t, f.db, &model.PlatformSubmission{}, "user_id = ? AND idempotency_key LIKE ?", "user-a", "turn:"+assignment.ExecutorSessionID+":%"); orders != 4 {
+		t.Fatalf("expected one order per charged step (4), got %d", orders)
+	}
+}
+
+// B0-B: stopping the work while the model step is in flight fences the late
+// tool call both directly and when the turn resumes; the work stays cancelled.
+func TestAgentStoppedWorkRejectsLateMutation(t *testing.T) {
+	f := newBusinessFixture(t)
+	executed := 0
+	assignment := reviewNotebookWork(t, f, &executed)
+	turn := businessTurn{Assignment: assignment, MessageID: "late-message", Text: "write", Model: cp.ModelSelection{ChannelID: f.text.channel, ModelKey: f.text.modelKey}}
+	f.text.script(toolCallReply("call-0", "notebook_write", `{}`), textReply("done"))
+	if _, done, err := f.svc.advanceBusinessTurn("user-a", turn); done || err != nil {
+		t.Fatalf("initial step: done=%v err=%v", done, err)
+	}
+	work, err := f.svc.GetWork("user-a", assignment.WorkItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.StopWork("user-a", WorkControlRequest{WorkItemID: work.ID, ExpectedVersion: work.Version, Reason: "user stopped"}); err != nil {
+		t.Fatal(err)
+	}
+	f.drain(t)
+	// A late direct call carrying the old assignment is refused.
+	_, lateErr := f.svc.executeBusinessTool(context.Background(), as.ToolInvocation{
+		OwnerID: "user-a", SessionID: assignment.ExecutorSessionID, Scope: as.Scope{Application: "notebook", SpaceType: "notebook_page", SpaceID: "page-1"},
+		WorkItemID: assignment.WorkItemID, BudgetGrantID: assignment.BudgetGrantID, AssignmentID: assignment.ID, AssignmentEpoch: assignment.Epoch,
+		CallID: "late-call", Name: "notebook_write", Arguments: json.RawMessage(`{}`),
+	})
+	if !as.IsCode(lateErr, as.CodeWorkStopped) && !as.IsCode(lateErr, as.CodeStaleAssignment) {
+		t.Fatalf("stopped work accepted a late direct mutation: %v", lateErr)
+	}
+	// The resumed turn is fenced before any tool executes.
+	if _, _, err := f.svc.advanceBusinessTurn("user-a", turn); err == nil {
+		t.Fatal("resumed turn after stop was accepted")
+	}
+	if executed != 0 {
+		t.Fatalf("late mutation executed %d times", executed)
+	}
+	stopped, err := f.svc.GetWork("user-a", work.ID)
+	if err != nil || stopped.Status != ao.WorkCancelled {
+		t.Fatalf("work status: %+v %v", stopped, err)
+	}
+}
+
+// probeNotebookPage is the durable business object of the receipt probe: one
+// row per operation, so a replayed operation finds its page instead of writing
+// a second one.
+type probeNotebookPage struct {
+	ID          uint   `gorm:"primaryKey"`
+	OperationID string `gorm:"size:400;uniqueIndex"`
+	Body        string `gorm:"size:200"`
+}
+
+// durableNotebookAdapter writes its business object keyed by the operation ID,
+// which makes a replayed operation return the stored page.
+type durableNotebookAdapter struct {
+	db       *gorm.DB
+	executed *int
+}
+
+func (durableNotebookAdapter) Application() string  { return "notebook" }
+func (durableNotebookAdapter) SpaceTypes() []string { return []string{"notebook_page"} }
+func (durableNotebookAdapter) ValidateSpace(context.Context, string, as.Scope) error {
+	return nil
+}
+func (durableNotebookAdapter) Tools() []as.ToolSpec {
+	return []as.ToolSpec{{Name: "notebook_write", Description: "写一页", Parameters: json.RawMessage(`{"type":"object"}`)}}
+}
+func (a durableNotebookAdapter) Execute(_ context.Context, call as.ToolInvocation) (as.ToolResult, error) {
+	var page probeNotebookPage
+	err := a.db.First(&page, "operation_id = ?", call.OperationID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		page = probeNotebookPage{OperationID: call.OperationID, Body: "已写入"}
+		if err := a.db.Create(&page).Error; err != nil {
+			return as.ToolResult{}, err
+		}
+		*a.executed++
+	} else if err != nil {
+		return as.ToolResult{}, err
+	}
+	return as.ToolResult{Text: page.Body, Operation: call.OperationID}, nil
+}
+
+// B0-C: crashes in both receipt windows replay the operation exactly once.
+// Window one crashes between the business write and the receipt commit, so the
+// adapter's operation-keyed idempotency absorbs the replay; window two crashes
+// between the receipt commit and the history message, so the stored receipt
+// short-circuits the replay.
+func TestAgentToolReceiptCrashRecovery(t *testing.T) {
+	f := newBusinessFixture(t)
+	executed := 0
+	if err := f.db.AutoMigrate(&probeNotebookPage{}); err != nil {
+		t.Fatal(err)
+	}
+	assignment := registerNotebookWork(t, f, durableNotebookAdapter{db: f.db, executed: &executed})
+	selection := cp.ModelSelection{ChannelID: f.text.channel, ModelKey: f.text.modelKey}
+
+	// Window one: the business write commits, the receipt commit cannot.
+	turnA := businessTurn{Assignment: assignment, MessageID: "crash-a", Text: "write", Model: selection}
+	f.text.script(toolCallReply("call-0", "notebook_write", `{}`), textReply("done"))
+	if _, _, err := f.svc.advanceBusinessTurn("user-a", turnA); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Exec(`CREATE TRIGGER reject_tool_receipt_finish BEFORE UPDATE ON agent_operations WHEN NEW.status = 'succeeded' BEGIN SELECT RAISE(ABORT, 'reject receipt'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.drain(t)
+	if _, _, err := f.svc.advanceBusinessTurn("user-a", turnA); err == nil {
+		t.Fatal("receipt failure did not fail the turn")
+	}
+	if executed != 1 {
+		t.Fatalf("business write count after the first crash: %d", executed)
+	}
+	if err := f.db.Exec(`DROP TRIGGER reject_tool_receipt_finish`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runTurn(t, turnA); err != nil {
+		t.Fatal(err)
+	}
+	if executed != 1 {
+		t.Fatalf("recovery re-executed the operation %d times", executed)
+	}
+
+	// Window two: the receipt commits, its history message cannot.
+	turnB := businessTurn{Assignment: assignment, MessageID: "crash-b", Text: "write", Model: selection}
+	f.text.script(toolCallReply("call-0", "notebook_write", `{}`), textReply("done"))
+	if _, _, err := f.svc.advanceBusinessTurn("user-a", turnB); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Exec(`CREATE TRIGGER reject_tool_receipt BEFORE INSERT ON agent_session_messages WHEN NEW.message_id LIKE 'tool:%' BEGIN SELECT RAISE(ABORT, 'reject receipt'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.drain(t)
+	if _, _, err := f.svc.advanceBusinessTurn("user-a", turnB); err == nil {
+		t.Fatal("history receipt failure did not fail the turn")
+	}
+	if executed != 2 {
+		t.Fatalf("business write count after the second crash: %d", executed)
+	}
+	if err := f.db.Exec(`DROP TRIGGER reject_tool_receipt`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runTurn(t, turnB); err != nil {
+		t.Fatal(err)
+	}
+	if executed != 2 {
+		t.Fatalf("recovery re-executed the second operation %d times", executed)
+	}
+	var pages, receipts int64
+	if err := f.db.Model(&probeNotebookPage{}).Count(&pages).Error; err != nil || pages != 2 {
+		t.Fatalf("business rows = %d, err=%v", pages, err)
+	}
+	if err := f.db.Model(&model.AgentSessionMessage{}).Where("session_id = ? AND kind = ?", assignment.ExecutorSessionID, as.MessageKindToolResult).Count(&receipts).Error; err != nil || receipts != 2 {
+		t.Fatalf("tool receipts = %d, err=%v", receipts, err)
+	}
 }
 
 // A7-E: a new business registers an adapter and a definition; the supervisor

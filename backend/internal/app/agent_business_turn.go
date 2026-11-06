@@ -45,6 +45,9 @@ func (s *Service) advanceBusinessTurn(ownerID string, turn businessTurn) (busine
 	if err != nil {
 		return businessTurnResult{}, false, err
 	}
+	if err := s.fenceAgentTurn(session); err != nil {
+		return businessTurnResult{}, false, err
+	}
 	turnKey := "turn:" + session.ID + ":" + strings.TrimSpace(turn.MessageID)
 	lease, err := s.acquireAgentTurnLease(ownerID, session.ID, agentSessionID(ownerID, turnKey))
 	if err != nil {
@@ -83,7 +86,7 @@ func (r *businessTurnRun) advance() (businessTurnResult, bool, error) {
 	}
 	for step := 1; step <= businessTurnMaxSteps; step++ {
 		stepKey := r.turnKey + ":step:" + itoaStep(step)
-		finished, calls, text, err := r.modelStep(stepKey)
+		finished, calls, text, err := r.modelStep(step, stepKey)
 		if err != nil || !finished {
 			return r.result, false, err
 		}
@@ -94,7 +97,7 @@ func (r *businessTurnRun) advance() (businessTurnResult, bool, error) {
 			}
 			return r.result, true, nil
 		}
-		if err := r.runTools(stepKey, calls); err != nil {
+		if err := r.runTools(step, stepKey, calls); err != nil {
 			return r.result, false, err
 		}
 	}
@@ -103,8 +106,9 @@ func (r *businessTurnRun) advance() (businessTurnResult, bool, error) {
 
 // modelStep submits the step once and afterwards reads the task it created.
 // The step's input is frozen at its first submit: later resumes never rebuild
-// it, so they cannot submit different content under the same key.
-func (r *businessTurnRun) modelStep(stepKey string) (bool, []cp.ToolCall, string, error) {
+// it, so they cannot submit different content under the same key. The tools
+// come from the turn's frozen contract, not from the live registry.
+func (r *businessTurnRun) modelStep(step int, stepKey string) (bool, []cp.ToolCall, string, error) {
 	taskID, err := r.s.structuredStepTask(r.ownerID, agentBillingApplication(r.session.Application), stepKey)
 	if err != nil {
 		return false, nil, "", err
@@ -114,8 +118,12 @@ func (r *businessTurnRun) modelStep(stepKey string) (bool, []cp.ToolCall, string
 		if err != nil {
 			return false, nil, "", err
 		}
+		tools, err := r.s.agentTurnTools(r.ownerID, r.turnKey, r.session)
+		if err != nil {
+			return false, nil, "", err
+		}
 		req := agentStepRequest(snapshot, r.turn.Model, stepKey)
-		req.ToolChoice, req.Tools, req.Messages = cp.ToolChoiceAuto, r.s.businessToolDefinitions(r.session.Application), businessStepMessages(snapshot)
+		req.ToolChoice, req.Tools, req.Messages = cp.ToolChoiceAuto, tools, businessStepMessages(snapshot)
 		receipt, err := r.s.SubmitStructuredText(context.Background(), cp.Caller{UserID: r.ownerID}, req, r.turn.Assignment.BudgetGrantID)
 		if err != nil {
 			return false, nil, "", err
@@ -135,54 +143,43 @@ func (r *businessTurnRun) modelStep(stepKey string) (bool, []cp.ToolCall, string
 	return false, nil, "", nil
 }
 
-// runTools records the calls, executes each one whose result is not stored
-// yet, and records the result keyed by the call ID.
-func (r *businessTurnRun) runTools(stepKey string, calls []cp.ToolCall) error {
-	encoded, _ := json.Marshal(calls)
+// runTools records the calls, executes each one under its operation receipt,
+// and records the result keyed by the operation, so a provider call ID reused
+// in a later turn or step cannot alias an earlier result. The conversation
+// blocks carry the server call identity, not the provider's.
+func (r *businessTurnRun) runTools(step int, stepKey string, calls []cp.ToolCall) error {
+	serverCalls := make([]cp.ToolCall, len(calls))
+	for index, call := range calls {
+		serverCalls[index] = call
+		serverCalls[index].ID = serverAgentCallID(agentOperationKey(r.turnKey, step, call.ID))
+	}
+	encoded, _ := json.Marshal(serverCalls)
 	if err := r.append(as.HistoryMessage{ID: stepKey + ":calls", Kind: as.MessageKindToolCall, Actor: as.ActorExecutor, Role: cp.RoleAssistant, Text: string(encoded)}); err != nil {
 		return err
 	}
-	recorded := r.recordedResults()
-	for _, call := range calls {
-		if stored, ok := recorded[call.ID]; ok {
-			r.result.Calls = append(r.result.Calls, businessCallResult{Call: call, Result: stored})
-			continue
-		}
+	for index, call := range calls {
+		operationKey := agentOperationKey(r.turnKey, step, call.ID)
 		result, err := r.s.executeBusinessTool(context.Background(), as.ToolInvocation{OwnerID: r.ownerID, SessionID: r.session.ID,
 			Scope:      as.Scope{Application: r.session.Application, SpaceType: r.session.SpaceType, SpaceID: r.session.SpaceID},
-			WorkItemID: r.session.WorkItemID, BudgetGrantID: r.turn.Assignment.BudgetGrantID, CallID: call.ID, Name: call.Name, Arguments: call.Arguments})
+			WorkItemID: r.session.WorkItemID, BudgetGrantID: r.turn.Assignment.BudgetGrantID, CallID: call.ID, Name: call.Name, Arguments: call.Arguments,
+			TurnMessageID: r.turn.MessageID, Step: step, OperationID: operationKey,
+			AssignmentID: r.turn.Assignment.ID, AssignmentEpoch: r.turn.Assignment.Epoch})
 		if err != nil {
+			if !isAgentToolRefusal(err) {
+				// An infrastructure failure is not a refusal; the turn fails and
+				// the pending receipt keeps the attempt on record.
+				return err
+			}
 			// The model sees the refusal as the tool result; nothing was executed.
 			result = as.ToolResult{Text: "工具调用被拒绝：" + err.Error()}
 		}
-		body, _ := json.Marshal(map[string]any{"toolCallId": call.ID, "result": result})
-		if err := r.append(as.HistoryMessage{ID: "tool:" + call.ID, Kind: as.MessageKindToolResult, Actor: as.ActorSystem, Role: cp.RoleTool, Text: string(body)}); err != nil {
+		body, _ := json.Marshal(map[string]any{"toolCallId": serverCalls[index].ID, "result": result})
+		if err := r.append(as.HistoryMessage{ID: agentToolReceiptMessageID(operationKey), Kind: as.MessageKindToolResult, Actor: as.ActorSystem, Role: cp.RoleTool, Text: string(body)}); err != nil {
 			return err
 		}
 		r.result.Calls = append(r.result.Calls, businessCallResult{Call: call, Result: result})
 	}
 	return nil
-}
-
-func (r *businessTurnRun) recordedResults() map[string]as.ToolResult {
-	rows, err := r.s.repo.AgentSessionMessages(r.ownerID, r.session.ID)
-	out := map[string]as.ToolResult{}
-	if err != nil {
-		return out
-	}
-	for _, row := range rows {
-		if row.Kind != as.MessageKindToolResult {
-			continue
-		}
-		var body struct {
-			ToolCallID string        `json:"toolCallId"`
-			Result     as.ToolResult `json:"result"`
-		}
-		if json.Unmarshal([]byte(row.Body), &body) == nil {
-			out[body.ToolCallID] = body.Result
-		}
-	}
-	return out
 }
 
 // businessStepMessages turns the snapshot's history into structured messages,

@@ -2,14 +2,19 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	as "yingce/backend/internal/agentservice"
 	cp "yingce/backend/internal/creationplatform"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 type agentRunnerFixture struct {
@@ -356,6 +361,210 @@ func TestAgentOutboxDeliveryAndTurnQueueRollbackTogether(t *testing.T) {
 	}
 	if outbox.Status != "pending" || messages != 0 {
 		t.Fatalf("partial delivery committed: status=%s messages=%d", outbox.Status, messages)
+	}
+}
+
+// newSecondaryAgentService builds a second backend instance on the same
+// database, the way a redeployed or neighbouring instance would join it.
+func newSecondaryAgentService(t *testing.T, db *gorm.DB) *Service {
+	t.Helper()
+	return &Service{repo: repository.New(db), dataDir: t.TempDir(), activeCancels: make(map[string]context.CancelFunc), coordinator: platformTestCoordinator(t, db.Dialector.Name()), workerID: "instance-2"}
+}
+
+// B0-D: an expired lease is taken over within one instance and across
+// instances, a late writer holding the expired lease cannot commit, and the
+// turn reaches exactly one deterministic terminal state.
+func TestAgentLongTurnLeaseRecovery(t *testing.T) {
+	f := newBusinessFixture(t)
+	second := newSecondaryAgentService(t, f.db)
+	session := agentSessionCreate(t, f.svc, "user-a", as.CreateSessionRequest{DefinitionID: "drama.agent", Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, IdempotencyKey: "lease-recovery"})
+	f.text.script(textReply("恢复后的回复"))
+	if _, err := f.svc.SendSessionMessage("user-a", SendSessionMessageRequest{SessionID: session.ID, MessageID: "u-slow", Text: "慢慢想"}); err != nil {
+		t.Fatal(err)
+	}
+	// The first instance claims the turn, submits the model step and keeps the
+	// Session writer lease while the step runs.
+	if _, err := f.svc.runPendingAgentTurns(10); err != nil {
+		t.Fatal(err)
+	}
+	var turn model.AgentTurn
+	if err := f.db.First(&turn, "session_id = ?", session.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	stored, err := f.svc.agentSessionForOwner("user-a", session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleLease := agentSessionLease(*stored)
+	if turn.Status != "running" || turn.ClaimOwner != f.svc.agentRuntimeOwner() {
+		t.Fatalf("claimed turn: %+v", turn)
+	}
+	// The lease and the claim expire mid-step (crash or pause).
+	if err := f.db.Model(&model.AgentSession{}).Where("id = ?", session.ID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Model(&model.AgentTurn{}).Where("id = ?", turn.ID).Update("claim_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.drain(t)
+	// Another instance takes over the expired claim and finishes the turn.
+	for range 8 {
+		if _, err := second.runPendingAgentTurns(10); err != nil {
+			t.Fatal(err)
+		}
+		f.drain(t)
+	}
+	// A late writer holding the expired lease cannot commit anything.
+	_, lateErr := f.svc.appendAgentSessionMessages("user-a", session.ID, staleLease, stored.Revision, []as.HistoryMessage{{ID: "late-write", Kind: as.MessageKindMessage, Actor: as.ActorSystem, Role: "user", Text: "迟到的写入"}})
+	if lateErr == nil {
+		t.Fatal("late writer committed with an expired lease")
+	}
+	var finished model.AgentTurn
+	if err := f.db.First(&finished, "session_id = ?", session.ID).Error; err != nil || finished.Status != "done" {
+		t.Fatalf("turn terminal state: %+v %v", finished, err)
+	}
+	rows, err := f.svc.repo.AgentSessionMessages("user-a", session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replies := 0
+	for _, row := range rows {
+		if row.Actor == as.ActorExecutor && row.Kind == as.MessageKindMessage {
+			replies++
+		}
+	}
+	if replies != 1 {
+		t.Fatalf("replies = %d in %+v", replies, rows)
+	}
+	if orders := platformCount(t, f.db, &model.PlatformSubmission{}, "user_id = ? AND idempotency_key LIKE ?", "user-a", "turn:"+session.ID+":%"); orders != 1 {
+		t.Fatalf("expected one charged order for the step, got %d", orders)
+	}
+}
+
+// expandedNotebookAdapter is the notebook business after a deploy widened its
+// tool schema for the same definition version.
+type expandedNotebookAdapter struct{ executed *int }
+
+func (expandedNotebookAdapter) Application() string  { return "notebook" }
+func (expandedNotebookAdapter) SpaceTypes() []string { return []string{"notebook_page"} }
+func (expandedNotebookAdapter) ValidateSpace(context.Context, string, as.Scope) error {
+	return nil
+}
+func (a expandedNotebookAdapter) Tools() []as.ToolSpec {
+	return []as.ToolSpec{
+		{Name: "notebook_write", Description: "写一页", Parameters: json.RawMessage(`{"type":"object"}`)},
+		{Name: "notebook_erase", Description: "擦一页", Parameters: json.RawMessage(`{"type":"object"}`)},
+	}
+}
+func (a expandedNotebookAdapter) Execute(_ context.Context, call as.ToolInvocation) (as.ToolResult, error) {
+	switch call.Name {
+	case "notebook_write":
+		*a.executed++
+		return as.ToolResult{Text: "已写入"}, nil
+	case "notebook_erase":
+		return as.ToolResult{Text: "已擦除"}, nil
+	}
+	return as.ToolResult{}, as.NewError(as.CodeForbidden, "工具不存在")
+}
+
+func requestToolNames(t *testing.T, f *structuredFixture, index int) []string {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if index >= len(f.bodies) {
+		t.Fatalf("upstream call %d not recorded (%d total)", index, len(f.bodies))
+	}
+	raw, err := json.Marshal(f.bodies[index]["tools"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := []struct {
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	}{}
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		t.Fatalf("tools body: %v", err)
+	}
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Function.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// B0-E: a turn whose first step already ran keeps its frozen tool contract
+// when a deployed instance widens the schema; only a new turn freezes the new
+// contract.
+func TestAgentFrozenContractRecovery(t *testing.T) {
+	f := newBusinessFixture(t)
+	executed := 0
+	assignment := reviewNotebookWork(t, f, &executed)
+	selection := cp.ModelSelection{ChannelID: f.text.channel, ModelKey: f.text.modelKey}
+	turn := businessTurn{Assignment: assignment, MessageID: "frozen-message", Text: "write", Model: selection}
+	f.text.script(toolCallReply("call-0", "notebook_write", `{}`))
+	if _, done, err := f.svc.advanceBusinessTurn("user-a", turn); done || err != nil {
+		t.Fatalf("initial step: done=%v err=%v", done, err)
+	}
+	f.drain(t)
+	if names := requestToolNames(t, f.text, 0); len(names) != 1 || names[0] != "notebook_write" {
+		t.Fatalf("first step tools: %v", names)
+	}
+	// Deploy: a new instance ships a wider tool schema for the same definition.
+	upgraded := newSecondaryAgentService(t, f.db)
+	if err := upgraded.registerAgentBusiness(expandedNotebookAdapter{executed: &executed}, as.Definition{
+		ID: "notebook.agent", Version: "1", Role: as.RoleBusiness,
+		Application: "notebook", SpaceTypes: []string{"notebook_page"}, Title: "Notebook", Tools: []string{"notebook_write", "notebook_erase"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Model(&model.AgentSession{}).Where("id = ?", assignment.ExecutorSessionID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.text.script(textReply("done"))
+	f.drain(t)
+	done := false
+	for range 8 {
+		result, finished, err := upgraded.advanceBusinessTurn("user-a", turn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if finished {
+			done = true
+			if result.Text != "done" {
+				t.Fatalf("resumed turn text: %q", result.Text)
+			}
+			break
+		}
+		f.drain(t)
+	}
+	if !done {
+		t.Fatal("resumed turn did not finish")
+	}
+	if names := requestToolNames(t, f.text, 1); len(names) != 1 || names[0] != "notebook_write" {
+		t.Fatalf("resumed turn must keep the frozen contract, tools: %v", names)
+	}
+	// A new turn freezes the widened schema.
+	f.text.script(textReply("新轮次完成"))
+	fresh := businessTurn{Assignment: assignment, MessageID: "fresh-message", Text: "write", Model: selection}
+	done = false
+	for range 8 {
+		_, finished, err := upgraded.advanceBusinessTurn("user-a", fresh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if finished {
+			done = true
+			break
+		}
+		f.drain(t)
+	}
+	if !done {
+		t.Fatal("new turn did not finish")
+	}
+	if names := requestToolNames(t, f.text, 2); len(names) != 2 {
+		t.Fatalf("new turn must use the new contract, tools: %v", names)
 	}
 }
 
