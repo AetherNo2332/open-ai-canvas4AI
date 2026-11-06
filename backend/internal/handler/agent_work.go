@@ -47,19 +47,7 @@ func RegisterAgentWorkRoutes(r *gin.RouterGroup, svc *service.Service) {
 		receipt, err := svc.SendSessionMessage(caller.UserID, service.SendSessionMessageRequest{SessionID: c.Param("id"), MessageID: body.MessageID, Text: body.Text})
 		respondAgent(c, receipt, err)
 	})
-	group.GET("/works", func(c *gin.Context) {
-		caller, authenticated := agentServiceCaller(c, svc)
-		if !authenticated {
-			return
-		}
-		limit, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
-		if err != nil || limit < 0 {
-			failAgentService(c, as.NewError(as.CodeInvalidRequest, "limit 必须是非负整数"))
-			return
-		}
-		works, err := svc.ListAgentWorks(caller.UserID, limit)
-		respondAgent(c, gin.H{"works": works}, err)
-	})
+	group.GET("/works", func(c *gin.Context) { handleListAgentWorks(c, svc) })
 	group.POST("/work", func(c *gin.Context) {
 		caller, authenticated := agentServiceCaller(c, svc)
 		if !authenticated {
@@ -154,6 +142,21 @@ func respondAgent(c *gin.Context, data any, err error) {
 var workErrorStatus = map[ao.ErrorCode]int{
 	ao.CodeInvalidRequest: http.StatusBadRequest, ao.CodeNotFound: http.StatusNotFound, ao.CodeForbidden: http.StatusForbidden,
 	ao.CodeWorkStopped: http.StatusConflict, ao.CodeStaleAssignment: http.StatusConflict, ao.CodeVersionConflict: http.StatusConflict,
+}
+
+// handleListAgentWorks 是总控工作台目录的 HTTP 适配。
+func handleListAgentWorks(c *gin.Context, svc *service.Service) {
+	caller, authenticated := agentServiceCaller(c, svc)
+	if !authenticated {
+		return
+	}
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if err != nil || limit < 0 {
+		failAgentService(c, as.NewError(as.CodeInvalidRequest, "limit 必须是非负整数"))
+		return
+	}
+	works, err := svc.ListAgentWorks(caller.UserID, limit)
+	respondAgent(c, gin.H{"works": works}, err)
 }
 
 // failAgentWork maps work, session and platform contract errors to the envelope.

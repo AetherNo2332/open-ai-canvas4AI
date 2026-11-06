@@ -368,6 +368,12 @@ func (s *Service) changeApproval(ownerID, approvalID string, rule func(model.Age
 	if err != nil {
 		return ApprovalView{}, workNotFound(err)
 	}
+	if view.Status == ao.ApprovalApproved {
+		// 批准后重置挂起的轮次：运行器重放同一操作并提交任务。
+		if resumeErr := s.resumeApprovedAgentOperations(ownerID, approvalID); resumeErr != nil {
+			return view, resumeErr
+		}
+	}
 	return view, ruleErr
 }
 

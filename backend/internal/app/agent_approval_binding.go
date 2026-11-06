@@ -58,13 +58,35 @@ func (s *Service) gateAgentToolApproval(call as.ToolInvocation, quote int64, tar
 	if err := s.ConsumeApproval(call.OwnerID, view.ID, quote, targetVersion, identity); err != nil {
 		if ao.IsCode(err, ao.CodeForbidden) || ao.IsCode(err, ao.CodeVersionConflict) {
 			// Not approved yet, or bound to a moved target: the model sees the
-			// refusal and the operation stays pending for a later retry.
+			// refusal; the operation is parked until the approval decision.
 			if view.Status == ao.ApprovalRejected {
 				return as.NewError(as.CodeForbidden, "该操作已被用户拒绝，请调整方案")
+			}
+			if err := s.repo.MarkAgentOperationAwaitingApproval(call.OwnerID, call.OperationID, view.ID); err != nil {
+				return err
 			}
 			return as.NewError(as.CodeForbidden, "该操作报价达到审批阈值，等待用户批准后继续")
 		}
 		return err
+	}
+	return nil
+}
+
+// resumeApprovedAgentOperations resets the turns of operations that were
+// parked behind an approval the user has now granted, so the background
+// runner replays them: the replayed step submits the parked operation once.
+func (s *Service) resumeApprovedAgentOperations(ownerID, approvalID string) error {
+	operations, err := s.repo.AgentOperationsAwaitingApproval(ownerID, approvalID)
+	if err != nil {
+		return err
+	}
+	for _, operation := range operations {
+		if err := s.repo.ResetAgentTurnForReplay(ownerID, operation.SessionID, operation.TurnMessageID); err != nil {
+			return err
+		}
+	}
+	if len(operations) > 0 {
+		s.wakeAgentRunner()
 	}
 	return nil
 }

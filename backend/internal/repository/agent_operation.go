@@ -36,13 +36,17 @@ func (r *Repository) InsertAgentOperation(row *model.AgentOperation) (bool, erro
 	return created.RowsAffected == 1, nil
 }
 
-// FinishAgentOperation records the outcome of the owner's pending
-// attempt. A succeeded receipt is never overwritten, so a racing loser cannot
-// replace the winner's result.
+// FinishAgentOperation records the outcome of the owner's pending attempt.
+// A succeeded receipt is never overwritten, so a racing loser cannot replace
+// the winner's result. A succeeded outcome may transition a row parked behind
+// an approval; only refusals leave the parked row alone.
 func (r *Repository) FinishAgentOperation(ownerID, operationKey, status, resultJSON, operationRef string, now time.Time) error {
-	updated := r.db.Model(&model.AgentOperation{}).
-		Where("owner_id = ? AND operation_key = ? AND status <> ?", ownerID, operationKey, "succeeded").
-		Updates(map[string]any{"status": status, "result_json": resultJSON, "operation_ref": operationRef, "updated_at": now})
+	query := r.db.Model(&model.AgentOperation{}).
+		Where("owner_id = ? AND operation_key = ? AND status <> ?", ownerID, operationKey, "succeeded")
+	if status != "succeeded" {
+		query = query.Where("status <> ?", "awaiting_approval")
+	}
+	updated := query.Updates(map[string]any{"status": status, "result_json": resultJSON, "operation_ref": operationRef, "updated_at": now})
 	if updated.Error != nil {
 		return updated.Error
 	}
@@ -155,4 +159,27 @@ func (r *Repository) OwnersWithSubmittedTasks(limit int) ([]string, error) {
 	owners := []string{}
 	err := r.db.Model(&model.AgentOperation{}).Where("operation_ref LIKE ?", "task:%").Distinct("owner_id").Limit(limit).Pluck("owner_id", &owners).Error
 	return owners, err
+}
+
+// MarkAgentOperationAwaitingApproval parks one operation behind an approval.
+func (r *Repository) MarkAgentOperationAwaitingApproval(ownerID, operationKey, approvalID string) error {
+	return r.db.Model(&model.AgentOperation{}).
+		Where("owner_id = ? AND operation_key = ? AND status <> ?", ownerID, operationKey, "succeeded").
+		Updates(map[string]any{"status": "awaiting_approval", "approval_id": approvalID, "updated_at": time.Now()}).Error
+}
+
+// AgentOperationsAwaitingApproval lists the operations parked behind one
+// approval.
+func (r *Repository) AgentOperationsAwaitingApproval(ownerID, approvalID string) ([]model.AgentOperation, error) {
+	rows := []model.AgentOperation{}
+	err := r.db.Where("owner_id = ? AND approval_id = ? AND status = ?", ownerID, approvalID, "awaiting_approval").Find(&rows).Error
+	return rows, err
+}
+
+// ResetAgentTurnForReplay re-queues a finished turn so the runner replays it
+// after an approval: the replayed step re-submits the parked operation.
+func (r *Repository) ResetAgentTurnForReplay(ownerID, sessionID, messageID string) error {
+	return r.db.Model(&model.AgentTurn{}).
+		Where("owner_id = ? AND session_id = ? AND message_id = ? AND status IN ?", ownerID, sessionID, messageID, []string{"done", "failed"}).
+		Updates(map[string]any{"status": "pending", "next_at": nil, "error": "", "attempts": 0, "claim_owner": "", "claim_expires_at": nil, "updated_at": time.Now()}).Error
 }

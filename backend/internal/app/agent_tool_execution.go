@@ -21,10 +21,11 @@ import (
 // pending row marks an attempt whose outcome is unknown, and refused or
 // uncertain rows are audit records that a retry re-evaluates.
 const (
-	agentOperationPending   = "pending"
-	agentOperationSucceeded = "succeeded"
-	agentOperationRefused   = "refused"
-	agentOperationUncertain = "uncertain"
+	agentOperationPending          = "pending"
+	agentOperationSucceeded        = "succeeded"
+	agentOperationRefused          = "refused"
+	agentOperationUncertain        = "uncertain"
+	agentOperationAwaitingApproval = "awaiting_approval"
 )
 
 // agentOperationKey is the durable identity of one tool execution: the turn,
@@ -56,9 +57,11 @@ func agentArgumentsHash(arguments json.RawMessage) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// fenceAgentTurn refuses to advance a turn whose work tree has stopped.
+// fenceAgentTurn refuses to advance a turn whose work tree the user stopped.
 // StopWork cancels the queued turns; in-flight ones fail here, and the model
-// step already paid for stays an audit fact.
+// step already paid for stays an audit fact. A work that completed or failed
+// through its own business facts lets the in-flight turn finish its reply;
+// its tool calls are still refused by the execution fence.
 func (s *Service) fenceAgentTurn(session *model.AgentSession) error {
 	if session.WorkItemID == "" {
 		return nil
@@ -67,7 +70,7 @@ func (s *Service) fenceAgentTurn(session *model.AgentSession) error {
 	if err != nil {
 		return workNotFound(err)
 	}
-	if ao.WorkTerminal(work.Status) {
+	if work.Status == ao.WorkCancelled {
 		return as.NewError(as.CodeWorkStopped, "工作已停止，轮次不再推进")
 	}
 	return nil

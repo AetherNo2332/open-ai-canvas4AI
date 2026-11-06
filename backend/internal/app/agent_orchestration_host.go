@@ -130,6 +130,10 @@ func (s *Service) StartWork(ownerID string, req StartWorkRequest) (WorkView, err
 	if key == "" || strings.TrimSpace(req.Goal) == "" || req.BudgetMicrocredits <= 0 {
 		return WorkView{}, ao.NewError(ao.CodeInvalidRequest, "工作需要目标、预算与幂等键")
 	}
+	// 同幂等键的重放先于授权校验返回原工作：重放请求可以省略授权字段。
+	if existing, err := s.repo.AgentWorkByKey(ownerID, "root:"+key); err == nil {
+		return workView(*existing), nil
+	}
 	scopes := make([]ao.ScopeGrant, 0, len(req.AuthorizedScopes))
 	for _, scope := range req.AuthorizedScopes {
 		normalized := scope.Normalized()
@@ -142,9 +146,6 @@ func (s *Service) StartWork(ownerID string, req StartWorkRequest) (WorkView, err
 	authJSON, err := ao.EncodeAuthorization(auth)
 	if err != nil {
 		return WorkView{}, err
-	}
-	if existing, err := s.repo.AgentWorkByKey(ownerID, "root:"+key); err == nil {
-		return workView(*existing), nil
 	}
 	workID, grantID := newID(), newID()
 	def, _ := s.agentRegistry().Definition(supervisorDefinitionID)
@@ -229,10 +230,11 @@ func (s *Service) ListAgentWorks(ownerID string, limit int) ([]WorkDirectoryEntr
 		}
 		for _, child := range children {
 			item := WorkChildEntry{Work: workView(child)}
-			if child.ActiveAssignmentID != "" {
-				if assignment, err := s.repo.AgentAssignmentForOwner(ownerID, child.ActiveAssignmentID); err == nil {
-					item.ExecutorSessionID = assignment.ExecutorSessionID
-				}
+			// 活跃派工优先；已结束的子工作回退到最近一次派工，执行会话仍可直达。
+			if assignment, err := s.repo.AgentAssignmentForOwner(ownerID, child.ActiveAssignmentID); err == nil && child.ActiveAssignmentID != "" {
+				item.ExecutorSessionID = assignment.ExecutorSessionID
+			} else if latest, latestErr := s.repo.AgentLatestAssignmentForWork(ownerID, child.ID); latestErr == nil {
+				item.ExecutorSessionID = latest.ExecutorSessionID
 			}
 			entry.Children = append(entry.Children, item)
 		}
@@ -250,10 +252,12 @@ func (s *Service) GetWork(ownerID, workID string) (WorkView, error) {
 }
 
 func (s *Service) ListReports(ownerID, workID string) ([]ReportView, error) {
-	if _, err := s.GetWork(ownerID, workID); err != nil {
+	work, err := s.GetWork(ownerID, workID)
+	if err != nil {
 		return nil, err
 	}
-	rows, err := s.repo.AgentWorkReports(ownerID, workID)
+	// 根工作的报告目录聚合整棵子树：总控与业务页面读同一份事实。
+	rows, err := s.repo.AgentWorkReportsForTree(ownerID, work.ID, work.ParentWorkID == "")
 	if err != nil {
 		return nil, err
 	}

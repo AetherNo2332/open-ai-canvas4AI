@@ -241,7 +241,8 @@ func (s *Service) businessToolDefinitions(application string) []cp.ToolDefinitio
 		return nil
 	}
 	tools := []cp.ToolDefinition{}
-	for _, spec := range adapter.Tools() {
+	specs := append(append([]as.ToolSpec{}, adapter.Tools()...), executorWorkReportSpec())
+	for _, spec := range specs {
 		tools = append(tools, cp.ToolDefinition{Name: spec.Name, Description: spec.Description, Parameters: spec.Parameters})
 	}
 	return tools

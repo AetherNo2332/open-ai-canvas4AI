@@ -54,6 +54,10 @@ func (s *Service) executeBusinessTool(ctx context.Context, call as.ToolInvocatio
 	if err != nil {
 		return as.ToolResult{}, err
 	}
+	if call.Name == "report_work" {
+		// 共享执行器工具：报告只读工作与派工状态，不进入业务适配器。
+		return s.executeWorkReportTool(call)
+	}
 	adapter, ok := s.agentAdapters().Adapter(scope.Application)
 	if !ok {
 		return as.ToolResult{}, as.NewError(as.CodeForbidden, "该业务没有可用工具")

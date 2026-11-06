@@ -362,6 +362,9 @@ func (r *Repository) DeliverAgentOutbox(item model.AgentOutbox, message model.Ag
 			return err
 		}
 		turn.MessageSeq = stored.Sequence
+		// 认领顺序按 created_at 排：沿用 outbox 的写入时间，保证同一轮投递里
+		// 的多个执行轮次仍按事件顺序被推进。
+		turn.CreatedAt = item.CreatedAt
 		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(turn).Error
 	})
 }
@@ -407,4 +410,30 @@ func (r *Repository) InAgentWorkChildren(ownerID, workID string) ([]model.AgentW
 		return nil
 	})
 	return children, err
+}
+
+// AgentLatestAssignmentForWork returns the newest assignment of one work item,
+// including ended ones; the work directory uses it to keep completed children
+// reachable through their executor Session.
+func (r *Repository) AgentLatestAssignmentForWork(ownerID, workID string) (*model.AgentAssignment, error) {
+	row := &model.AgentAssignment{}
+	err := r.db.Where("owner_id = ? AND work_item_id = ?", ownerID, workID).Order("epoch DESC").First(row).Error
+	if err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+// AgentWorkReportsForTree lists the reports of one work item, or of the whole
+// subtree when the caller passes root=true.
+func (r *Repository) AgentWorkReportsForTree(ownerID, workID string, root bool) ([]model.AgentWorkReport, error) {
+	rows := []model.AgentWorkReport{}
+	var err error
+	if !root {
+		err = r.db.Where("owner_id = ? AND work_item_id = ?", ownerID, workID).Order("created_at ASC").Find(&rows).Error
+		return rows, err
+	}
+	err = r.db.Where("owner_id = ? AND work_item_id IN (SELECT id FROM agent_work_items WHERE owner_id = ? AND (id = ? OR root_work_id = (SELECT root_work_id FROM agent_work_items WHERE owner_id = ? AND id = ?)))", ownerID, ownerID, workID, ownerID, workID).
+		Order("created_at ASC").Find(&rows).Error
+	return rows, err
 }

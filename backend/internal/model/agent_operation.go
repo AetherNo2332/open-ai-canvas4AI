@@ -23,6 +23,8 @@ type AgentOperation struct {
 	Name            string `gorm:"not null;size:120"`
 	ArgumentsHash   string `gorm:"not null;size:64"`
 	Status          string `gorm:"not null;size:16;index"`
+	// ApprovalID 记录等待审批的挂起操作；批准后轮次被重置重放，同一操作键提交任务。
+	ApprovalID      string `gorm:"size:36;default:'';index"`
 	ResultJSON      string `gorm:"type:text"`
 	OperationRef    string `gorm:"size:160;default:''"`
 	CreatedAt       time.Time

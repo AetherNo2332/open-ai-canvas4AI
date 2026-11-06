@@ -357,11 +357,37 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		_, terminalErr := terminal.handleResultPersistenceFailure(task, fmt.Errorf("序列化画布操作失败：%w", err))
 		return terminalErr
 	}
-	if err := s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, len(canvasOps) > 0); err != nil {
+	return s.finishClaimedTaskResult(task, terminal, resultJSON, opsJSON, len(canvasOps) > 0)
+}
+
+// finishClaimedTaskResult 落任务结果并收尾成功；SQLite 瞬时锁在保存内退避。
+func (s *Service) finishClaimedTaskResult(task *model.Task, terminal *taskTerminalCoordinator, resultJSON []byte, opsJSON []byte, hasCanvasOps bool) error {
+	if err := s.saveTaskCompletionWithLockRetry(task, resultJSON, opsJSON, hasCanvasOps); err != nil {
 		_, terminalErr := terminal.handleResultPersistenceFailure(task, err)
 		return terminalErr
 	}
 	return terminal.handleSuccess(task)
+}
+
+// saveTaskCompletionWithLockRetry 先按 SQLite 瞬时写锁退避重试结果保存，
+// 重试耗尽才返回错误交由保存失败收尾。
+func (s *Service) saveTaskCompletionWithLockRetry(task *model.Task, resultJSON []byte, opsJSON []byte, hasCanvasOps bool) error {
+	for attempt := 0; ; attempt++ {
+		err := s.saveTaskCompletionWithinStorageQuota(task, resultJSON, opsJSON, hasCanvasOps)
+		if err == nil || !isSQLiteBusyError(err) || attempt >= 10 {
+			return err
+		}
+		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
+	}
+}
+
+// isSQLiteBusyError 识别 SQLite 的瞬时写锁错误（database is locked / busy）。
+func isSQLiteBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "database is locked") || strings.Contains(message, "database table is locked")
 }
 
 func taskUsesUpstreamReportedProgress(taskType string) bool {
