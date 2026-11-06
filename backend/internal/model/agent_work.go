@@ -91,3 +91,23 @@ type AgentOutbox struct {
 	CreatedAt       time.Time
 	DeliveredAt     *time.Time
 }
+
+// AgentApproval is one approval request. The same ID is shown in the
+// supervisor and business views; it binds the work authorization version,
+// the quote and the target object version, and can be consumed once.
+type AgentApproval struct {
+	ID                   string `gorm:"primaryKey;size:36"`
+	OwnerID              string `gorm:"not null;size:36;uniqueIndex:idx_agent_approval_call,priority:1;index:idx_agent_approval_root,priority:1"`
+	WorkItemID           string `gorm:"not null;size:36;index"`
+	RootWorkID           string `gorm:"not null;size:36;index:idx_agent_approval_root,priority:2"`
+	SessionID            string `gorm:"not null;size:80;uniqueIndex:idx_agent_approval_call,priority:2"`
+	CallID               string `gorm:"not null;size:160;uniqueIndex:idx_agent_approval_call,priority:3"`
+	Summary              string `gorm:"size:500"`
+	QuoteMicrocredits    int64  `gorm:"not null"`
+	TargetVersion        string `gorm:"not null;size:160;default:''"`
+	AuthorizationVersion int64  `gorm:"not null"`
+	Status               string `gorm:"not null;size:16"`
+	DecidedAt            *time.Time
+	ConsumedAt           *time.Time
+	CreatedAt            time.Time
+}

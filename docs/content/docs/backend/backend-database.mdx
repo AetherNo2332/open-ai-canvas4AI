@@ -551,4 +551,8 @@ Schema 89 `agent_service_work` 新增总控工作与派工的五张表。工作�
 - `agent_outboxes`：与状态变化同事务写入的待投递记录（`assignment_started`、`report`），至少一次投递，接收方按 `id` 去重。停止工作时同事务取消待投递记录。
 - 写入顺序：同一棵工作树的写入先锁根工作行，再锁预算根授权；派工在同一事务里建子工作、执行会话、子预算、首个派工与执行方投递记录。停止工作会把整棵子树标为 cancelled、结束派工、取消投递并关闭各自预算。
 - SQLite → PostgreSQL 迁移工具已包含五张表。回退旧代码时这些表无人读取，可保留；删除前须先备份。
+
+Schema 90 `agent_service_approvals` 新增 `agent_approvals`：`id`、`owner_id`、`work_item_id`、`root_work_id`、`session_id`、`call_id`、`summary`、`quote_microcredits`、`target_version`、`authorization_version`（申请时的工作版本）、`status`（pending/approved/rejected/consumed/expired）、`decided_at`、`consumed_at`。`(owner_id, session_id, call_id)` 唯一，同一工具调用重复申请返回同一审批；总控与业务视图读取同一行。决定只能做一次（同决定重复为无操作），执行只能消耗一次；报价、目标对象版本或工作版本变化后审批转为 expired。
+
+投递：`agent_outboxes` 由投递环节按时间顺序写入目标会话的 `agent_session_messages`，消息 ID 为 `outbox:<投递 ID>`，重复投递不会写第二条。用户直聊的补充以用户身份写入执行会话；派工、报告与“用户已补充”通知以 system 身份写入，只陈述事实，不构成授权。
 - SQLite → PostgreSQL 迁移工具已包含两张表。回退旧代码时两张表无人读取，可保留；删除前须先备份。

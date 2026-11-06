@@ -183,13 +183,15 @@
 
 **调整：** `model/agent_message_queue.go`、`repository/agent_message_queue.go`、`app/agent_message_queue.go`、`agent_message_dispatch.go`、`handler/agent_message_queue.go`；对接 A5 的 WorkInput 与授权版本。
 
-- [ ] A6-A：business Session 可直接接收用户消息；temporary 子代理仍保留原限制，不能简单移除 SQL 排除条件。
-- [ ] A6-B：用户消息与总控输入并发到达，经一个队列、一个活跃执行者处理；源消息可追踪，重试不重新建工作。
-- [ ] A6-C：用户在原工作补充要求，工作版本更新且总控收到一次变更通知；越界/增额需新授权，前端不能伪造 actorKind。
-- [ ] A6-D：用户停止或拒绝审批后，总控旧指令、消息重放、恢复调度均不能重新执行；旧授权版本拒绝。
-- [ ] A6-E：审批在总控与业务界面指向同一 ID；重复批准不重复收费，目标/报价/权限改变后旧审批失效。
+- [x] A6-A：business Session 可直接接收用户消息；temporary 子代理仍保留原限制，不能简单移除 SQL 排除条件。
+- [x] A6-B：用户消息与总控输入并发到达，经一个队列、一个活跃执行者处理；源消息可追踪，重试不重新建工作。
+- [x] A6-C：用户在原工作补充要求，工作版本更新且总控收到一次变更通知；越界/增额需新授权，前端不能伪造 actorKind。
+- [x] A6-D：用户停止或拒绝审批后，总控旧指令、消息重放、恢复调度均不能重新执行；旧授权版本拒绝。
+- [x] A6-E：审批在总控与业务界面指向同一 ID；重复批准不重复收费，目标/报价/权限改变后旧审批失效。
 
 **用例：** `TestAgentBusinessSessionDirectChat`、`TestAgentUserAndSupervisorInputOrdering`、`TestAgentUserStopFencesQueuedDelegation`、`TestAgentApprovalCrossViewIdempotency`。
+
+**A6 证据：** 上述 4 个用例与 `TestAgentOutboxDeliversOnceToTargetSession` 在 SQLite 与 PostgreSQL 17 下通过（10 路用户与 10 路总控并发输入得到 20 个不同工作版本；10 路并发批准、5 次执行只消耗一次）；领域规则 `agentorchestration/approval_test.go`。变异核对：去掉输入的工作版本条件更新后出现同版本输入、去掉“已消耗”检查后审批被执行 5 次，对应用例失败。按 R-A0-1，画布消息队列（`agent_message_queue*`）未改：新输入入口只服务 Agent 服务会话，临时子代理的直聊排除条件保留并有回归。
 
 ### A7：短剧与电商业务适配器
 

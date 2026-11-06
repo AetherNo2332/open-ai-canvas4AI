@@ -182,3 +182,103 @@ func (r *Repository) AgentAssignmentForOwner(ownerID, id string) (*model.AgentAs
 func (r *Repository) AgentWorkByKey(ownerID, key string) (*model.AgentWorkItem, error) {
 	return (&WorkTx{db: r.db}).WorkByKey(ownerID, key)
 }
+
+// InsertApproval stores an approval once per (owner, Session, call).
+func (t *WorkTx) InsertApproval(approval *model.AgentApproval) (*model.AgentApproval, error) {
+	created := t.db.Clauses(clause.OnConflict{DoNothing: true}).Create(approval)
+	if created.Error != nil {
+		return nil, created.Error
+	}
+	if created.RowsAffected == 1 {
+		return approval, nil
+	}
+	var stored model.AgentApproval
+	err := t.db.First(&stored, "owner_id = ? AND session_id = ? AND call_id = ?", approval.OwnerID, approval.SessionID, approval.CallID).Error
+	return &stored, err
+}
+
+func (t *WorkTx) Approval(ownerID, id string) (*model.AgentApproval, error) {
+	var approval model.AgentApproval
+	if err := t.db.First(&approval, "id = ? AND owner_id = ?", id, ownerID).Error; err != nil {
+		return nil, err
+	}
+	return &approval, nil
+}
+
+// SetApprovalStatus moves an approval from one status to another; a lost
+// race returns ErrAgentWorkChanged.
+func (t *WorkTx) SetApprovalStatus(ownerID, id, from, to string, now time.Time) error {
+	fields := map[string]any{"status": to}
+	switch to {
+	case "approved", "rejected":
+		fields["decided_at"] = now
+	case "consumed":
+		fields["consumed_at"] = now
+	}
+	updated := t.db.Model(&model.AgentApproval{}).Where("id = ? AND owner_id = ? AND status = ?", id, ownerID, from).Updates(fields)
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return ErrAgentWorkChanged
+	}
+	return nil
+}
+
+// AgentApprovalForOwner reads one approval outside a transaction.
+func (r *Repository) AgentApprovalForOwner(ownerID, id string) (*model.AgentApproval, error) {
+	return (&WorkTx{db: r.db}).Approval(ownerID, id)
+}
+
+// AgentApprovalsForWork lists approvals of a work item or of a whole tree
+// when workID is a root.
+func (r *Repository) AgentApprovalsForWork(ownerID, workID string, root bool) ([]model.AgentApproval, error) {
+	rows := []model.AgentApproval{}
+	query := r.db.Where("owner_id = ?", ownerID)
+	if root {
+		query = query.Where("root_work_id = ?", workID)
+	} else {
+		query = query.Where("work_item_id = ?", workID)
+	}
+	err := query.Order("created_at ASC, id ASC").Find(&rows).Error
+	return rows, err
+}
+
+// DeliverAgentOutbox appends one pending item to its target Session's history
+// and marks it delivered, in one transaction. The message ID is the outbox ID,
+// so a redelivered item is a no-op. The Session revision advances like any
+// other append; no writer lease is needed because the inbox is the queue.
+func (r *Repository) DeliverAgentOutbox(item model.AgentOutbox, message model.AgentSessionMessage, now time.Time) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		marked := tx.Model(&model.AgentOutbox{}).Where("id = ? AND owner_id = ? AND status = ?", item.ID, item.OwnerID, "pending").Updates(map[string]any{"status": "delivered", "delivered_at": now})
+		if marked.Error != nil || marked.RowsAffected != 1 {
+			return marked.Error
+		}
+		var exists int64
+		if err := tx.Model(&model.AgentSessionMessage{}).Where("owner_id = ? AND session_id = ? AND message_id = ?", item.OwnerID, item.TargetSessionID, message.MessageID).Count(&exists).Error; err != nil || exists > 0 {
+			return err
+		}
+		bumped := tx.Model(&model.AgentSession{}).Where("id = ? AND owner_id = ?", item.TargetSessionID, item.OwnerID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": now})
+		if bumped.Error != nil {
+			return bumped.Error
+		}
+		if bumped.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		var last int64
+		if err := tx.Model(&model.AgentSessionMessage{}).Where("session_id = ?", item.TargetSessionID).Select("COALESCE(MAX(sequence), 0)").Scan(&last).Error; err != nil {
+			return err
+		}
+		message.OwnerID, message.SessionID, message.Sequence, message.CreatedAt = item.OwnerID, item.TargetSessionID, last+1, now
+		return tx.Create(&message).Error
+	})
+}
+
+// AgentWorkInputByID reads one input for delivery.
+func (r *Repository) AgentWorkInputByID(ownerID, id string) (*model.AgentWorkInput, error) {
+	var input model.AgentWorkInput
+	if err := r.db.First(&input, "id = ? AND owner_id = ?", id, ownerID).Error; err != nil {
+		return nil, err
+	}
+	return &input, nil
+}

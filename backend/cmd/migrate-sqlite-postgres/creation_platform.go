@@ -24,5 +24,6 @@ func agentServiceTableMigrations() []tableMigration {
 		migrateTable[model.AgentWorkReport]("agent_work_reports"),
 		migrateTable[model.AgentWorkInput]("agent_work_inputs"),
 		migrateTable[model.AgentOutbox]("agent_outboxes"),
+		migrateTable[model.AgentApproval]("agent_approvals"),
 	}
 }
