@@ -47,6 +47,19 @@ func RegisterAgentWorkRoutes(r *gin.RouterGroup, svc *service.Service) {
 		receipt, err := svc.SendSessionMessage(caller.UserID, service.SendSessionMessageRequest{SessionID: c.Param("id"), MessageID: body.MessageID, Text: body.Text})
 		respondAgent(c, receipt, err)
 	})
+	group.GET("/works", func(c *gin.Context) {
+		caller, authenticated := agentServiceCaller(c, svc)
+		if !authenticated {
+			return
+		}
+		limit, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
+		if err != nil || limit < 0 {
+			failAgentService(c, as.NewError(as.CodeInvalidRequest, "limit 必须是非负整数"))
+			return
+		}
+		works, err := svc.ListAgentWorks(caller.UserID, limit)
+		respondAgent(c, gin.H{"works": works}, err)
+	})
 	group.POST("/work", func(c *gin.Context) {
 		caller, authenticated := agentServiceCaller(c, svc)
 		if !authenticated {

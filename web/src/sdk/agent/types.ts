@@ -50,6 +50,7 @@ export type WorkView = {
     goal: string;
     status: "pending" | "running" | "waiting_user" | "paused" | "completed" | "failed" | "cancelled";
     version: number;
+    authorizationVersion: number;
     supervisorSessionId?: string;
     scope: Scope;
     budgetGrantId: string;
@@ -58,6 +59,13 @@ export type WorkView = {
 };
 
 export type ReportView = { reportId: string; assignmentId: string; status: string; summary: string; applied: boolean; createdAt: string };
+
+/** 工作目录：根工作与其直接子工作；子工作带执行会话，供统一 UI 直达原会话。 */
+export type WorkChildEntry = { work: WorkView; executorSessionId?: string };
+
+export type WorkDirectoryEntry = { work: WorkView; children: WorkChildEntry[] };
+
+export type WorkDirectoryPage = { works: WorkDirectoryEntry[] };
 
 /** 费用视图：预算、实收、在途、待核对与退回分开显示，待核对不算作 0。 */
 export type BudgetView = { limit: number; available: number; charged: number; inFlight: number; pendingReview: number; refunded: number; status: "open" | "closed" };

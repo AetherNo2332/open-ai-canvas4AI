@@ -193,6 +193,54 @@ func (s *Service) StartWork(ownerID string, req StartWorkRequest) (WorkView, err
 	return workView(*work), nil
 }
 
+// WorkChildEntry is one delegated child with its live executor Session.
+type WorkChildEntry struct {
+	Work              WorkView `json:"work"`
+	ExecutorSessionID string   `json:"executorSessionId,omitempty"`
+}
+
+// WorkDirectoryEntry is one root work and its direct children: the supervisor
+// view and the unified UI read the tree from here.
+type WorkDirectoryEntry struct {
+	Work     WorkView         `json:"work"`
+	Children []WorkChildEntry `json:"children"`
+}
+
+// ListAgentWorks returns the owner's root works with their children, newest
+// first. Executor sessions come from the live assignment, so the UI opens the
+// very Session that executes the work.
+func (s *Service) ListAgentWorks(ownerID string, limit int) ([]WorkDirectoryEntry, error) {
+	if strings.TrimSpace(ownerID) == "" {
+		return nil, ao.NewError(ao.CodeForbidden, "请先登录")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	roots, err := s.repo.AgentRootWorks(ownerID, limit)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]WorkDirectoryEntry, 0, len(roots))
+	for _, root := range roots {
+		entry := WorkDirectoryEntry{Work: workView(root), Children: []WorkChildEntry{}}
+		children, err := s.repo.InAgentWorkChildren(ownerID, root.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, child := range children {
+			item := WorkChildEntry{Work: workView(child)}
+			if child.ActiveAssignmentID != "" {
+				if assignment, err := s.repo.AgentAssignmentForOwner(ownerID, child.ActiveAssignmentID); err == nil {
+					item.ExecutorSessionID = assignment.ExecutorSessionID
+				}
+			}
+			entry.Children = append(entry.Children, item)
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
 func (s *Service) GetWork(ownerID, workID string) (WorkView, error) {
 	work, err := s.repo.AgentWorkForOwner(ownerID, strings.TrimSpace(workID))
 	if err != nil {

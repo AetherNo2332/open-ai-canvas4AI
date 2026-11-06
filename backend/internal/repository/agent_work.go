@@ -383,3 +383,28 @@ func (r *Repository) AgentSessionMessageByKey(ownerID, sessionID, messageID stri
 	}
 	return &message, nil
 }
+
+// AgentRootWorks lists the owner's root works, newest first.
+func (r *Repository) AgentRootWorks(ownerID string, limit int) ([]model.AgentWorkItem, error) {
+	rows := []model.AgentWorkItem{}
+	err := r.db.Where("owner_id = ? AND parent_work_id = ?", ownerID, "").Order("created_at DESC, id DESC").Limit(limit).Find(&rows).Error
+	return rows, err
+}
+
+// InAgentWorkChildren reads the direct children of one work item.
+func (r *Repository) InAgentWorkChildren(ownerID, workID string) ([]model.AgentWorkItem, error) {
+	children := []model.AgentWorkItem{}
+	err := r.InAgentWork(ownerID, "", func(tx *WorkTx) error {
+		rows, err := tx.Descendants(ownerID, workID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.ParentWorkID == workID {
+				children = append(children, row)
+			}
+		}
+		return nil
+	})
+	return children, err
+}

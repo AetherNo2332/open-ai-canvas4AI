@@ -3229,6 +3229,23 @@ paths:
           $ref: "#/components/responses/AgentServiceError"
         "409":
           $ref: "#/components/responses/AgentServiceError"
+  /agent/v2/works:
+    get:
+      tags: [agent-service]
+      summary: 列出当前用户的根工作树（总控工作台目录）
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: data.works 为根工作与其直接子工作，子工作带执行会话 ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
   /agent/v2/work:
     post:
       tags: [agent-service]

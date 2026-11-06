@@ -3,7 +3,7 @@
  * 不读 window、store 或配置；业务页面不在这里执行工具或拼装上下文。
  */
 import type { Transport, TransportRequest } from "../creation-platform/transport";
-import type { AgentError, AgentErrorCode, ApprovalView, BudgetView, DefinitionView, MessagePage, MessageReceipt, ReportView, Scope, SessionPage, SessionView, WorkView } from "./types";
+import type { AgentError, AgentErrorCode, ApprovalView, BudgetView, DefinitionView, MessagePage, MessageReceipt, ReportView, Scope, SessionPage, SessionView, WorkDirectoryPage, WorkView } from "./types";
 
 const AGENT_ERROR_CODES: readonly AgentErrorCode[] = [
     "invalid_request",
@@ -90,6 +90,7 @@ export function createAgentClient(options: AgentClientOptions) {
         sendMessage: (sessionId: string, message: { text: string; messageId?: string }, signal?: AbortSignal) =>
             call<MessageReceipt>({ method: "POST", path: `/agent/v2/sessions/${id(sessionId)}/messages`, body: { messageId: message.messageId || (options.newMessageId ?? defaultId)(), text: message.text }, signal }),
 
+        works: (limit?: number, signal?: AbortSignal) => call<WorkDirectoryPage>({ method: "GET", path: `/agent/v2/works?limit=${limit ?? 20}`, signal }),
         work: (workId: string, signal?: AbortSignal) => call<WorkView>({ method: "GET", path: `/agent/v2/work/${id(workId)}`, signal }),
 
         reports: async (workId: string, signal?: AbortSignal) => (await call<{ reports: ReportView[] }>({ method: "GET", path: `/agent/v2/work/${id(workId)}/reports`, signal })).reports,

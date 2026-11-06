@@ -24,19 +24,23 @@ export type AgentConversationPanelProps = {
     title: string;
     definitionId: string;
     scope: Scope;
+    /** 指定会话：统一 UI 从工作卡直达原执行会话时使用，不再按空间取默认会话。 */
+    sessionId?: string;
+    /** 测试注入的传输；运行时使用共享的 web 传输。 */
+    transport?: typeof webTransport;
 };
 
 /**
  * 共用会话面板：打开时在当前业务空间取（或创建）一个会话并显示消息。只负责呈现与调用 SDK 控制器；
  * 工具执行、预算与上下文都在服务端。关闭面板只结束本地订阅，不取消服务端工作。
  */
-export function AgentConversationPanel({ open, onClose, title, definitionId, scope }: AgentConversationPanelProps) {
+export function AgentConversationPanel({ open, onClose, title, definitionId, scope, sessionId, transport: transportProp }: AgentConversationPanelProps) {
     const { message } = App.useApp();
     const userId = useUserStore((state) => state.user?.id ?? "");
     const [, rerender] = useReducer((n: number) => n + 1, 0);
     const [session, setSession] = useState<SessionView>();
     const [sending, setSending] = useState(false);
-    const client = useMemo(() => createAgentClient({ transport: webTransport }), []);
+    const client = useMemo(() => createAgentClient({ transport: transportProp ?? webTransport }), [transportProp]);
     const controller = useMemo(() => createSessionController({ client, userId, storage: browserStorage, onChange: rerender }), [client, userId]);
     const [draft, setDraft] = useState("");
     const { application, spaceType, spaceId } = scope;
@@ -47,9 +51,14 @@ export function AgentConversationPanel({ open, onClose, title, definitionId, sco
         const target: Scope = { application, spaceType, spaceId };
         void (async () => {
             try {
-                const page = await client.listSessions({ scope: target, limit: 1 });
-                const existing = page.sessions.find((item) => item.status === "active" && item.definitionId === definitionId);
-                const next = existing ?? (await client.createSession({ definitionId, scope: target, idempotencyKey: `panel:${userId}:${application}:${spaceId}` }));
+                let next: SessionView;
+                if (sessionId) {
+                    next = await client.getSession(sessionId);
+                } else {
+                    const page = await client.listSessions({ scope: target, limit: 1 });
+                    const existing = page.sessions.find((item) => item.status === "active" && item.definitionId === definitionId);
+                    next = existing ?? (await client.createSession({ definitionId, scope: target, idempotencyKey: `panel:${userId}:${application}:${spaceId}` }));
+                }
                 if (cancelled) return;
                 setSession(next);
                 setDraft(controller.draft(next));
@@ -61,7 +70,7 @@ export function AgentConversationPanel({ open, onClose, title, definitionId, sco
         return () => {
             cancelled = true;
         };
-    }, [open, userId, client, controller, definitionId, application, spaceType, spaceId, message]);
+    }, [open, userId, client, controller, definitionId, application, spaceType, spaceId, sessionId, message]);
 
     useEffect(() => {
         if (!open || !session) return;

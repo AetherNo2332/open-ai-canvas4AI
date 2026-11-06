@@ -6,6 +6,8 @@ import "yingce/backend/internal/app"
 type (
 	StartWorkRequest          = app.StartWorkRequest
 	WorkView                  = app.WorkView
+	WorkDirectoryEntry        = app.WorkDirectoryEntry
+	WorkChildEntry            = app.WorkChildEntry
 	WorkControlRequest        = app.WorkControlRequest
 	ReportView                = app.ReportView
 	ApprovalView              = app.ApprovalView
