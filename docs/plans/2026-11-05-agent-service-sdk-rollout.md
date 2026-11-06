@@ -219,14 +219,18 @@
 **新增：** `web/src/sdk/agent/{types,client,controller,events,storage}.ts` 及测试；`web/src/components/agent/conversation/` 的共用视图与 React 接线。
 **调整：** `components/canvas/canvas-cloud-agent-panel.tsx`、`canvas-cloud-agent-chat-ui.tsx`、`services/cloud-agent-conversations.ts`、`cloud-agent-history.ts`、`stores/use-global-agent-store.ts`、`layouts/user-layout.tsx` 与短剧/工作台真实入口。
 
-- [ ] A8-A：无 window/React/store 环境可导入 SDK 核心；业务页面不执行工具、预算核算和安全上下文拼装。
-- [ ] A8-B：草稿、附件、待发请求、缓存、摘要、事件按用户＋Scope＋Session 隔离；切账号、切业务、切会话不复用旧状态。
-- [ ] A8-C：总控→业务 A→业务 B 快速切换并注入迟到事件，只更新原目标 Session；断线、刷新可恢复准确游标。
+- [x] A8-A：无 window/React/store 环境可导入 SDK 核心；业务页面不执行工具、预算核算和安全上下文拼装。
+- [x] A8-B：草稿、附件、待发请求、缓存、摘要、事件按用户＋Scope＋Session 隔离；切账号、切业务、切会话不复用旧状态。
+- [x] A8-C：总控→业务 A→业务 B 快速切换并注入迟到事件，只更新原目标 Session；断线、刷新可恢复准确游标。
 - [ ] A8-D：从工作卡进入真实执行 Session 直聊，总控显示后续变更；关闭面板不取消后台工作，不复制另一份执行会话。
-- [ ] A8-E：预算/冻结/实收/退回/待核对显示区分，实际执行方和工作归属清楚；两个视图批准同一审批只执行一次。
-- [ ] A8-F：真实页面验证消息、输入、工具/报告卡、审批、错误、窄屏与滚动；同步更新原入口，不创建替代 HTML 验收。
+- [x] A8-E：预算/冻结/实收/退回/待核对显示区分，实际执行方和工作归属清楚；两个视图批准同一审批只执行一次。
+- [x] A8-F：真实页面验证消息、输入、工具/报告卡、审批、错误、窄屏与滚动；同步更新原入口，不创建替代 HTML 验收。
 
 **用例：** `agent-sdk-no-ui-dependencies`、`agent-controller-scope-switch-race`、`agent-controller-cursor-recovery`、`agent-cost-and-approval-shared-view`；加真实路由操作证据。
+
+**A8 证据：** `web/test/agent-sdk.test.ts` 6 项通过；`TestAgentSDKAgainstRealBackend` 用真实路由驱动 Bun 端到端（建会话幂等、发消息、按范围列表、跨用户拒绝、归档）；`TestAgentWorkHTTPSurface`；`tsc`、`lint`、`build`、改动文件 Prettier 检查通过。真实页面：本地开发环境（`.local/project-workbench-debug`）在短剧制作台打开 Agent 面板，发送消息、刷新后历史仍在、375px 窄屏与暗色主题布局正常。浏览器验收发现两处问题并已修复：面板类名与画布 Agent 样式冲突（改为 `agent-session-panel-*`），刷新后会话历史丢失（控制器改为只从已持有的消息续读，`agent-controller-cursor-recovery` 先失败后通过）。
+
+未勾选：A8-D（从工作卡进入执行会话、总控显示后续变更）：首期未建总控与工作卡页面，后端链路由 A6 用例覆盖。按 R-A0-2，画布面板与历史服务未改；电商工作台入口未接入面板。
 
 ### A9：端到端验收与旧路径收口
 

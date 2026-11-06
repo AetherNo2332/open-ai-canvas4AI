@@ -56,6 +56,10 @@ func (s *Service) SendSessionMessage(ownerID string, req SendSessionMessageReque
 		return SessionMessageReceipt{}, as.NewError(as.CodeSessionConflict, "会话已归档")
 	}
 	if session.WorkItemID == "" || session.Role != as.RoleBusiness {
+		// A Session without delegated work keeps the message in its own history.
+		if err := s.repo.AppendAgentInboxMessage(ownerID, session.ID, model.AgentSessionMessage{ID: newID(), MessageID: messageID, Kind: as.MessageKindMessage, Actor: as.ActorUser, Role: "user", Body: req.Text}, time.Now()); err != nil {
+			return SessionMessageReceipt{}, err
+		}
 		return SessionMessageReceipt{Accepted: true}, nil
 	}
 	receipt, err := s.appendWorkInput(ownerID, session.WorkItemID, as.ActorUser, messageID, req.Text, "user:"+session.ID+":"+messageID)
@@ -271,4 +275,43 @@ func (s *Service) changeApproval(ownerID, approvalID string, rule func(model.Age
 		return ApprovalView{}, workNotFound(err)
 	}
 	return view, ruleErr
+}
+
+// SessionMessageView is one message as the SDK reads it.
+type SessionMessageView struct {
+	SessionID string    `json:"sessionId"`
+	MessageID string    `json:"messageId"`
+	Sequence  int64     `json:"sequence"`
+	Kind      string    `json:"kind"`
+	Actor     string    `json:"actor"`
+	Role      string    `json:"role"`
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type SessionMessagePage struct {
+	Messages  []SessionMessageView `json:"messages"`
+	NextAfter int64                `json:"nextAfter"`
+}
+
+// SessionMessages returns the owner's Session messages after a sequence.
+// Canvas Sessions keep their history in the Pi tables and return none here.
+func (s *Service) SessionMessages(ownerID, sessionID string, after int64) (SessionMessagePage, error) {
+	session, err := s.agentSessionForOwner(ownerID, sessionID)
+	if err != nil {
+		return SessionMessagePage{}, err
+	}
+	rows, err := s.repo.AgentSessionMessages(ownerID, session.ID)
+	if err != nil {
+		return SessionMessagePage{}, err
+	}
+	page := SessionMessagePage{Messages: []SessionMessageView{}, NextAfter: after}
+	for _, row := range rows {
+		if row.Sequence <= after {
+			continue
+		}
+		page.Messages = append(page.Messages, SessionMessageView{SessionID: row.SessionID, MessageID: row.MessageID, Sequence: row.Sequence, Kind: row.Kind, Actor: row.Actor, Role: row.Role, Text: row.Body, CreatedAt: row.CreatedAt})
+		page.NextAfter = row.Sequence
+	}
+	return page, nil
 }

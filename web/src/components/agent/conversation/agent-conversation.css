@@ -1,0 +1,72 @@
+.agent-session-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.agent-session-panel-messages {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: 16px;
+    overflow-y: auto;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.agent-session-panel-message {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 88%;
+    padding: 8px 12px;
+    border-radius: var(--radius-lg);
+    background: var(--surface-card);
+    color: var(--text-primary);
+}
+
+.agent-session-panel-message[data-actor="user"] {
+    align-self: flex-end;
+    background: var(--surface-card-hover);
+}
+
+.agent-session-panel-message p {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.agent-session-panel-actor {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.agent-session-panel-empty {
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.agent-session-panel-error {
+    margin: 0 16px;
+    color: var(--color-error, #d4380d);
+}
+
+.agent-session-panel-input {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    padding: 12px 16px;
+    border-top: 1px solid var(--color-border);
+}
+
+.agent-session-panel-input .ant-input {
+    flex: 1;
+}

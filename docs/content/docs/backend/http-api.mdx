@@ -36,6 +36,16 @@ description: 信封、错误码与 OpenAPI
 - 业务接入（不新增 HTTP 路由）：电商工作台 `POST /api/workbench/tasks`、短剧调度与画布命令提交产生的任务同样是平台任务，可用上述 `tasks/:id`、`events` 与 `billing/aggregate`（`application=ecommerce|drama|canvas`，`projectId` 分别为批次 ID、短剧作品 ID、画布 ID）读取。工作台同一批次同一序号重投返回原任务，改了内容返回 `idempotency_conflict`；无批次的单次提交仍每次新建任务。
 - 失败信封的 `reason` 为合同错误码（`invalid_request`、`model_unavailable`、`model_not_supported`、`reference_unavailable`、`insufficient_credits`、`active_task_limit` 等），`details.retryable` 表示是否可重试。
 
+## Agent 服务（v2）
+
+`/api/agent/v2` 是短剧、电商与总控共用的会话与工作接口；画布 Agent 仍使用 `/api/agent/runs` 与 `/api/agent/conversations`。所有接口只按登录会话识别用户；失败信封的 `reason` 为 Agent 服务错误码（`scope_mismatch`、`session_conflict`、`stale_lease`、`work_stopped`、`stale_assignment`、`version_conflict` 等）。
+
+- 会话：`GET /definitions`、`POST /sessions`、`GET /sessions`、`GET /sessions/:id`、`POST /sessions/:id/archive`、`GET /sessions/:id/messages?after=`、`POST /sessions/:id/messages`。发送消息只给 `messageId` 与 `text`，发送者身份由服务端写入；同一 `messageId` 重投不重复受理。
+- 工作：`POST /work`、`GET /work/:id`、`GET /work/:id/reports`、`POST /work/:id/stop`、`GET /work/:id/approvals`、`POST /approvals/:id/decision`。派工、补充输入与报告由服务端 Agent 调用，不对浏览器开放。
+- 预算只读：`GET /api/platform/v1/budget-grants/:id`，返回额度、可用额与子树用量（实收、在途、待核对、退回分列）。
+
+前端通过 `web/src/sdk/agent` 调用；浏览器传输复用 `http.raw`（`web/src/sdk/creation-platform/http-transport.ts`）。
+
 ## 画布实时会话
 
 `GET /api/canvas-projects/:id/realtime` 使用登录 Cookie 升级为 WebSocket，握手校验当前用户对画布的归属和请求 Origin。首帧 `welcome` 提供服务端分配的 `selfId` 和窗口 Presence；客户端发送 `presence`，服务端推送 `peer`、`leave`、`invalidate`、`canvas_changed`、`agent_presence` 和 `heartbeat`。Presence 只含有界世界坐标和拖拽矩形，不包含密钥、编辑租约 token、画布正文或实际保存指令。

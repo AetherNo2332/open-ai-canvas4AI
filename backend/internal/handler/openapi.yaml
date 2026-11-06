@@ -3168,6 +3168,249 @@ paths:
           $ref: "#/components/responses/AgentServiceError"
         "409":
           $ref: "#/components/responses/AgentServiceError"
+  /agent/v2/sessions/{id}/messages:
+    get:
+      tags: [agent-service]
+      summary: 按序号增量读取会话消息
+      description: after 为上次读到的最大序号；画布会话的历史在原画布面板中读取，这里返回空列表。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: after
+          required: false
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: data 为对应视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "400":
+          $ref: "#/components/responses/AgentServiceError"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+    post:
+      tags: [agent-service]
+      summary: 向会话发送用户消息
+      description: 发送者身份由服务端写入；对总控派出的业务会话，消息成为该工作的输入并通知总控一次。messageId 由客户端生成，重投不重复受理。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messageId, text]
+              properties:
+                messageId: { type: string, maxLength: 120 }
+                text: { type: string }
+      responses:
+        "200":
+          description: data 为对应视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "400":
+          $ref: "#/components/responses/AgentServiceError"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+        "409":
+          $ref: "#/components/responses/AgentServiceError"
+  /agent/v2/work:
+    post:
+      tags: [agent-service]
+      summary: 创建根工作、总控会话与预算根授权
+      description: 预算为用户授权上限；之后模型不能自行提高。同一幂等键返回同一工作。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [goal, budgetMicrocredits, idempotencyKey]
+              properties:
+                goal: { type: string }
+                budgetMicrocredits: { type: integer, minimum: 1 }
+                idempotencyKey: { type: string }
+                sourceSessionId: { type: string }
+                sourceMessageId: { type: string }
+      responses:
+        "200":
+          description: data 为对应视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "400":
+          $ref: "#/components/responses/AgentServiceError"
+  /agent/v2/work/{id}:
+    get:
+      tags: [agent-service]
+      summary: 读取工作状态
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为对应视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+  /agent/v2/work/{id}/reports:
+    get:
+      tags: [agent-service]
+      summary: 列出工作的执行报告
+      description: applied=false 的报告来自已被替代的派工或旧版本，只留档。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为对应视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+  /agent/v2/work/{id}/stop:
+    post:
+      tags: [agent-service]
+      summary: 停止工作及其全部子工作
+      description: 同一事务结束派工、取消待投递记录并关闭预算；停止后不能再派工或输入。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { type: integer }
+                reason: { type: string }
+      responses:
+        "200":
+          description: data 为对应视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "400":
+          $ref: "#/components/responses/AgentServiceError"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+        "409":
+          $ref: "#/components/responses/AgentServiceError"
+  /agent/v2/work/{id}/approvals:
+    get:
+      tags: [agent-service]
+      summary: 列出工作的审批
+      description: 根工作返回整棵工作树的审批，子工作返回自己的；总控与业务视图看到同一审批 ID。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为对应视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+  /agent/v2/approvals/{id}/decision:
+    post:
+      tags: [agent-service]
+      summary: 批准或拒绝审批
+      description: 决定只能做一次，同决定重复为无操作；授权版本变化或工作停止后审批失效。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, expectedAuthorizationVersion]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                expectedAuthorizationVersion: { type: integer }
+      responses:
+        "200":
+          description: data 为对应视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "400":
+          $ref: "#/components/responses/AgentServiceError"
+        "404":
+          $ref: "#/components/responses/AgentServiceError"
+        "409":
+          $ref: "#/components/responses/AgentServiceError"
+  /platform/v1/budget-grants/{id}:
+    get:
+      tags: [creation-platform]
+      summary: 读取预算授权及其子树用量
+      description: 只读；预算由服务端可信调用方创建与分配。实收、在途、待核对与退回分开给出，待核对不按 0 计。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为对应视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/PlatformError"
   /platform/v1/events:
     get:
       tags: [creation-platform]
@@ -3754,7 +3997,7 @@ components:
         reason:
           type: string
           description: Agent 服务合同错误码
-          enum: [invalid_request, unauthorized, forbidden, not_found, scope_mismatch, session_conflict, stale_lease, idempotency_conflict, work_stopped, stale_assignment, budget_exceeded, internal]
+          enum: [invalid_request, unauthorized, forbidden, not_found, scope_mismatch, session_conflict, stale_lease, idempotency_conflict, work_stopped, stale_assignment, version_conflict, budget_exceeded, internal]
         details:
           type: object
           properties:
@@ -3770,7 +4013,7 @@ components:
         reason:
           type: string
           description: 创作平台合同错误码
-          enum: [invalid_request, unauthorized, forbidden, not_found, model_unavailable, model_not_supported, reference_unavailable, insufficient_credits, cost_limit_exceeded, quote_expired, idempotency_conflict, active_task_limit, action_not_allowed, billing_pending_review, media_delivery_failed, unavailable, internal]
+          enum: [invalid_request, unauthorized, forbidden, not_found, model_unavailable, model_not_supported, reference_unavailable, insufficient_credits, cost_limit_exceeded, quote_expired, idempotency_conflict, active_task_limit, action_not_allowed, billing_pending_review, media_delivery_failed, unavailable, budget_exceeded, budget_closed, internal]
         details:
           type: object
           properties:

@@ -244,6 +244,34 @@ func (r *Repository) AgentApprovalsForWork(ownerID, workID string, root bool) ([
 	return rows, err
 }
 
+// AppendAgentInboxMessage appends a user message to a Session outside any
+// turn; the message ID makes a resend a no-op.
+func (r *Repository) AppendAgentInboxMessage(ownerID, sessionID string, message model.AgentSessionMessage, now time.Time) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return appendInboxMessage(tx, ownerID, sessionID, message, now)
+	})
+}
+
+func appendInboxMessage(tx *gorm.DB, ownerID, sessionID string, message model.AgentSessionMessage, now time.Time) error {
+	var exists int64
+	if err := tx.Model(&model.AgentSessionMessage{}).Where("owner_id = ? AND session_id = ? AND message_id = ?", ownerID, sessionID, message.MessageID).Count(&exists).Error; err != nil || exists > 0 {
+		return err
+	}
+	bumped := tx.Model(&model.AgentSession{}).Where("id = ? AND owner_id = ?", sessionID, ownerID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": now})
+	if bumped.Error != nil {
+		return bumped.Error
+	}
+	if bumped.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
+	var last int64
+	if err := tx.Model(&model.AgentSessionMessage{}).Where("session_id = ?", sessionID).Select("COALESCE(MAX(sequence), 0)").Scan(&last).Error; err != nil {
+		return err
+	}
+	message.OwnerID, message.SessionID, message.Sequence, message.CreatedAt = ownerID, sessionID, last+1, now
+	return tx.Create(&message).Error
+}
+
 // DeliverAgentOutbox appends one pending item to its target Session's history
 // and marks it delivered, in one transaction. The message ID is the outbox ID,
 // so a redelivered item is a no-op. The Session revision advances like any
@@ -254,23 +282,7 @@ func (r *Repository) DeliverAgentOutbox(item model.AgentOutbox, message model.Ag
 		if marked.Error != nil || marked.RowsAffected != 1 {
 			return marked.Error
 		}
-		var exists int64
-		if err := tx.Model(&model.AgentSessionMessage{}).Where("owner_id = ? AND session_id = ? AND message_id = ?", item.OwnerID, item.TargetSessionID, message.MessageID).Count(&exists).Error; err != nil || exists > 0 {
-			return err
-		}
-		bumped := tx.Model(&model.AgentSession{}).Where("id = ? AND owner_id = ?", item.TargetSessionID, item.OwnerID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": now})
-		if bumped.Error != nil {
-			return bumped.Error
-		}
-		if bumped.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
-		}
-		var last int64
-		if err := tx.Model(&model.AgentSessionMessage{}).Where("session_id = ?", item.TargetSessionID).Select("COALESCE(MAX(sequence), 0)").Scan(&last).Error; err != nil {
-			return err
-		}
-		message.OwnerID, message.SessionID, message.Sequence, message.CreatedAt = item.OwnerID, item.TargetSessionID, last+1, now
-		return tx.Create(&message).Error
+		return appendInboxMessage(tx, item.OwnerID, item.TargetSessionID, message, now)
 	})
 }
 
