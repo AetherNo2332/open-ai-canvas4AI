@@ -175,12 +175,17 @@ func TestAgentApprovalCrossViewIdempotency(t *testing.T) {
 		}
 		consumed := 0
 		for range 5 {
-			if err := w.svc.ConsumeApproval("user-a", approval.ID, 100_000, "shot:v3"); err == nil {
+			// 同一操作的崩溃重试幂等：重复消耗不再报错，也不重复执行
+			//（执行唯一性由操作回执与平台幂等保证）。
+			if err := w.svc.ConsumeApproval("user-a", approval.ID, 100_000, "shot:v3", "call-1"); err == nil {
 				consumed++
 			}
 		}
-		if consumed != 1 {
-			t.Fatalf("approval consumed %d times", consumed)
+		if consumed != 5 {
+			t.Fatalf("same-operation retries: %d/5 succeeded", consumed)
+		}
+		if err := w.svc.ConsumeApproval("user-a", approval.ID, 100_000, "shot:v3", "call-1b"); err == nil {
+			t.Fatal("a different operation reused the consumed approval")
 		}
 		second, err := w.svc.RequestApproval("user-a", ApprovalRequest{WorkItemID: assignment.WorkItemID, SessionID: assignment.ExecutorSessionID, CallID: "call-2", QuoteMicrocredits: 100_000, TargetVersion: "shot:v3"})
 		if err != nil {
@@ -189,7 +194,7 @@ func TestAgentApprovalCrossViewIdempotency(t *testing.T) {
 		if _, err := w.svc.DecideApproval("user-a", DecideApprovalRequest{ApprovalID: second.ID, Decision: ao.ApprovalApproved, ExpectedAuthorizationVersion: second.AuthorizationVersion}); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.svc.ConsumeApproval("user-a", second.ID, 150_000, "shot:v3"); !ao.IsCode(err, ao.CodeVersionConflict) {
+		if err := w.svc.ConsumeApproval("user-a", second.ID, 150_000, "shot:v3", "call-2"); !ao.IsCode(err, ao.CodeVersionConflict) {
 			t.Fatalf("consume with a changed quote: %v", err)
 		}
 		if _, err := w.svc.DecideApproval("user-b", DecideApprovalRequest{ApprovalID: approval.ID, Decision: ao.ApprovalApproved, ExpectedAuthorizationVersion: approval.AuthorizationVersion}); !ao.IsCode(err, ao.CodeNotFound) {

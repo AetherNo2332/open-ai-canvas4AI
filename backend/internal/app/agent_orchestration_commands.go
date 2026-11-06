@@ -42,6 +42,17 @@ func (s *Service) DelegateWork(ownerID string, req DelegateRequest) (AssignmentV
 	if err := s.validateAgentSpace(ownerID, scope); err != nil {
 		return AssignmentView{}, err
 	}
+	root, err := s.repo.AgentWorkForOwner(ownerID, parent.RootWorkID)
+	if err != nil {
+		return AssignmentView{}, workNotFound(err)
+	}
+	auth, err := ao.DecodeAuthorization(root.AuthorizationJSON)
+	if err != nil {
+		return AssignmentView{}, err
+	}
+	if !auth.AllowsScope(ao.ScopeGrant{Application: scope.Application, SpaceType: scope.SpaceType, SpaceID: scope.SpaceID}) {
+		return AssignmentView{}, ao.NewError(ao.CodeForbidden, "该业务空间不在工作授权范围内")
+	}
 	key := "child:" + ao.DelegationKey(ownerID, req.SourceMessageID, req.ActionKey)
 	var view AssignmentView
 	err = s.repo.InAgentWork(ownerID, parent.RootWorkID, func(tx *repository.WorkTx) error {
@@ -70,7 +81,7 @@ func (s *Service) DelegateWork(ownerID string, req DelegateRequest) (AssignmentV
 		if err := ao.CheckDelegation(current.Status); err != nil {
 			return err
 		}
-		view, err = s.createDelegation(tx, ownerID, current, key, def, scope, req)
+		view, err = s.createDelegation(tx, ownerID, current, key, def, scope, req, root.AuthorizationJSON)
 		return err
 	})
 	if err != nil {
@@ -79,7 +90,7 @@ func (s *Service) DelegateWork(ownerID string, req DelegateRequest) (AssignmentV
 	return view, nil
 }
 
-func (s *Service) createDelegation(tx *repository.WorkTx, ownerID string, parent *model.AgentWorkItem, key string, def as.Definition, scope as.Scope, req DelegateRequest) (AssignmentView, error) {
+func (s *Service) createDelegation(tx *repository.WorkTx, ownerID string, parent *model.AgentWorkItem, key string, def as.Definition, scope as.Scope, req DelegateRequest, authorizationJSON string) (AssignmentView, error) {
 	childID, assignmentID := newID(), newID()
 	grant, err := tx.AllocateBudget(s.repo, &model.PlatformBudgetGrant{ID: newID(), OwnerID: ownerID, IdempotencyKey: "work-child:" + childID, Fingerprint: "work-child:" + childID,
 		LimitMicrocredits: req.BudgetMicrocredits, Status: cp.BudgetStatusOpen, Version: 1, Application: scope.Application, ObjectType: "work", ObjectID: childID,
@@ -102,7 +113,8 @@ func (s *Service) createDelegation(tx *repository.WorkTx, ownerID string, parent
 	}
 	child := &model.AgentWorkItem{ID: childID, OwnerID: ownerID, IdempotencyKey: key, ParentWorkID: parent.ID, RootWorkID: parent.RootWorkID, Goal: strings.TrimSpace(req.Handoff),
 		Status: ao.WorkRunning, Version: 1, SourceSessionID: parent.SupervisorSessionID, SourceMessageID: req.SourceMessageID,
-		Application: scope.Application, SpaceType: scope.SpaceType, SpaceID: scope.SpaceID, BudgetGrantID: grant.ID, ActiveAssignmentID: assignmentID}
+		Application: scope.Application, SpaceType: scope.SpaceType, SpaceID: scope.SpaceID, BudgetGrantID: grant.ID, ActiveAssignmentID: assignmentID,
+		AuthorizationJSON: authorizationJSON, AuthorizationVersion: 1}
 	if child.Goal == "" {
 		child.Goal = parent.Goal
 	}

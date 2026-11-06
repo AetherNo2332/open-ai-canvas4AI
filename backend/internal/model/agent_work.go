@@ -22,11 +22,16 @@ type AgentWorkItem struct {
 	SpaceID             string `gorm:"not null;size:120;default:''"`
 	BudgetGrantID       string `gorm:"not null;size:36;default:''"`
 	ActiveAssignmentID  string `gorm:"not null;size:36;default:''"`
-	ResultSummary       string `gorm:"type:text"`
-	StoppedReason       string `gorm:"size:500"`
-	StoppedAt           *time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// AuthorizationJSON is the work tree's authorization snapshot (scopes,
+	// tool allow-list, approval threshold); children carry a copy taken at
+	// delegation time. AuthorizationVersion expires approvals when it moves.
+	AuthorizationJSON    string `gorm:"type:text"`
+	AuthorizationVersion int64  `gorm:"not null;default:1"`
+	ResultSummary        string `gorm:"type:text"`
+	StoppedReason        string `gorm:"size:500"`
+	StoppedAt            *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 // AgentAssignment is one execution attempt of a work item by a business
@@ -107,6 +112,9 @@ type AgentApproval struct {
 	Summary              string `gorm:"size:500"`
 	QuoteMicrocredits    int64  `gorm:"not null"`
 	TargetVersion        string `gorm:"not null;size:160;default:''"`
+	// ArgumentsHash pins the arguments the approval was requested for; a
+	// changed payload invalidates the approval even with the same call identity.
+	ArgumentsHash        string `gorm:"size:64;default:''"`
 	AuthorizationVersion int64  `gorm:"not null"`
 	Status               string `gorm:"not null;size:16"`
 	DecidedAt            *time.Time

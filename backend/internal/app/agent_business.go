@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	ao "yingce/backend/internal/agentorchestration"
 	as "yingce/backend/internal/agentservice"
 	"yingce/backend/internal/workbench"
 )
@@ -46,7 +47,13 @@ func (a dramaAgentAdapter) Execute(_ context.Context, call as.ToolInvocation) (a
 		if err := json.Unmarshal(call.Arguments, &args); err != nil {
 			return as.ToolResult{}, as.NewError(as.CodeInvalidRequest, "参数无效")
 		}
-		summary, err := a.s.SetDramaRunning(call.OwnerID, call.Scope.SpaceID, args.Running)
+		var summary DramaSummary
+		var err error
+		if args.Running && call.WorkItemID != "" {
+			summary, err = a.s.SetDramaRunningUnderWork(call.OwnerID, call.Scope.SpaceID, true, call.WorkItemID, call.BudgetGrantID)
+		} else {
+			summary, err = a.s.SetDramaRunning(call.OwnerID, call.Scope.SpaceID, args.Running)
+		}
 		if err != nil {
 			return as.ToolResult{}, err
 		}
@@ -89,11 +96,24 @@ func (a ecommerceAgentAdapter) Execute(_ context.Context, call as.ToolInvocation
 	}
 	req := WorkbenchTaskInput{Kind: WorkbenchKindImage, Prompt: args.Prompt, Model: args.Model, ChannelID: args.ChannelID, Parameters: args.Parameters,
 		Batch: &workbench.TaskBatch{ID: call.Scope.SpaceID, Index: args.Index, Count: args.Count}}
-	task, err := a.s.createWorkbenchTaskUnderBudget(call.OwnerID, req, call.BudgetGrantID)
+	// 报价达到工作授权阈值时，提交前先等用户批准；批准消费绑定本操作，重试幂等。
+	gate := func(quote int64) error {
+		return a.s.gateAgentToolApproval(call, quote, workbenchTargetVersion(req))
+	}
+	task, err := a.s.createWorkbenchTaskUnderApproval(call.OwnerID, req, call.BudgetGrantID, gate)
 	if err != nil {
 		return as.ToolResult{}, err
 	}
 	return as.ToolResult{Text: "已提交生成任务，状态 " + string(task.Status), Operation: task.ID}, nil
+}
+
+// workbenchTargetVersion names the exact batch slot a workbench submission
+// targets; an approval for one slot never covers another.
+func workbenchTargetVersion(req WorkbenchTaskInput) string {
+	if req.Batch == nil {
+		return ""
+	}
+	return fmt.Sprintf("batch:%s:%d", req.Batch.ID, req.Batch.Index)
 }
 
 // agentAdapters is the registry of business adapters; the canvas Agent keeps
@@ -137,7 +157,8 @@ func (s *Service) executeBusinessTool(ctx context.Context, call as.ToolInvocatio
 	if call.Scope.Normalized() != scope {
 		return as.ToolResult{}, as.NewError(as.CodeScopeMismatch, "工具调用的业务范围与会话不一致")
 	}
-	if err := s.fenceAgentToolExecution(call); err != nil {
+	work, err := s.fenceAgentToolExecution(call)
+	if err != nil {
 		return as.ToolResult{}, err
 	}
 	adapter, ok := s.agentAdapters().Adapter(scope.Application)
@@ -146,6 +167,15 @@ func (s *Service) executeBusinessTool(ctx context.Context, call as.ToolInvocatio
 	}
 	if _, ok := s.agentAdapters().Tool(scope.Application, call.Name); !ok {
 		return as.ToolResult{}, as.NewError(as.CodeForbidden, "工具不属于当前业务")
+	}
+	if work != nil && work.AuthorizationJSON != "" {
+		authorization, err := ao.DecodeAuthorization(work.AuthorizationJSON)
+		if err != nil {
+			return as.ToolResult{}, err
+		}
+		if !authorization.AllowsTool(call.Name) {
+			return as.ToolResult{}, as.NewError(as.CodeForbidden, "工具不在工作授权范围内")
+		}
 	}
 	if err := adapter.ValidateSpace(ctx, call.OwnerID, scope); err != nil {
 		return as.ToolResult{}, err

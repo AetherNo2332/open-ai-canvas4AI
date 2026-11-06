@@ -639,24 +639,20 @@ func (r *dramaRun) castLookup(id string) (model.DramaCast, bool) {
 }
 
 // dispatch 按优先级把排队工作提交为生成任务，受项目并发、账号并发与预算约束。
+// 制作由 Agent 工作授权绑定时，先核对工作与授权仍有效：停止或关闭即暂停制作，不再提交新收费任务。
 func (r *dramaRun) dispatch() error {
+	if paused, err := r.pauseWhenAgentAuthorizationStopped(); paused || err != nil {
+		return err
+	}
 	queued, err := r.s.repo.DramaJobsByStatus(r.project.ID, model.DramaJobQueued)
 	if err != nil {
 		return err
 	}
 	sort.SliceStable(queued, func(i, j int) bool { return queued[i].Priority > queued[j].Priority })
 	capacity := r.settings.Concurrency - r.running
-	// 预算按订单口径保守判断：流水线与画布精修的实收加上所有未结算订单的冻结额。每轮只汇总一次，
-	// 本轮新提交任务的冻结额逐项累加；同时把流水线实收回写到 spent_microcredits 缓存。
-	var committed int64
-	budgeted := r.production.BudgetMicrocredits > 0 && len(queued) > 0
-	if budgeted {
-		totals, err := r.s.dramaBillingTotals(r.production)
-		if err != nil {
-			return err
-		}
-		committed = totals.ChargedMicrocredits() + totals.HeldMicrocredits()
-		r.production.SpentMicrocredits = totals.PipelineChargedMicrocredits
+	committed, budgeted, err := r.dispatchBudgetCommitted(len(queued))
+	if err != nil {
+		return err
 	}
 	for i := range queued {
 		if capacity <= 0 {

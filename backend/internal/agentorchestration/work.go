@@ -37,6 +37,7 @@ const (
 	CodeWorkStopped     ErrorCode = "work_stopped"
 	CodeStaleAssignment ErrorCode = "stale_assignment"
 	CodeVersionConflict ErrorCode = "version_conflict"
+	CodeBudgetExceeded  ErrorCode = "budget_exceeded"
 )
 
 type Error struct {

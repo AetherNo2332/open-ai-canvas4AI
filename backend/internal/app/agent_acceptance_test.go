@@ -21,13 +21,13 @@ func TestAgentAcceptanceFullChain(t *testing.T) {
 	caller := cp.Caller{UserID: "user-a"}
 	textModel := cp.ModelSelection{ChannelID: f.text.channel, ModelKey: f.text.modelKey}
 
-	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "acc-0", Goal: "第一集分镜 + 一套主图", BudgetMicrocredits: 3_000_000, IdempotencyKey: "acceptance"})
+	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "acc-0", Goal: "第一集分镜 + 一套主图", BudgetMicrocredits: 1_000_000, IdempotencyKey: "acceptance", AuthorizedScopes: []as.Scope{{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, {Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch_accept"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	delegate := func(action, definition string, scope as.Scope) AssignmentView {
 		t.Helper()
-		view, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "acc-0", ActionKey: action, DefinitionID: definition, Scope: scope, Handoff: action, BudgetMicrocredits: 1_000_000})
+		view, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "acc-0", ActionKey: action, DefinitionID: definition, Scope: scope, Handoff: action, BudgetMicrocredits: 400_000})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,8 +41,19 @@ func TestAgentAcceptanceFullChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.text.script(toolCallReply("call-img", "ecommerce_generate_image", `{"prompt":"浅灰背景陶瓷杯","channelId":"`+f.channelID+`","model":"`+f.modelKey+`","parameters":{"size":"1024x1024"},"index":0,"count":1}`), textReply("已按浅灰背景生成"))
+	// 报价达到审批阈值：第一轮等待批准，用户批准后重放同一操作提交任务。
+	if _, err := f.runTurn(t, businessTurn{Assignment: ecommerce, MessageID: "exec-1", Text: "按最新要求生成主图", Model: textModel}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := f.svc.WorkApprovals("user-a", work.ID)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("approvals: %+v %v", pending, err)
+	}
+	if _, err := f.svc.DecideApproval("user-a", DecideApprovalRequest{ApprovalID: pending[0].ID, Decision: ao.ApprovalApproved, ExpectedAuthorizationVersion: 1}); err != nil {
+		t.Fatal(err)
+	}
 	turn, err := f.runTurn(t, businessTurn{Assignment: ecommerce, MessageID: "exec-1", Text: "按最新要求生成主图", Model: textModel})
-	if err != nil || len(turn.Calls) != 1 {
+	if err != nil || len(turn.Calls) != 1 || turn.Calls[0].Result.Operation == "" {
 		t.Fatalf("ecommerce turn: %+v %v", turn, err)
 	}
 	f.text.script(toolCallReply("call-sum", "drama_summary", `{}`), textReply("项目已读取"))
@@ -52,7 +63,7 @@ func TestAgentAcceptanceFullChain(t *testing.T) {
 
 	// Replaying every step (a crash after each) changes nothing.
 	calls := f.text.calls.Load()
-	if _, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "acc-0", ActionKey: "ecommerce", DefinitionID: "ecommerce.agent", Scope: as.Scope{Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch_accept"}, Handoff: "ecommerce", BudgetMicrocredits: 1_000_000}); err != nil {
+	if _, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "acc-0", ActionKey: "ecommerce", DefinitionID: "ecommerce.agent", Scope: as.Scope{Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch_accept"}, Handoff: "ecommerce", BudgetMicrocredits: 400_000}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.svc.SendSessionMessage("user-a", SendSessionMessageRequest{SessionID: ecommerce.ExecutorSessionID, MessageID: "user-edit", Text: "背景改成浅灰"}); err != nil {
@@ -101,7 +112,8 @@ func TestAgentAcceptanceFullChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ecomGrant.Usage.Spent() == 0 || root.Usage.Spent() < ecomGrant.Usage.Spent() || root.AvailableMicrocredits != 1_000_000 {
+	// 两个 400k 子授权占用根额度：根可用 = 1M − 800k。
+	if ecomGrant.Usage.Spent() == 0 || root.Usage.Spent() < ecomGrant.Usage.Spent() || root.AvailableMicrocredits != 200_000 {
 		t.Fatalf("budget tree: root=%+v ecommerce=%+v", root, ecomGrant)
 	}
 	var orders []model.BillingOrder

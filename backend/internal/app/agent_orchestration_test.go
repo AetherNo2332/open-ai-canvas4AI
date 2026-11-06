@@ -21,7 +21,7 @@ type workFixture struct {
 func newWorkFixture(t *testing.T, f *structuredFixture) *workFixture {
 	t.Helper()
 	w := &workFixture{structuredFixture: f}
-	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "sup-msg-1", Goal: "做一集短剧和一套电商素材", BudgetMicrocredits: 1_000_000, IdempotencyKey: "work-1"})
+	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "sup-msg-1", Goal: "做一集短剧和一套电商素材", BudgetMicrocredits: 1_000_000, IdempotencyKey: "work-1", AuthorizedScopes: []as.Scope{{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

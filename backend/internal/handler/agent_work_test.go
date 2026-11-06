@@ -70,7 +70,8 @@ func TestAgentWorkHTTPSurface(t *testing.T) {
 	}
 	const a, b = "session-a.token-a", "session-b.token-b"
 
-	w, envelope := call(http.MethodPost, "/api/agent/v2/work", gin.H{"goal": "一集短剧", "budgetMicrocredits": 1_000_000, "idempotencyKey": "w1", "sourceMessageId": "m0"}, a)
+	w, envelope := call(http.MethodPost, "/api/agent/v2/work", gin.H{"goal": "一集短剧", "budgetMicrocredits": 1_000_000, "idempotencyKey": "w1", "sourceMessageId": "m0",
+		"authorizedScopes": []gin.H{{"application": "drama", "spaceType": "drama_project", "spaceId": "drama-1"}}}, a)
 	var work service.WorkView
 	if w.Code != http.StatusOK {
 		t.Fatalf("start work: %d %s", w.Code, w.Body.String())

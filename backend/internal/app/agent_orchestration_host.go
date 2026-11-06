@@ -15,6 +15,12 @@ import (
 
 const supervisorDefinitionID = "supervisor.agent"
 
+// agentRootBudgetCeilingMicrocredits is the product policy confirmed for B1:
+// one root work authorization, user-started or independent, never exceeds this
+// server ceiling. Raising a budget means the user stops this work and starts a
+// new one with a new explicit authorization.
+const agentRootBudgetCeilingMicrocredits int64 = 1_000_000
+
 // StartWorkRequest creates root work with a supervisor Session and a budget root.
 type StartWorkRequest struct {
 	SourceSessionID    string
@@ -22,20 +28,26 @@ type StartWorkRequest struct {
 	Goal               string
 	BudgetMicrocredits int64
 	IdempotencyKey     string
+	// AuthorizedScopes lists the business spaces this work may enter; a
+	// delegation outside them is refused. AllowedTools optionally narrows the
+	// charged tools of the whole tree.
+	AuthorizedScopes []as.Scope
+	AllowedTools     []string
 }
 
 type WorkView struct {
-	ID                  string   `json:"id"`
-	ParentWorkID        string   `json:"parentWorkId,omitempty"`
-	RootWorkID          string   `json:"rootWorkId"`
-	Goal                string   `json:"goal"`
-	Status              string   `json:"status"`
-	Version             int64    `json:"version"`
-	SupervisorSessionID string   `json:"supervisorSessionId,omitempty"`
-	Scope               as.Scope `json:"scope"`
-	BudgetGrantID       string   `json:"budgetGrantId"`
-	ActiveAssignmentID  string   `json:"activeAssignmentId,omitempty"`
-	ResultSummary       string   `json:"resultSummary,omitempty"`
+	ID                   string   `json:"id"`
+	ParentWorkID         string   `json:"parentWorkId,omitempty"`
+	RootWorkID           string   `json:"rootWorkId"`
+	Goal                 string   `json:"goal"`
+	Status               string   `json:"status"`
+	Version              int64    `json:"version"`
+	AuthorizationVersion int64    `json:"authorizationVersion"`
+	SupervisorSessionID  string   `json:"supervisorSessionId,omitempty"`
+	Scope                as.Scope `json:"scope"`
+	BudgetGrantID        string   `json:"budgetGrantId"`
+	ActiveAssignmentID   string   `json:"activeAssignmentId,omitempty"`
+	ResultSummary        string   `json:"resultSummary,omitempty"`
 }
 
 // DelegateRequest is the supervisor's only way to hand work to a business Agent.
@@ -84,7 +96,8 @@ type WorkControlRequest struct {
 
 func workView(row model.AgentWorkItem) WorkView {
 	return WorkView{ID: row.ID, ParentWorkID: row.ParentWorkID, RootWorkID: row.RootWorkID, Goal: row.Goal, Status: row.Status, Version: row.Version,
-		SupervisorSessionID: row.SupervisorSessionID, Scope: as.Scope{Application: row.Application, SpaceType: row.SpaceType, SpaceID: row.SpaceID},
+		AuthorizationVersion: row.AuthorizationVersion,
+		SupervisorSessionID:  row.SupervisorSessionID, Scope: as.Scope{Application: row.Application, SpaceType: row.SpaceType, SpaceID: row.SpaceID},
 		BudgetGrantID: row.BudgetGrantID, ActiveAssignmentID: row.ActiveAssignmentID, ResultSummary: row.ResultSummary}
 }
 
@@ -103,8 +116,9 @@ func workNotFound(err error) error {
 }
 
 // StartWork creates a root work item, its supervisor Session and a budget
-// root in one transaction. The budget is the user's authorization; nothing a
-// model says later can raise it.
+// root in one transaction. The budget is the user's authorization bounded by
+// the product ceiling; nothing a model says later can raise it. The
+// authorization snapshot fixes the scopes and tools of the whole tree.
 func (s *Service) StartWork(ownerID string, req StartWorkRequest) (WorkView, error) {
 	if strings.TrimSpace(ownerID) == "" {
 		return WorkView{}, ao.NewError(ao.CodeForbidden, "请先登录")
@@ -112,6 +126,19 @@ func (s *Service) StartWork(ownerID string, req StartWorkRequest) (WorkView, err
 	key := strings.TrimSpace(req.IdempotencyKey)
 	if key == "" || strings.TrimSpace(req.Goal) == "" || req.BudgetMicrocredits <= 0 {
 		return WorkView{}, ao.NewError(ao.CodeInvalidRequest, "工作需要目标、预算与幂等键")
+	}
+	scopes := make([]ao.ScopeGrant, 0, len(req.AuthorizedScopes))
+	for _, scope := range req.AuthorizedScopes {
+		normalized := scope.Normalized()
+		scopes = append(scopes, ao.ScopeGrant{Application: normalized.Application, SpaceType: normalized.SpaceType, SpaceID: normalized.SpaceID})
+	}
+	auth := ao.WorkAuthorization{Version: 1, LimitMicrocredits: req.BudgetMicrocredits, Scopes: scopes, AllowedTools: req.AllowedTools, ApprovalThresholdMicrocredits: agentApprovalThresholdMicrocredits}
+	if err := ao.ValidateRootAuthorization(auth, agentRootBudgetCeilingMicrocredits); err != nil {
+		return WorkView{}, err
+	}
+	authJSON, err := ao.EncodeAuthorization(auth)
+	if err != nil {
+		return WorkView{}, err
 	}
 	if existing, err := s.repo.AgentWorkByKey(ownerID, "root:"+key); err == nil {
 		return workView(*existing), nil
@@ -121,8 +148,9 @@ func (s *Service) StartWork(ownerID string, req StartWorkRequest) (WorkView, err
 	sessionKey := "work-supervisor:" + workID
 	work := &model.AgentWorkItem{ID: workID, OwnerID: ownerID, IdempotencyKey: "root:" + key, RootWorkID: workID, Goal: strings.TrimSpace(req.Goal), Status: ao.WorkRunning, Version: 1,
 		SourceSessionID: req.SourceSessionID, SourceMessageID: req.SourceMessageID, SupervisorSessionID: agentSessionID(ownerID, sessionKey),
-		Application: as.ApplicationOrchestration, SpaceType: as.SpaceWork, SpaceID: workID, BudgetGrantID: grantID}
-	err := s.repo.InAgentWork(ownerID, "", func(tx *repository.WorkTx) error {
+		Application: as.ApplicationOrchestration, SpaceType: as.SpaceWork, SpaceID: workID, BudgetGrantID: grantID,
+		AuthorizationJSON: authJSON, AuthorizationVersion: 1}
+	err = s.repo.InAgentWork(ownerID, "", func(tx *repository.WorkTx) error {
 		if err := tx.CreateWork(work); err != nil {
 			return err
 		}

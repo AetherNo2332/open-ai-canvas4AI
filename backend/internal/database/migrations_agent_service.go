@@ -42,6 +42,12 @@ const agentToolExecutionMigrationVersion int64 = 92
 
 const agentToolExecutionChecksum = "sha256:agent-service-tool-execution-v92-20261107"
 
+// agentAuthorizationMigrationVersion 建立工作树的授权快照、审批参数指纹与
+// 短剧制作的 Agent 授权绑定；版本接在工具执行之后。
+const agentAuthorizationMigrationVersion int64 = 93
+
+const agentAuthorizationChecksum = "sha256:agent-service-authorization-v93-20261107"
+
 // agentServiceMigrations 由 migrations_creation_platform.go 的 init 接在平台迁移之后登记。
 var agentServiceMigrations = []migration{
 	{version: agentSessionsMigrationVersion, name: "agent_service_sessions", checksum: agentSessionsChecksum, apply: migrateAgentSessions},
@@ -51,6 +57,7 @@ var agentServiceMigrations = []migration{
 	{version: agentApprovalMigrationVersion, name: "agent_service_approvals", checksum: agentApprovalChecksum, apply: migrateAgentApprovals},
 	{version: agentTurnMigrationVersion, name: "agent_service_turns", checksum: agentTurnChecksum, apply: migrateAgentTurns},
 	{version: agentToolExecutionMigrationVersion, name: "agent_service_tool_execution", checksum: agentToolExecutionChecksum, apply: migrateAgentToolExecution},
+	{version: agentAuthorizationMigrationVersion, name: "agent_service_authorization", checksum: agentAuthorizationChecksum, apply: migrateAgentAuthorization},
 }
 
 // AgentServiceModels 是 Agent 服务的持久结构，顺序即迁移与复制顺序。
@@ -89,4 +96,10 @@ func migrateAgentTurns(tx *gorm.DB) error {
 
 func migrateAgentToolExecution(tx *gorm.DB) error {
 	return tx.AutoMigrate(&model.AgentOperation{}, &model.AgentTurnContract{})
+}
+
+// migrateAgentAuthorization also widens the drama production with the Agent
+// authorization binding columns; both dialects take the added columns as is.
+func migrateAgentAuthorization(tx *gorm.DB) error {
+	return tx.AutoMigrate(&model.AgentWorkItem{}, &model.AgentApproval{}, &model.DramaProduction{})
 }

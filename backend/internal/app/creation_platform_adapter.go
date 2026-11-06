@@ -88,3 +88,16 @@ func adapterSubmissionRecord(in adapterSubmission, application, key, fingerprint
 		BudgetGrantID: strings.TrimSpace(in.BudgetGrantID),
 	}
 }
+
+// quoteResolvedTask prices a resolved task request without creating anything
+// or freezing funds; the Agent approval gate uses it before asking the user.
+func (p *creationPlatform) quoteResolvedTask(userID string, taskReq CreateTaskRequest) (int64, error) {
+	_, order, err := p.prepareResolvedTask(userID, taskReq)
+	if err != nil {
+		return 0, err
+	}
+	if order == nil {
+		return 0, nil
+	}
+	return max(order.ReservedAmountMicrocredits, order.AmountMicrocredits), nil
+}

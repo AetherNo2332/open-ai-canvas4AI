@@ -35,28 +35,32 @@ func TestApprovalDecisionIsFinalAndVersioned(t *testing.T) {
 
 func TestApprovalConsumeChecksQuoteTargetAndVersion(t *testing.T) {
 	approved := Approval{Status: ApprovalApproved, AuthorizationVersion: 3, QuoteMicrocredits: 100, TargetVersion: "v7"}
-	if next, err := ConsumeApproval(approved, 100, "v7", 3, WorkRunning); err != nil || next != ApprovalConsumed {
+	if next, err := ConsumeApproval(approved, "op-1", 100, "v7", 3, WorkRunning); err != nil || next != ApprovalConsumed {
 		t.Fatalf("consume: %s %v", next, err)
 	}
-	if _, err := ConsumeApproval(Approval{Status: ApprovalConsumed, AuthorizationVersion: 3, QuoteMicrocredits: 100, TargetVersion: "v7"}, 100, "v7", 3, WorkRunning); !IsCode(err, CodeVersionConflict) {
-		t.Fatalf("second consume: %v", err)
+	// B1：同一操作的重复消费幂等（崩溃后重试不重复执行），其他操作不能复用。
+	if next, err := ConsumeApproval(Approval{Status: ApprovalConsumed, Operation: "op-1", AuthorizationVersion: 3, QuoteMicrocredits: 100, TargetVersion: "v7"}, "op-1", 100, "v7", 3, WorkRunning); err != nil || next != ApprovalConsumed {
+		t.Fatalf("idempotent retry of the same operation: %s %v", next, err)
+	}
+	if _, err := ConsumeApproval(Approval{Status: ApprovalConsumed, Operation: "op-1", AuthorizationVersion: 3, QuoteMicrocredits: 100, TargetVersion: "v7"}, "op-2", 100, "v7", 3, WorkRunning); !IsCode(err, CodeVersionConflict) {
+		t.Fatalf("second operation on a consumed approval: %v", err)
 	}
 	for name, call := range map[string]func() (string, error){
-		"quote changed":  func() (string, error) { return ConsumeApproval(approved, 150, "v7", 3, WorkRunning) },
-		"target changed": func() (string, error) { return ConsumeApproval(approved, 100, "v8", 3, WorkRunning) },
-		"work changed":   func() (string, error) { return ConsumeApproval(approved, 100, "v7", 4, WorkRunning) },
+		"quote changed":  func() (string, error) { return ConsumeApproval(approved, "op-2", 150, "v7", 3, WorkRunning) },
+		"target changed": func() (string, error) { return ConsumeApproval(approved, "op-1", 100, "v8", 3, WorkRunning) },
+		"work changed":   func() (string, error) { return ConsumeApproval(approved, "op-1", 100, "v7", 4, WorkRunning) },
 	} {
 		if next, err := call(); !IsCode(err, CodeVersionConflict) || next != ApprovalExpired {
 			t.Fatalf("%s: %s %v", name, next, err)
 		}
 	}
-	if _, err := ConsumeApproval(Approval{Status: ApprovalPending}, 0, "", 0, WorkRunning); !IsCode(err, CodeForbidden) {
+	if _, err := ConsumeApproval(Approval{Status: ApprovalPending}, "op-1", 0, "", 0, WorkRunning); !IsCode(err, CodeForbidden) {
 		t.Fatalf("consume pending: %v", err)
 	}
-	if _, err := ConsumeApproval(Approval{Status: ApprovalRejected}, 0, "", 0, WorkRunning); !IsCode(err, CodeForbidden) {
+	if _, err := ConsumeApproval(Approval{Status: ApprovalRejected}, "op-1", 0, "", 0, WorkRunning); !IsCode(err, CodeForbidden) {
 		t.Fatalf("consume rejected: %v", err)
 	}
-	if next, err := ConsumeApproval(approved, 100, "v7", 3, WorkCancelled); !IsCode(err, CodeWorkStopped) || next != ApprovalExpired {
+	if next, err := ConsumeApproval(approved, "op-1", 100, "v7", 3, WorkCancelled); !IsCode(err, CodeWorkStopped) || next != ApprovalExpired {
 		t.Fatalf("consume on stopped work: %s %v", next, err)
 	}
 }

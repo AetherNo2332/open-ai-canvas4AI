@@ -108,16 +108,23 @@ func (s *Service) SetWorkbenchPresetEnabled(actor *model.User, id string, enable
 }
 
 func (s *Service) CreateWorkbenchTask(userID string, req WorkbenchTaskInput, traceID, requestID string) (*model.Task, error) {
-	return s.createWorkbenchTask(userID, req, traceID, requestID, "")
+	return s.createWorkbenchTask(userID, req, traceID, requestID, "", nil)
 }
 
 // createWorkbenchTaskUnderBudget is the Agent path: the same workbench rules,
 // with the order admitted against the Agent's budget grant.
 func (s *Service) createWorkbenchTaskUnderBudget(userID string, req WorkbenchTaskInput, grantID string) (*model.Task, error) {
-	return s.createWorkbenchTask(userID, req, "", "", grantID)
+	return s.createWorkbenchTask(userID, req, "", "", grantID, nil)
 }
 
-func (s *Service) createWorkbenchTask(userID string, req WorkbenchTaskInput, traceID, requestID, grantID string) (*model.Task, error) {
+// createWorkbenchTaskUnderApproval also gates the submission behind the work's
+// approval policy: the gate receives the resolved task's quote and refuses
+// before any cost when the policy asks for one.
+func (s *Service) createWorkbenchTaskUnderApproval(userID string, req WorkbenchTaskInput, grantID string, approvalGate func(quote int64) error) (*model.Task, error) {
+	return s.createWorkbenchTask(userID, req, "", "", grantID, approvalGate)
+}
+
+func (s *Service) createWorkbenchTask(userID string, req WorkbenchTaskInput, traceID, requestID, grantID string, approvalGate func(quote int64) error) (*model.Task, error) {
 	if req.Kind == WorkbenchKindImage {
 		if err := s.RequireFeature(FeatureImageWorkbench); err != nil {
 			return nil, err
@@ -144,6 +151,15 @@ func (s *Service) createWorkbenchTask(userID string, req WorkbenchTaskInput, tra
 	}
 	resolved.Model = modelName
 	taskReq := CreateTaskRequest{Type: resolved.TaskType, Operation: resolved.Operation, Prompt: resolved.Prompt, Model: resolved.Model, LogicalModelID: resolved.LogicalModelID, Input: resolved.Input, TraceID: traceID, RequestID: requestID, workbenchKind: req.Kind}
+	if approvalGate != nil {
+		quote, err := (&creationPlatform{s: s}).quoteResolvedTask(userID, taskReq)
+		if err != nil {
+			return nil, err
+		}
+		if err := approvalGate(quote); err != nil {
+			return nil, err
+		}
+	}
 	submission := adapterSubmission{UserID: userID, TaskReq: taskReq, Business: cp.BusinessRef{Application: "ecommerce", ObjectType: "workbench_" + req.Kind, ObjectID: req.ToolID}, BudgetGrantID: grantID}
 	// 批次项按“批次 + 序号”幂等：整批重提时已接受的项回放原任务，不重新建任务或冻结费用。
 	if req.Batch != nil && workbench.ValidTaskBatch(req.Batch.ID, req.Batch.Index, req.Batch.Count) {

@@ -73,8 +73,12 @@ type DramaProduction struct {
 	PauseReason    string     `json:"pauseReason" gorm:"size:500"`
 	Revision       int64      `json:"revision"`
 	LastTickAt     *time.Time `json:"lastTickAt,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	// AgentWorkID/AgentGrantID 是 Agent 派工启动制作时的授权绑定：调度器创建的
+	// 每个收费任务按该 grant 准入并归属工作树；工作停止或授权关闭后不再提交。
+	AgentWorkID  string    `json:"agentWorkId" gorm:"size:36;default:''"`
+	AgentGrantID string    `json:"agentGrantId" gorm:"size:36;default:''"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // DramaCast 是全剧设定（角色 / 场景），镜头引用它的参考图保持一致性。

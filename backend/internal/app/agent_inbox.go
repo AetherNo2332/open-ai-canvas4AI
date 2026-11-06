@@ -190,6 +190,8 @@ type ApprovalRequest struct {
 	QuoteMicrocredits int64
 	TargetVersion     string
 	Summary           string
+	// ArgumentsHash pins the arguments the approval was requested for.
+	ArgumentsHash string
 }
 
 type ApprovalView struct {
@@ -213,7 +215,7 @@ func approvalView(row model.AgentApproval) ApprovalView {
 }
 
 func approvalState(row model.AgentApproval) ao.Approval {
-	return ao.Approval{Status: row.Status, AuthorizationVersion: row.AuthorizationVersion, QuoteMicrocredits: row.QuoteMicrocredits, TargetVersion: row.TargetVersion}
+	return ao.Approval{Status: row.Status, Operation: row.CallID, AuthorizationVersion: row.AuthorizationVersion, QuoteMicrocredits: row.QuoteMicrocredits, TargetVersion: row.TargetVersion}
 }
 
 // RequestApproval records an approval for one tool call of an executor
@@ -243,7 +245,7 @@ func (s *Service) RequestApproval(ownerID string, req ApprovalRequest) (Approval
 			return err
 		}
 		stored, err := tx.InsertApproval(&model.AgentApproval{ID: newID(), OwnerID: ownerID, WorkItemID: work.ID, RootWorkID: work.RootWorkID, SessionID: session.ID, CallID: strings.TrimSpace(req.CallID),
-			Summary: req.Summary, QuoteMicrocredits: req.QuoteMicrocredits, TargetVersion: req.TargetVersion, AuthorizationVersion: current.Version, Status: ao.ApprovalPending, CreatedAt: time.Now()})
+			Summary: req.Summary, QuoteMicrocredits: req.QuoteMicrocredits, TargetVersion: req.TargetVersion, ArgumentsHash: req.ArgumentsHash, AuthorizationVersion: current.AuthorizationVersion, Status: ao.ApprovalPending, CreatedAt: time.Now()})
 		if err != nil {
 			return err
 		}
@@ -275,15 +277,16 @@ func (s *Service) WorkApprovals(ownerID, workID string) ([]ApprovalView, error) 
 // a no-op, from either view.
 func (s *Service) DecideApproval(ownerID string, req DecideApprovalRequest) (ApprovalView, error) {
 	return s.changeApproval(ownerID, req.ApprovalID, func(approval model.AgentApproval, work *model.AgentWorkItem) (string, error) {
-		return ao.DecideApproval(approvalState(approval), req.Decision, req.ExpectedAuthorizationVersion, work.Version, work.Status)
+		return ao.DecideApproval(approvalState(approval), req.Decision, req.ExpectedAuthorizationVersion, work.AuthorizationVersion, work.Status)
 	})
 }
 
 // ConsumeApproval lets one execution use an approved approval, with the quote
-// and target it is about to use.
-func (s *Service) ConsumeApproval(ownerID, approvalID string, quote int64, targetVersion string) error {
+// and target it is about to use. The operation identity makes a retry of the
+// same execution consume idempotently.
+func (s *Service) ConsumeApproval(ownerID, approvalID string, quote int64, targetVersion, operation string) error {
 	_, err := s.changeApproval(ownerID, approvalID, func(approval model.AgentApproval, work *model.AgentWorkItem) (string, error) {
-		return ao.ConsumeApproval(approvalState(approval), quote, targetVersion, work.Version, work.Status)
+		return ao.ConsumeApproval(approvalState(approval), operation, quote, targetVersion, work.AuthorizationVersion, work.Status)
 	})
 	return err
 }

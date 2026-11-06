@@ -337,11 +337,11 @@ func TestAgentRunnerFailureStateAndNoticeCommitTogether(t *testing.T) {
 
 func TestAgentOutboxDeliveryAndTurnQueueRollbackTogether(t *testing.T) {
 	f := newBusinessFixture(t)
-	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "s", Goal: "看项目", BudgetMicrocredits: 2_000_000, IdempotencyKey: "atomic-delivery"})
+	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "s", Goal: "看项目", BudgetMicrocredits: 1_000_000, IdempotencyKey: "atomic-delivery", AuthorizedScopes: []as.Scope{{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assignment, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "s", ActionKey: "d", DefinitionID: "drama.agent", Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, Handoff: "读取项目状态", BudgetMicrocredits: 1_000_000})
+	assignment, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "s", ActionKey: "d", DefinitionID: "drama.agent", Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, Handoff: "读取项目状态", BudgetMicrocredits: 500_000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,11 +572,11 @@ func TestAgentFrozenContractRecovery(t *testing.T) {
 // the assignment queues a turn under the child budget grant.
 func TestAgentRunnerStartsDelegatedWork(t *testing.T) {
 	f := newBusinessFixture(t)
-	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "s", Goal: "看项目", BudgetMicrocredits: 2_000_000, IdempotencyKey: "runner-work"})
+	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "s", Goal: "看项目", BudgetMicrocredits: 1_000_000, IdempotencyKey: "runner-work", AuthorizedScopes: []as.Scope{{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assignment, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "s", ActionKey: "d", DefinitionID: "drama.agent", Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, Handoff: "读取项目状态并汇报", BudgetMicrocredits: 1_000_000})
+	assignment, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "s", ActionKey: "d", DefinitionID: "drama.agent", Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, Handoff: "读取项目状态并汇报", BudgetMicrocredits: 500_000})
 	if err != nil {
 		t.Fatal(err)
 	}

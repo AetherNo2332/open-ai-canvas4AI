@@ -79,15 +79,15 @@ func (f *businessFixture) drain(t *testing.T) {
 // through the adapter, and reports. Generations stay traceable to the batch.
 func TestAgentSupervisorDelegatesDramaAndEcommerce(t *testing.T) {
 	f := newBusinessFixture(t)
-	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "sup-1", Goal: "第一集分镜 + 一套主图", BudgetMicrocredits: 3_000_000, IdempotencyKey: "biz-work"})
+	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "sup-1", Goal: "第一集分镜 + 一套主图", BudgetMicrocredits: 1_000_000, IdempotencyKey: "biz-work", AuthorizedScopes: []as.Scope{{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, {Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch_agent1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	drama, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "sup-1", ActionKey: "drama", DefinitionID: "drama.agent", Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, Handoff: "梳理第一集", BudgetMicrocredits: 1_000_000})
+	drama, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "sup-1", ActionKey: "drama", DefinitionID: "drama.agent", Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, Handoff: "梳理第一集", BudgetMicrocredits: 400_000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ecommerce, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "sup-1", ActionKey: "ecommerce", DefinitionID: "ecommerce.agent", Scope: as.Scope{Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch_agent1"}, Handoff: "白底陶瓷杯主图", BudgetMicrocredits: 1_000_000})
+	ecommerce, err := f.svc.DelegateWork("user-a", DelegateRequest{WorkItemID: work.ID, SourceMessageID: "sup-1", ActionKey: "ecommerce", DefinitionID: "ecommerce.agent", Scope: as.Scope{Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch_agent1"}, Handoff: "白底陶瓷杯主图", BudgetMicrocredits: 400_000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,13 +106,30 @@ func TestAgentSupervisorDelegatesDramaAndEcommerce(t *testing.T) {
 		t.Fatalf("drama tool result: %+v", result)
 	}
 	// Ecommerce: the model submits a workbench image through the existing bridge.
+	// The fixture's image quote reaches the approval threshold, so the first
+	// pass waits for the user; approving the bound approval lets the replayed
+	// operation submit the task once.
 	f.text.script(toolCallReply("call-e1", "ecommerce_generate_image", `{"prompt":"白底陶瓷杯","channelId":"`+f.channelID+`","model":"`+f.modelKey+`","parameters":{"size":"1024x1024"},"index":0,"count":1}`), textReply("完成"))
 	result, err = f.runTurn(t, businessTurn{Assignment: ecommerce, MessageID: "e-1", Text: "生成一张主图", Model: textModel})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(result.Calls) != 1 || !strings.Contains(result.Calls[0].Result.Text, "等待用户批准") {
+		t.Fatalf("ecommerce tool should wait for approval: %+v", result)
+	}
+	approvals, err := f.svc.WorkApprovals("user-a", work.ID)
+	if err != nil || len(approvals) != 1 {
+		t.Fatalf("approvals: %+v %v", approvals, err)
+	}
+	if _, err := f.svc.DecideApproval("user-a", DecideApprovalRequest{ApprovalID: approvals[0].ID, Decision: ao.ApprovalApproved, ExpectedAuthorizationVersion: 1}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = f.runTurn(t, businessTurn{Assignment: ecommerce, MessageID: "e-1", Text: "生成一张主图", Model: textModel})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(result.Calls) != 1 || result.Calls[0].Result.Operation == "" {
-		t.Fatalf("ecommerce tool result: %+v", result)
+		t.Fatalf("ecommerce tool result after approval: %+v", result)
 	}
 	snapshot, err := f.svc.CreationPlatform().Task(context.Background(), cp.Caller{UserID: "user-a"}, result.Calls[0].Result.Operation)
 	if err != nil || snapshot.Business.Application != "ecommerce" || snapshot.Business.ProjectID != "batch_agent1" {
@@ -154,7 +171,7 @@ func TestAgentSupervisorDelegatesDramaAndEcommerce(t *testing.T) {
 // application or a forged project is refused before any business write.
 func TestAgentBusinessToolsPreserveDomainRules(t *testing.T) {
 	f := newBusinessFixture(t)
-	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "s", Goal: "g", BudgetMicrocredits: 1_000_000, IdempotencyKey: "rules"})
+	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "s", Goal: "g", BudgetMicrocredits: 1_000_000, IdempotencyKey: "rules", AuthorizedScopes: []as.Scope{{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,13 +238,13 @@ func registerNotebookWork(t *testing.T, f *businessFixture, adapter as.BusinessA
 	}); err != nil {
 		t.Fatal(err)
 	}
-	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "review-source", Goal: "write", BudgetMicrocredits: 2_000_000, IdempotencyKey: "review-root-" + newID()})
+	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "review-source", Goal: "write", BudgetMicrocredits: 1_000_000, IdempotencyKey: "review-root-" + newID(), AuthorizedScopes: []as.Scope{{Application: "notebook", SpaceType: "notebook_page", SpaceID: "page-1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assignment, err := f.svc.DelegateWork("user-a", DelegateRequest{
 		WorkItemID: work.ID, SourceMessageID: "review-source", ActionKey: "notebook", DefinitionID: "notebook.agent",
-		Scope: as.Scope{Application: "notebook", SpaceType: "notebook_page", SpaceID: "page-1"}, Handoff: "write", BudgetMicrocredits: 1_000_000,
+		Scope: as.Scope{Application: "notebook", SpaceType: "notebook_page", SpaceID: "page-1"}, Handoff: "write", BudgetMicrocredits: 500_000,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -431,7 +448,7 @@ func TestAgentNewBusinessRegistration(t *testing.T) {
 	if err := f.svc.registerAgentBusiness(testBusinessAdapter{executed: &executed}, as.Definition{ID: "notebook.agent", Version: "1", Role: as.RoleBusiness, Application: "notebook", SpaceTypes: []string{"notebook_page"}, Title: "笔记 Agent", Tools: []string{"notebook_write"}}); err != nil {
 		t.Fatal(err)
 	}
-	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "n", Goal: "写一页", BudgetMicrocredits: 100_000, IdempotencyKey: "nb"})
+	work, err := f.svc.StartWork("user-a", StartWorkRequest{SourceMessageID: "n", Goal: "写一页", BudgetMicrocredits: 100_000, IdempotencyKey: "nb", AuthorizedScopes: []as.Scope{{Application: "notebook", SpaceType: "notebook_page", SpaceID: "p1"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

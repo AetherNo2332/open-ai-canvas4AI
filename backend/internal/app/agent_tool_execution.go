@@ -74,30 +74,31 @@ func (s *Service) fenceAgentTurn(session *model.AgentSession) error {
 }
 
 // fenceAgentToolExecution re-checks, for this call, that the work is still
-// live and that the executing assignment is still the work's live one. A
-// stopped tree or a replaced assignment invalidates the caller's credentials.
-func (s *Service) fenceAgentToolExecution(call as.ToolInvocation) error {
+// live and that the executing assignment is still the work's live one, and
+// returns the work for the caller's authorization checks. A stopped tree or a
+// replaced assignment invalidates the caller's credentials.
+func (s *Service) fenceAgentToolExecution(call as.ToolInvocation) (*model.AgentWorkItem, error) {
 	if call.WorkItemID == "" {
-		return nil
+		return nil, nil
 	}
 	work, err := s.repo.AgentWorkForOwner(call.OwnerID, call.WorkItemID)
 	if err != nil {
-		return workNotFound(err)
+		return nil, workNotFound(err)
 	}
 	if ao.WorkTerminal(work.Status) {
-		return as.NewError(as.CodeWorkStopped, "工作已停止，工具执行被拒绝")
+		return nil, as.NewError(as.CodeWorkStopped, "工作已停止，工具执行被拒绝")
 	}
 	if call.AssignmentID == "" {
-		return nil
+		return work, nil
 	}
 	assignment, err := s.repo.AgentAssignmentForOwner(call.OwnerID, call.AssignmentID)
 	if err != nil {
-		return workNotFound(err)
+		return nil, workNotFound(err)
 	}
 	if assignment.WorkItemID != work.ID || work.ActiveAssignmentID != assignment.ID || assignment.Status != ao.AssignmentRunning || assignment.Epoch != call.AssignmentEpoch {
-		return as.NewError(as.CodeStaleAssignment, "派工已更换，旧执行凭据失效")
+		return nil, as.NewError(as.CodeStaleAssignment, "派工已更换，旧执行凭据失效")
 	}
-	return nil
+	return work, nil
 }
 
 // isAgentToolRefusal reports whether an execution error is a refusal the
@@ -127,11 +128,11 @@ func (s *Service) executeAgentOperation(ctx context.Context, call as.ToolInvocat
 		if storedErr != nil {
 			return as.ToolResult{}, storedErr
 		}
-		if stored.Status == agentOperationSucceeded {
-			return storedAgentToolResult(stored)
-		}
 		if stored.ArgumentsHash != argumentsHash {
 			return as.ToolResult{}, as.NewError(as.CodeIdempotencyConflict, "同一操作标识被用于不同参数")
+		}
+		if stored.Status == agentOperationSucceeded {
+			return storedAgentToolResult(stored)
 		}
 	}
 	result, execErr := execute()

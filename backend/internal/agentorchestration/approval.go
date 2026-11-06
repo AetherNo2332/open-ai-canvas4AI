@@ -10,9 +10,11 @@ const (
 
 // Approval is the state an approval decision is checked against. It binds the
 // work authorization version, the quoted cost and the target object version
-// at the time it was requested.
+// at the time it was requested. Operation is the server identity of the one
+// execution the approval belongs to.
 type Approval struct {
 	Status               string
+	Operation            string
 	AuthorizationVersion int64
 	QuoteMicrocredits    int64
 	TargetVersion        string
@@ -47,20 +49,26 @@ func DecideApproval(current Approval, decision string, callerVersion, workVersio
 }
 
 // ConsumeApproval lets exactly one execution use an approved approval, and
-// only while the quote, target object and work version still match.
-func ConsumeApproval(current Approval, quote int64, targetVersion string, workVersion int64, workStatus string) (string, error) {
-	switch current.Status {
-	case ApprovalApproved:
-	case ApprovalConsumed:
-		return current.Status, NewError(CodeVersionConflict, "审批已执行过一次")
-	default:
-		return current.Status, NewError(CodeForbidden, "审批未通过")
-	}
+// only while the quote, target object and work version still match. The
+// consuming execution identifies itself by operation: a retry of the same
+// operation after a crash consumes idempotently, a different operation never
+// touches the approval.
+func ConsumeApproval(current Approval, operation string, quote int64, targetVersion string, workVersion int64, workStatus string) (string, error) {
 	if WorkTerminal(workStatus) {
 		return ApprovalExpired, NewError(CodeWorkStopped, "工作已停止，审批失效")
 	}
 	if quote != current.QuoteMicrocredits || targetVersion != current.TargetVersion || workVersion != current.AuthorizationVersion {
 		return ApprovalExpired, NewError(CodeVersionConflict, "报价、目标或授权已变化，审批失效")
+	}
+	switch current.Status {
+	case ApprovalApproved:
+	case ApprovalConsumed:
+		if operation != "" && operation == current.Operation {
+			return ApprovalConsumed, nil
+		}
+		return current.Status, NewError(CodeVersionConflict, "审批已执行过一次")
+	default:
+		return current.Status, NewError(CodeForbidden, "审批未通过")
 	}
 	return ApprovalConsumed, nil
 }
