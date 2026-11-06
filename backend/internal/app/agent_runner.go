@@ -78,6 +78,16 @@ func (s *Service) runPendingAgentTurns(limit int) (int, error) {
 			finished++
 		}
 	}
+	// 把已提交任务的最新状态投影成工作报告：进行中一次、终态一次。
+	taskOwners, err := s.repo.OwnersWithSubmittedTasks(limit)
+	if err != nil {
+		return finished, err
+	}
+	for _, owner := range taskOwners {
+		if err := s.reconcileAgentOperations(owner); err != nil {
+			slog.Warn("agent operation reconcile failed", "owner", owner, "error", err)
+		}
+	}
 	return finished, nil
 }
 

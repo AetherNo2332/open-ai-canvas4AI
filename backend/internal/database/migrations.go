@@ -14,7 +14,7 @@ import (
 
 // CurrentSchemaVersion：v1–v77 归上游迁移；v78 起是 fork 云端 Agent 子系统，v79 起见各 migrations_*_go 文件。
 // 迁移计划按列表逐项执行，不要求版本连续（v44 与上游合并前的 v75–v77 均为空号）。
-const CurrentSchemaVersion int64 = agentAuthorizationMigrationVersion
+const CurrentSchemaVersion int64 = agentBusinessCapabilityMigrationVersion
 
 const (
 	baselineSchemaChecksum                = "sha256:open-ai-canvas-schema-v1-20260830"

@@ -48,6 +48,12 @@ const agentAuthorizationMigrationVersion int64 = 93
 
 const agentAuthorizationChecksum = "sha256:agent-service-authorization-v93-20261107"
 
+// agentBusinessCapabilityMigrationVersion 建立电商批次的持久记录：
+// 商品资料、预设与任务关联跨页面与服务重启可找回。
+const agentBusinessCapabilityMigrationVersion int64 = 94
+
+const agentBusinessCapabilityChecksum = "sha256:agent-service-business-capability-v94-20261107"
+
 // agentServiceMigrations 由 migrations_creation_platform.go 的 init 接在平台迁移之后登记。
 var agentServiceMigrations = []migration{
 	{version: agentSessionsMigrationVersion, name: "agent_service_sessions", checksum: agentSessionsChecksum, apply: migrateAgentSessions},
@@ -58,6 +64,7 @@ var agentServiceMigrations = []migration{
 	{version: agentTurnMigrationVersion, name: "agent_service_turns", checksum: agentTurnChecksum, apply: migrateAgentTurns},
 	{version: agentToolExecutionMigrationVersion, name: "agent_service_tool_execution", checksum: agentToolExecutionChecksum, apply: migrateAgentToolExecution},
 	{version: agentAuthorizationMigrationVersion, name: "agent_service_authorization", checksum: agentAuthorizationChecksum, apply: migrateAgentAuthorization},
+	{version: agentBusinessCapabilityMigrationVersion, name: "agent_service_business_capability", checksum: agentBusinessCapabilityChecksum, apply: migrateAgentBusinessCapability},
 }
 
 // AgentServiceModels 是 Agent 服务的持久结构，顺序即迁移与复制顺序。
@@ -102,4 +109,8 @@ func migrateAgentToolExecution(tx *gorm.DB) error {
 // authorization binding columns; both dialects take the added columns as is.
 func migrateAgentAuthorization(tx *gorm.DB) error {
 	return tx.AutoMigrate(&model.AgentWorkItem{}, &model.AgentApproval{}, &model.DramaProduction{})
+}
+
+func migrateAgentBusinessCapability(tx *gorm.DB) error {
+	return tx.AutoMigrate(&model.AgentEcommerceBatch{})
 }

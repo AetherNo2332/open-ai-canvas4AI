@@ -84,6 +84,10 @@ func (r *businessTurnRun) advance() (businessTurnResult, bool, error) {
 	if err := r.append(as.HistoryMessage{ID: r.turn.MessageID, Kind: as.MessageKindMessage, Actor: as.ActorUser, Role: cp.RoleUser, Text: r.turn.Text}); err != nil {
 		return r.result, false, err
 	}
+	// 长材料先做一次按会话保存的摘要步骤，摘要费用归当前授权。
+	if err := r.maybeCompactContext(); err != nil {
+		return r.result, false, err
+	}
 	for step := 1; step <= businessTurnMaxSteps; step++ {
 		stepKey := r.turnKey + ":step:" + itoaStep(step)
 		finished, calls, text, err := r.modelStep(step, stepKey)

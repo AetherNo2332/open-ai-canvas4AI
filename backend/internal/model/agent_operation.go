@@ -43,3 +43,17 @@ type AgentTurnContract struct {
 	ToolsJSON         string `gorm:"type:text"`
 	CreatedAt         time.Time
 }
+
+// AgentEcommerceBatch is the durable batch record of an ecommerce space:
+// product material, the chosen preset and the tasks submitted under the batch,
+// so the page and the Agent recover the same batch across restarts.
+type AgentEcommerceBatch struct {
+	ID          string `gorm:"primaryKey;size:36"`
+	OwnerID     string `gorm:"not null;size:36;uniqueIndex:idx_agent_ecommerce_batch,priority:1"`
+	BatchID     string `gorm:"not null;size:120;uniqueIndex:idx_agent_ecommerce_batch,priority:2"`
+	ProductJSON string `gorm:"type:text"`
+	PresetJSON  string `gorm:"type:text"`
+	TaskRefsJSON string `gorm:"type:text"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}

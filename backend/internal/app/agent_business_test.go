@@ -131,7 +131,7 @@ func TestAgentSupervisorDelegatesDramaAndEcommerce(t *testing.T) {
 	if len(result.Calls) != 1 || result.Calls[0].Result.Operation == "" {
 		t.Fatalf("ecommerce tool result after approval: %+v", result)
 	}
-	snapshot, err := f.svc.CreationPlatform().Task(context.Background(), cp.Caller{UserID: "user-a"}, result.Calls[0].Result.Operation)
+	snapshot, err := f.svc.CreationPlatform().Task(context.Background(), cp.Caller{UserID: "user-a"}, strings.TrimPrefix(result.Calls[0].Result.Operation, "task:"))
 	if err != nil || snapshot.Business.Application != "ecommerce" || snapshot.Business.ProjectID != "batch_agent1" {
 		t.Fatalf("generation must be a workbench batch task: %+v %v", snapshot, err)
 	}
