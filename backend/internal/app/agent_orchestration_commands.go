@@ -212,6 +212,10 @@ func (s *Service) applyReportEffect(tx *repository.WorkTx, ownerID string, work 
 			return err
 		}
 	}
+	// 根工作（独立咨询）没有父工作：报告留在自己的目录里，不向总控投递。
+	if work.ParentWorkID == "" {
+		return nil
+	}
 	parent, err := tx.Work(ownerID, work.ParentWorkID)
 	if err != nil {
 		return err
