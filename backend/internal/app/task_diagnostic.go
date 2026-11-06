@@ -17,7 +17,8 @@ func taskHasAgentOrigin(raw string) bool {
 			Source string `json:"source"`
 		} `json:"metadata"`
 	}
-	return json.Unmarshal([]byte(raw), &input) == nil && input.Metadata.Source == "cloud_agent"
+	// Structured platform steps belong to a server-side Agent turn the same way.
+	return json.Unmarshal([]byte(raw), &input) == nil && (input.Metadata.Source == "cloud_agent" || input.Metadata.Source == "creation_platform_structured")
 }
 
 func safeTaskDiagnosticMessage(message string) string {

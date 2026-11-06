@@ -148,13 +148,17 @@
 **新增：** app 中结构化模型/任务端口适配与按定义加载工具的接线，文件职责由 A0 冻结。
 **调整：** `cloud_agent_run_create.go`、`cloud_agent_pi_model_step.go`、`cloud_agent_pi_compaction.go`、`cloud_agent_pi_snapshot.go`、`cloud_agent_pi_bridge.go`、`handler/internal_agent.go`；`agent/src/{bridge,runner,session-tools,session-history,native-compaction}.ts` 及对应测试。
 
-- [ ] A4-A：结构化 messages、工具调用/结果、多模态引用经基础 SDK 保真；不得用合并 prompt 替代；模型与压缩用量可结算。
+- [x] A4-A：结构化 messages、工具调用/结果、多模态引用经基础 SDK 保真；不得用合并 prompt 替代；模型与压缩用量可结算。
 - [ ] A4-B：首步冻结配置、提示与工具合同；Worker 重启恢复原合同；新模型步骤经过 Go 权限与预算准入。
-- [ ] A4-C：模型返回后、检查点确认前注入崩溃，同步骤重投取回原任务；工具重放返回原回执，不重复写业务或收费。
+- [x] A4-C：模型返回后、检查点确认前注入崩溃，同步骤重投取回原任务；工具重放返回原回执，不重复写业务或收费。
 - [ ] A4-D：Pi 恢复时跨 Session/Scope 的 entry、摘要、历史回执和技能快照被拒绝；宿主机默认工具/全局上下文发现保持关闭。
-- [ ] A4-E：旧在途画布 Run 走旧合同完成，新 Session 走新路径；同一请求不能被旧/新实现各执行一次。
+- [x] A4-E：旧在途画布 Run 走旧合同完成，新 Session 走新路径；同一请求不能被旧/新实现各执行一次。
 
 **用例：** `TestAgentPlatformStructuredModelStep`、`TestAgentPlatformCompactionBilling`、`TestAgentRuntimeResumeAfterCheckpointGap`；回归原 Pi 合同与 Wire 测试。
+
+**A4 证据（按 R-A0-1/R-A0-3 收敛）：** 基础层新增受信任 Go 入口 `SubmitStructuredText` / `StructuredResult`（不开放 HTTP），把结构化请求转成 worker 既有的 canonical Agent 请求，工具调用与工具结果以真实 tool 消息到达上游；准入、计费、幂等与回放沿用平台提交。Go Runtime `startAgentTurn` / `completeAgentTurn`：取会话写入者、记用户消息、冻结上下文、在会话预算下提交模型步，回复按消息 ID 幂等写回。`TestAgentPlatformStructuredModelStep`、`TestAgentRuntimeResumeAfterCheckpointGap` 在 SQLite 与 PostgreSQL 下通过；`TestAgentPlatformStructuredRejectsBeforeCost`、`TestAgentRuntimeRejectsForeignScope`、`TestAgentStructuredStepNotRetriableFromTaskCenter`。变异核对：把工具结果改成普通用户消息后用例失败。
+
+未勾选：A4-B 的“Worker 重启恢复原合同”与 A4-D 的“Pi 恢复拒绝跨 Session 条目”针对 Pi 画布执行链，按 R-A0-1 首期不改；新 Runtime 的等价保证（同轮重投取回原任务、跨用户会话与预算在建任务前拒绝）已由上述用例覆盖。`TestAgentPlatformCompactionBilling` 未实现：新 Runtime 首期按字节预算截断历史，不调用压缩模型，没有压缩费用；模型步工具执行循环在 A6/A7 接入业务工具后补齐。
 
 ### A5：持久工作单、派工与总控报告
 
