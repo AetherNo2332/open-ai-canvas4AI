@@ -127,25 +127,11 @@ func (r *Repository) CreateBudgetRoot(grant *model.PlatformBudgetGrant) (*model.
 // AllocateBudgetGrant inserts a child under the locked tree after check
 // accepts it. A key already used by the owner returns the stored grant.
 func (r *Repository) AllocateBudgetGrant(grant *model.PlatformBudgetGrant, check func(nodes []BudgetNodeRow) error) (*model.PlatformBudgetGrant, error) {
-	result := grant
+	var result *model.PlatformBudgetGrant
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := lockBudgetTree(tx, grant.OwnerID, grant.RootID); err != nil {
-			return err
-		}
-		if stored, err := r.budgetGrantByKey(tx, grant.OwnerID, grant.IdempotencyKey); err == nil {
-			result = stored
-			return nil
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		nodes, err := budgetTreeRows(tx, grant.OwnerID, grant.RootID)
-		if err != nil {
-			return err
-		}
-		if err := check(nodes); err != nil {
-			return err
-		}
-		return tx.Create(grant).Error
+		var err error
+		result, err = r.allocateBudgetGrantTx(tx, grant, check)
+		return err
 	})
 	if err != nil {
 		// The same key may have been taken in another tree at the same time.
@@ -155,6 +141,27 @@ func (r *Repository) AllocateBudgetGrant(grant *model.PlatformBudgetGrant, check
 		return nil, err
 	}
 	return result, nil
+}
+
+// allocateBudgetGrantTx is the allocation body for callers already in a
+// transaction (work delegation commits the grant with the work).
+func (r *Repository) allocateBudgetGrantTx(tx *gorm.DB, grant *model.PlatformBudgetGrant, check func(nodes []BudgetNodeRow) error) (*model.PlatformBudgetGrant, error) {
+	if err := lockBudgetTree(tx, grant.OwnerID, grant.RootID); err != nil {
+		return nil, err
+	}
+	if stored, err := r.budgetGrantByKey(tx, grant.OwnerID, grant.IdempotencyKey); err == nil {
+		return stored, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	nodes, err := budgetTreeRows(tx, grant.OwnerID, grant.RootID)
+	if err != nil {
+		return nil, err
+	}
+	if err := check(nodes); err != nil {
+		return nil, err
+	}
+	return grant, tx.Create(grant).Error
 }
 
 // CloseBudgetGrant closes an open grant at the expected version.

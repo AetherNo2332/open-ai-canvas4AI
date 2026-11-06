@@ -167,13 +167,15 @@
 **新增：** `agentorchestration/{contract,ports,work,assignment,inbox,report}.go`；`model/agent_work.go`、`repository/agent_work.go`、`app/agent_orchestration_host.go`、`handler/agent_work.go` 及迁移/测试。
 **调整：** 注册总控工具与定义，复用现有事件/Worker 唤醒设施，不复用 parentRunID 作为工作生命周期。
 
-- [ ] A5-A：同源消息、同 actionKey 重放只创建一个子工作、派工、执行 Session 和预算分配；合法分解多个子项可分别追踪。
-- [ ] A5-B：总控 Run 完成或前端关闭后，子工作继续；重启从持久待派发记录恢复，不要求总控循环轮询模型。
-- [ ] A5-C：报告状态、工作投影和待投递通知同事务提交；重复投递去重，旧 Assignment/旧工作版本报告不覆盖当前结果。
-- [ ] A5-D：未授权业务/空间不能派工；总控收到报告不自动获得完整业务历史和写权限。
-- [ ] A5-E：停止工作使排队派工与自动唤醒失效；新到结果保留审计但不能自动重新派工或恢复预算。
+- [x] A5-A：同源消息、同 actionKey 重放只创建一个子工作、派工、执行 Session 和预算分配；合法分解多个子项可分别追踪。
+- [x] A5-B：总控 Run 完成或前端关闭后，子工作继续；重启从持久待派发记录恢复，不要求总控循环轮询模型。
+- [x] A5-C：报告状态、工作投影和待投递通知同事务提交；重复投递去重，旧 Assignment/旧工作版本报告不覆盖当前结果。
+- [x] A5-D：未授权业务/空间不能派工；总控收到报告不自动获得完整业务历史和写权限。
+- [x] A5-E：停止工作使排队派工与自动唤醒失效；新到结果保留审计但不能自动重新派工或恢复预算。
 
 **用例：** `TestAgentWorkDelegationIdempotency`、`TestAgentWorkOutlivesSupervisorRun`、`TestAgentReportOutboxAndStaleAssignment`、`TestAgentStoppedWorkDoesNotRevive`。
+
+**A5 证据：** 上述 4 个用例在 SQLite 与 PostgreSQL 17 下通过（20 并发重放同一派工只得到 1 个子工作、1 个派工、1 个执行会话、1 个子预算）；领域规则 `agentorchestration/work_test.go`。变异核对：去掉根工作的停止检查后重放派工被接受、按报告自报的派工判断后旧报告被采纳，对应用例均失败。A5-B 的“重启恢复”以新 Service 读同一库验证持久待投递记录；投递执行器（读取 outbox 唤醒执行会话）随 A6 统一队列接入。
 
 ### A6：用户直聊与总控输入的统一队列
 

@@ -541,4 +541,14 @@ Schema 88 `creation_platform_budget_grants` 在基础计费层新增层级预算
 - 准入：在任务提交事务的第一条语句锁住根授权（空更新，PostgreSQL 行锁、SQLite 写锁），读整棵树的用量后判断，再写订单、任务、提交记录与归属；任一写入失败整体回滚。用量按订单状态计：已结算计实收，已退款不占额，`uncertain`（待核对）与在途按冻结额占用。
 - 额度：父授权可用额 = 额度 − 直接用量 − 未关闭子授权的完整额度 − 已关闭子授权的实际用量（含待核对与在途）。子授权内的收费只占子额度，不在父授权上再算一次。关闭授权或其任一上级后不再准入新订单与重试；平台任务重试按提交时的授权准入。
 - SQLite → PostgreSQL 迁移工具已包含两张新表。回退旧代码时预算不再生效（旧代码不读不写），删除前须先备份。
+
+Schema 89 `agent_service_work` 新增总控工作与派工的五张表。工作的生命周期与任何一次运行无关：总控一轮结束、页面关闭都不结束工作。
+
+- `agent_work_items`：`id`、`owner_id`、`idempotency_key`（根工作 `root:<键>`；子工作 `child:<所有者+来源消息+动作键摘要>`）、`parent_work_id`、`root_work_id`、`goal`、`status`（pending/running/waiting_user/paused/completed/failed/cancelled）、`version`、`source_session_id`、`source_message_id`、`supervisor_session_id`、`application`、`space_type`、`space_id`、`budget_grant_id`、`active_assignment_id`、`result_summary`、`stopped_reason`、`stopped_at`。`(owner_id, idempotency_key)` 唯一，重放同一总控步骤只得到一个子工作。
+- `agent_assignments`：`id`、`owner_id`、`work_item_id`、`epoch`、`executor_session_id`、`definition_id`、`handoff`、`status`（pending/running/ended）、`end_reason`、`ended_at`。`(work_item_id, epoch)` 唯一；部分唯一索引 `idx_agent_assignment_live` 保证每个工作至多一个未结束派工。
+- `agent_work_reports`：`(assignment_id, report_id)` 唯一，重复投递只存一次；来自旧派工、旧 epoch 或旧工作版本的报告以 `applied = false` 留档，不改变工作。
+- `agent_work_inputs`：用户或总控对工作的补充输入，`(work_item_id, idempotency_key)` 唯一。
+- `agent_outboxes`：与状态变化同事务写入的待投递记录（`assignment_started`、`report`），至少一次投递，接收方按 `id` 去重。停止工作时同事务取消待投递记录。
+- 写入顺序：同一棵工作树的写入先锁根工作行，再锁预算根授权；派工在同一事务里建子工作、执行会话、子预算、首个派工与执行方投递记录。停止工作会把整棵子树标为 cancelled、结束派工、取消投递并关闭各自预算。
+- SQLite → PostgreSQL 迁移工具已包含五张表。回退旧代码时这些表无人读取，可保留；删除前须先备份。
 - SQLite → PostgreSQL 迁移工具已包含两张表。回退旧代码时两张表无人读取，可保留；删除前须先备份。

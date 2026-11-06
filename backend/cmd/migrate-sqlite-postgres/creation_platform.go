@@ -19,5 +19,10 @@ func agentServiceTableMigrations() []tableMigration {
 		migrateTable[model.AgentSession]("agent_sessions"),
 		migrateTable[model.AgentSessionMessage]("agent_session_messages"),
 		migrateTable[model.AgentMemoryNote]("agent_memory_notes"),
+		migrateTable[model.AgentWorkItem]("agent_work_items"),
+		migrateTable[model.AgentAssignment]("agent_assignments"),
+		migrateTable[model.AgentWorkReport]("agent_work_reports"),
+		migrateTable[model.AgentWorkInput]("agent_work_inputs"),
+		migrateTable[model.AgentOutbox]("agent_outboxes"),
 	}
 }

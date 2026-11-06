@@ -21,16 +21,22 @@ const platformBudgetMigrationVersion int64 = 88
 
 const platformBudgetChecksum = "sha256:creation-platform-budget-grants-v88-20261106"
 
+// agentWorkMigrationVersion 建立总控工作单、派工、输入、报告与待投递记录。
+const agentWorkMigrationVersion int64 = 89
+
+const agentWorkChecksum = "sha256:agent-service-work-v89-20261106"
+
 // agentServiceMigrations 由 migrations_creation_platform.go 的 init 接在平台迁移之后登记。
 var agentServiceMigrations = []migration{
 	{version: agentSessionsMigrationVersion, name: "agent_service_sessions", checksum: agentSessionsChecksum, apply: migrateAgentSessions},
 	{version: agentContextMigrationVersion, name: "agent_service_context", checksum: agentContextChecksum, apply: migrateAgentContext},
 	{version: platformBudgetMigrationVersion, name: "creation_platform_budget_grants", checksum: platformBudgetChecksum, apply: migratePlatformBudget},
+	{version: agentWorkMigrationVersion, name: "agent_service_work", checksum: agentWorkChecksum, apply: migrateAgentWork},
 }
 
 // AgentServiceModels 是 Agent 服务的持久结构，顺序即迁移与复制顺序。
 func AgentServiceModels() []any {
-	return []any{&model.AgentSession{}, &model.AgentSessionMessage{}, &model.AgentMemoryNote{}}
+	return []any{&model.AgentSession{}, &model.AgentSessionMessage{}, &model.AgentMemoryNote{}, &model.AgentWorkItem{}, &model.AgentAssignment{}, &model.AgentWorkReport{}, &model.AgentWorkInput{}, &model.AgentOutbox{}}
 }
 
 func migrateAgentSessions(tx *gorm.DB) error {
@@ -43,4 +49,13 @@ func migrateAgentContext(tx *gorm.DB) error {
 
 func migratePlatformBudget(tx *gorm.DB) error {
 	return tx.AutoMigrate(&model.PlatformSubmission{}, &model.PlatformBudgetGrant{}, &model.PlatformBudgetCharge{})
+}
+
+// migrateAgentWork also adds the partial unique index that allows at most one
+// live assignment per work item; SQLite and PostgreSQL both support it.
+func migrateAgentWork(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.AgentWorkItem{}, &model.AgentAssignment{}, &model.AgentWorkReport{}, &model.AgentWorkInput{}, &model.AgentOutbox{}); err != nil {
+		return err
+	}
+	return tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_assignment_live ON agent_assignments (work_item_id) WHERE status <> 'ended'").Error
 }

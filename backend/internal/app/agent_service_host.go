@@ -40,6 +40,7 @@ func (s *Service) agentRegistry() *as.Registry {
 			{ID: canvasAgentDefinitionID, Version: "1", Role: as.RoleBusiness, Application: as.ApplicationCanvas, SpaceTypes: []string{as.SpaceCanvas}, Title: "画布 Agent"},
 			{ID: "drama.agent", Version: "1", Role: as.RoleBusiness, Application: as.ApplicationDrama, SpaceTypes: []string{as.SpaceDramaProject}, Title: "短剧 Agent"},
 			{ID: "ecommerce.agent", Version: "1", Role: as.RoleBusiness, Application: as.ApplicationEcommerce, SpaceTypes: []string{as.SpaceWorkbenchBatch}, Title: "电商 Agent"},
+			{ID: supervisorDefinitionID, Version: "1", Role: as.RoleSupervisor, Application: as.ApplicationOrchestration, SpaceTypes: []string{as.SpaceWork}, Title: "总控 Agent"},
 		} {
 			if err := registry.Register(def); err != nil {
 				panic(err)
