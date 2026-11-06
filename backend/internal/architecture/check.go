@@ -104,7 +104,7 @@ func InAgentScope(rel string) bool {
 	case dir == "internal/handler":
 		return match("agent*.go") || base == "internal_agent.go"
 	}
-	for _, domain := range []string{"internal/agentcontext", "internal/agentmemory"} {
+	for _, domain := range []string{"internal/agentcontext", "internal/agentmemory", "internal/agentservice", "internal/agentorchestration"} {
 		if dir == domain || strings.HasPrefix(dir, domain+"/") {
 			return true
 		}

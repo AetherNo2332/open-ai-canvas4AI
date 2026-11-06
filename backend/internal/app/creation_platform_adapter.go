@@ -18,6 +18,9 @@ type adapterSubmission struct {
 	// Key 为空表示不做幂等（每次新建任务），用于保留“再生成一次”的旧语义。
 	Key     string
 	TaskReq CreateTaskRequest
+	// BudgetGrantID is set by trusted server callers (Agent runtimes) to admit
+	// the order against a budget grant; it joins the idempotency fingerprint.
+	BudgetGrantID string
 }
 
 // submitResolved 走与 Submit 相同的准备、提交与回放流程；返回落库后的任务行。
@@ -34,6 +37,7 @@ func (p *creationPlatform) submitResolved(in adapterSubmission) (*model.Task, bo
 	if err != nil {
 		return nil, false, err
 	}
+	fingerprint = platformBudgetFingerprint(fingerprint, strings.TrimSpace(in.BudgetGrantID))
 	lookup := func() (*cp.SubmitReceipt, error) {
 		return p.existingPlatformSubmission(in.UserID, application, key, fingerprint)
 	}
@@ -81,5 +85,6 @@ func adapterSubmissionRecord(in adapterSubmission, application, key, fingerprint
 		UserID: in.UserID, Application: application, IdempotencyKey: key, Fingerprint: fingerprint,
 		Capability: capabilityFromTaskType(in.TaskReq.Type), BusinessJSON: string(business),
 		ProjectRef: in.Business.ProjectID, ObjectType: in.Business.ObjectType, ObjectID: in.Business.ObjectID, OperationID: in.Business.OperationID,
+		BudgetGrantID: strings.TrimSpace(in.BudgetGrantID),
 	}
 }

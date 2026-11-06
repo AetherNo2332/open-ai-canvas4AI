@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { App, Button } from "antd";
-import { ArrowLeft, Brush, CheckCheck, Clapperboard, Film, Inbox, Pause, Pencil, Play, ScrollText, Settings2, UsersRound } from "lucide-react";
+import { ArrowLeft, Bot, Brush, CheckCheck, Clapperboard, Film, Inbox, Pause, Pencil, Play, ScrollText, Settings2, UsersRound } from "lucide-react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
+import { AgentConversationPanel } from "@/components/agent/conversation/agent-conversation-panel";
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
@@ -28,6 +29,7 @@ type StudioView = "production" | "cast" | "inbox" | "settings";
 
 export default function DramaStudioPage() {
     const { projectId = "", episodeId: routeEpisodeId = "" } = useParams();
+    const [agentOpen, setAgentOpen] = useState(false);
     const navigate = useNavigate();
     const { message, modal } = App.useApp();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -246,6 +248,9 @@ export default function DramaStudioPage() {
                     </nav>
                     {/* 窄屏只保留图标（全部生成保留集数），文字由 aria-label 与 title 提供。 */}
                     <div className="drama-topbar-actions">
+                        <Button icon={<Bot className="size-4" />} onClick={() => setAgentOpen(true)} aria-label="短剧 Agent" title="和这部短剧的 Agent 对话：会话只属于本作品">
+                            <span className="drama-topbar-action-label">Agent</span>
+                        </Button>
                         <Button icon={<Brush className="size-4" />} loading={canvas.opening === "canvas"} onClick={() => void canvas.open()} aria-label="精修画布" title="打开这部短剧的精修画布：投送设定、剧情段或成片，精修后采用回短剧">
                             <span className="drama-topbar-action-label">精修画布</span>
                         </Button>
@@ -262,6 +267,7 @@ export default function DramaStudioPage() {
                         ) : null}
                     </div>
                 </header>
+                <AgentConversationPanel open={agentOpen} onClose={() => setAgentOpen(false)} title="短剧 Agent" definitionId="drama.agent" scope={{ application: "drama", spaceType: "drama_project", spaceId: projectId }} />
 
                 {view === "cast" ? <CastPanel projectId={projectId} cast={cast} ratios={{ character: production.settings.assets.characterRatio }} focusId={castFocus} retrying={retry.isPending} assetsPending={production.settings.mediaMode === "manual" && !production.assetsReleased} releasing={release.isPending && release.variables?.target === "assets"} onReleaseAssets={() => release.mutate({ target: "assets" })} onFocus={(id) => setParams({ cast: id })} onRetry={() => retry.mutate()} onChanged={() => invalidate(episodeId)} onOpenCanvas={(castId) => void canvas.open({ kind: "cast", castId })} canvasOpening={canvas.opening?.startsWith("cast:") ? canvas.opening.slice("cast:".length) : undefined} />
                 : view === "inbox" ? <InboxPanel items={summary.inbox} castById={castById} retrying={retry.isPending} retryingGroup={retryingGroup} releasing={release.isPending} onRetryAll={() => retry.mutate()} onRetryGroup={(key, items) => retryGroup.mutate({ key, items })} onOpen={openInbox} onOpenSettings={() => openView("settings")} onReleaseAll={confirmReleaseAll} />

@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"yingce/backend/internal/agentservice"
 	"yingce/backend/internal/auth"
 	"yingce/backend/internal/canvas"
 	"yingce/backend/internal/canvas/commands"
@@ -98,6 +99,10 @@ type Service struct {
 	observability            *observability.Aggregator
 	observabilityExporter    *observability.Exporter
 	providerCatalogOnce      sync.Once
+	agentServiceOnce         sync.Once
+	agentDefinitions         *agentservice.Registry
+	agentAdaptersOnce        sync.Once
+	agentBusinesses          *agentservice.AdapterRegistry
 	providerCatalog          *providercatalog.Source
 	creditPolicyMu           sync.RWMutex
 	creditPolicyCache        *CreditPolicy
@@ -204,6 +209,7 @@ func (s *Service) StartWorker() {
 	s.startPaymentWorker(ctx)
 	s.startBillingAutoRefundWorker()
 	s.startDramaScheduler()
+	s.startAgentRunner()
 	if s.canvasTasks != nil {
 		s.startCanvasMaterializer()
 	}

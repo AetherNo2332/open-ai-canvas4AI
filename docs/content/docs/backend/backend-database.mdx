@@ -517,3 +517,50 @@ Schema 85 新增 `platform_task_events` 与 `platform_event_counters`，以及 `
 - 游标分配：PostgreSQL 用 `DEFERRABLE INITIALLY DEFERRED` 约束触发器在提交时从 `platform_event_counters` 取号，游标按提交顺序递增、回滚不留空洞；SQLite 写事务串行，写入时取号。计数器行只在事务末尾加锁，不与业务锁形成环。
 - 清理：后台每小时删除 7 天前的事件，但保留每个任务最新一条，并把清理水位写入 `platform_event_counters.pruned_before`。
 - SQLite → PostgreSQL 迁移工具已包含两张新表；目标库触发器由迁移 v85 建立。回退旧代码时触发器仍会写事件但无人读取，可保留；需要移除时先备份，再删除触发器与两张表。
+
+### Agent 服务会话（Schema 86 起）
+
+Schema 86 `agent_service_sessions`（`database/migrations_agent_service.go`）新增 `agent_sessions`：短剧、电商、画布与总控共用的会话根记录。只新增表，不改 `cloud_agent_executions`、`cloud_agent_pi_sessions` 与既有历史。
+
+- 字段：`id`、`owner_id`、`idempotency_key`（API 创建为 `api:<键>`，画布映射为 `canvas-conversation:<对话 ID>`）、`fingerprint`、`definition_id`、`definition_version`、`role`（business/supervisor）、`application`、`space_type`、`space_id`、`work_item_id`、`conversation_id`（画布对话的原 ID，非画布会话为空）、`title`、`status`（active/archived）、`revision`、`active_run_id`、`lease_owner`、`lease_epoch`、`lease_expires_at`、`archived_at`、`created_at`、`updated_at`。
+- 约束：`(owner_id, idempotency_key)` 唯一，同一画布对话重复映射或并发映射只留一行；`(owner_id, application, space_type, space_id)`、`(owner_id, conversation_id)`、`(owner_id, created_at)` 普通索引。
+- 所有者、定义、业务与空间只在插入时写入，仓储没有修改这些列的写路径。单写者：获取租约以读到的 `lease_epoch` 为条件更新并让 epoch +1，写入要求租约所有者、epoch、未过期与 `revision` 同时匹配；释放租约保留 epoch，旧写入者之后的写入仍被拒绝。
+- 画布映射：列出目录时为该用户每个画布对话补一行 `canvas.agent` 会话，`space_id` 为对话所在画布；临时子代理对话不映射，保留不可直聊的限制。Pi 存储 ID、条目与事件序号不变。
+- SQLite → PostgreSQL 迁移工具已包含此表。回退旧代码时此表无人读取，可保留；删除会丢失非画布会话，删除前须先备份。
+
+Schema 87 `agent_service_context` 新增两张表，只服务非画布会话；画布会话的历史仍在 Pi 表中，不复制。
+
+- `agent_session_messages`：`id`、`owner_id`、`session_id`、`message_id`、`sequence`、`kind`（message/summary）、`actor`（user/supervisor/executor/system，由服务端写入）、`role`、`body`、`run_id`、`created_at`。`(owner_id, session_id, message_id)` 唯一，同一消息重放不会写第二条；`(session_id, sequence)` 唯一。追加与会话 `revision` +1 在同一事务，条件是当前租约所有者、epoch、未过期且 revision 一致。
+- `agent_memory_notes`：`id`、`owner_id`、`kind`（session/business_space/user_preference）、`session_id`、`application`、`space_type`、`space_id`、`published_from`、`body`、`revision`。会话笔记只被本会话读取；业务文档由用户显式发布会话笔记生成，只在完全相同的业务空间可读，`(owner_id, published_from)` 唯一保证重复发布返回同一文档；用户偏好由用户写入，所有会话可读。
+- 旧的 `agent_memory_documents`（每用户一份）保持原样，仍可在原记忆页面查看和撤销；新会话的上下文不注入它。
+
+Schema 88 `creation_platform_budget_grants` 在基础计费层新增层级预算，并为 `platform_submissions` 增加 `budget_grant_id`（非空、默认空字符串）。预算不是第二个钱包：余额、冻结与结算仍只由 `billing_orders` 与 `credit_accounts` 完成，预算只决定新订单能否准入。
+
+- `platform_budget_grants`：`id`、`owner_id`、`idempotency_key`、`fingerprint`、`root_id`、`parent_id`（根为空）、`limit_microcredits`、`status`（open/closed）、`version`、`application`、`object_type`、`object_id`（工作归属标签）、`closed_at`。`(owner_id, idempotency_key)` 唯一；同一棵树共用 `root_id` 与所有者账户，每个授权只有一个上级。
+- `platform_budget_charges`：`id`（收费任务为订单 ID，免费任务为 `free:<任务>:<随机>`）、`owner_id`、`root_id`、`grant_id`、`task_id`、`billing_order_id`。主键即订单 ID，一张订单只计入一个授权。
+- 准入：在任务提交事务的第一条语句锁住根授权（空更新，PostgreSQL 行锁、SQLite 写锁），读整棵树的用量后判断，再写订单、任务、提交记录与归属；任一写入失败整体回滚。用量按订单状态计：已结算计实收，已退款不占额，`uncertain`（待核对）与在途按冻结额占用。
+- 额度：父授权可用额 = 额度 − 直接用量 − 未关闭子授权的完整额度 − 已关闭子授权的实际用量（含待核对与在途）。子授权内的收费只占子额度，不在父授权上再算一次。关闭授权或其任一上级后不再准入新订单与重试；平台任务重试按提交时的授权准入。
+- SQLite → PostgreSQL 迁移工具已包含两张新表。回退旧代码时预算不再生效（旧代码不读不写），删除前须先备份。
+
+Schema 89 `agent_service_work` 新增总控工作与派工的五张表。工作的生命周期与任何一次运行无关：总控一轮结束、页面关闭都不结束工作。
+
+- `agent_work_items`：`id`、`owner_id`、`idempotency_key`（根工作 `root:<键>`；子工作 `child:<所有者+来源消息+动作键摘要>`）、`parent_work_id`、`root_work_id`、`goal`、`status`（pending/running/waiting_user/paused/completed/failed/cancelled）、`version`、`source_session_id`、`source_message_id`、`supervisor_session_id`、`application`、`space_type`、`space_id`、`budget_grant_id`、`active_assignment_id`、`result_summary`、`stopped_reason`、`stopped_at`。`(owner_id, idempotency_key)` 唯一，重放同一总控步骤只得到一个子工作。
+- `agent_assignments`：`id`、`owner_id`、`work_item_id`、`epoch`、`executor_session_id`、`definition_id`、`handoff`、`status`（pending/running/ended）、`end_reason`、`ended_at`。`(work_item_id, epoch)` 唯一；部分唯一索引 `idx_agent_assignment_live` 保证每个工作至多一个未结束派工。
+- `agent_work_reports`：`(assignment_id, report_id)` 唯一，重复投递只存一次；来自旧派工、旧 epoch 或旧工作版本的报告以 `applied = false` 留档，不改变工作。
+- `agent_work_inputs`：用户或总控对工作的补充输入，`(work_item_id, idempotency_key)` 唯一。
+- `agent_outboxes`：与状态变化同事务写入的待投递记录（`assignment_started`、`report`、`work_input`、`user_input`），`seq` 为同一所有者的写入序号（`(owner_id, seq)` 唯一），投递按 `seq` 顺序；至少一次投递，接收方按 `id` 去重。停止工作时同事务取消待投递记录。
+- 写入顺序：同一棵工作树的写入先锁根工作行，再锁预算根授权；派工在同一事务里建子工作、执行会话、子预算、首个派工与执行方投递记录。停止工作会把整棵子树标为 cancelled、结束派工、取消投递并关闭各自预算。
+- SQLite → PostgreSQL 迁移工具已包含五张表。回退旧代码时这些表无人读取，可保留；删除前须先备份。
+
+Schema 90 `agent_service_approvals` 新增 `agent_approvals`：`id`、`owner_id`、`work_item_id`、`root_work_id`、`session_id`、`call_id`、`summary`、`quote_microcredits`、`target_version`、`authorization_version`（申请时的工作版本）、`status`（pending/approved/rejected/consumed/expired）、`decided_at`、`consumed_at`。`(owner_id, session_id, call_id)` 唯一，同一工具调用重复申请返回同一审批；总控与业务视图读取同一行。决定只能做一次（同决定重复为无操作），执行只能消耗一次；报价、目标对象版本或工作版本变化后审批转为 expired。
+
+投递：`agent_outboxes` 由投递环节按时间顺序写入目标会话的 `agent_session_messages`，消息 ID 为 `outbox:<投递 ID>`，重复投递不会写第二条。用户直聊的补充以用户身份写入执行会话；派工、报告与“用户已补充”通知以 system 身份写入，只陈述事实，不构成授权。
+- SQLite → PostgreSQL 迁移工具已包含两张表。回退旧代码时两张表无人读取，可保留；删除前须先备份。
+
+Schema 91 `agent_service_turns` 新增 `agent_turns`，作为非画布业务 Session 的持久执行队列。`StartWorker` 启动的 Go 后台运行器投递 outbox、认领到期轮次并推进可恢复的模型/工具循环；画布 Agent 仍走原 Pi 队列。
+
+- 字段：`id`、`owner_id`、`session_id`、`message_id`、`message_seq`、`text`、`status`（pending/running/done/failed）、`model_json`（首次选择后冻结）、`budget_grant_id`、`attempts`、`error`、`next_at`、`claim_owner`、`claim_expires_at`、`created_at`、`updated_at`。
+- 约束：`(owner_id, session_id, message_id)` 唯一；`(session_id, message_seq)` 索引用于只推进每个 Session 最早的未完成轮次。有效 claim 不能被另一后端实例抢占，过期后可接管；状态写回要求 claim owner 匹配，迟到实例不能覆盖接管者。
+- 原子边界：第一条独立咨询消息与根工作、固定服务端预算授权、派工、Session 绑定和轮次同事务提交；`assignment_started` / `work_input` 的 outbox 状态、Session 消息与轮次同事务提交；终态 failed 与用户可见失败消息同事务提交。任一步失败都不留下半条可执行链。
+- 独立咨询的根预算上限由服务端固定为 1,000,000 microcredits，前端与模型不能抬高；后续消息沿用同一工作和授权。预算仍只做准入，钱包与账单口径不变。
+- SQLite → PostgreSQL 迁移工具已包含 `agent_turns`。回退旧代码会停止推进这些轮次，但数据可保留；恢复新代码后可继续认领，删除前须先备份。

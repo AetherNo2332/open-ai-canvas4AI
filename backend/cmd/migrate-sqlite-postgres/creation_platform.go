@@ -8,5 +8,23 @@ func creationPlatformTableMigrations() []tableMigration {
 		migrateTable[model.PlatformSubmission]("platform_submissions"),
 		migrateTable[model.PlatformTaskEvent]("platform_task_events"),
 		migrateTable[model.PlatformEventCounter]("platform_event_counters"),
+		migrateTable[model.PlatformBudgetGrant]("platform_budget_grants"),
+		migrateTable[model.PlatformBudgetCharge]("platform_budget_charges"),
+	}
+}
+
+// agentServiceTableMigrations 是 Agent 服务的表（schema v86 起），放在平台表之后。
+func agentServiceTableMigrations() []tableMigration {
+	return []tableMigration{
+		migrateTable[model.AgentSession]("agent_sessions"),
+		migrateTable[model.AgentSessionMessage]("agent_session_messages"),
+		migrateTable[model.AgentMemoryNote]("agent_memory_notes"),
+		migrateTable[model.AgentWorkItem]("agent_work_items"),
+		migrateTable[model.AgentAssignment]("agent_assignments"),
+		migrateTable[model.AgentWorkReport]("agent_work_reports"),
+		migrateTable[model.AgentWorkInput]("agent_work_inputs"),
+		migrateTable[model.AgentOutbox]("agent_outboxes"),
+		migrateTable[model.AgentApproval]("agent_approvals"),
+		migrateTable[model.AgentTurn]("agent_turns"),
 	}
 }

@@ -108,6 +108,16 @@ func (s *Service) SetWorkbenchPresetEnabled(actor *model.User, id string, enable
 }
 
 func (s *Service) CreateWorkbenchTask(userID string, req WorkbenchTaskInput, traceID, requestID string) (*model.Task, error) {
+	return s.createWorkbenchTask(userID, req, traceID, requestID, "")
+}
+
+// createWorkbenchTaskUnderBudget is the Agent path: the same workbench rules,
+// with the order admitted against the Agent's budget grant.
+func (s *Service) createWorkbenchTaskUnderBudget(userID string, req WorkbenchTaskInput, grantID string) (*model.Task, error) {
+	return s.createWorkbenchTask(userID, req, "", "", grantID)
+}
+
+func (s *Service) createWorkbenchTask(userID string, req WorkbenchTaskInput, traceID, requestID, grantID string) (*model.Task, error) {
 	if req.Kind == WorkbenchKindImage {
 		if err := s.RequireFeature(FeatureImageWorkbench); err != nil {
 			return nil, err
@@ -134,7 +144,7 @@ func (s *Service) CreateWorkbenchTask(userID string, req WorkbenchTaskInput, tra
 	}
 	resolved.Model = modelName
 	taskReq := CreateTaskRequest{Type: resolved.TaskType, Operation: resolved.Operation, Prompt: resolved.Prompt, Model: resolved.Model, LogicalModelID: resolved.LogicalModelID, Input: resolved.Input, TraceID: traceID, RequestID: requestID, workbenchKind: req.Kind}
-	submission := adapterSubmission{UserID: userID, TaskReq: taskReq, Business: cp.BusinessRef{Application: "ecommerce", ObjectType: "workbench_" + req.Kind, ObjectID: req.ToolID}}
+	submission := adapterSubmission{UserID: userID, TaskReq: taskReq, Business: cp.BusinessRef{Application: "ecommerce", ObjectType: "workbench_" + req.Kind, ObjectID: req.ToolID}, BudgetGrantID: grantID}
 	// 批次项按“批次 + 序号”幂等：整批重提时已接受的项回放原任务，不重新建任务或冻结费用。
 	if req.Batch != nil && workbench.ValidTaskBatch(req.Batch.ID, req.Batch.Index, req.Batch.Count) {
 		operation := fmt.Sprintf("%s:%d", req.Batch.ID, req.Batch.Index)
