@@ -52,8 +52,20 @@ func (s *Service) agentRegistry() *as.Registry {
 }
 
 // validateAgentSpace checks that the space exists and belongs to the owner.
-// Each application owns its rule; the Session core never reads business rows.
+// Built-in applications use the rules below; registered businesses use their
+// adapter. The Session core never reads business rows.
 func (s *Service) validateAgentSpace(ownerID string, scope as.Scope) error {
+	switch scope.Application {
+	case as.ApplicationCanvas, as.ApplicationDrama, as.ApplicationEcommerce:
+		return s.validateBuiltinAgentSpace(ownerID, scope)
+	}
+	if adapter, ok := s.agentAdapters().Adapter(scope.Application); ok {
+		return adapter.ValidateSpace(context.Background(), ownerID, scope)
+	}
+	return as.NewError(as.CodeScopeMismatch, "该业务尚未接入 Agent 服务")
+}
+
+func (s *Service) validateBuiltinAgentSpace(ownerID string, scope as.Scope) error {
 	switch scope.Application {
 	case as.ApplicationCanvas:
 		_, err := s.repo.CanvasProjectForUser(ownerID, scope.SpaceID)

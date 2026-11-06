@@ -101,6 +101,8 @@ type Service struct {
 	providerCatalogOnce      sync.Once
 	agentServiceOnce         sync.Once
 	agentDefinitions         *agentservice.Registry
+	agentAdaptersOnce        sync.Once
+	agentBusinesses          *agentservice.AdapterRegistry
 	providerCatalog          *providercatalog.Source
 	creditPolicyMu           sync.RWMutex
 	creditPolicyCache        *CreditPolicy

@@ -200,13 +200,17 @@
 **新增/完善：** `app/agent_business_canvas.go`、`agent_business_drama.go`、`agent_business_ecommerce.go`，提供器与工具专项测试。
 **调用而非重写：** `drama_service.go`、`drama_actions.go`、`drama_orchestrator.go`、`drama_canvas.go`、`workbench_bridge.go`、`internal/workbench/tasks.go`、`internal/canvas/commands/`。
 
-- [ ] A7-A：总控授权后分别派出“短剧分镜任务”和“电商营销素材任务”，两业务各在独立 Session 执行并汇报可追踪结果。
-- [ ] A7-B：业务 Agent 可读取自己的资料并申请生成；调用既有业务校验，不能绕过短剧审阅/预算和画布版本命令。
+- [x] A7-A：总控授权后分别派出“短剧分镜任务”和“电商营销素材任务”，两业务各在独立 Session 执行并汇报可追踪结果。
+- [x] A7-B：业务 Agent 可读取自己的资料并申请生成；调用既有业务校验，不能绕过短剧审阅/预算和画布版本命令。
 - [ ] A7-C：短剧与精修画布交接只传选定资料、目标与资源引用，采用仍为显式动作；旧版本结果不覆盖新采用。
-- [ ] A7-D：业务状态机继续后台推进，Agent 不按页面状态反复重提相同生成；平台任务与短剧作业/电商批次能一一追踪。
-- [ ] A7-E：注册一个最小测试业务可被总控发现/派工/读报告，不修改总控核心路由或 Session 公共字段。
+- [x] A7-D：业务状态机继续后台推进，Agent 不按页面状态反复重提相同生成；平台任务与短剧作业/电商批次能一一追踪。
+- [x] A7-E：注册一个最小测试业务可被总控发现/派工/读报告，不修改总控核心路由或 Session 公共字段。
 
 **用例：** `TestAgentSupervisorDelegatesDramaAndEcommerce`、`TestAgentBusinessToolsPreserveDomainRules`、`TestAgentNewBusinessRegistration`。
+
+**A7 证据：** 上述 3 个用例通过（SQLite；工作台图片夹具只有 SQLite 版，其 PostgreSQL 行为由 S5 平台用例覆盖）。工具执行经 `executeBusinessTool` 每次重核会话归属、范围与工具所属业务；短剧开始制作走 `SetDramaRunning` 自身的模型与预算校验；电商生成走 `createWorkbenchTaskUnderBudget`，按批次与序号幂等并计入子预算。变异核对：去掉范围重核后伪造空间被放行、去掉工具结果回放后同一工具执行两次，对应用例失败。
+
+未勾选：A7-C（短剧与精修画布交接）：画布 Agent 首期保持原执行链（R-A0-1），交接需画布侧接入新会话，留到画布迁移时实现；短剧作业与平台任务一一对应已由 S6 的短剧平台接入保证。总控与新注册业务的模型步计费标签暂用 `test`（平台 application 白名单首版只有 canvas/drama/ecommerce/test），费用归属以工作树的预算授权为准。
 
 ### A8：Agent TS SDK 与统一会话组件
 

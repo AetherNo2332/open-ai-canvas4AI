@@ -29,6 +29,7 @@ type structuredFixture struct {
 	mu       sync.Mutex
 	bodies   []map[string]any
 	reply    atomic.Value // string: raw JSON body the upstream returns
+	queue    []string     // replies used first, one per call (guarded by mu)
 	channel  string
 	modelKey string
 }
@@ -40,7 +41,24 @@ func newStructuredFixture(t *testing.T, db *gorm.DB) *structuredFixture {
 	if err := database.MigrateSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	f := &structuredFixture{db: db, channel: "text-channel", modelKey: "text-model"}
+	svc := &Service{repo: repository.New(db), dataDir: t.TempDir(), activeCancels: make(map[string]context.CancelFunc), coordinator: platformTestCoordinator(t, db.Dialector.Name())}
+	for _, row := range []any{
+		&model.User{ID: "user-a", Username: "user-a", Role: model.UserRoleUser, Status: model.UserStatusActive},
+		&model.CreditAccount{UserID: "user-a", AvailableMicrocredits: 10_000_000},
+		&model.Project{ID: "drama-1", UserID: "user-a", Name: "短剧", Type: "short-drama", Status: model.ProjectStatusActive, Revision: 1},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	return attachStructuredText(t, svc, db)
+}
+
+// attachStructuredText adds a recording chat-completions upstream and a
+// system text channel to an existing service and database.
+func attachStructuredText(t *testing.T, svc *Service, db *gorm.DB) *structuredFixture {
+	t.Helper()
+	f := &structuredFixture{svc: svc, db: db, channel: "text-channel", modelKey: "text-model"}
 	f.reply.Store(`{"choices":[{"message":{"role":"assistant","content":"好的"},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":7}}`)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.calls.Add(1)
@@ -48,18 +66,18 @@ func newStructuredFixture(t *testing.T, db *gorm.DB) *structuredFixture {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.bodies = append(f.bodies, body)
+		reply := f.reply.Load().(string)
+		if len(f.queue) > 0 {
+			reply, f.queue = f.queue[0], f.queue[1:]
+		}
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(f.reply.Load().(string)))
+		_, _ = w.Write([]byte(reply))
 	}))
 	t.Cleanup(upstream.Close)
-	f.svc = &Service{repo: repository.New(db), dataDir: t.TempDir(), activeCancels: make(map[string]context.CancelFunc), coordinator: platformTestCoordinator(t, db.Dialector.Name())}
 	profile := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), f.modelKey)
 	capabilityJSON, _ := json.Marshal(profile)
 	for _, row := range []any{
-		&model.User{ID: "user-a", Username: "user-a", Role: model.UserRoleUser, Status: model.UserStatusActive},
-		&model.CreditAccount{UserID: "user-a", AvailableMicrocredits: 10_000_000},
-		&model.Project{ID: "drama-1", UserID: "user-a", Name: "短剧", Type: "short-drama", Status: model.ProjectStatusActive, Revision: 1},
 		&model.ModelChannel{ID: f.channel, Scope: model.ChannelScopeSystem, Enabled: true, Name: "文本", BaseURL: upstream.URL + "/v1", APIKey: "upstream-key", APIFormat: "openai"},
 		&model.ChannelModel{ID: "text-cm", ChannelID: f.channel, ModelKey: f.modelKey, ProviderModelKey: f.modelKey, Capability: "text", Protocol: model.ChannelInterfaceChatCompletion, CapabilityConfigJSON: string(capabilityJSON), BillingMode: "token", UnitPriceMicrocredits: 10_000, PriceConfigured: true, Enabled: true},
 		&model.ChannelModelPriceTier{ID: "text-tier", ChannelModelID: "text-cm", SelectorKey: "{}", SelectorJSON: "{}", BillingMode: "token", UnitPriceMicrocredits: 10_000, InputTokenPriceMicrocredits: 1_000, OutputTokenPriceMicrocredits: 1_000, PriceConfigured: true, Enabled: true},
@@ -299,4 +317,11 @@ func TestAgentStructuredStepNotRetriableFromTaskCenter(t *testing.T) {
 	if got := platformCount(t, f.db, &model.BillingOrder{}, "user_id = ?", "user-a"); got != orders {
 		t.Fatalf("rejected retry created orders: %d -> %d", orders, got)
 	}
+}
+
+// script queues upstream replies, one per model call, before the default reply.
+func (f *structuredFixture) script(replies ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queue = append(f.queue, replies...)
 }

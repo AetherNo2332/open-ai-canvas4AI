@@ -108,7 +108,7 @@ func (s *Service) acquireAgentTurnLease(ownerID, sessionID, runID string) (as.Le
 func agentStepRequest(snapshot as.ContextSnapshot, selection cp.ModelSelection, key string) cp.StructuredTextRequest {
 	req := cp.StructuredTextRequest{
 		Model: selection, System: as.RenderText(snapshot), ToolChoice: cp.ToolChoiceNone, IdempotencyKey: key,
-		Business: cp.BusinessRef{Application: snapshot.Scope.Application, ProjectID: snapshot.Scope.SpaceID, ObjectType: "agent_session", ObjectID: snapshot.SessionID, OperationID: key},
+		Business: cp.BusinessRef{Application: agentBillingApplication(snapshot.Scope.Application), ProjectID: snapshot.Scope.SpaceID, ObjectType: "agent_session", ObjectID: snapshot.SessionID, OperationID: key},
 	}
 	for _, block := range snapshot.Blocks {
 		if block.Kind != as.BlockHistory && block.Kind != as.BlockSummary {
@@ -164,4 +164,16 @@ func (s *Service) agentReplyRecorded(ownerID string, step agentTurnStep) bool {
 		}
 	}
 	return false
+}
+
+// agentBillingApplication is the platform billing label of an Agent's model
+// steps. The platform accepts a fixed list; the supervisor and registered
+// businesses bill under "test" until they are added to it. The work tree's
+// budget grant, not this label, is what attributes the cost.
+func agentBillingApplication(application string) string {
+	switch application {
+	case as.ApplicationCanvas, as.ApplicationDrama, as.ApplicationEcommerce:
+		return application
+	}
+	return "test"
 }

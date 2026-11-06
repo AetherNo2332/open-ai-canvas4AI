@@ -21,8 +21,10 @@ const (
 // Message kinds and the actor that produced a message. Actor kinds are written
 // by the server, never taken from a request body.
 const (
-	MessageKindMessage = "message"
-	MessageKindSummary = "summary"
+	MessageKindMessage    = "message"
+	MessageKindSummary    = "summary"
+	MessageKindToolCall   = "tool_call"
+	MessageKindToolResult = "tool_result"
 
 	ActorUser       = "user"
 	ActorSupervisor = "supervisor"
@@ -39,6 +41,8 @@ const (
 	BlockSessionNote    = "memory_session"
 	BlockSummary        = "summary"
 	BlockHistory        = "history"
+	BlockToolCall       = "tool_call"
+	BlockToolResult     = "tool_result"
 	DefaultHistoryBytes = 96 << 10
 )
 
@@ -216,8 +220,13 @@ func contextHistory(in ContextInput, base ContextBlock) ([]ContextBlock, error) 
 	blocks := make([]ContextBlock, 0, len(kept))
 	for _, message := range kept {
 		kind := BlockHistory
-		if message.Kind == MessageKindSummary {
+		switch message.Kind {
+		case MessageKindSummary:
 			kind = BlockSummary
+		case MessageKindToolCall:
+			kind = BlockToolCall
+		case MessageKindToolResult:
+			kind = BlockToolResult
 		}
 		block := base.with(kind, "message:"+message.ID, "session", message.Text)
 		block.Role, block.Actor, block.Revision = message.Role, message.Actor, message.Sequence
@@ -240,7 +249,7 @@ func ValidateNoteText(text string) (string, error) {
 func RenderText(snapshot ContextSnapshot) string {
 	var out strings.Builder
 	for _, block := range snapshot.Blocks {
-		if block.Kind == BlockHistory {
+		if block.Kind == BlockHistory || block.Kind == BlockToolCall || block.Kind == BlockToolResult {
 			continue
 		}
 		out.WriteString("[" + block.Kind + " " + block.Source + "]\n" + block.Text + "\n\n")
