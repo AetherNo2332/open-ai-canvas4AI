@@ -23,6 +23,9 @@ const (
 	CodeMediaDeliveryFailed  ErrorCode = "media_delivery_failed"
 	CodeUnavailable          ErrorCode = "unavailable"
 	CodeInternal             ErrorCode = "internal"
+	// 预算授权（BudgetGrant）错误：额度不足与授权已关闭分开，调用方据此决定申请增额还是停止。
+	CodeBudgetExceeded ErrorCode = "budget_exceeded"
+	CodeBudgetClosed   ErrorCode = "budget_closed"
 )
 
 // Error 是平台对外的统一错误。Reason 对齐后端信封的 reason 取值，便于 HTTP 适配复用。
@@ -64,6 +67,8 @@ var errorDefaults = map[ErrorCode]struct {
 	CodeMediaDeliveryFailed:  {"failed_precondition", 409, true},
 	CodeUnavailable:          {"unavailable", 503, true},
 	CodeInternal:             {"internal", 500, true},
+	CodeBudgetExceeded:       {"quota_exceeded", 403, false},
+	CodeBudgetClosed:         {"failed_precondition", 409, false},
 }
 
 // NewError 用默认 reason 与可重试标记构造错误。
@@ -90,4 +95,10 @@ func AsError(err error) (*Error, bool) {
 		return platformErr, true
 	}
 	return nil, false
+}
+
+// IsCode reports whether err is a platform error with the given code.
+func IsCode(err error, code ErrorCode) bool {
+	platformErr, ok := AsError(err)
+	return ok && platformErr.Code == code
 }

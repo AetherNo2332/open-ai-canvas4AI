@@ -117,29 +117,37 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 
 func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int, submission ...*model.PlatformSubmission) error {
 	return r.Transaction(func(repo *Repository) error {
-		tx := repo.db
-		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
-			return err
-		}
-		if err := enforceActiveTaskLimit(tx, task.UserID, activeTaskLimit); err != nil {
-			return err
-		}
+		return r.createTaskTx(repo, task, order, activeTaskLimit, submission)
+	})
+}
+
+// createTaskTx is the shared body of a task commit: model check, active limit,
+// optional credit reservation, the task row and its platform submissions.
+func (r *Repository) createTaskTx(repo *Repository, task *model.Task, order *model.BillingOrder, activeTaskLimit int, submission []*model.PlatformSubmission) error {
+	tx := repo.db
+	if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
+		return err
+	}
+	if err := enforceActiveTaskLimit(tx, task.UserID, activeTaskLimit); err != nil {
+		return err
+	}
+	if order != nil {
 		if err := reserveBillingOrder(tx, order); err != nil {
 			return err
 		}
-		if err := tx.Create(task).Error; err != nil {
+	}
+	if err := tx.Create(task).Error; err != nil {
+		return err
+	}
+	for _, item := range submission {
+		if err := insertPlatformSubmission(repo, item, task.ID); err != nil {
 			return err
 		}
-		for _, item := range submission {
-			if err := insertPlatformSubmission(repo, item, task.ID); err != nil {
-				return err
-			}
-		}
-		if task.Operation == "cloud_agent" && task.ProjectID != "" {
-			repo.canvasChanged(task.UserID, task.ProjectID)
-		}
-		return nil
-	})
+	}
+	if task.Operation == "cloud_agent" && task.ProjectID != "" {
+		repo.canvasChanged(task.UserID, task.ProjectID)
+	}
+	return nil
 }
 
 func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int, submission ...*model.PlatformSubmission) error {
@@ -166,10 +174,18 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit
 	})
 }
 
-func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, order *model.BillingOrder, activeTaskLimit int) (*model.Task, error) {
+// RetryTaskWithBilling re-queues a failed task with a new order. When budget is
+// set, the order is admitted against and bound to the task's budget grant in
+// the same transaction.
+func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, order *model.BillingOrder, activeTaskLimit int, budget ...*BudgetAdmission) (*model.Task, error) {
 	var task model.Task
 	taskID := prepared.ID
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range budget {
+			if err := admitBudgetCharge(tx, userID, item); err != nil {
+				return err
+			}
+		}
 		// Agent 画布命令绑定过媒体版本的任务不能在任务中心原样重投：结果归属已冻结到
 		// 那个版本，必须回到画布创建新版本。
 		if tx.Migrator().HasTable(&model.CanvasTaskBinding{}) {
@@ -219,6 +235,11 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 		}
 		if err := tx.Delete(&model.TaskTextDelta{}, "user_id = ? AND task_id = ?", userID, taskID).Error; err != nil {
 			return err
+		}
+		for _, item := range budget {
+			if err := bindBudgetCharge(tx, userID, taskID, order, item); err != nil {
+				return err
+			}
 		}
 		return tx.First(&task, "id = ? AND user_id = ?", taskID, userID).Error
 	})

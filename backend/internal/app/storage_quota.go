@@ -72,10 +72,13 @@ func validateStructuredReplacementQuotaWithPolicy(usage repository.UserStorageUs
 	return validateStructuredStorageQuotaWithPolicy(usage, kind, false, deltaBytes, policy)
 }
 
-func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting, submission ...*model.PlatformSubmission) error {
+func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting, budget *repository.BudgetAdmission, submission ...*model.PlatformSubmission) error {
 	s.storageMu.Lock()
 	err := func() error {
 		defer s.storageMu.Unlock()
+		if budget != nil {
+			return createTaskUnderBudgetRepository(s.repo, task, billingOrder, policy, budget, submission...)
+		}
 		return createTaskWithStorageQuotaRepository(s.repo, task, billingOrder, policy, submission...)
 	}()
 	if err == nil {
@@ -97,6 +100,20 @@ func createTaskWithStorageQuotaRepository(repo *repository.Repository, task *mod
 		return repo.CreateTaskWithCreditReservation(task, billingOrder, policy.Task.ActiveTaskLimit, submission...)
 	}
 	return repo.CreateTaskWithActiveLimit(task, policy.Task.ActiveTaskLimit, submission...)
+}
+
+// createTaskUnderBudgetRepository applies the same storage quota, then commits
+// the task with its order admitted against a budget grant.
+func createTaskUnderBudgetRepository(repo *repository.Repository, task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting, budget *repository.BudgetAdmission, submission ...*model.PlatformSubmission) error {
+	usage, err := repo.UserStorageUsage(task.UserID)
+	if err != nil {
+		return err
+	}
+	incomingBytes := int64(len([]byte(task.Prompt)) + len([]byte(task.InputJSON)) + len([]byte(task.Error)))
+	if err := validateTaskStorageQuotaWithPolicy(usage, incomingBytes, policy.Resource); err != nil {
+		return err
+	}
+	return repo.CreateTaskUnderBudget(task, billingOrder, policy.Task.ActiveTaskLimit, budget, submission...)
 }
 
 // 任务完成会同时扩张任务历史和画布操作数据，必须在同一临界区核算并原子写入。

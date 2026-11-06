@@ -130,14 +130,16 @@
 **新增/扩展：** 基础 SDK 预算授权模块、BudgetGrant/预留与关联迁移；实际模型/计费仓储专项测试。
 **调整：** 原基础计费准入和结算；`app/agent_subagent_write.go`、`cloud_agent_pi_model_step.go`、`cloud_agent_billing_invariant_test.go` 仅负责适配与回归。
 
-- [ ] A3-A：根额度 1,000，给两个子工作各分 600 的并发请求最多成功一次；子额度不能跨账户、成环或多父复用。
-- [ ] A3-B：20 个并发同操作收费请求只产生一笔授权和账单；父/子用量按唯一账单汇总，子分配不二次扣钱。
-- [ ] A3-C：分别在任务、账单、预算预留、工作绑定写入处故障，整个提交回滚，Worker 不提前执行；SQLite/PostgreSQL 均验证。
-- [ ] A3-D：实收、退款、在途、uncertain 分别对平；存在待核对订单的子授权不能完全归还给父继续分配。
+- [x] A3-A：根额度 1,000，给两个子工作各分 600 的并发请求最多成功一次；子额度不能跨账户、成环或多父复用。
+- [x] A3-B：20 个并发同操作收费请求只产生一笔授权和账单；父/子用量按唯一账单汇总，子分配不二次扣钱。
+- [x] A3-C：分别在任务、账单、预算预留、工作绑定写入处故障，整个提交回滚，Worker 不提前执行；SQLite/PostgreSQL 均验证。
+- [x] A3-D：实收、退款、在途、uncertain 分别对平；存在待核对订单的子授权不能完全归还给父继续分配。
 - [ ] A3-E：总控、业务模型、压缩和媒体费用都能定位同一工作树；用户直聊原工作不切错预算，独立工作不能偷用原额度。
-- [ ] A3-F：停止、撤权后不再批准新收费请求；上游在途取消/费用核对真实表达，媒体恢复不重新生成扣费。
+- [x] A3-F：停止、撤权后不再批准新收费请求；上游在途取消/费用核对真实表达，媒体恢复不重新生成扣费。
 
 **用例：** `TestAgentBudgetConcurrentAllocation`、`TestAgentBudgetChargeRollback`、`TestAgentBudgetUncertainHoldback`、`TestAgentBudgetRollupNoDoubleCount`。
+
+**A3 证据：** 上述 4 个用例与 `TestAgentBudgetChargeAdmission`（20 并发同键只 1 张订单、20 并发异键不超额）、`TestAgentBudgetClosedGrantFencesNewCharges` 在 SQLite 与 PostgreSQL 17 下通过；领域规则 `creationplatform/budget_test.go`。变异核对：去掉事务内准入检查或把未关闭子授权按实际用量占额后，对应用例失败。A3-E 未勾选：总控、业务模型与压缩费用定位工作树依赖 A4 的模型步与 A5 的工作单，届时以真实提交复验。A3-F 的“上游在途取消与对账”沿用基础平台既有行为，本片只保证关闭后不再准入。
 
 ### A4：复用 Pi 的通用 Runtime 与基础 SDK 适配
 

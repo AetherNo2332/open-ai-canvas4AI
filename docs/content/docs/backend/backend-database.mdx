@@ -533,4 +533,12 @@ Schema 87 `agent_service_context` 新增两张表，只服务非画布会话；�
 - `agent_session_messages`：`id`、`owner_id`、`session_id`、`message_id`、`sequence`、`kind`（message/summary）、`actor`（user/supervisor/executor/system，由服务端写入）、`role`、`body`、`run_id`、`created_at`。`(owner_id, session_id, message_id)` 唯一，同一消息重放不会写第二条；`(session_id, sequence)` 唯一。追加与会话 `revision` +1 在同一事务，条件是当前租约所有者、epoch、未过期且 revision 一致。
 - `agent_memory_notes`：`id`、`owner_id`、`kind`（session/business_space/user_preference）、`session_id`、`application`、`space_type`、`space_id`、`published_from`、`body`、`revision`。会话笔记只被本会话读取；业务文档由用户显式发布会话笔记生成，只在完全相同的业务空间可读，`(owner_id, published_from)` 唯一保证重复发布返回同一文档；用户偏好由用户写入，所有会话可读。
 - 旧的 `agent_memory_documents`（每用户一份）保持原样，仍可在原记忆页面查看和撤销；新会话的上下文不注入它。
+
+Schema 88 `creation_platform_budget_grants` 在基础计费层新增层级预算，并为 `platform_submissions` 增加 `budget_grant_id`（非空、默认空字符串）。预算不是第二个钱包：余额、冻结与结算仍只由 `billing_orders` 与 `credit_accounts` 完成，预算只决定新订单能否准入。
+
+- `platform_budget_grants`：`id`、`owner_id`、`idempotency_key`、`fingerprint`、`root_id`、`parent_id`（根为空）、`limit_microcredits`、`status`（open/closed）、`version`、`application`、`object_type`、`object_id`（工作归属标签）、`closed_at`。`(owner_id, idempotency_key)` 唯一；同一棵树共用 `root_id` 与所有者账户，每个授权只有一个上级。
+- `platform_budget_charges`：`id`（收费任务为订单 ID，免费任务为 `free:<任务>:<随机>`）、`owner_id`、`root_id`、`grant_id`、`task_id`、`billing_order_id`。主键即订单 ID，一张订单只计入一个授权。
+- 准入：在任务提交事务的第一条语句锁住根授权（空更新，PostgreSQL 行锁、SQLite 写锁），读整棵树的用量后判断，再写订单、任务、提交记录与归属；任一写入失败整体回滚。用量按订单状态计：已结算计实收，已退款不占额，`uncertain`（待核对）与在途按冻结额占用。
+- 额度：父授权可用额 = 额度 − 直接用量 − 未关闭子授权的完整额度 − 已关闭子授权的实际用量（含待核对与在途）。子授权内的收费只占子额度，不在父授权上再算一次。关闭授权或其任一上级后不再准入新订单与重试；平台任务重试按提交时的授权准入。
+- SQLite → PostgreSQL 迁移工具已包含两张新表。回退旧代码时预算不再生效（旧代码不读不写），删除前须先备份。
 - SQLite → PostgreSQL 迁移工具已包含两张表。回退旧代码时两张表无人读取，可保留；删除前须先备份。

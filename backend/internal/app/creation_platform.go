@@ -120,6 +120,13 @@ func (p *creationPlatform) attachPlatformReferences(userID string, references []
 }
 
 func (p *creationPlatform) Submit(_ context.Context, caller cp.Caller, req cp.GenerationRequest) (cp.SubmitReceipt, error) {
+	return p.submit(caller, req, "")
+}
+
+// submit is Submit for trusted server callers that may charge a budget grant.
+// The grant is part of the idempotency fingerprint, so one key cannot be
+// replayed under a different budget.
+func (p *creationPlatform) submit(caller cp.Caller, req cp.GenerationRequest, grantID string) (cp.SubmitReceipt, error) {
 	if err := requireCaller(caller); err != nil {
 		return cp.SubmitReceipt{}, err
 	}
@@ -130,8 +137,10 @@ func (p *creationPlatform) Submit(_ context.Context, caller cp.Caller, req cp.Ge
 	if err != nil {
 		return cp.SubmitReceipt{}, err
 	}
+	grantID = strings.TrimSpace(grantID)
+	fingerprint := platformBudgetFingerprint(req.Fingerprint(), grantID)
 	lookup := func() (*cp.SubmitReceipt, error) {
-		return p.existingPlatformSubmission(caller.UserID, application, req.IdempotencyKey, req.Fingerprint())
+		return p.existingPlatformSubmission(caller.UserID, application, req.IdempotencyKey, fingerprint)
 	}
 	if replay, err := lookup(); replay != nil || err != nil {
 		return derefReceipt(replay), err
@@ -146,7 +155,9 @@ func (p *creationPlatform) Submit(_ context.Context, caller cp.Caller, req cp.Ge
 		if err := p.applyCostAuthorization(caller.UserID, req, task, order); err != nil {
 			return err
 		}
-		return p.commitPlatformTask(task, order, platformSubmissionRecord(caller.UserID, application, req))
+		record := platformSubmissionRecord(caller.UserID, application, req)
+		record.Fingerprint, record.BudgetGrantID = fingerprint, grantID
+		return p.commitPlatformTask(task, order, record)
 	}()
 	if err != nil {
 		replay, lookupErr := replayConcurrentWinner(lookup, err)

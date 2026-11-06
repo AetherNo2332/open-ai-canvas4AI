@@ -91,7 +91,7 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
 		return nil, err
 	}
-	task, err = s.repo.RetryTaskWithBilling(userID, task, billingOrder, policy.Task.ActiveTaskLimit)
+	task, err = s.retryTaskUnderBudget(userID, task, billingOrder, policy.Task.ActiveTaskLimit)
 	if errors.Is(err, repository.ErrCanvasTaskRequiresNewVersion) {
 		return nil, &AppError{Status: 409, Code: 409, Reason: "canvas_task_retry_requires_new_version", Message: "请回到画布重新生成，原作品与版本记录会保留"}
 	}

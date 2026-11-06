@@ -8,6 +8,8 @@ func creationPlatformTableMigrations() []tableMigration {
 		migrateTable[model.PlatformSubmission]("platform_submissions"),
 		migrateTable[model.PlatformTaskEvent]("platform_task_events"),
 		migrateTable[model.PlatformEventCounter]("platform_event_counters"),
+		migrateTable[model.PlatformBudgetGrant]("platform_budget_grants"),
+		migrateTable[model.PlatformBudgetCharge]("platform_budget_charges"),
 	}
 }
 

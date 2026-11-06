@@ -210,7 +210,7 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if billingOrder != nil {
 		task.BillingOrderID = billingOrder.ID
 	}
-	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy)
+	err = s.createTaskWithinStorageQuota(&task, billingOrder, policy, nil)
 	if errors.Is(err, repository.ErrActiveTaskLimit) {
 		return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", policy.Task.ActiveTaskLimit))
 	}
@@ -422,7 +422,7 @@ func (s *Service) createTextReplayTask(userID string, req CreateTaskRequest, nor
 	if err != nil {
 		return nil, err
 	}
-	if err := s.createTaskWithinStorageQuota(&task, nil, policy); err != nil {
+	if err := s.createTaskWithinStorageQuota(&task, nil, policy, nil); err != nil {
 		return nil, err
 	}
 	_ = s.log(userID, task.ID, "info", "文本持久化任务已创建（前端自管）", "")

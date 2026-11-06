@@ -133,8 +133,12 @@ func (p *creationPlatform) commitPlatformTask(task *model.Task, order *model.Bil
 	if err != nil {
 		return err
 	}
-	if err := p.s.createTaskWithinStorageQuota(task, order, policy, record); err != nil {
+	budget, err := p.s.budgetAdmission(task.UserID, record.BudgetGrantID, order)
+	if err != nil {
 		return err
+	}
+	if err := p.s.createTaskWithinStorageQuota(task, order, policy, budget, record); err != nil {
+		return platformBudgetError(err)
 	}
 	p.s.recordActivity(task.UserID, "task", 1)
 	_ = p.s.log(task.UserID, task.ID, "info", "任务已进入队列", "")

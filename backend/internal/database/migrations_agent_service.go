@@ -16,10 +16,16 @@ const agentContextMigrationVersion int64 = 87
 
 const agentContextChecksum = "sha256:agent-service-context-v87-20261106"
 
+// platformBudgetMigrationVersion 在基础计费层建立层级预算授权与订单归属；版本接在 Agent 迁移之后。
+const platformBudgetMigrationVersion int64 = 88
+
+const platformBudgetChecksum = "sha256:creation-platform-budget-grants-v88-20261106"
+
 // agentServiceMigrations 由 migrations_creation_platform.go 的 init 接在平台迁移之后登记。
 var agentServiceMigrations = []migration{
 	{version: agentSessionsMigrationVersion, name: "agent_service_sessions", checksum: agentSessionsChecksum, apply: migrateAgentSessions},
 	{version: agentContextMigrationVersion, name: "agent_service_context", checksum: agentContextChecksum, apply: migrateAgentContext},
+	{version: platformBudgetMigrationVersion, name: "creation_platform_budget_grants", checksum: platformBudgetChecksum, apply: migratePlatformBudget},
 }
 
 // AgentServiceModels 是 Agent 服务的持久结构，顺序即迁移与复制顺序。
@@ -33,4 +39,8 @@ func migrateAgentSessions(tx *gorm.DB) error {
 
 func migrateAgentContext(tx *gorm.DB) error {
 	return tx.AutoMigrate(&model.AgentSessionMessage{}, &model.AgentMemoryNote{})
+}
+
+func migratePlatformBudget(tx *gorm.DB) error {
+	return tx.AutoMigrate(&model.PlatformSubmission{}, &model.PlatformBudgetGrant{}, &model.PlatformBudgetCharge{})
 }
