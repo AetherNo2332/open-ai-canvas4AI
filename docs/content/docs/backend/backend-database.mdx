@@ -548,7 +548,7 @@ Schema 89 `agent_service_work` 新增总控工作与派工的五张表。工作�
 - `agent_assignments`：`id`、`owner_id`、`work_item_id`、`epoch`、`executor_session_id`、`definition_id`、`handoff`、`status`（pending/running/ended）、`end_reason`、`ended_at`。`(work_item_id, epoch)` 唯一；部分唯一索引 `idx_agent_assignment_live` 保证每个工作至多一个未结束派工。
 - `agent_work_reports`：`(assignment_id, report_id)` 唯一，重复投递只存一次；来自旧派工、旧 epoch 或旧工作版本的报告以 `applied = false` 留档，不改变工作。
 - `agent_work_inputs`：用户或总控对工作的补充输入，`(work_item_id, idempotency_key)` 唯一。
-- `agent_outboxes`：与状态变化同事务写入的待投递记录（`assignment_started`、`report`），至少一次投递，接收方按 `id` 去重。停止工作时同事务取消待投递记录。
+- `agent_outboxes`：与状态变化同事务写入的待投递记录（`assignment_started`、`report`、`work_input`、`user_input`），`seq` 为同一所有者的写入序号（`(owner_id, seq)` 唯一），投递按 `seq` 顺序；至少一次投递，接收方按 `id` 去重。停止工作时同事务取消待投递记录。
 - 写入顺序：同一棵工作树的写入先锁根工作行，再锁预算根授权；派工在同一事务里建子工作、执行会话、子预算、首个派工与执行方投递记录。停止工作会把整棵子树标为 cancelled、结束派工、取消投递并关闭各自预算。
 - SQLite → PostgreSQL 迁移工具已包含五张表。回退旧代码时这些表无人读取，可保留；删除前须先备份。
 

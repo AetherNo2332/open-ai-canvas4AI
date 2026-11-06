@@ -1,12 +1,15 @@
 package app
 
 import (
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	ao "yingce/backend/internal/agentorchestration"
 	as "yingce/backend/internal/agentservice"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func (w *workFixture) executor(t *testing.T) AssignmentView {
@@ -227,4 +230,33 @@ func TestAgentOutboxDeliversOnceToTargetSession(t *testing.T) {
 			t.Fatalf("supervisor notice: %+v %v", supervisor, err)
 		}
 	})
+}
+
+// Outbox items written in the same clock tick are delivered in write order,
+// not in the order of their random IDs.
+func TestAgentOutboxDeliveryOrderIsWriteOrder(t *testing.T) {
+	f := newStructuredFixture(t, newSQLiteTestDB(t))
+	session := agentSessionCreate(t, f.svc, "user-a", as.CreateSessionRequest{DefinitionID: "drama.agent", Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, IdempotencyKey: "order"})
+	tick := time.Now()
+	// IDs chosen so that ID order is the reverse of write order.
+	for i, id := range []string{"zzzz", "mmmm", "aaaa"} {
+		item := &model.AgentOutbox{ID: id, OwnerID: "user-a", WorkItemID: "w", TargetSessionID: session.ID, Kind: "unknown", Payload: `{}`, Status: "pending", CreatedAt: tick}
+		if err := f.svc.repo.InAgentWork("user-a", "", func(tx *repository.WorkTx) error { return tx.Enqueue(item) }); err != nil {
+			t.Fatal(err)
+		}
+		if item.Seq != int64(i+1) {
+			t.Fatalf("seq = %d, want %d", item.Seq, i+1)
+		}
+	}
+	pending, err := f.svc.repo.PendingAgentOutbox("user-a", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, item := range pending {
+		got = append(got, item.ID)
+	}
+	if strings.Join(got, ",") != "zzzz,mmmm,aaaa" {
+		t.Fatalf("delivery order %v, want write order", got)
+	}
 }

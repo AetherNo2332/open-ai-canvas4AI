@@ -79,10 +79,12 @@ type AgentWorkInput struct {
 
 // AgentOutbox is a durable pending delivery written in the same transaction
 // as the state change it announces. Delivery is at least once; receivers
-// deduplicate on ID.
+// deduplicate on ID. Seq is the per-owner write order: delivery follows it, so
+// items written in one clock tick still arrive in the order they were written.
 type AgentOutbox struct {
 	ID              string `gorm:"primaryKey;size:36"`
-	OwnerID         string `gorm:"not null;size:36;index:idx_agent_outbox_pending,priority:1"`
+	OwnerID         string `gorm:"not null;size:36;index:idx_agent_outbox_pending,priority:1;uniqueIndex:idx_agent_outbox_seq,priority:1"`
+	Seq             int64  `gorm:"not null;default:0;uniqueIndex:idx_agent_outbox_seq,priority:2"`
 	WorkItemID      string `gorm:"not null;size:36;index"`
 	TargetSessionID string `gorm:"not null;size:80"`
 	Kind            string `gorm:"not null;size:40"`

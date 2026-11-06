@@ -110,7 +110,17 @@ func (t *WorkTx) InsertInput(input *model.AgentWorkInput) (bool, error) {
 	return created.RowsAffected == 1, created.Error
 }
 
-func (t *WorkTx) Enqueue(item *model.AgentOutbox) error { return t.db.Create(item).Error }
+// Enqueue writes a delivery after the owner's last one. Callers hold the work
+// tree lock, and the (owner, seq) unique index rejects any concurrent writer
+// that slipped past it, rolling its whole transaction back.
+func (t *WorkTx) Enqueue(item *model.AgentOutbox) error {
+	var last int64
+	if err := t.db.Model(&model.AgentOutbox{}).Where("owner_id = ?", item.OwnerID).Select("COALESCE(MAX(seq), 0)").Scan(&last).Error; err != nil {
+		return err
+	}
+	item.Seq = last + 1
+	return t.db.Create(item).Error
+}
 
 // CancelPendingOutbox drops pending deliveries of the given work items.
 func (t *WorkTx) CancelPendingOutbox(ownerID string, workIDs []string) error {
@@ -144,7 +154,7 @@ func (r *Repository) AgentWorkReports(ownerID, workID string) ([]model.AgentWork
 // PendingAgentOutbox lists undelivered items, oldest first.
 func (r *Repository) PendingAgentOutbox(ownerID string, limit int) ([]model.AgentOutbox, error) {
 	rows := []model.AgentOutbox{}
-	err := r.db.Where("owner_id = ? AND status = ?", ownerID, "pending").Order("created_at ASC, id ASC").Limit(limit).Find(&rows).Error
+	err := r.db.Where("owner_id = ? AND status = ?", ownerID, "pending").Order("seq ASC").Limit(limit).Find(&rows).Error
 	return rows, err
 }
 
