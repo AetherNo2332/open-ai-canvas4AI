@@ -174,7 +174,7 @@ func storedAgentToolResult(row *model.AgentOperation) (as.ToolResult, error) {
 // the turn freezes them together with the definition version; every later step
 // and every resume of the same turn key reuses that frozen contract, so an
 // instance that redeployed with wider tools cannot change a running turn.
-func (s *Service) agentTurnTools(ownerID, turnKey string, session *model.AgentSession) ([]cp.ToolDefinition, error) {
+func (s *Service) agentTurnTools(ownerID, turnKey string, session *model.AgentSession, live []cp.ToolDefinition) ([]cp.ToolDefinition, error) {
 	contract, err := s.repo.AgentTurnContract(ownerID, turnKey)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -184,7 +184,7 @@ func (s *Service) agentTurnTools(ownerID, turnKey string, session *model.AgentSe
 			return tools, nil
 		}
 	}
-	tools := s.businessToolDefinitions(session.Application)
+	tools := live
 	if len(tools) == 0 {
 		return tools, nil
 	}

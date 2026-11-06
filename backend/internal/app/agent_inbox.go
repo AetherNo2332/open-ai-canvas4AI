@@ -69,6 +69,14 @@ func (s *Service) SendSessionMessage(ownerID string, req SendSessionMessageReque
 	if isIndependentBusinessSession(session) {
 		return s.bindAndQueueIndependentMessage(session, messageID, req.Text)
 	}
+	if session.Role == as.RoleSupervisor && session.WorkItemID != "" {
+		// A user message to the supervisor Session queues its turn; a waiting
+		// work resumes with the user's answer.
+		if err := s.queueSupervisorTurn(session, messageID, req.Text); err != nil {
+			return SessionMessageReceipt{}, err
+		}
+		return SessionMessageReceipt{Accepted: true, WorkItemID: session.WorkItemID}, nil
+	}
 	if session.WorkItemID == "" || session.Role != as.RoleBusiness {
 		// A non-executor Session keeps the message in its own history. Supervisor
 		// execution is driven by deterministic work commands, not this business loop.
@@ -90,6 +98,39 @@ func (s *Service) bindAndQueueIndependentMessage(session *model.AgentSession, me
 		return SessionMessageReceipt{}, err
 	}
 	return SessionMessageReceipt{Accepted: true, WorkItemID: work.ID, WorkVersion: work.Version}, nil
+}
+
+// queueSupervisorTurn stores the user's message and the supervisor turn in one
+// transaction, resuming a waiting work with the user's answer.
+func (s *Service) queueSupervisorTurn(session *model.AgentSession, messageID, text string) error {
+	err := s.repo.InAgentWork(session.OwnerID, "", func(tx *repository.WorkTx) error {
+		current, err := tx.LockSessionForWork(session.OwnerID, session.ID)
+		if err != nil {
+			return err
+		}
+		root, err := tx.Work(session.OwnerID, current.WorkItemID)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		message := model.AgentSessionMessage{ID: newID(), MessageID: strings.TrimSpace(messageID), Kind: as.MessageKindMessage, Actor: as.ActorUser, Role: "user", Body: text}
+		seq, err := tx.AppendSessionMessage(session.OwnerID, session.ID, message, now)
+		if err != nil {
+			return err
+		}
+		if root.Status == ao.WorkWaitingUser {
+			if err := tx.UpdateWork(session.OwnerID, root.ID, root.Version, map[string]any{"status": ao.WorkRunning}); err != nil {
+				return err
+			}
+		}
+		return tx.EnqueueTurn(&model.AgentTurn{ID: newID(), OwnerID: session.OwnerID, SessionID: session.ID,
+			MessageID: message.MessageID, MessageSeq: seq, Text: text, Status: "pending", BudgetGrantID: root.BudgetGrantID})
+	})
+	if err != nil {
+		return workNotFound(err)
+	}
+	s.wakeAgentRunner()
+	return nil
 }
 
 func (s *Service) resumeStoredBusinessMessage(session *model.AgentSession, messageID, text string) (SessionMessageReceipt, error) {

@@ -113,23 +113,23 @@ func (r *businessTurnRun) modelStep(step int, stepKey string) (bool, []cp.ToolCa
 	if err != nil {
 		return false, nil, "", err
 	}
-	if taskID == "" {
-		snapshot, err := r.s.buildAgentSessionContext(r.ownerID, r.session.ID)
-		if err != nil {
-			return false, nil, "", err
+		if taskID == "" {
+			snapshot, err := r.s.buildAgentSessionContext(r.ownerID, r.session.ID)
+			if err != nil {
+				return false, nil, "", err
+			}
+			tools, err := r.turnTools()
+			if err != nil {
+				return false, nil, "", err
+			}
+			req := agentStepRequest(snapshot, r.turn.Model, stepKey)
+			req.ToolChoice, req.Tools, req.Messages = cp.ToolChoiceAuto, tools, businessStepMessages(snapshot)
+			receipt, err := r.s.SubmitStructuredText(context.Background(), cp.Caller{UserID: r.ownerID}, req, r.turn.Assignment.BudgetGrantID)
+			if err != nil {
+				return false, nil, "", err
+			}
+			taskID = receipt.Snapshot.TaskID
 		}
-		tools, err := r.s.agentTurnTools(r.ownerID, r.turnKey, r.session)
-		if err != nil {
-			return false, nil, "", err
-		}
-		req := agentStepRequest(snapshot, r.turn.Model, stepKey)
-		req.ToolChoice, req.Tools, req.Messages = cp.ToolChoiceAuto, tools, businessStepMessages(snapshot)
-		receipt, err := r.s.SubmitStructuredText(context.Background(), cp.Caller{UserID: r.ownerID}, req, r.turn.Assignment.BudgetGrantID)
-		if err != nil {
-			return false, nil, "", err
-		}
-		taskID = receipt.Snapshot.TaskID
-	}
 	result, state, err := r.s.StructuredResult(context.Background(), cp.Caller{UserID: r.ownerID}, taskID)
 	if err != nil {
 		return false, nil, "", err
@@ -141,6 +141,29 @@ func (r *businessTurnRun) modelStep(step int, stepKey string) (bool, []cp.ToolCa
 		return false, nil, "", as.NewError(as.CodeInternal, "模型步失败")
 	}
 	return false, nil, "", nil
+}
+
+// turnTools returns the tool schemas of this turn: the supervisor Session
+// offers its deterministic work commands, a business Session the adapter's.
+func (r *businessTurnRun) turnTools() ([]cp.ToolDefinition, error) {
+	if r.session.Role == as.RoleSupervisor {
+		return r.s.agentTurnTools(r.ownerID, r.turnKey, r.session, supervisorToolDefinitions())
+	}
+	return r.s.agentTurnTools(r.ownerID, r.turnKey, r.session, r.s.businessToolDefinitions(r.session.Application))
+}
+
+// executeToolCall routes one call to its executor: the supervisor's work
+// commands or the business adapter, both under the same execution receipt.
+func (r *businessTurnRun) executeToolCall(ctx context.Context, call cp.ToolCall, step int, operationKey string) (as.ToolResult, error) {
+	invocation := as.ToolInvocation{OwnerID: r.ownerID, SessionID: r.session.ID,
+		Scope:      as.Scope{Application: r.session.Application, SpaceType: r.session.SpaceType, SpaceID: r.session.SpaceID},
+		WorkItemID: r.session.WorkItemID, BudgetGrantID: r.turn.Assignment.BudgetGrantID, CallID: call.ID, Name: call.Name, Arguments: call.Arguments,
+		TurnMessageID: r.turn.MessageID, Step: step, OperationID: operationKey,
+		AssignmentID: r.turn.Assignment.ID, AssignmentEpoch: r.turn.Assignment.Epoch}
+	if r.session.Role == as.RoleSupervisor {
+		return r.s.executeSupervisorTool(ctx, r.session, invocation)
+	}
+	return r.s.executeBusinessTool(ctx, invocation)
 }
 
 // runTools records the calls, executes each one under its operation receipt,
@@ -159,11 +182,7 @@ func (r *businessTurnRun) runTools(step int, stepKey string, calls []cp.ToolCall
 	}
 	for index, call := range calls {
 		operationKey := agentOperationKey(r.turnKey, step, call.ID)
-		result, err := r.s.executeBusinessTool(context.Background(), as.ToolInvocation{OwnerID: r.ownerID, SessionID: r.session.ID,
-			Scope:      as.Scope{Application: r.session.Application, SpaceType: r.session.SpaceType, SpaceID: r.session.SpaceID},
-			WorkItemID: r.session.WorkItemID, BudgetGrantID: r.turn.Assignment.BudgetGrantID, CallID: call.ID, Name: call.Name, Arguments: call.Arguments,
-			TurnMessageID: r.turn.MessageID, Step: step, OperationID: operationKey,
-			AssignmentID: r.turn.Assignment.ID, AssignmentEpoch: r.turn.Assignment.Epoch})
+		result, err := r.executeToolCall(context.Background(), call, step, operationKey)
 		if err != nil {
 			if !isAgentToolRefusal(err) {
 				// An infrastructure failure is not a refusal; the turn fails and

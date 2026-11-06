@@ -64,15 +64,24 @@ func (s *Service) outboxMessage(item model.AgentOutbox) (model.AgentSessionMessa
 }
 
 // deliveredAgentTurn builds the executor turn for a new assignment or work
-// input. The repository writes it atomically with delivery. Reports and notices
-// to the supervisor are facts and do not start this business execution loop.
+// input, and the supervisor turn for a report or a user's direct input to a
+// child work: the same durable event wakes exactly the session that can act
+// on it. The repository writes it atomically with delivery.
 func (s *Service) deliveredAgentTurn(item model.AgentOutbox, message model.AgentSessionMessage) (*model.AgentTurn, error) {
-	if item.Kind != "assignment_started" && item.Kind != "work_input" {
+	executorEvent := item.Kind == "assignment_started" || item.Kind == "work_input"
+	supervisorEvent := item.Kind == "report" || item.Kind == "user_input"
+	if !executorEvent && !supervisorEvent {
 		return nil, nil
 	}
 	session, err := s.agentSessionForOwner(item.OwnerID, item.TargetSessionID)
-	if err != nil || session.Role != as.RoleBusiness || session.WorkItemID == "" {
+	if err != nil {
 		return nil, err
+	}
+	if executorEvent && (session.Role != as.RoleBusiness || session.WorkItemID == "") {
+		return nil, nil
+	}
+	if supervisorEvent && (session.Role != as.RoleSupervisor || session.WorkItemID == "") {
+		return nil, nil
 	}
 	work, err := s.repo.AgentWorkForOwner(item.OwnerID, session.WorkItemID)
 	if err != nil {
@@ -80,7 +89,7 @@ func (s *Service) deliveredAgentTurn(item model.AgentOutbox, message model.Agent
 	}
 	return &model.AgentTurn{
 		ID: newID(), OwnerID: session.OwnerID, SessionID: session.ID,
-		MessageID: message.MessageID, Text: message.Body, Status: "pending",
+		MessageID: message.MessageID, MessageSeq: message.Sequence, Text: message.Body, Status: "pending",
 		BudgetGrantID: work.BudgetGrantID,
 	}, nil
 }

@@ -98,3 +98,22 @@ func DecodeAuthorization(raw string) (WorkAuthorization, error) {
 	}
 	return auth, nil
 }
+
+// CheckRootCompletion lets a root work complete only when every descendant is
+// completed; anything still running, waiting or failed keeps the root open so
+// the summary cannot claim facts the tree has not produced.
+func CheckRootCompletion(children []ChildWorkSummary) error {
+	for _, child := range children {
+		if child.Status != WorkCompleted {
+			return NewError(CodeInvalidRequest, "子工作 "+child.ID+" 尚未完成（"+child.Status+"），不能结束根工作")
+		}
+	}
+	return nil
+}
+
+// ChildWorkSummary is the state a completion check needs, decoupled from the
+// persistence layer.
+type ChildWorkSummary struct {
+	ID     string
+	Status string
+}

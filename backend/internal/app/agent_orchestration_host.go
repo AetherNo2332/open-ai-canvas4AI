@@ -30,9 +30,12 @@ type StartWorkRequest struct {
 	IdempotencyKey     string
 	// AuthorizedScopes lists the business spaces this work may enter; a
 	// delegation outside them is refused. AllowedTools optionally narrows the
-	// charged tools of the whole tree.
+	// charged tools of the whole tree. InitialMessage is the user's goal
+	// message: it lands in the supervisor Session with its first turn in the
+	// same transaction as the work.
 	AuthorizedScopes []as.Scope
 	AllowedTools     []string
+	InitialMessage   string
 }
 
 type WorkView struct {
@@ -159,10 +162,27 @@ func (s *Service) StartWork(ownerID string, req StartWorkRequest) (WorkView, err
 		if err := tx.CreateBudgetRoot(grant); err != nil {
 			return err
 		}
-		_, err := tx.CreateSession(&model.AgentSession{ID: work.SupervisorSessionID, OwnerID: ownerID, IdempotencyKey: sessionKey, Fingerprint: sessionKey,
+		if _, err := tx.CreateSession(&model.AgentSession{ID: work.SupervisorSessionID, OwnerID: ownerID, IdempotencyKey: sessionKey, Fingerprint: sessionKey,
 			DefinitionID: def.ID, DefinitionVersion: def.Version, Role: def.Role, Application: as.ApplicationOrchestration, SpaceType: as.SpaceWork, SpaceID: workID,
-			WorkItemID: workID, Title: def.Title, Status: as.SessionActive, Revision: 1})
-		return err
+			WorkItemID: workID, Title: def.Title, Status: as.SessionActive, Revision: 1}); err != nil {
+			return err
+		}
+		// The user's goal message and the supervisor's first turn commit with
+		// the work, so the runner can start without a second user action.
+		if strings.TrimSpace(req.InitialMessage) == "" {
+			return nil
+		}
+		goalMessageID := strings.TrimSpace(req.SourceMessageID)
+		if goalMessageID == "" {
+			goalMessageID = "goal:" + workID
+		}
+		now := time.Now()
+		seq, err := tx.AppendSessionMessage(ownerID, work.SupervisorSessionID, model.AgentSessionMessage{ID: newID(), MessageID: goalMessageID, Kind: as.MessageKindMessage, Actor: as.ActorUser, Role: "user", Body: strings.TrimSpace(req.InitialMessage)}, now)
+		if err != nil {
+			return err
+		}
+		return tx.EnqueueTurn(&model.AgentTurn{ID: newID(), OwnerID: ownerID, SessionID: work.SupervisorSessionID,
+			MessageID: goalMessageID, MessageSeq: seq, Text: strings.TrimSpace(req.InitialMessage), Status: "pending", BudgetGrantID: grantID})
 	})
 	if err != nil {
 		if existing, lookupErr := s.repo.AgentWorkByKey(ownerID, "root:"+key); lookupErr == nil {
