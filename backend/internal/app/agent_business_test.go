@@ -148,6 +148,7 @@ func TestAgentSupervisorDelegatesDramaAndEcommerce(t *testing.T) {
 		t.Fatalf("replayed turn re-ran: model calls %d->%d", calls, f.text.calls.Load())
 	}
 	// Both report; the supervisor sees two reports and no business history.
+	f.drain(t)
 	for _, assignment := range []AssignmentView{drama, ecommerce} {
 		child, _ := f.svc.GetWork("user-a", assignment.WorkItemID)
 		if _, err := f.svc.SubmitReport("user-a", SubmitReportRequest{AssignmentID: assignment.ID, LeaseEpoch: assignment.Epoch, WorkVersion: child.Version, ReportID: "done", Status: ao.ReportCompleted, Summary: "完成"}); err != nil {

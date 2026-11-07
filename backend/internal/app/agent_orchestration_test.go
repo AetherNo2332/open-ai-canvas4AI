@@ -73,7 +73,8 @@ func TestAgentWorkDelegationIdempotency(t *testing.T) {
 				t.Fatalf("replay %d diverged: %+v vs %+v", i, views[i], views[0])
 			}
 		}
-		for table, want := range map[any]int64{&model.AgentWorkItem{}: 2, &model.AgentAssignment{}: 1, &model.PlatformBudgetGrant{}: 2} {
+		// The supervisor Pi Session has its own root assignment; delegation adds one child.
+		for table, want := range map[any]int64{&model.AgentWorkItem{}: 2, &model.AgentAssignment{}: 2, &model.PlatformBudgetGrant{}: 2} {
 			if got := platformCount(t, w.db, table, "owner_id = ?", "user-a"); got != want {
 				t.Fatalf("%T rows = %d, want %d", table, got, want)
 			}

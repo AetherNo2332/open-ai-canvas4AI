@@ -387,8 +387,8 @@ func TestAgentLongTurnLeaseRecovery(t *testing.T) {
 	if _, err := f.svc.SendSessionMessage("user-a", SendSessionMessageRequest{SessionID: session.ID, MessageID: "u-slow", Text: "慢慢想"}); err != nil {
 		t.Fatal(err)
 	}
-	// The first instance claims the turn, submits the model step and keeps the
-	// Session writer lease while the step runs.
+	// Go durably hands the inbox item to Pi; Pi owns the execution lease and
+	// model checkpoint after admission. AgentTurn.done only means handed off.
 	if _, err := f.svc.runPendingAgentTurns(10); err != nil {
 		t.Fatal(err)
 	}
@@ -396,33 +396,43 @@ func TestAgentLongTurnLeaseRecovery(t *testing.T) {
 	if err := f.db.First(&turn, "session_id = ?", session.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	stored, err := f.svc.agentSessionForOwner("user-a", session.ID)
+	if turn.Status != "done" || turn.ClaimOwner != "" {
+		t.Fatalf("claimed turn: %+v", turn)
+	}
+	first, err := f.svc.ClaimPiAgentForWorker("first-pi", "user-a")
+	if err != nil || first == nil {
+		t.Fatalf("first Pi claim: %+v %v", first, err)
+	}
+	oldOwner := "first-pi@" + itoa64(first.PiSessionLeaseEpoch)
+	step, err := f.svc.PiModelStep("user-a", first.RunID, oldOwner, PiModelStepRequest{Canonical: first.Canonical})
 	if err != nil {
 		t.Fatal(err)
 	}
-	staleLease := agentSessionLease(*stored)
-	if turn.Status != "running" || turn.ClaimOwner != f.svc.agentRuntimeOwner() {
-		t.Fatalf("claimed turn: %+v", turn)
-	}
-	// The lease and the claim expire mid-step (crash or pause).
-	if err := f.db.Model(&model.AgentSession{}).Where("id = ?", session.ID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := f.db.Model(&model.AgentTurn{}).Where("id = ?", turn.ID).Update("claim_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
-		t.Fatal(err)
-	}
-	f.drain(t)
-	// Another instance takes over the expired claim and finishes the turn.
-	for range 8 {
-		if _, err := second.runPendingAgentTurns(10); err != nil {
+	// Crash mid-step: expire the run and Pi Session leases, keeping the task.
+	for _, row := range []any{&model.CloudAgentExecution{}, &model.CloudAgentPiSession{}} {
+		if err := f.db.Model(row).Where("user_id = ?", "user-a").Update("lease_expires_at", time.Now().UTC().Add(-time.Minute)).Error; err != nil {
 			t.Fatal(err)
 		}
-		f.drain(t)
 	}
-	// A late writer holding the expired lease cannot commit anything.
-	_, lateErr := f.svc.appendAgentSessionMessages("user-a", session.ID, staleLease, stored.Revision, []as.HistoryMessage{{ID: "late-write", Kind: as.MessageKindMessage, Actor: as.ActorSystem, Role: "user", Text: "迟到的写入"}})
-	if lateErr == nil {
-		t.Fatal("late writer committed with an expired lease")
+	taken, err := second.ClaimPiAgentForWorker("second-pi", "user-a")
+	if err != nil || taken == nil || taken.RunID != first.RunID || taken.PiSessionLeaseEpoch != first.PiSessionLeaseEpoch+1 {
+		t.Fatalf("Pi takeover: %+v %v", taken, err)
+	}
+	f.drain(t)
+	if err := f.svc.PiCheckpointMessage("user-a", first.RunID, oldOwner, PiMessageCheckpoint{Sequence: 1, TaskID: step.TaskID, Message: json.RawMessage(`{"role":"assistant","content":"迟到的写入"}`)}); err == nil {
+		t.Fatal("late Pi writer committed with an expired lease")
+	}
+	driveTestPiRun(t, second, f.text, "user-a", "second-pi", taken)
+	run, err := second.repo.CloudAgent("user-a", first.RunID)
+	if err != nil || run.Status != "completed" {
+		t.Fatalf("Pi terminal state: %+v %v", run, err)
+	}
+	if count := platformCount(t, f.db, &model.PlatformBudgetCharge{}, "owner_id = ? AND task_id = ?", "user-a", step.TaskID); count != 1 {
+		t.Fatalf("expected one charge for the resumed step, got %d", count)
+	}
+	// The inbox row remains done across execution takeover.
+	if _, err := second.runPendingAgentTurns(10); err != nil {
+		t.Fatal(err)
 	}
 	var finished model.AgentTurn
 	if err := f.db.First(&finished, "session_id = ?", session.ID).Error; err != nil || finished.Status != "done" {
@@ -440,9 +450,6 @@ func TestAgentLongTurnLeaseRecovery(t *testing.T) {
 	}
 	if replies != 1 {
 		t.Fatalf("replies = %d in %+v", replies, rows)
-	}
-	if orders := platformCount(t, f.db, &model.PlatformSubmission{}, "user_id = ? AND idempotency_key LIKE ?", "user-a", "turn:"+session.ID+":%"); orders != 1 {
-		t.Fatalf("expected one charged order for the step, got %d", orders)
 	}
 }
 
