@@ -98,6 +98,59 @@ describe("agent SDK", () => {
         expect(controller.active()?.id).toBe("s3");
     });
 
+    test("agent-controller-latest-load-wins: a stale failure cannot overwrite a newer successful load", async () => {
+        const pending: Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void }> = [];
+        const { transport } = fakeTransport({
+            "GET /agent/v2/sessions/s1/messages": () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+        });
+        const controller = createSessionController({ client: createAgentClient({ transport }), userId: "u1", storage: createMemoryStorage() });
+        const first = controller.open(session("s1"));
+        const second = controller.refresh("s1");
+
+        pending[1]?.resolve(ok({ messages: [message("s1", 1, "新请求")], nextAfter: 1 }));
+        await second;
+        pending[0]?.reject(new Error("旧请求失败"));
+        await first;
+
+        expect(controller.state("s1").messages.map((item) => item.text)).toEqual(["新请求"]);
+        expect(controller.state("s1").error).toBeUndefined();
+    });
+
+    test("agent-controller-latest-load-wins: a stale response cannot replace a newer message at the same sequence", async () => {
+        const pending: Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void }> = [];
+        const { transport } = fakeTransport({
+            "GET /agent/v2/sessions/s1/messages": () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+        });
+        const controller = createSessionController({ client: createAgentClient({ transport }), userId: "u1", storage: createMemoryStorage() });
+        const first = controller.open(session("s1"));
+        const second = controller.refresh("s1");
+
+        pending[1]?.resolve(ok({ messages: [message("s1", 1, "新版本")], nextAfter: 1 }));
+        await second;
+        pending[0]?.resolve(ok({ messages: [message("s1", 1, "旧版本"), message("s1", 2, "补齐")], nextAfter: 2 }));
+        await first;
+
+        expect(controller.state("s1").messages.map((item) => item.text)).toEqual(["新版本", "补齐"]);
+    });
+
+    test("agent-controller-loading: overlapping loads remain loading until every request settles", async () => {
+        const pending: Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void }> = [];
+        const { transport } = fakeTransport({
+            "GET /agent/v2/sessions/s1/messages": () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+        });
+        const controller = createSessionController({ client: createAgentClient({ transport }), userId: "u1", storage: createMemoryStorage() });
+        const first = controller.open(session("s1"));
+        const second = controller.refresh("s1");
+
+        pending[1]?.resolve(ok({ messages: [message("s1", 1, "先完成")], nextAfter: 1 }));
+        await second;
+        expect(controller.state("s1").loading).toBe(true);
+
+        pending[0]?.resolve(ok({ messages: [message("s1", 2, "后完成")], nextAfter: 2 }));
+        await first;
+        expect(controller.state("s1").loading).toBe(false);
+    });
+
     test("drafts and cursors are partitioned by user + scope + Session", () => {
         const storage = createMemoryStorage();
         const a = session("s1");

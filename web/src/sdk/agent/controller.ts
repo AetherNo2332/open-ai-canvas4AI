@@ -21,6 +21,8 @@ const defaultPollScheduler: AgentPollScheduler = (poll, intervalMs) => {
 export function createSessionController(options: SessionControllerOptions) {
     const { client, userId, storage } = options;
     const states = new Map<string, SessionState>();
+    const latestLoad = new Map<string, number>();
+    const activeLoads = new Map<string, number>();
     let activeId: string | undefined;
 
     const stateOf = (sessionId: string): SessionState => {
@@ -37,6 +39,9 @@ export function createSessionController(options: SessionControllerOptions) {
     async function load(session: SessionView) {
         const target = session.id; // captured: the response belongs to this Session only
         const state = stateOf(target);
+        const requestId = (latestLoad.get(target) ?? 0) + 1;
+        latestLoad.set(target, requestId);
+        activeLoads.set(target, (activeLoads.get(target) ?? 0) + 1);
         state.loading = true;
         changed(target);
         try {
@@ -44,12 +49,19 @@ export function createSessionController(options: SessionControllerOptions) {
             // and reads the full history, so a reload never hides earlier messages.
             const page = await client.messages(target, lastSequence(state.messages));
             const next = stateOf(target);
-            next.messages = mergeMessages(next.messages, page.messages, target);
-            next.error = undefined;
+            const isLatest = latestLoad.get(target) === requestId;
+            const incoming = isLatest ? page.messages : page.messages.filter((item) => !next.messages.some((current) => current.sequence === item.sequence));
+            next.messages = mergeMessages(next.messages, incoming, target);
+            if (isLatest) next.error = undefined;
         } catch (error) {
-            stateOf(target).error = error instanceof Error ? error.message : "加载失败";
+            if (latestLoad.get(target) === requestId) {
+                stateOf(target).error = error instanceof Error ? error.message : "加载失败";
+            }
         } finally {
-            stateOf(target).loading = false;
+            const remaining = Math.max(0, (activeLoads.get(target) ?? 1) - 1);
+            if (remaining === 0) activeLoads.delete(target);
+            else activeLoads.set(target, remaining);
+            stateOf(target).loading = remaining > 0;
             changed(target);
         }
     }
