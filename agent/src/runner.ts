@@ -5,16 +5,11 @@ import { getCurrentSystemPrompt, getCurrentTools,
   type AssistantMessage, type Message, type Model, type ToolResultMessage, type UserMessage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
-  DefaultResourceLoader,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  createAgentSession,
   buildSessionContext,
   type AgentSession,
   type ExtensionAPI,
-  type FileEntry,
   type InlineExtension,
+  type SessionManager,
   type SessionBeforeCompactEvent,
   type SessionCompactEvent,
   type SessionCompactFailedEvent,
@@ -31,6 +26,7 @@ import { createStableSkillPromptExtension, materializeNativeSkills, readNativeSk
 import { Unsafe, type TSchema } from "typebox";
 import { createImageContextExtension, createTerminalHistoryExtension, missingImageContent } from "./session-history.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
+import { createSessionRuntime } from "./session-runtime.js";
 
 /**
  * 本轮终态：不再有工具回执，也不得再发起后续模型请求。
@@ -556,75 +552,39 @@ async function bootstrapSession(
   systemPrompt: string,
   entries: SessionEntry[],
   streamSimple: ReturnType<typeof createCanvasStreamFn>,
-  disclosure: SessionToolDisclosure,
   extensionFactories: InlineExtension[],
   workspace: ReturnType<typeof createWorkspace>,
 ): Promise<SessionBootstrap> {
-  try {
-    const model = canvasModel(snapshot);
-    // 不发现任何磁盘模型目录、也不访问模型网络：唯一 provider 是下面的桥。
-    const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
-    runtime.registerProvider(CANVAS_PROVIDER_ID, {
+  const nativeMode = snapshot.skillRuntimeMode === "pi-native";
+  const skillsRoot = join(workspace.cwd, "skills");
+  const sessionFiles: SessionEntry[] = [
+    ...(snapshot.piSessionHeader ? [snapshot.piSessionHeader as unknown as SessionEntry] : []),
+    ...entries,
+  ];
+  return createSessionRuntime({
+    workspace,
+    sessionId: snapshot.piSessionId || snapshot.runId,
+    entries: sessionFiles,
+    systemPrompt,
+    provider: {
+      id: CANVAS_PROVIDER_ID,
       name: "Canvas Bridge",
       api: CANVAS_API_ID,
       baseUrl: CANVAS_BASE_URL,
-      models: [{
-        id: model.id, name: model.name, api: CANVAS_API_ID, reasoning: true, input: model.input,
-        cost: { ...emptyUsage.cost }, contextWindow: model.contextWindow, maxTokens: model.maxTokens,
-      }],
+      model: canvasModel(snapshot),
       streamSimple,
-    } as never);
-    await runtime.setRuntimeApiKey(CANVAS_PROVIDER_ID, "canvas-bridge-internal");
-    const resolved = runtime.getModel(CANVAS_PROVIDER_ID, model.id);
-    if (!resolved) throw new FatalWorkerError("canvas provider model did not resolve");
-
-    const settingsManager = SettingsManager.create(workspace.cwd, workspace.agentDir);
-    settingsManager.applyOverrides({ compaction: compactionSettings(snapshot) });
-    // Retry admission, billing and escalation are governed by Go's persisted policy.
-    settingsManager.setRetryEnabled(false);
-    const nativeMode = snapshot.skillRuntimeMode === "pi-native";
-    const skillsRoot = join(workspace.cwd, "skills");
-    const resourceLoader = new DefaultResourceLoader({
-      cwd: workspace.cwd, agentDir: workspace.agentDir, settingsManager,
-      // noSkills suppresses host/global discovery; Pi still loads explicit Skill paths.
-      // Only the run's frozen entries may join the server policy and Harness.
-      noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-      ...(nativeMode ? { additionalSkillPaths: [skillsRoot] } : {}),
-      extensionFactories,
-      systemPrompt,
-    });
-    await resourceLoader.reload();
-    if (nativeMode) verifyNativeSkillDiscovery(snapshot.skills || [], resourceLoader.getSkills());
-    else if (resourceLoader.getSkills().skills.length) throw new FatalWorkerError("Legacy run discovered unexpected Skills");
-
-    const sessionFiles: FileEntry[] = [
-      ...(snapshot.piSessionHeader ? [snapshot.piSessionHeader as unknown as FileEntry] : []),
-      ...entries,
-    ];
-    const sessionManager = SessionManager.inMemory(workspace.cwd,
-      { id: snapshot.piSessionId || snapshot.runId }, sessionFiles);
-    const { session } = await createAgentSession({
-      cwd: workspace.cwd,
-      agentDir: workspace.agentDir,
-      model: resolved,
-      modelRuntime: runtime,
-      sessionManager,
-      settingsManager,
-      resourceLoader,
-      // 默认 coding 工具（read/bash/edit/write/ls/grep/find/powershell）一个都不注册。
-      noTools: "all",
-      // SDK tools is also a lifetime allowlist. Reserve the eligible catalog;
-      // only advertised definitions are registered by our extension, so hidden
-      // L1 tools stay absent until a later boundary explicitly registers them.
-      // The catalog covers every tool a mid-run permission change could allow.
-      tools: [...new Set([...snapshot.tools.map(tool => tool.name), ...(snapshot.toolCatalog || [])])]
-        .filter(name => !name.startsWith("agent_tools_") && (nativeMode || name !== "read")),
-    });
-    return { session, sessionManager, cleanup: workspace.cleanup };
-  } catch (error) {
-    workspace.cleanup();
-    throw error;
-  }
+      apiKey: "canvas-bridge-internal",
+    },
+    extensionFactories,
+    additionalSkillPaths: nativeMode ? [skillsRoot] : undefined,
+    configureSettings: (settingsManager) => settingsManager.applyOverrides({ compaction: compactionSettings(snapshot) }),
+    verifySkills: (resourceLoader) => {
+      if (nativeMode) verifyNativeSkillDiscovery(snapshot.skills || [], resourceLoader.getSkills());
+      else if (resourceLoader.getSkills().skills.length) throw new FatalWorkerError("Legacy run discovered unexpected Skills");
+    },
+    toolNames: [...new Set([...snapshot.tools.map(tool => tool.name), ...(snapshot.toolCatalog || [])])]
+      .filter(name => !name.startsWith("agent_tools_") && (nativeMode || name !== "read")),
+  });
 }
 
 /**
@@ -999,7 +959,7 @@ export async function runCanvasAgent(
     if (!admittedCallIds.has(callId)) return batchRejection || `Tool batch does not admit ${toolName}`;
     return undefined;
   }, nativeRead);
-  const boot = await bootstrapSession(snapshot, systemPrompt, resume.entries, streamSimple, disclosure,
+  const boot = await bootstrapSession(snapshot, systemPrompt, resume.entries, streamSimple,
     [compactionExtension, toolExtension, createStableSkillPromptExtension(snapshot.skills || []), createTerminalHistoryExtension(snapshot), createImageContextExtension(() => snapshot.visionBatchBudget?.maxImages ?? 1)],
     workspace);
   session = boot.session;

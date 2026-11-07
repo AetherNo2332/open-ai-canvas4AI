@@ -1147,7 +1147,7 @@ test("取消后不再发起模型请求，运行以取消收场", async () => {
   assert.deepEqual(state.batches, []);
 });
 
-test("生产 runner 不再手写 new Agent 循环（C1 出口）", () => {
+test("生产 runner 委托给统一的 Pi Session Runtime", () => {
   // 测试运行的是编译产物（dist/test），源码在仓库的 src/：必须往上两级再进 src，
   // 否则会去找 dist/src/runner.ts —— 那个文件不存在，断言就变成了 ENOENT 而不是内容检查。
   const testDirectory = dirname(fileURLToPath(import.meta.url));
@@ -1164,17 +1164,28 @@ test("生产 runner 不再手写 new Agent 循环（C1 出口）", () => {
     false,
     "runner.ts 不得值导入 pi-agent-core 的 Agent（类型导入不受限）",
   );
-  assert.match(source, /createAgentSession/, "生产 runner 必须走 createAgentSession");
+  assert.match(source, /createSessionRuntime/, "生产 runner 必须走统一 Session Runtime");
+  const runtimePath = [join(testDirectory, "..", "src", "session-runtime.ts"),
+    join(testDirectory, "..", "..", "src", "session-runtime.ts")].find(existsSync);
+  assert.ok(runtimePath, "session runtime source must be available from source and compiled tests");
+  const runtimeSource = readFileSync(runtimePath, "utf8");
+  assert.match(runtimeSource, /createAgentSession/, "Session Runtime 必须创建真实 Pi Session");
 });
 
-test("Pi lifetime allowlist reserves the Go tool catalog for mid-run permission changes", () => {
+test("统一 Session Runtime reserves the Go tool catalog for mid-run permission changes", () => {
   const testDirectory = dirname(fileURLToPath(import.meta.url));
   const sourcePath = [join(testDirectory, "..", "src", "runner.ts"),
     join(testDirectory, "..", "..", "src", "runner.ts")].find(existsSync);
   assert.ok(sourcePath, "runner source must be available from source and compiled tests");
   const source = readFileSync(sourcePath, "utf8");
-  // 只读开局的运行中途放宽后，写工具要能在下一边界注册：终身白名单必须包含目录。
-  assert.match(source, /tools:\s*\[\.\.\.new Set\(\[\.\.\.snapshot\.tools\.map\(tool => tool\.name\), \.\.\.\(snapshot\.toolCatalog \|\| \[\]\)\]\)\]/);
+  // 只读开局的运行中途放宽后，写工具要能在下一边界注册：runner 计算完整目录，
+  // Session Runtime 把它作为 SDK 的 lifetime allowlist。
+  assert.match(source, /toolNames:\s*\[\.\.\.new Set\(\[\.\.\.snapshot\.tools\.map\(tool => tool\.name\), \.\.\.\(snapshot\.toolCatalog \|\| \[\]\)\]\)/);
+  const runtimePath = [join(testDirectory, "..", "src", "session-runtime.ts"),
+    join(testDirectory, "..", "..", "src", "session-runtime.ts")].find(existsSync);
+  assert.ok(runtimePath, "session runtime source must be available from source and compiled tests");
+  const runtimeSource = readFileSync(runtimePath, "utf8");
+  assert.match(runtimeSource, /tools:\s*options\.toolNames\s*\?\?\s*\[\]/);
 });
 
 function snapshotFor(): PiSnapshot {
