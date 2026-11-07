@@ -7,9 +7,11 @@ import (
 
 	"gorm.io/gorm"
 
+	ao "yingce/backend/internal/agentorchestration"
 	as "yingce/backend/internal/agentservice"
 	cp "yingce/backend/internal/creationplatform"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // AgentSessionPiRunRequest is one user message dispatched to a Session's Pi
@@ -70,7 +72,10 @@ func (s *Service) EnqueueAgentSessionPiRun(ownerID string, req AgentSessionPiRun
 	if err != nil {
 		return AgentSessionPiRunView{}, err
 	}
-	tools := s.agentSessionPiTools(session)
+	tools, err := s.agentSessionPiTools(session)
+	if err != nil {
+		return AgentSessionPiRunView{}, err
+	}
 	if session.Role == as.RoleBusiness && len(tools) == 0 {
 		return AgentSessionPiRunView{}, as.NewError(as.CodeInvalidRequest, "业务执行缺少有效工具")
 	}
@@ -98,6 +103,9 @@ func (s *Service) EnqueueAgentSessionPiRun(ownerID string, req AgentSessionPiRun
 		return AgentSessionPiRunView{}, err
 	}
 	if err := s.repo.CreateAgentSessionPiRun(run); err != nil {
+		if errors.Is(err, repository.ErrAgentSessionBusy) {
+			return AgentSessionPiRunView{}, as.NewError(as.CodeSessionConflict, "会话正在执行前一条消息，后续输入等待有序处理")
+		}
 		return AgentSessionPiRunView{}, err
 	}
 	return AgentSessionPiRunView{RunID: run.ID, Status: run.Status}, nil
@@ -142,16 +150,31 @@ func (s *Service) agentSessionPiBinding(ownerID string, session *model.AgentSess
 
 // agentSessionPiTools freezes the definition's tool set for the run. Execution
 // still re-checks authorization on every call.
-func (s *Service) agentSessionPiTools(session *model.AgentSession) []as.ToolSpec {
+func (s *Service) agentSessionPiTools(session *model.AgentSession) ([]as.ToolSpec, error) {
 	definitions := s.businessToolDefinitions(session.Application)
 	if session.Role == as.RoleSupervisor {
 		definitions = supervisorToolDefinitions()
 	}
+	var authorization *ao.WorkAuthorization
+	if session.Role == as.RoleBusiness && session.WorkItemID != "" {
+		work, err := s.repo.AgentWorkForOwner(session.OwnerID, session.WorkItemID)
+		if err != nil {
+			return nil, workNotFound(err)
+		}
+		auth, err := ao.DecodeAuthorization(work.AuthorizationJSON)
+		if err != nil {
+			return nil, err
+		}
+		authorization = &auth
+	}
 	tools := make([]as.ToolSpec, 0, len(definitions))
 	for _, definition := range definitions {
+		if authorization != nil && !authorization.AllowsTool(definition.Name) {
+			continue
+		}
 		tools = append(tools, as.ToolSpec{Name: definition.Name, Description: definition.Description, Parameters: definition.Parameters})
 	}
-	return tools
+	return tools, nil
 }
 
 func agentSessionPiState(session *model.AgentSession, trigger, prompt, parentID string, selection cp.ModelSelection, binding *as.ExecutionBinding, tools []as.ToolSpec) cloudAgentRuntime {

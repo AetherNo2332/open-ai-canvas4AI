@@ -69,7 +69,7 @@ var agentServiceMigrations = []migration{
 
 // AgentServiceModels 是 Agent 服务的持久结构，顺序即迁移与复制顺序。
 func AgentServiceModels() []any {
-	return []any{&model.AgentSession{}, &model.AgentSessionMessage{}, &model.AgentMemoryNote{}, &model.AgentWorkItem{}, &model.AgentAssignment{}, &model.AgentWorkReport{}, &model.AgentWorkInput{}, &model.AgentOutbox{}, &model.AgentApproval{}, &model.AgentTurn{}, &model.AgentOperation{}, &model.AgentTurnContract{}}
+	return []any{&model.AgentSession{}, &model.AgentSessionMessage{}, &model.AgentMemoryNote{}, &model.AgentWorkItem{}, &model.AgentAssignment{}, &model.AgentWorkReport{}, &model.AgentWorkInput{}, &model.AgentOutbox{}, &model.AgentApproval{}, &model.AgentTurn{}, &model.AgentOperation{}, &model.AgentTurnContract{}, &model.AgentEcommerceBatch{}}
 }
 
 func migrateAgentSessions(tx *gorm.DB) error {

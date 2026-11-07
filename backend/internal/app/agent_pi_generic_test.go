@@ -488,6 +488,21 @@ func TestAgentSessionPiRunLeaseTakeoverFencesOldEpoch(t *testing.T) {
 	if err := f.svc.RenewPiAgentLease("user-a", view.RunID, oldOwner); err == nil {
 		t.Fatal("old epoch still renews the lease")
 	}
+	if _, err := f.svc.PiModelStep("user-a", view.RunID, oldOwner, PiModelStepRequest{Canonical: first.Canonical}); err == nil {
+		t.Fatal("old epoch admitted a model step")
+	}
+	if err := f.svc.PiToolBatch("user-a", view.RunID, oldOwner, PiToolBatchRequest{TaskID: "old-task", Calls: []cloudAgentCall{piAgentTestCall("old-call", "drama_summary", `{}`)}}); err == nil {
+		t.Fatal("old epoch admitted tools")
+	}
+	if err := f.svc.PiCheckpointMessage("user-a", view.RunID, oldOwner, PiMessageCheckpoint{Sequence: 1, Message: json.RawMessage(`{"role":"user","content":"stale"}`)}); err == nil {
+		t.Fatal("old epoch wrote a checkpoint")
+	}
+	if err := f.svc.PiFailRun("user-a", view.RunID, oldOwner, "stale"); err == nil {
+		t.Fatal("old epoch wrote terminal state")
+	}
+	if count := platformCount(t, f.db, &model.BillingOrder{}, "user_id = ?", "user-a"); count != 0 {
+		t.Fatalf("stale epoch created %d orders", count)
+	}
 	if err := f.svc.RenewPiAgentLease("user-a", view.RunID, newOwner); err != nil {
 		t.Fatalf("new epoch renewal: %v", err)
 	}

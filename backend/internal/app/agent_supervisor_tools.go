@@ -315,7 +315,7 @@ func (s *Service) supervisorAppendInput(call as.ToolInvocation, root *model.Agen
 		return as.ToolResult{}, as.NewError(as.CodeInvalidRequest, "补充要求需要子工作与正文")
 	}
 	source := supervisorWorkInputSource(call)
-	receipt, err := s.AppendWorkInput(call.OwnerID, AppendInputRequest{WorkItemID: args.WorkItemID, SourceMessageID: source, Text: args.Text, IdempotencyKey: source})
+	receipt, err := s.appendWorkInput(call.OwnerID, args.WorkItemID, as.ActorSupervisor, source, args.Text, "supervisor:"+source, root.RootWorkID)
 	if err != nil {
 		return as.ToolResult{}, err
 	}

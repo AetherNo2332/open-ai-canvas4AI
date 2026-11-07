@@ -557,7 +557,7 @@ Schema 90 `agent_service_approvals` 新增 `agent_approvals`：`id`、`owner_id`
 投递：`agent_outboxes` 由投递环节按时间顺序写入目标会话的 `agent_session_messages`，消息 ID 为 `outbox:<投递 ID>`，重复投递不会写第二条。用户直聊的补充以用户身份写入执行会话；派工、报告与“用户已补充”通知以 system 身份写入，只陈述事实，不构成授权。
 - SQLite → PostgreSQL 迁移工具已包含两张表。回退旧代码时两张表无人读取，可保留；删除前须先备份。
 
-Schema 91 `agent_service_turns` 新增 `agent_turns`，作为非画布业务 Session 的持久执行队列。`StartWorker` 启动的 Go 后台运行器投递 outbox、认领到期轮次并推进可恢复的模型/工具循环；画布 Agent 仍走原 Pi 队列。
+Schema 91 `agent_service_turns` 新增 `agent_turns`，作为非画布业务 Session 的持久输入队列。`StartWorker` 的 Go 后台运行器投递 outbox、认领到期输入并创建通用 Pi run；Node/Pi 推进模型、工具、检查点与压缩。同 Session 前轮未终结时后续输入留队等待，不切换前轮 active run，不消耗失败重试次数。
 
 - 字段：`id`、`owner_id`、`session_id`、`message_id`、`message_seq`、`text`、`status`（pending/running/done/failed）、`model_json`（首次选择后冻结）、`budget_grant_id`、`attempts`、`error`、`next_at`、`claim_owner`、`claim_expires_at`、`created_at`、`updated_at`。
 - 约束：`(owner_id, session_id, message_id)` 唯一；`(session_id, message_seq)` 索引用于只推进每个 Session 最早的未完成轮次。有效 claim 不能被另一后端实例抢占，过期后可接管；状态写回要求 claim owner 匹配，迟到实例不能覆盖接管者。
@@ -566,3 +566,7 @@ Schema 91 `agent_service_turns` 新增 `agent_turns`，作为非画布业务 Ses
 - SQLite → PostgreSQL 迁移工具已包含 `agent_turns`。回退旧代码会停止推进这些轮次，但数据可保留；恢复新代码后可继续认领，删除前须先备份。
 
 Agent 服务迁移契约位于 `backend/internal/database/migrations_agent_contract.go`。它把 Session、消息、工作、派工、预算、审批、工具操作、Cloud Agent journal 以及 Pi Session/Entry 作为运行时事实列出，要求 SQLite → PostgreSQL 复制保留主键、租约/授权 epoch 和消息/事件顺序；`backend/cmd/migrate-sqlite-postgres` 的测试会检查这份契约与完整复制清单一致。
+
+Schema 92–94 的本地 Agent 扩展同时加入模型清单、迁移契约和复制器：`agent_operations`（`owner_id + operation_key` 唯一，记录参数指纹、Assignment epoch、审批与成功回执）、`agent_turn_contracts`（`owner_id + turn_key` 唯一，冻结 Definition 版本与工具 Schema）、`agent_ecommerce_batches`（`owner_id + batch_id` 唯一，保存产品/预设/任务引用）。同时保留 `agent_work_items.authorization_json/authorization_version`、`agent_approvals.arguments_hash` 和 `drama_productions.agent_work_id/agent_grant_id`。本次补全复制登记不增加 schema 版本；跨库实际复制仍需 C6 环境验证。
+
+通用 Pi 身份目前冻结在运行 Execution JSON，conversation 使用 `agent-session:<SessionID>`；没有新增 Session/Scope 显式列。镜头工具变更和成功操作回执在同一事务中提交；回执失败回滚镜头，已成功操作重放不修改后来用户版本。工作完成报告在工作事务内检查该 grant 的全部任务，资源交付、采用与失败替代策略仍待完整验收。

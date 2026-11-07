@@ -12,7 +12,7 @@
 
 ## PR #131 的处理与交付
 
-2026-11-07 核对时，PR #130 与 #131 均为 OPEN。PR #131 的目标为 PR #130 的 `feat/creation-platform-sdk`，head 为 `ba85fc6c3`，当前尚非 Draft。
+接手刷新确认 PR #131 OPEN/Draft，目标为 `feat/creation-platform-sdk@d6fdc51699`，head 为 `33cf12b535`。本地 C0–C4 与远端 C5/C6 已在独立分支整合并修复，但未推送，保持 Draft。实际 20 条状态见[接手审计](../design/2026-11-08-pi-agent-c0-c4-audit.md)，主计划未完成条目继续保持未勾选。
 
 建议继续由 PR #131 承载架构对齐后的全业务 Pi Agent 服务与总控 Session 协作，实施阶段将其标记为 Draft，描述中说明当前正在进行 Pi 架构整改。最终标题围绕同源 Pi Runtime、通用业务 Session 和总控消息协作表达。
 

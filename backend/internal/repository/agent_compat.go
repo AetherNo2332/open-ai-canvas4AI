@@ -8,6 +8,8 @@ import (
 	"yingce/backend/internal/model"
 )
 
+var ErrAgentSessionBusy = errors.New("Agent Session has an unfinished Pi run")
+
 // transactionRepository 让 Agent 仓储在调用方事务里复用当前仓储的配置
 // （画布变更通知、编辑凭证等），对应上游 Transaction 内部构造的仓储。
 func (r *Repository) transactionRepository(db *gorm.DB) *Repository {
@@ -43,6 +45,15 @@ func (r *Repository) CreateAgentSessionPiRun(run *model.CloudAgentExecution) err
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		repo := r.transactionRepository(tx)
 		if err := repo.LockCanvasWrite(run.UserID, ""); err != nil {
+			return err
+		}
+		var active model.CloudAgentExecution
+		err := tx.Where("user_id = ? AND conversation_id = ? AND id <> ? AND status IN ?", run.UserID, run.ConversationID, run.ID,
+			[]string{"queued", "running", "waiting_approval"}).First(&active).Error
+		if err == nil {
+			return ErrAgentSessionBusy
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		if err := repo.EnsureCloudAgent(run); err != nil {

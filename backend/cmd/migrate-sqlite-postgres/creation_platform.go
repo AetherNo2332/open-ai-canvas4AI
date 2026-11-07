@@ -56,5 +56,8 @@ func agentServiceTableMigrationDefinitions() []tableMigration {
 		migrateTable[model.AgentOutbox]("agent_outboxes"),
 		migrateTable[model.AgentApproval]("agent_approvals"),
 		migrateTable[model.AgentTurn]("agent_turns"),
+		migrateTable[model.AgentOperation]("agent_operations"),
+		migrateTable[model.AgentTurnContract]("agent_turn_contracts"),
+		migrateTable[model.AgentEcommerceBatch]("agent_ecommerce_batches"),
 	}
 }

@@ -14,6 +14,8 @@ import (
 	"yingce/backend/internal/repository"
 )
 
+var errAgentWorkTasksPending = ao.NewError(ao.CodeInvalidRequest, "工作仍有未成功的必需任务，不能报告完成")
+
 func outboxItem(ownerID, workID, target, kind string, payload any) *model.AgentOutbox {
 	raw, _ := json.Marshal(payload)
 	return &model.AgentOutbox{ID: newID(), OwnerID: ownerID, WorkItemID: workID, TargetSessionID: target, Kind: kind, Payload: string(raw), Status: "pending", CreatedAt: time.Now()}
@@ -165,6 +167,15 @@ func (s *Service) SubmitReport(ownerID string, req SubmitReportRequest) (ReportV
 		live, err := tx.Assignment(ownerID, assignment.ID)
 		if err != nil {
 			return err
+		}
+		if req.Status == ao.ReportCompleted {
+			pending, err := tx.UnfinishedWorkTasks(ownerID, current.BudgetGrantID)
+			if err != nil {
+				return err
+			}
+			if pending != 0 {
+				return errAgentWorkTasksPending
+			}
 		}
 		row := &model.AgentWorkReport{ID: newID(), OwnerID: ownerID, WorkItemID: work.ID, AssignmentID: live.ID, ReportID: req.ReportID, LeaseEpoch: req.LeaseEpoch,
 			WorkVersion: req.WorkVersion, Status: req.Status, Summary: req.Summary, CreatedAt: time.Now()}

@@ -26,6 +26,20 @@ func (r *Repository) AgentOperation(ownerID, operationKey string) (*model.AgentO
 	return row, nil
 }
 
+// LockAgentOperation serializes a business mutation with its durable receipt.
+// The no-op update also obtains a write lock on SQLite.
+func (r *Repository) LockAgentOperation(ownerID, operationKey string) (*model.AgentOperation, error) {
+	result := r.db.Model(&model.AgentOperation{}).Where("owner_id = ? AND operation_key = ?", ownerID, operationKey).
+		UpdateColumn("updated_at", gorm.Expr("updated_at"))
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return r.AgentOperation(ownerID, operationKey)
+}
+
 // InsertAgentOperation writes a pending receipt; the first attempt for an
 // operation key wins and later ones find the stored row.
 func (r *Repository) InsertAgentOperation(row *model.AgentOperation) (bool, error) {

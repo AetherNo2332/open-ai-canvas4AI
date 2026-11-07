@@ -134,6 +134,11 @@ func (s *Service) advanceGenericQueuedTurn(turn model.AgentTurn) (bool, error) {
 		SessionID: turn.SessionID, TriggerMessageID: turn.MessageID, Prompt: turn.Text,
 	})
 	if err != nil {
+		if as.IsCode(err, as.CodeSessionConflict) {
+			next := time.Now().Add(agentTurnRetryDelay)
+			_, updateErr := s.updateQueuedTurn(turn, map[string]any{"next_at": next, "error": err.Error(), "claim_owner": "", "claim_expires_at": nil})
+			return false, updateErr
+		}
 		return s.retryOrFailQueuedTurn(turn, err)
 	}
 	if view.RunID == "" {

@@ -2,7 +2,7 @@
 
 > 当前设计依据为用户于 2026-11-07 明确的目标。Agent 的基本循环统一由 Pi Worker 执行，画布、短剧、电商与总控使用同一套 Pi Agent 运行机制。总控通过受控消息工具与业务 Session 协作。
 > 本文取代 A0 中 R-A0-1、R-A0-3 关于非画布 Go Agent 循环的裁定，以及后续 B0–B6 计划中的对应运行器选择。历史实现和验收记录用于迁移参考。
-> 状态为设计修订，代码基线为本地 `codex/agent-supervisor-b0b6@4ae426d88`。实施分片见[对齐计划](../plans/2026-11-07-pi-agent-service-alignment.md)。
+> 冻结设计继续有效。当前接手基线、实际修复、20 条验收与 C5/C6 边界见[C0–C4 接手审计](./2026-11-08-pi-agent-c0-c4-audit.md)。实施分片见[对齐计划](../plans/2026-11-07-pi-agent-service-alignment.md)，未完成条目保持待验收。
 
 ## 1. 设计目标
 

@@ -1,4 +1,3 @@
-import { hostname } from "node:os";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { CanvasBridge } from "./bridge.js";
@@ -35,7 +34,7 @@ const harness = await loadHarnessPrompt(harnessDir).catch((error) => { health.fa
 const scheduler = new EventScheduler(4);
 const events = new RunEvents();
 const availability={nextProbeAt:0};
-const eventBridge = new CanvasBridge(backend, token, `${hostname()}-${process.pid}-events`, scheduler, events,availability,identity);
+const eventBridge = new CanvasBridge(backend, token, `${process.pid}-events`, scheduler, events,availability,identity);
 // Fail closed before any claim when the authoritative configuration is unavailable.
 async function loadInitialConfig(): Promise<RuntimeConfigController | undefined> {
   while (!controller.signal.aborted) {
@@ -130,7 +129,7 @@ await runEventSessions({
   reportState: capacityReport,
   signal: controller.signal,
   createBridge: (index) => new CanvasBridge(backend, token,
-    `${hostname()}-${process.pid}-${index + 1}`.slice(0, 80), scheduler, events,availability,identity),
+    `${process.pid}-${index + 1}`, scheduler, events,availability,identity),
   run: async (bridge, run, signal) => {
     await runLeasedPiSession(bridge, run, signal, (b, r, s) => runCanvasAgent(b, r, s, harness));
   },

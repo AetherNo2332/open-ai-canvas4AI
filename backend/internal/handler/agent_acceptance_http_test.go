@@ -53,6 +53,7 @@ func TestAgentAcceptanceHTTPSupervisorChain(t *testing.T) {
 
 	pngBytes := chainPNG()
 	upstreamCalls := atomic.Int64{}
+	supervisorStage := atomic.Int64{}
 	// 确定性上游按请求内容响应：任意运行器/worker 交错下，同一阶段得到同一指令。
 	textUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalls.Add(1)
@@ -78,11 +79,11 @@ func TestAgentAcceptanceHTTPSupervisorChain(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case toolNames["delegate_work"]:
-			if !strings.Contains(conversation, "已派工：子工作") {
+			if supervisorStage.CompareAndSwap(0, 1) {
 				_, _ = w.Write([]byte(chainToolCallReply("call-del-drama", "delegate_work", `{"actionKey":"drama","definitionId":"drama.agent","application":"drama","spaceType":"drama_project","spaceId":"drama-chain","handoff":"梳理第一集分镜","budgetMicrocredits":300000}`)))
 				return
 			}
-			if !strings.Contains(conversation, "第二份派工回执") && strings.Count(conversation, "已派工：子工作") == 1 {
+			if supervisorStage.CompareAndSwap(1, 2) {
 				_, _ = w.Write([]byte(chainToolCallReply("call-del-ecom", "delegate_work", `{"actionKey":"ecom","definitionId":"ecommerce.agent","application":"ecommerce","spaceType":"workbench_batch","spaceId":"batch-chain","handoff":"一张白底主图","budgetMicrocredits":300000}`)))
 				return
 			}
@@ -157,6 +158,8 @@ func TestAgentAcceptanceHTTPSupervisorChain(t *testing.T) {
 	t.Cleanup(svc.BeginDrain)
 	router := gin.New()
 	RegisterCanvasAPI(router.Group("/api"), svc)
+	startChainPiWorker(t, router, svc)
+	t.Cleanup(func() { writeChainPiEvidence(t, db) })
 
 	call := func(method, path string, body any) (*httptest.ResponseRecorder, map[string]any) {
 		raw := []byte(nil)

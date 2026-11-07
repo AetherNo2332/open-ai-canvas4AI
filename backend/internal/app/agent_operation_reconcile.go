@@ -60,7 +60,7 @@ func (s *Service) reconcileAgentOperations(ownerID string) error {
 				continue
 			}
 			if _, err := s.SubmitReport(ownerID, SubmitReportRequest{AssignmentID: assignment.ID, LeaseEpoch: assignment.Epoch,
-				WorkVersion: current.Version, ReportID: report.reportID, Status: report.status, Summary: report.summary}); err != nil && !ao.IsCode(err, ao.CodeStaleAssignment) {
+				WorkVersion: current.Version, ReportID: report.reportID, Status: report.status, Summary: report.summary}); err != nil && !ao.IsCode(err, ao.CodeStaleAssignment) && !errors.Is(err, errAgentWorkTasksPending) {
 				return err
 			}
 		}

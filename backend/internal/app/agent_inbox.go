@@ -172,7 +172,7 @@ func (s *Service) AppendWorkInput(ownerID string, req AppendInputRequest) (WorkI
 // appendWorkInput is the single ordered inbox of a work item: each accepted
 // input bumps the work version in the work-tree lock, so concurrent user and
 // supervisor inputs get distinct versions and are delivered once.
-func (s *Service) appendWorkInput(ownerID, workID, actor, sourceMessageID, text, key string) (WorkInputReceipt, error) {
+func (s *Service) appendWorkInput(ownerID, workID, actor, sourceMessageID, text, key string, expectedRoot ...string) (WorkInputReceipt, error) {
 	work, err := s.repo.AgentWorkForOwner(ownerID, strings.TrimSpace(workID))
 	if err != nil {
 		return WorkInputReceipt{}, workNotFound(err)
@@ -186,6 +186,9 @@ func (s *Service) appendWorkInput(ownerID, workID, actor, sourceMessageID, text,
 		current, err := tx.Work(ownerID, work.ID)
 		if err != nil {
 			return err
+		}
+		if len(expectedRoot) > 0 && (expectedRoot[0] == "" || current.RootWorkID != expectedRoot[0] || current.ID == expectedRoot[0]) {
+			return as.NewError(as.CodeForbidden, "目标工作不属于当前总控工作树")
 		}
 		for _, status := range []string{root.Status, current.Status} {
 			if err := ao.CheckDelegation(status); err != nil {

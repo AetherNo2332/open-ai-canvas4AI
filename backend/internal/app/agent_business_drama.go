@@ -38,6 +38,9 @@ func (dramaAgentAdapter) Tools() []as.ToolSpec {
 }
 
 func (a dramaAgentAdapter) Execute(_ context.Context, call as.ToolInvocation) (as.ToolResult, error) {
+	if err := a.bindChargedOperation(call); err != nil {
+		return as.ToolResult{}, err
+	}
 	switch call.Name {
 	case "drama_summary":
 		summary, err := a.s.DramaSummary(call.OwnerID, call.Scope.SpaceID)
@@ -92,6 +95,9 @@ func (a dramaAgentAdapter) Execute(_ context.Context, call as.ToolInvocation) (a
 }
 
 func (a dramaAgentAdapter) updateShot(call as.ToolInvocation) (as.ToolResult, error) {
+	if call.OperationID != "" {
+		return a.updateShotAtomically(call)
+	}
 	var args struct {
 		ShotID      string  `json:"shotId"`
 		Dialogue    *string `json:"dialogue"`
