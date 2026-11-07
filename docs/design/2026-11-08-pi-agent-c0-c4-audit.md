@@ -112,7 +112,9 @@ accepted 表达持久受理；Pi run 完成、媒体完成、资源交付和工�
 - `go-support-final.log`：数据库与复制器通过；repository 全包因既有 Gmail 并发测试未关闭 SQLite，Windows 清理 users.db 失败。该项未冒称通过，也未修改无关账号模块。
 - `historical-probes.log` 保留历史反例原始复现，不能当最终修复后结果。
 - 真实跨进程命令：设置 `CANVAS_PI_EVIDENCE_DIR` 为隔离证据目录后执行 `go test ./internal/handler -run '^TestAgentAcceptanceHTTPSupervisorChain$' -count=1 -v -timeout 120s`。它启动生产 Node server、真实 Pi SDK、Go 服务/后台任务与确定性 HTTP Provider；不使用 Go 模拟 Pi 驱动。
-- `pi-ascii.log` 曾通过完整三角色链路；后续重复运行暴露消息抢写者问题，失败日志保留；以单写者修复后的 `pi-ordered.log` 为最终复验，不能沿用早期成功声称最终通过。
-- `chain-evidence.json` 导出脱敏身份、操作、审批、订单、charge 与 entries 数；日志不保存运行授权或真实密钥。金额逐笔、压缩费用和实际故障恢复仍待补。
+- `pi-ascii.log` 曾通过完整三角色链路；后续重复运行暴露消息抢写者问题，失败日志保留；单写者修复后的 `pi-ordered.log` 通过（32.71 秒），三 Session、6 runs、29 Pi entries、11 订单/11 charges、1 consumed 审批、5 操作。最终导出扩展验证见 `pi-delivery.log`，不能沿用早期成功声称最终通过。
+- `pi-delivery.log` 最终通过（31.20 秒）。`chain-evidence.json` 导出脱敏身份、触发消息、Scope、Assignment/grant/authVersion、操作、审批、订单金额、charge 与 entries 数。最终样本：3 Session、5 Pi runs、27 entries、5 操作、1 consumed 审批；9 笔文本与 1 笔图片订单，各有唯一 charge，实收合计 100,009 microcredits。进度报告与完成报告的到达时机会改变模型轮数，因此不能把不同运行的计数拼在一起。压缩费用、钱包逐笔对平和实际故障恢复仍待补。
 
 本轮没有推送，所以未运行推送专用全门禁。准备推送前仍须按最新 base rebase、更新内部版本与日志、执行项目 verify-before-push，确认 C0–C4 和后续 C5/C6 的剩余项。作者独立审查，无子代理复核。
+
+修复与可复用回归提交为 `543782fee`。历史 R1/R2/R5 的关键探针已迁入 `agent_historical_regression_test.go`，不依赖临时 overlay；`acceptance-final.log` 包含这些场景及完整 app 专项，结果通过（24.645 秒）。`architecture-final.log` 为最终生产代码架构守卫与 DTO 包通过证据。
