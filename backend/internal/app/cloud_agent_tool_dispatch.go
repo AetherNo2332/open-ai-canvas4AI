@@ -23,6 +23,9 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 	if state.CallIndex < 0 || state.CallIndex >= len(state.Calls) {
 		return s.failCloudAgent(run, state, "Agent 工具调用状态无效，本轮已停止")
 	}
+	if state.Execution != nil {
+		return s.executeGenericPiToolCall(run, state)
+	}
 	call := state.Calls[state.CallIndex]
 	// director preview 挂起在浏览器视口上：回传由 SubmitCloudAgentDirectorPreview 处理，
 	// 这里只负责超时回执，避免页面未打开时卡死运行。

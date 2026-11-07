@@ -52,6 +52,48 @@ func (r *Repository) AppendAgentSessionMessages(ownerID, sessionID, writer strin
 	return revision, err
 }
 
+// AppendAgentSessionMessageFromPi projects one assistant result from the
+// business-neutral Pi writer into the public Session history. The Pi session
+// lease is the single-writer fence for this path; AgentSession's revision keeps
+// the user-facing sequence ordered and the MessageID makes a retry a no-op.
+func (r *Repository) AppendAgentSessionMessageFromPi(ownerID, sessionID, conversationID, runID, leaseOwner string, leaseEpoch int64, message model.AgentSessionMessage, now time.Time) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var piSession model.CloudAgentPiSession
+		if err := tx.Where("user_id = ? AND conversation_id = ? AND active_run_id = ? AND lease_owner = ? AND lease_epoch = ? AND lease_expires_at > ?", ownerID, conversationID, runID, leaseOwner, leaseEpoch, now).First(&piSession).Error; err != nil {
+			return err
+		}
+		var existing model.AgentSessionMessage
+		err := tx.Where("owner_id = ? AND session_id = ? AND message_id = ?", ownerID, sessionID, message.MessageID).First(&existing).Error
+		if err == nil {
+			if existing.Body != message.Body || existing.RunID != runID {
+				return ErrCreationConflict
+			}
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var session model.AgentSession
+		if err := tx.Where("id = ? AND owner_id = ? AND status = ?", sessionID, ownerID, "active").First(&session).Error; err != nil {
+			return err
+		}
+		bumped := tx.Model(&model.AgentSession{}).Where("id = ? AND owner_id = ? AND status = ? AND revision = ?", sessionID, ownerID, "active", session.Revision).
+			Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": now})
+		if bumped.Error != nil {
+			return bumped.Error
+		}
+		if bumped.RowsAffected != 1 {
+			return ErrAgentSessionChanged
+		}
+		var sequence int64
+		if err := tx.Model(&model.AgentSessionMessage{}).Where("session_id = ?", sessionID).Select("COALESCE(MAX(sequence), 0)").Scan(&sequence).Error; err != nil {
+			return err
+		}
+		message.OwnerID, message.SessionID, message.Sequence, message.CreatedAt, message.RunID = ownerID, sessionID, sequence+1, now, runID
+		return tx.Create(&message).Error
+	})
+}
+
 // AgentSessionMessages returns the Session history in order, owner-scoped.
 func (r *Repository) AgentSessionMessages(ownerID, sessionID string) ([]model.AgentSessionMessage, error) {
 	rows := []model.AgentSessionMessage{}

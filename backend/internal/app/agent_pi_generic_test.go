@@ -151,6 +151,95 @@ func TestAgentSessionPiRunAdmitsModelStep(t *testing.T) {
 	}
 }
 
+func TestAgentSessionPiRunCompletesNoToolReplyIntoSession(t *testing.T) {
+	f := newGenericPiFixture(t, "reply", "drama")
+	view := enqueueGenericPi(t, f, "reply-1", "请汇总当前短剧状态")
+	snapshot, err := f.svc.ClaimPiAgentForWorker("generic-worker", "user-a")
+	if err != nil || snapshot == nil {
+		t.Fatalf("claim generic run: %+v, %v", snapshot, err)
+	}
+	owner := "generic-worker@" + itoa64(snapshot.PiSessionLeaseEpoch)
+	f.text.script(textReply("短剧状态已汇总"))
+	canonical := snapshot.Canonical
+	step, err := f.svc.PiModelStep("user-a", view.RunID, owner, PiModelStepRequest{Canonical: canonical})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.drain(t)
+	assistant, _ := json.Marshal(map[string]any{"role": "assistant", "content": "短剧状态已汇总", "stopReason": "stop"})
+	if err := f.svc.PiCheckpointMessage("user-a", view.RunID, owner, PiMessageCheckpoint{Sequence: 1, TaskID: step.TaskID, Message: assistant}); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := f.svc.PiNoToolTurn("user-a", view.RunID, owner, step.TaskID)
+	if err != nil || decision.Status != "completed" {
+		t.Fatalf("generic no-tool decision = %+v, %v", decision, err)
+	}
+	rows, err := f.svc.repo.AgentSessionMessages("user-a", f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replies []model.AgentSessionMessage
+	for _, row := range rows {
+		if row.Actor == as.ActorExecutor && row.Body == "短剧状态已汇总" {
+			replies = append(replies, row)
+		}
+	}
+	if len(replies) != 1 {
+		t.Fatalf("generic assistant replies = %+v, want exactly one", replies)
+	}
+	if _, err := f.svc.PiNoToolTurn("user-a", view.RunID, owner, step.TaskID); err != nil {
+		t.Fatalf("replaying completed no-tool turn: %v", err)
+	}
+	rows, err = f.svc.repo.AgentSessionMessages("user-a", f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, row := range rows {
+		if row.Body == "短剧状态已汇总" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("replayed generic assistant reply count = %d, want 1", count)
+	}
+}
+
+func TestAgentSessionPiRunExecutesBusinessToolThroughOperationReceipt(t *testing.T) {
+	f := newGenericPiFixture(t, "tool", "drama")
+	view := enqueueGenericPi(t, f, "tool-1", "读取短剧摘要")
+	snapshot, err := f.svc.ClaimPiAgentForWorker("generic-worker", "user-a")
+	if err != nil || snapshot == nil {
+		t.Fatalf("claim generic run: %+v, %v", snapshot, err)
+	}
+	owner := "generic-worker@" + itoa64(snapshot.PiSessionLeaseEpoch)
+	call := piAgentTestCall("generic-call", "drama_summary", `{}`)
+	f.text.script(toolCallReply(call.ID, call.Function.Name, call.Function.Arguments))
+	step, err := f.svc.PiModelStep("user-a", view.RunID, owner, PiModelStepRequest{Canonical: snapshot.Canonical})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.drain(t)
+	assistant, _ := json.Marshal(map[string]any{"role": "assistant", "content": "", "tool_calls": []map[string]any{{"id": call.ID, "type": "function", "function": map[string]any{"name": call.Function.Name, "arguments": call.Function.Arguments}}}})
+	if err := f.svc.PiCheckpointMessage("user-a", view.RunID, owner, PiMessageCheckpoint{Sequence: 1, TaskID: step.TaskID, Message: assistant}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.PiToolBatch("user-a", view.RunID, owner, PiToolBatchRequest{TaskID: step.TaskID, Calls: []cloudAgentCall{call}}); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := f.svc.PiToolAdvance("user-a", view.RunID, owner, step.TaskID, call.ID)
+	if err != nil || receipt == nil || receipt.Pending {
+		t.Fatalf("generic tool receipt = %+v, %v", receipt, err)
+	}
+	var operations []model.AgentOperation
+	if err := f.db.Where("owner_id = ? AND session_id = ?", "user-a", f.session.ID).Find(&operations).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 1 || operations[0].Status != "succeeded" {
+		t.Fatalf("generic operations = %+v", operations)
+	}
+}
+
 // C1-B: two Sessions in one space keep distinct Pi sessions and never share
 // the claimed identity or history root.
 func TestAgentSessionPiRunIsolatesTwoSessions(t *testing.T) {

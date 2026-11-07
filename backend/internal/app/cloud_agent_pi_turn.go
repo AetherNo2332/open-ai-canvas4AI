@@ -65,6 +65,9 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 	if cloudAgentRunTerminal(run.Status) {
 		return &PiTurnDecision{Status: run.Status}, nil
 	}
+	if state.Execution != nil {
+		return s.piGenericNoToolTurn(userID, run, state, taskID, owner)
+	}
 	limits, err := s.cloudAgentStepLimits()
 	if err != nil {
 		return nil, err
@@ -152,6 +155,31 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 	})
 	if err == nil && cloudAgentRunTerminal(decision.Status) {
 		s.publishCloudAgentIdle(userID, runID, state.Request.CanvasID)
+	}
+	return decision, err
+}
+
+func (s *Service) piGenericNoToolTurn(userID string, run *model.CloudAgentExecution, state cloudAgentRuntime, taskID, owner string) (*PiTurnDecision, error) {
+	if state.ActiveTaskID != "" || state.CallIndex < len(state.Calls) || state.LastStepTaskID != taskID {
+		return nil, kernel.Forbidden("通用 Pi 收尾步骤无效")
+	}
+	result, _, err := s.piNoToolTurnResult(userID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.ToolCalls) > 0 || len(result.LegacyCalls) > 0 {
+		return nil, kernel.Forbidden("通用 Pi 收尾步骤包含工具调用")
+	}
+	decision := &PiTurnDecision{Status: "completed"}
+	err = s.repo.MutateCloudAgent(userID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
+		latest, decodeErr := cloudAgentDecode(current)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		return s.completeGenericPiNoToolTurn(repo, current, &latest, taskID, result, owner)
+	})
+	if err == nil {
+		s.publishCloudAgentIdle(userID, run.ID, run.CanvasID)
 	}
 	return decision, err
 }
