@@ -18,13 +18,18 @@ import (
 // chooses them, the server resolves every identity (owner, root work, grant)
 // from the Session, and nothing the model says can widen the authorization.
 const (
-	supervisorToolListAgents  = "list_business_agents"
-	supervisorToolDelegate    = "delegate_work"
-	supervisorToolReadStatus  = "read_work_status"
-	supervisorToolAppendInput = "append_work_input"
-	supervisorToolRequestUser = "request_user_input"
-	supervisorToolFinishWork  = "finish_work"
-	supervisorWorkInputPrefix = "supervisor-turn:"
+	supervisorToolListAgents    = "list_business_agents"
+	supervisorToolDelegate      = "delegate_work"
+	supervisorToolReadStatus    = "read_work_status"
+	supervisorToolAppendInput   = "append_work_input"
+	supervisorToolRequestUser   = "request_user_input"
+	supervisorToolFinishWork    = "finish_work"
+	supervisorToolSessionsList  = "agent_sessions_list"
+	supervisorToolSessionOpen   = "agent_session_open"
+	supervisorToolSessionSend   = "agent_session_send"
+	supervisorToolWorkRead      = "agent_work_read"
+	supervisorToolRequestUserV2 = "agent_request_user"
+	supervisorWorkInputPrefix   = "supervisor-turn:"
 )
 
 // supervisorToolDefinitions is the fixed tool set of a supervisor Session.
@@ -40,6 +45,16 @@ func supervisorToolDefinitions() []cp.ToolDefinition {
 			Parameters: json.RawMessage(`{"type":"object","properties":{"question":{"type":"string"}},"required":["question"]}`)},
 		{Name: supervisorToolFinishWork, Description: "全部子工作完成后汇总结果并结束根工作：结果摘要",
 			Parameters: json.RawMessage(`{"type":"object","properties":{"resultSummary":{"type":"string"}},"required":["resultSummary"]}`)},
+		{Name: supervisorToolSessionsList, Description: "列出当前总控工作树中可访问的执行会话",
+			Parameters: json.RawMessage(`{"type":"object","properties":{}}`)},
+		{Name: supervisorToolSessionOpen, Description: "打开当前总控工作树中一个已授权的执行会话",
+			Parameters: json.RawMessage(`{"type":"object","properties":{"sessionId":{"type":"string"}},"required":["sessionId"]}`)},
+		{Name: supervisorToolSessionSend, Description: "向当前总控工作树中一个已授权的执行会话发送要求",
+			Parameters: json.RawMessage(`{"type":"object","properties":{"sessionId":{"type":"string"},"text":{"type":"string"}},"required":["sessionId","text"]}`)},
+		{Name: supervisorToolWorkRead, Description: "读取当前总控工作树中一个已授权工作的状态和报告",
+			Parameters: json.RawMessage(`{"type":"object","properties":{"workItemId":{"type":"string"},"sessionId":{"type":"string"}}}`)},
+		{Name: supervisorToolRequestUserV2, Description: "向用户提出具体问题并暂停当前总控工作",
+			Parameters: json.RawMessage(`{"type":"object","properties":{"question":{"type":"string"}},"required":["question"]}`)},
 	}
 }
 
@@ -55,7 +70,7 @@ func (s *Service) executeSupervisorTool(ctx context.Context, session *model.Agen
 	if err != nil {
 		return as.ToolResult{}, workNotFound(err)
 	}
-	if ao.WorkTerminal(root.Status) && call.Name != supervisorToolReadStatus {
+	if ao.WorkTerminal(root.Status) && !supervisorReadOnlyTool(call.Name) {
 		return as.ToolResult{}, as.NewError(as.CodeWorkStopped, "工作已结束")
 	}
 	switch call.Name {
@@ -71,8 +86,136 @@ func (s *Service) executeSupervisorTool(ctx context.Context, session *model.Agen
 		return s.supervisorRequestUser(call, root)
 	case supervisorToolFinishWork:
 		return s.supervisorFinishWork(call, root)
+	case supervisorToolSessionsList:
+		return s.supervisorSessionsList(call.OwnerID, root)
+	case supervisorToolSessionOpen:
+		return s.supervisorSessionOpen(call, root)
+	case supervisorToolSessionSend:
+		return s.supervisorSessionSend(call, root)
+	case supervisorToolWorkRead:
+		return s.supervisorWorkRead(call, root)
+	case supervisorToolRequestUserV2:
+		return s.supervisorRequestUser(call, root)
 	}
 	return as.ToolResult{}, as.NewError(as.CodeForbidden, "总控工具不存在")
+}
+
+func supervisorReadOnlyTool(name string) bool {
+	return name == supervisorToolReadStatus || name == supervisorToolSessionsList || name == supervisorToolSessionOpen || name == supervisorToolWorkRead
+}
+
+func (s *Service) supervisorTargetSession(ownerID string, root *model.AgentWorkItem, sessionID string) (*model.AgentSession, *model.AgentWorkItem, error) {
+	target, err := s.agentSessionForOwner(ownerID, strings.TrimSpace(sessionID))
+	if err != nil {
+		return nil, nil, err
+	}
+	if target.Role != as.RoleBusiness || strings.TrimSpace(target.WorkItemID) == "" {
+		return nil, nil, as.NewError(as.CodeForbidden, "目标会话不属于当前总控工作树")
+	}
+	work, err := s.repo.AgentWorkForOwner(ownerID, target.WorkItemID)
+	if err != nil {
+		return nil, nil, workNotFound(err)
+	}
+	if work.RootWorkID != root.RootWorkID || work.ID == root.ID {
+		return nil, nil, as.NewError(as.CodeForbidden, "目标会话不属于当前总控工作树")
+	}
+	if work.ActiveAssignmentID == "" {
+		return nil, nil, as.NewError(as.CodeStaleAssignment, "目标会话没有有效派工")
+	}
+	assignment, err := s.repo.AgentAssignmentForOwner(ownerID, work.ActiveAssignmentID)
+	if err != nil || assignment.ExecutorSessionID != target.ID || assignment.Status != ao.AssignmentRunning {
+		return nil, nil, as.NewError(as.CodeStaleAssignment, "目标会话的派工已失效")
+	}
+	return target, work, nil
+}
+
+func (s *Service) supervisorSessionsList(ownerID string, root *model.AgentWorkItem) (as.ToolResult, error) {
+	var children []model.AgentWorkItem
+	if err := s.repo.InAgentWork(ownerID, root.RootWorkID, func(tx *repository.WorkTx) error {
+		rows, err := tx.Descendants(ownerID, root.RootWorkID)
+		if err != nil {
+			return err
+		}
+		children = rows
+		return nil
+	}); err != nil {
+		return as.ToolResult{}, workNotFound(err)
+	}
+	lines := make([]string, 0, len(children))
+	for _, child := range children {
+		if child.ID == root.ID || child.SupervisorSessionID != "" {
+			continue
+		}
+		assignment, err := s.repo.AgentLatestAssignmentForWork(ownerID, child.ID)
+		if err != nil || assignment.ExecutorSessionID == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("会话 %s：工作 %s，业务 %s，空间 %s/%s，状态 %s", assignment.ExecutorSessionID, child.ID, child.Application, child.SpaceType, child.SpaceID, child.Status))
+	}
+	if len(lines) == 0 {
+		return as.ToolResult{Text: "当前工作树没有可访问的执行会话。"}, nil
+	}
+	return as.ToolResult{Text: strings.Join(lines, "\n")}, nil
+}
+
+func (s *Service) supervisorSessionOpen(call as.ToolInvocation, root *model.AgentWorkItem) (as.ToolResult, error) {
+	var args struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(call.Arguments, &args); err != nil || strings.TrimSpace(args.SessionID) == "" {
+		return as.ToolResult{}, as.NewError(as.CodeInvalidRequest, "打开会话需要 sessionId")
+	}
+	target, work, err := s.supervisorTargetSession(call.OwnerID, root, args.SessionID)
+	if err != nil {
+		return as.ToolResult{}, err
+	}
+	return as.ToolResult{Text: fmt.Sprintf("会话 %s：工作 %s，业务 %s，空间 %s/%s，状态 %s，目标 %s", target.ID, work.ID, target.Application, target.SpaceType, target.SpaceID, work.Status, work.Goal), Operation: target.ID}, nil
+}
+
+func (s *Service) supervisorSessionSend(call as.ToolInvocation, root *model.AgentWorkItem) (as.ToolResult, error) {
+	var args struct {
+		SessionID string `json:"sessionId"`
+		Text      string `json:"text"`
+	}
+	if err := json.Unmarshal(call.Arguments, &args); err != nil || strings.TrimSpace(args.SessionID) == "" || strings.TrimSpace(args.Text) == "" {
+		return as.ToolResult{}, as.NewError(as.CodeInvalidRequest, "发送会话消息需要 sessionId 与正文")
+	}
+	target, work, err := s.supervisorTargetSession(call.OwnerID, root, args.SessionID)
+	if err != nil {
+		return as.ToolResult{}, err
+	}
+	source := supervisorWorkInputSource(call)
+	receipt, err := s.appendWorkInput(call.OwnerID, work.ID, as.ActorSupervisor, source, strings.TrimSpace(args.Text), source)
+	if err != nil {
+		return as.ToolResult{}, err
+	}
+	return as.ToolResult{Text: fmt.Sprintf("已向会话 %s（工作 %s）发送要求，工作版本 %d。", target.ID, work.ID, receipt.WorkVersion), Operation: work.ID}, nil
+}
+
+func (s *Service) supervisorWorkRead(call as.ToolInvocation, root *model.AgentWorkItem) (as.ToolResult, error) {
+	var args struct {
+		WorkItemID string `json:"workItemId"`
+		SessionID  string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(call.Arguments, &args); err != nil {
+		return as.ToolResult{}, as.NewError(as.CodeInvalidRequest, "读取工作参数无效")
+	}
+	workID := strings.TrimSpace(args.WorkItemID)
+	if strings.TrimSpace(args.SessionID) != "" {
+		_, target, err := s.supervisorTargetSession(call.OwnerID, root, args.SessionID)
+		if err != nil {
+			return as.ToolResult{}, err
+		}
+		workID = target.ID
+	}
+	if workID == "" {
+		workID = root.ID
+	}
+	work, err := s.repo.AgentWorkForOwner(call.OwnerID, workID)
+	if err != nil || work.RootWorkID != root.RootWorkID {
+		return as.ToolResult{}, as.NewError(as.CodeForbidden, "目标工作不属于当前总控工作树")
+	}
+	return s.supervisorReadStatus(call.OwnerID, work.ID)
 }
 
 func (s *Service) supervisorListAgents(root *model.AgentWorkItem) (as.ToolResult, error) {
@@ -113,7 +256,7 @@ func (s *Service) supervisorDelegate(call as.ToolInvocation, root *model.AgentWo
 	}
 	assignment, err := s.DelegateWork(call.OwnerID, DelegateRequest{
 		WorkItemID: root.ID, SourceMessageID: supervisorWorkInputSource(call), ActionKey: args.ActionKey, DefinitionID: args.DefinitionID,
-		Scope: as.Scope{Application: args.Application, SpaceType: args.SpaceType, SpaceID: args.SpaceID},
+		Scope:   as.Scope{Application: args.Application, SpaceType: args.SpaceType, SpaceID: args.SpaceID},
 		Handoff: args.Handoff, BudgetMicrocredits: args.BudgetMicrocredits,
 	})
 	if err != nil {

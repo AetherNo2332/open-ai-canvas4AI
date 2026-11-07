@@ -44,6 +44,7 @@ func TestAgentAcceptanceIsolationMatrix(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.drain(t)
+			driveTestPiRuns(t, f.svc, f.text, session.owner)
 		}
 	}
 	// 用户 A 的派工：短剧子工作。

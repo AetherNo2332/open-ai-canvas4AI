@@ -147,12 +147,12 @@ func (s *Service) StartWork(ownerID string, req StartWorkRequest) (WorkView, err
 	if err != nil {
 		return WorkView{}, err
 	}
-	workID, grantID := newID(), newID()
+	workID, grantID, assignmentID := newID(), newID(), newID()
 	def, _ := s.agentRegistry().Definition(supervisorDefinitionID)
 	sessionKey := "work-supervisor:" + workID
 	work := &model.AgentWorkItem{ID: workID, OwnerID: ownerID, IdempotencyKey: "root:" + key, RootWorkID: workID, Goal: strings.TrimSpace(req.Goal), Status: ao.WorkRunning, Version: 1,
 		SourceSessionID: req.SourceSessionID, SourceMessageID: req.SourceMessageID, SupervisorSessionID: agentSessionID(ownerID, sessionKey),
-		Application: as.ApplicationOrchestration, SpaceType: as.SpaceWork, SpaceID: workID, BudgetGrantID: grantID,
+		Application: as.ApplicationOrchestration, SpaceType: as.SpaceWork, SpaceID: workID, BudgetGrantID: grantID, ActiveAssignmentID: assignmentID,
 		AuthorizationJSON: authJSON, AuthorizationVersion: 1}
 	err = s.repo.InAgentWork(ownerID, "", func(tx *repository.WorkTx) error {
 		if err := tx.CreateWork(work); err != nil {
@@ -166,6 +166,10 @@ func (s *Service) StartWork(ownerID string, req StartWorkRequest) (WorkView, err
 		if _, err := tx.CreateSession(&model.AgentSession{ID: work.SupervisorSessionID, OwnerID: ownerID, IdempotencyKey: sessionKey, Fingerprint: sessionKey,
 			DefinitionID: def.ID, DefinitionVersion: def.Version, Role: def.Role, Application: as.ApplicationOrchestration, SpaceType: as.SpaceWork, SpaceID: workID,
 			WorkItemID: workID, Title: def.Title, Status: as.SessionActive, Revision: 1}); err != nil {
+			return err
+		}
+		if err := tx.CreateAssignment(&model.AgentAssignment{ID: assignmentID, OwnerID: ownerID, WorkItemID: workID, Epoch: 1,
+			ExecutorSessionID: work.SupervisorSessionID, DefinitionID: def.ID, Handoff: work.Goal, Status: ao.AssignmentRunning}); err != nil {
 			return err
 		}
 		// The user's goal message and the supervisor's first turn commit with

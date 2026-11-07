@@ -39,10 +39,12 @@ func (f *agentRunnerFixture) drain(t *testing.T) {
 			t.Fatal(err)
 		}
 		if claimed == nil {
+			driveTestPiRuns(t, f.svc, f.text, "user-a")
 			return
 		}
 		_ = f.svc.taskWorker().processClaimedTask(claimed, nil)
 	}
+	driveTestPiRuns(t, f.svc, f.text, "user-a")
 }
 
 // A user message to a business Session is answered by the background runner:
@@ -83,6 +85,7 @@ func TestAgentRunnerRepliesToUserMessage(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.drain(t)
+		driveTestPiRuns(t, f.svc, f.text, "user-a")
 	}
 	rows, err := f.svc.repo.AgentSessionMessages("user-a", session.ID)
 	if err != nil {
@@ -107,6 +110,7 @@ func TestAgentRunnerRepliesToUserMessage(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.drain(t)
+		driveTestPiRuns(t, f.svc, f.text, "user-a")
 	}
 	if f.text.calls.Load() != calls {
 		t.Fatalf("finished turn re-ran: %d -> %d", calls, f.text.calls.Load())
@@ -126,6 +130,7 @@ func TestAgentRunnerRepliesToUserMessage(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.drain(t)
+		driveTestPiRuns(t, f.svc, f.text, "user-a")
 	}
 	rows, _ = f.svc.repo.AgentSessionMessages("user-a", session.ID)
 	if last := rows[len(rows)-1]; last.Actor != as.ActorExecutor || last.Body != "好的，已记下" {
@@ -602,6 +607,7 @@ func TestAgentRunnerStartsDelegatedWork(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.drain(t)
+		driveTestPiRuns(t, f.svc, f.text, "user-a")
 	}
 	rows, _ := f.svc.repo.AgentSessionMessages("user-a", assignment.ExecutorSessionID)
 	if last := rows[len(rows)-1]; last.Actor != as.ActorExecutor || last.Body != "项目状态已读" {

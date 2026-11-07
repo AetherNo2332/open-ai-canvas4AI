@@ -30,6 +30,7 @@ type cloudAgentTaskEnqueue struct {
 	contextPressure  *cloudAgentContextPressure
 	requestCanonical canonicalAgentRequest
 	policy           RuntimePolicySetting
+	budget           *repository.BudgetAdmission
 }
 
 func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *cloudAgentRuntime, req CreateTaskRequest, media *cloudAgentMediaPlan) error {
@@ -155,6 +156,13 @@ func (s *Service) admitCloudAgentTaskEnqueue(enqueue *cloudAgentTaskEnqueue, rem
 		return true, err
 	}
 	enqueue.policy = policy
+	if enqueue.state.Execution != nil && enqueue.state.Execution.Binding != nil {
+		budget, budgetErr := s.budgetAdmission(run.UserID, enqueue.state.Execution.Binding.BudgetGrantID, enqueue.prepare.Order)
+		if budgetErr != nil {
+			return true, budgetErr
+		}
+		enqueue.budget = budget
+	}
 	return false, nil
 }
 
@@ -267,6 +275,9 @@ func (enqueue *cloudAgentTaskEnqueue) insertTask(repo *repository.Repository) er
 		// 下一次投递就会再建一遍 —— 那正是重复计费。
 		state.Phase = ""
 		return nil
+	}
+	if enqueue.budget != nil {
+		return createTaskUnderBudgetRepository(repo, task, enqueue.prepare.Order, enqueue.policy, enqueue.budget)
 	}
 	return createTaskWithStorageQuotaRepository(repo, task, enqueue.prepare.Order, enqueue.policy)
 }

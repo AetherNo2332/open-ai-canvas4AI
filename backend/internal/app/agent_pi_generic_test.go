@@ -240,6 +240,35 @@ func TestAgentSessionPiRunExecutesBusinessToolThroughOperationReceipt(t *testing
 	}
 }
 
+func TestAgentRunnerRoutesBusinessTurnToGenericPi(t *testing.T) {
+	f := newBusinessFixture(t)
+	session := agentSessionCreate(t, f.svc, "user-a", as.CreateSessionRequest{
+		DefinitionID:   "drama.agent",
+		Scope:          as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"},
+		IdempotencyKey: "generic-runner",
+	})
+	if _, err := f.svc.SendSessionMessage("user-a", SendSessionMessageRequest{SessionID: session.ID, MessageID: "runner-1", Text: "读取短剧状态"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.runPendingAgentTurns(10); err != nil {
+		t.Fatal(err)
+	}
+	var run model.CloudAgentExecution
+	if err := f.db.Where("user_id = ? AND engine = ?", "user-a", "pi").First(&run).Error; err != nil {
+		t.Fatalf("generic Pi run was not admitted: %v", err)
+	}
+	if run.ConversationID != agentSessionPiConversationID(session.ID) || run.Status != "queued" {
+		t.Fatalf("generic Pi run = %+v", run)
+	}
+	var turn model.AgentTurn
+	if err := f.db.Where("session_id = ? AND message_id = ?", session.ID, "runner-1").First(&turn).Error; err != nil {
+		t.Fatal(err)
+	}
+	if turn.Status != "done" || turn.ClaimOwner != "" {
+		t.Fatalf("queued turn after Pi admission = %+v", turn)
+	}
+}
+
 // C1-B: two Sessions in one space keep distinct Pi sessions and never share
 // the claimed identity or history root.
 func TestAgentSessionPiRunIsolatesTwoSessions(t *testing.T) {

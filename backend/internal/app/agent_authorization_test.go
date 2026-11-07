@@ -277,6 +277,7 @@ func TestAgentDirectChatBudgetOwnership(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.drain(t)
+		driveTestPiRuns(t, f.svc, f.text, "user-a")
 	}
 	independentWork, err := f.svc.agentSessionForOwner("user-a", independent.ID)
 	if err != nil || independentWork.WorkItemID == "" {

@@ -98,6 +98,9 @@ func (s *Service) advanceQueuedTurn(turn model.AgentTurn) (bool, error) {
 	if err != nil || session.Status != as.SessionActive {
 		return s.failQueuedTurn(turn, "会话不可用")
 	}
+	if session.Application != as.ApplicationCanvas {
+		return s.advanceGenericQueuedTurn(turn)
+	}
 	selection, err := s.agentTurnModel(turn, session)
 	if err != nil {
 		return s.retryOrFailQueuedTurn(turn, err)
@@ -120,6 +123,25 @@ func (s *Service) advanceQueuedTurn(turn model.AgentTurn) (bool, error) {
 		return false, updateErr
 	}
 	return s.retryOrFailQueuedTurn(turn, err)
+}
+
+// advanceGenericQueuedTurn admits the durable inbox item to the shared Pi
+// worker. The AgentTurn is only a compatibility inbox/claim row: it becomes
+// done after the Pi run and its frozen identity are durable, while Node owns the
+// model, tool, checkpoint and recovery loop afterwards.
+func (s *Service) advanceGenericQueuedTurn(turn model.AgentTurn) (bool, error) {
+	view, err := s.EnqueueAgentSessionPiRun(turn.OwnerID, AgentSessionPiRunRequest{
+		SessionID: turn.SessionID, TriggerMessageID: turn.MessageID, Prompt: turn.Text,
+	})
+	if err != nil {
+		return s.retryOrFailQueuedTurn(turn, err)
+	}
+	if view.RunID == "" {
+		return s.retryOrFailQueuedTurn(turn, as.NewError(as.CodeInternal, "Pi 运行未返回身份"))
+	}
+	return s.updateQueuedTurn(turn, map[string]any{
+		"status": "done", "error": "", "next_at": nil, "claim_owner": "", "claim_expires_at": nil,
+	})
 }
 
 func (s *Service) retryOrFailQueuedTurn(turn model.AgentTurn, turnErr error) (bool, error) {

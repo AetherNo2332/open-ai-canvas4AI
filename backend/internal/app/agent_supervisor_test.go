@@ -23,6 +23,7 @@ func driveSupervisor(t *testing.T, f *businessFixture, passes int) {
 			t.Fatal(err)
 		}
 		f.drain(t)
+		driveTestPiRuns(t, f.svc, f.text, "user-a")
 	}
 }
 
@@ -244,6 +245,76 @@ func TestSupervisorCommandsBoundToRoot(t *testing.T) {
 	}
 	if _, err := f.svc.executeSupervisorTool(context.Background(), session, invocation("delegate_work", allowed)); !as.IsCode(err, as.CodeWorkStopped) {
 		t.Fatalf("stopped root accepted a delegation: %v", err)
+	}
+}
+
+func TestSupervisorPiMessageToolsUseAuthorizedSessionTargets(t *testing.T) {
+	f := newBusinessFixture(t)
+	root := supervisorGoal(t, f, "sup-session-tools", "推进短剧和电商任务", []as.Scope{
+		{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"},
+	})
+	drama, err := f.svc.DelegateWork("user-a", DelegateRequest{
+		WorkItemID: root.ID, SourceMessageID: "delegate-drama", ActionKey: "drama-tool-target", DefinitionID: "drama.agent",
+		Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"}, Handoff: "先读取项目", BudgetMicrocredits: 300_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRoot, err := f.svc.StartWork("user-a", StartWorkRequest{
+		SourceMessageID: "other-root", Goal: "电商任务", BudgetMicrocredits: 500_000, IdempotencyKey: "other-root",
+		AuthorizedScopes: []as.Scope{{Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch-tools"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ecommerce, err := f.svc.DelegateWork("user-a", DelegateRequest{
+		WorkItemID: otherRoot.ID, SourceMessageID: "delegate-ecommerce", ActionKey: "ecommerce-tool-target", DefinitionID: "ecommerce.agent",
+		Scope: as.Scope{Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch-tools"}, Handoff: "读取批次", BudgetMicrocredits: 200_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := f.svc.agentSessionForOwner("user-a", root.SupervisorSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(name, args string) as.ToolInvocation {
+		return as.ToolInvocation{OwnerID: "user-a", SessionID: session.ID, CallID: name + "-call", Name: name, Arguments: json.RawMessage(args), OperationID: "pi-tool:" + name}
+	}
+	for _, name := range []string{"agent_sessions_list", "agent_session_open", "agent_session_send", "agent_work_read", "agent_request_user"} {
+		found := false
+		for _, definition := range supervisorToolDefinitions() {
+			if definition.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("supervisor tool %q is not registered", name)
+		}
+	}
+	listed, err := f.svc.executeSupervisorTool(context.Background(), session, call("agent_sessions_list", `{}`))
+	if err != nil || !strings.Contains(listed.Text, drama.ExecutorSessionID) {
+		t.Fatalf("authorized Session list = %+v, %v", listed, err)
+	}
+	opened, err := f.svc.executeSupervisorTool(context.Background(), session, call("agent_session_open", `{"sessionId":"`+drama.ExecutorSessionID+`"}`))
+	if err != nil || !strings.Contains(opened.Text, "drama-1") {
+		t.Fatalf("authorized Session open = %+v, %v", opened, err)
+	}
+	sent, err := f.svc.executeSupervisorTool(context.Background(), session, call("agent_session_send", `{"sessionId":"`+drama.ExecutorSessionID+`","text":"补充读取角色关系"}`))
+	if err != nil || !strings.Contains(sent.Text, drama.WorkItemID) {
+		t.Fatalf("authorized Session send = %+v, %v", sent, err)
+	}
+	var input model.AgentWorkInput
+	if err := f.db.Where("work_item_id = ? AND actor = ? AND text = ?", drama.WorkItemID, as.ActorSupervisor, "补充读取角色关系").First(&input).Error; err != nil {
+		t.Fatalf("supervisor input not persisted: %v", err)
+	}
+	read, err := f.svc.executeSupervisorTool(context.Background(), session, call("agent_work_read", `{"workItemId":"`+drama.WorkItemID+`"}`))
+	if err != nil || !strings.Contains(read.Text, drama.WorkItemID) {
+		t.Fatalf("authorized work read = %+v, %v", read, err)
+	}
+	if _, err := f.svc.executeSupervisorTool(context.Background(), session, call("agent_session_open", `{"sessionId":"`+ecommerce.ExecutorSessionID+`"}`)); !as.IsCode(err, as.CodeForbidden) {
+		t.Fatalf("unauthorized Session open = %v", err)
 	}
 }
 
