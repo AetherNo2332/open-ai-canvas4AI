@@ -24,11 +24,11 @@ type AgentOperation struct {
 	ArgumentsHash   string `gorm:"not null;size:64"`
 	Status          string `gorm:"not null;size:16;index"`
 	// ApprovalID 记录等待审批的挂起操作；批准后轮次被重置重放，同一操作键提交任务。
-	ApprovalID      string `gorm:"size:36;default:'';index"`
-	ResultJSON      string `gorm:"type:text"`
-	OperationRef    string `gorm:"size:160;default:''"`
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ApprovalID   string `gorm:"size:36;default:'';index"`
+	ResultJSON   string `gorm:"type:text"`
+	OperationRef string `gorm:"size:160;default:''"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // AgentTurnContract freezes the agent contract of one turn at its first model
@@ -50,12 +50,12 @@ type AgentTurnContract struct {
 // product material, the chosen preset and the tasks submitted under the batch,
 // so the page and the Agent recover the same batch across restarts.
 type AgentEcommerceBatch struct {
-	ID          string `gorm:"primaryKey;size:36"`
-	OwnerID     string `gorm:"not null;size:36;uniqueIndex:idx_agent_ecommerce_batch,priority:1"`
-	BatchID     string `gorm:"not null;size:120;uniqueIndex:idx_agent_ecommerce_batch,priority:2"`
-	ProductJSON string `gorm:"type:text"`
-	PresetJSON  string `gorm:"type:text"`
+	ID           string `gorm:"primaryKey;size:36"`
+	OwnerID      string `gorm:"not null;size:36;uniqueIndex:idx_agent_ecommerce_batch,priority:1"`
+	BatchID      string `gorm:"not null;size:120;uniqueIndex:idx_agent_ecommerce_batch,priority:2"`
+	ProductJSON  string `gorm:"type:text"`
+	PresetJSON   string `gorm:"type:text"`
 	TaskRefsJSON string `gorm:"type:text"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }

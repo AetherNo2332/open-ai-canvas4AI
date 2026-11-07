@@ -117,23 +117,23 @@ func (r *businessTurnRun) modelStep(step int, stepKey string) (bool, []cp.ToolCa
 	if err != nil {
 		return false, nil, "", err
 	}
-		if taskID == "" {
-			snapshot, err := r.s.buildAgentSessionContext(r.ownerID, r.session.ID)
-			if err != nil {
-				return false, nil, "", err
-			}
-			tools, err := r.turnTools()
-			if err != nil {
-				return false, nil, "", err
-			}
-			req := agentStepRequest(snapshot, r.turn.Model, stepKey)
-			req.ToolChoice, req.Tools, req.Messages = cp.ToolChoiceAuto, tools, businessStepMessages(snapshot)
-			receipt, err := r.s.SubmitStructuredText(context.Background(), cp.Caller{UserID: r.ownerID}, req, r.turn.Assignment.BudgetGrantID)
-			if err != nil {
-				return false, nil, "", err
-			}
-			taskID = receipt.Snapshot.TaskID
+	if taskID == "" {
+		snapshot, err := r.s.buildAgentSessionContext(r.ownerID, r.session.ID)
+		if err != nil {
+			return false, nil, "", err
 		}
+		tools, err := r.turnTools()
+		if err != nil {
+			return false, nil, "", err
+		}
+		req := agentStepRequest(snapshot, r.turn.Model, stepKey)
+		req.ToolChoice, req.Tools, req.Messages = cp.ToolChoiceAuto, tools, businessStepMessages(snapshot)
+		receipt, err := r.s.SubmitStructuredText(context.Background(), cp.Caller{UserID: r.ownerID}, req, r.turn.Assignment.BudgetGrantID)
+		if err != nil {
+			return false, nil, "", err
+		}
+		taskID = receipt.Snapshot.TaskID
+	}
 	result, state, err := r.s.StructuredResult(context.Background(), cp.Caller{UserID: r.ownerID}, taskID)
 	if err != nil {
 		return false, nil, "", err

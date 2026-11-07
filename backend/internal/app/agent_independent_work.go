@@ -80,7 +80,7 @@ func ensureIndependentAgentWorkTx(tx *repository.WorkTx, session *model.AgentSes
 	grantID := agentSessionID(session.OwnerID, "independent-budget:"+session.ID)
 	assignmentID := agentSessionID(session.OwnerID, "independent-assignment:"+session.ID)
 	authorization, err := ao.EncodeAuthorization(ao.WorkAuthorization{Version: 1, LimitMicrocredits: independentAgentBudgetMicrocredits,
-		Scopes: []ao.ScopeGrant{{Application: session.Application, SpaceType: session.SpaceType, SpaceID: session.SpaceID}},
+		Scopes:                        []ao.ScopeGrant{{Application: session.Application, SpaceType: session.SpaceType, SpaceID: session.SpaceID}},
 		ApprovalThresholdMicrocredits: agentApprovalThresholdMicrocredits})
 	if err != nil {
 		return nil, err

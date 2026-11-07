@@ -280,7 +280,7 @@ func TestAgentAssetReferenceScope(t *testing.T) {
 	}
 	operationID := "turn:" + assignment.ExecutorSessionID + ":asset:step:1:ref-1"
 	result, err := f.svc.executeBusinessTool(context.Background(), as.ToolInvocation{OwnerID: "user-a", SessionID: assignment.ExecutorSessionID,
-		Scope: as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"},
+		Scope:      as.Scope{Application: as.ApplicationDrama, SpaceType: as.SpaceDramaProject, SpaceID: "drama-1"},
 		WorkItemID: assignment.WorkItemID, BudgetGrantID: assignment.BudgetGrantID, AssignmentID: assignment.ID, AssignmentEpoch: assignment.Epoch,
 		CallID: "ref-1", Name: "drama_reference_asset", Arguments: json.RawMessage(`{"resourceId":"` + own.ID + `"}`), OperationID: operationID})
 	if err != nil {

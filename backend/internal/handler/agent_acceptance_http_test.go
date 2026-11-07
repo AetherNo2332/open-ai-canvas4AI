@@ -290,7 +290,7 @@ func TestAgentAcceptanceHTTPSupervisorChain(t *testing.T) {
 				ResultSummary string `json:"resultSummary"`
 			} `json:"work"`
 			Children []struct {
-				Work              struct {
+				Work struct {
 					ID     string `json:"id"`
 					Status string `json:"status"`
 				} `json:"work"`
