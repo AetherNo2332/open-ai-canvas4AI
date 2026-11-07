@@ -113,6 +113,9 @@ func (s *Service) piAdmitToolBatchEnvelope(userID string, state *cloudAgentRunti
 	if err := json.Unmarshal([]byte(modelTask.ResultJSON), &modelOutput); err != nil {
 		return "", err
 	}
+	if state.Execution != nil {
+		return piAdmitGenericToolBatchEnvelope(state, batch, modelOutput.Text, modelOutput.ToolCalls, modelOutput.Legacy, modelOutput.StopReasonKind)
+	}
 	stopKind := strings.TrimSpace(modelOutput.StopReasonKind)
 	if stopKind == "" {
 		stopKind = cloudAgentStopKindUnknown

@@ -42,6 +42,18 @@ func (s *Service) registerAgentBusiness(adapter as.BusinessAdapter, def as.Defin
 // application, and the space is still the owner's. An identified call gets a
 // durable receipt; a refused call reaches the model as its tool result.
 func (s *Service) executeBusinessTool(ctx context.Context, call as.ToolInvocation) (as.ToolResult, error) {
+	return s.executeBusinessToolWithReceipt(ctx, call, true)
+}
+
+// executeBusinessToolForPi keeps the server operation identity available to
+// approval binding while the outer Pi gateway owns the durable operation
+// receipt. This prevents a generic Pi call from creating a nested receipt with
+// an empty operation key.
+func (s *Service) executeBusinessToolForPi(ctx context.Context, call as.ToolInvocation) (as.ToolResult, error) {
+	return s.executeBusinessToolWithReceipt(ctx, call, false)
+}
+
+func (s *Service) executeBusinessToolWithReceipt(ctx context.Context, call as.ToolInvocation, withReceipt bool) (as.ToolResult, error) {
 	session, err := s.agentSessionForOwner(call.OwnerID, call.SessionID)
 	if err != nil {
 		return as.ToolResult{}, err
@@ -77,7 +89,17 @@ func (s *Service) executeBusinessTool(ctx context.Context, call as.ToolInvocatio
 	if err := adapter.ValidateSpace(ctx, call.OwnerID, scope); err != nil {
 		return as.ToolResult{}, err
 	}
-	return s.dispatchAgentToolExecution(ctx, call, adapter)
+	execute := func() (as.ToolResult, error) {
+		result, err := adapter.Execute(ctx, call)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return as.ToolResult{}, as.NewError(as.CodeNotFound, "业务对象不存在")
+		}
+		return result, err
+	}
+	if withReceipt && call.OperationID != "" {
+		return s.executeAgentOperation(ctx, call, execute)
+	}
+	return execute()
 }
 
 // dispatchAgentToolExecution runs the adapter, normalizing missing business

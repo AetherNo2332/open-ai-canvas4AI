@@ -75,7 +75,7 @@ func TestAgentAcceptanceFullChain(t *testing.T) {
 	if f.text.calls.Load() != calls {
 		t.Fatalf("replay called the model again: %d -> %d", calls, f.text.calls.Load())
 	}
-	for table, want := range map[any]int64{&model.AgentWorkItem{}: 3, &model.AgentAssignment{}: 2, &model.AgentWorkInput{}: 1} {
+	for table, want := range map[any]int64{&model.AgentWorkItem{}: 3, &model.AgentAssignment{}: 3, &model.AgentWorkInput{}: 1} {
 		if got := platformCount(t, f.db, table, "owner_id = ?", "user-a"); got != want {
 			t.Fatalf("%T = %d, want %d", table, got, want)
 		}

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	ao "yingce/backend/internal/agentorchestration"
 	as "yingce/backend/internal/agentservice"
 	"yingce/backend/internal/model"
 )
@@ -231,12 +232,159 @@ func TestAgentSessionPiRunExecutesBusinessToolThroughOperationReceipt(t *testing
 	if err != nil || receipt == nil || receipt.Pending {
 		t.Fatalf("generic tool receipt = %+v, %v", receipt, err)
 	}
+	replayed, err := f.svc.PiToolAdvance("user-a", view.RunID, owner, step.TaskID, call.ID)
+	if err != nil || replayed == nil || string(replayed.Result) != string(receipt.Result) {
+		t.Fatalf("generic tool replay = %+v, %v", replayed, err)
+	}
 	var operations []model.AgentOperation
 	if err := f.db.Where("owner_id = ? AND session_id = ?", "user-a", f.session.ID).Find(&operations).Error; err != nil {
 		t.Fatal(err)
 	}
 	if len(operations) != 1 || operations[0].Status != "succeeded" {
 		t.Fatalf("generic operations = %+v", operations)
+	}
+}
+
+func TestAgentSessionPiToolRejectsStaleAssignmentBeforeBusinessExecution(t *testing.T) {
+	f := newGenericPiFixture(t, "stale", "drama")
+	view := enqueueGenericPi(t, f, "stale-1", "读取短剧摘要")
+	snapshot, err := f.svc.ClaimPiAgentForWorker("stale-worker", "user-a")
+	if err != nil || snapshot == nil {
+		t.Fatalf("claim stale run: %+v, %v", snapshot, err)
+	}
+	owner := "stale-worker@" + itoa64(snapshot.PiSessionLeaseEpoch)
+	call := piAgentTestCall("stale-call", "drama_summary", `{}`)
+	f.text.script(toolCallReply(call.ID, call.Function.Name, call.Function.Arguments))
+	step, err := f.svc.PiModelStep("user-a", view.RunID, owner, PiModelStepRequest{Canonical: snapshot.Canonical})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.drain(t)
+	assistant, _ := json.Marshal(map[string]any{"role": "assistant", "content": "", "stopReason": "tool_calls"})
+	if err := f.svc.PiCheckpointMessage("user-a", view.RunID, owner, PiMessageCheckpoint{Sequence: 1, TaskID: step.TaskID, Message: assistant}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.PiToolBatch("user-a", view.RunID, owner, PiToolBatchRequest{TaskID: step.TaskID, Calls: []cloudAgentCall{call}}); err != nil {
+		t.Fatal(err)
+	}
+	work, err := f.svc.GetWork("user-a", f.assignment.WorkItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.ReassignWork("user-a", work.ID, work.Version); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := f.svc.PiToolAdvance("user-a", view.RunID, owner, step.TaskID, call.ID)
+	if err != nil || receipt == nil || receipt.Pending || !receipt.IsError {
+		t.Fatalf("stale assignment receipt = %+v, %v", receipt, err)
+	}
+	operation, err := f.svc.repo.AgentOperation("user-a", agentOperationKey(view.RunID, 1, call.ID))
+	if err != nil || operation.Status != agentOperationRefused {
+		t.Fatalf("stale operation = %+v, %v", operation, err)
+	}
+}
+
+func TestAgentSessionPiReportDeliveryCreatesOneSupervisorRun(t *testing.T) {
+	f := newGenericPiFixture(t, "report", "drama")
+	child, err := f.svc.GetWork("user-a", f.assignment.WorkItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.SubmitReport("user-a", SubmitReportRequest{
+		AssignmentID: f.assignment.ID, LeaseEpoch: f.assignment.Epoch, WorkVersion: child.Version,
+		ReportID: "report-once", Status: ao.ReportCompleted, Summary: "短剧工作已完成",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if delivered, err := f.svc.deliverAgentOutbox("user-a", 10); err != nil || delivered != 2 {
+		t.Fatalf("first report delivery = %d, %v", delivered, err)
+	}
+	if delivered, err := f.svc.deliverAgentOutbox("user-a", 10); err != nil || delivered != 0 {
+		t.Fatalf("duplicate report delivery = %d, %v", delivered, err)
+	}
+	if _, err := f.svc.runPendingAgentTurns(10); err != nil {
+		t.Fatal(err)
+	}
+	var runs int64
+	if err := f.db.Model(&model.CloudAgentExecution{}).Where("engine = ? AND conversation_id = ?", "pi", agentSessionPiConversationID(f.root.SupervisorSessionID)).Count(&runs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 {
+		t.Fatalf("report-triggered supervisor Pi runs = %d", runs)
+	}
+	var turns int64
+	if err := f.db.Model(&model.AgentTurn{}).Where("session_id = ? AND message_id LIKE ?", f.root.SupervisorSessionID, "outbox:%").Count(&turns).Error; err != nil || turns != 1 {
+		t.Fatalf("report-triggered supervisor turns = %d, %v", turns, err)
+	}
+}
+
+func TestAgentSessionPiApprovalParksAndResumesTheSameToolOperation(t *testing.T) {
+	f := newBusinessFixture(t)
+	root, err := f.svc.StartWork("user-a", StartWorkRequest{
+		SourceMessageID: "approval-root", Goal: "生成电商主图", BudgetMicrocredits: 1_000_000, IdempotencyKey: "generic-approval-root",
+		AuthorizedScopes: []as.Scope{{Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch_approval"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := f.svc.DelegateWork("user-a", DelegateRequest{
+		WorkItemID: root.ID, SourceMessageID: "approval-root", ActionKey: "approval-ecommerce", DefinitionID: "ecommerce.agent",
+		Scope: as.Scope{Application: as.ApplicationEcommerce, SpaceType: as.SpaceWorkbenchBatch, SpaceID: "batch_approval"}, Handoff: "生成一张主图", BudgetMicrocredits: 500_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := f.svc.agentSessionForOwner("user-a", assignment.ExecutorSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := enqueueGenericPi(t, &genericPiFixture{businessFixture: f, root: root, assignment: assignment, session: session}, "approval-1", "生成主图")
+	snapshot, err := f.svc.ClaimPiAgentForWorker("approval-worker", "user-a")
+	if err != nil || snapshot == nil {
+		t.Fatalf("claim approval run: %+v, %v", snapshot, err)
+	}
+	owner := "approval-worker@" + itoa64(snapshot.PiSessionLeaseEpoch)
+	call := piAgentTestCall("approval-call", "ecommerce_generate_image", `{"prompt":"白底主图","channelId":"`+f.channelID+`","model":"`+f.modelKey+`","parameters":{"size":"1024x1024"},"index":0,"count":1}`)
+	f.text.script(toolCallReply(call.ID, call.Function.Name, call.Function.Arguments))
+	step, err := f.svc.PiModelStep("user-a", view.RunID, owner, PiModelStepRequest{Canonical: snapshot.Canonical})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.drain(t)
+	assistant, _ := json.Marshal(map[string]any{"role": "assistant", "content": "", "stopReason": "tool_calls"})
+	if err := f.svc.PiCheckpointMessage("user-a", view.RunID, owner, PiMessageCheckpoint{Sequence: 1, TaskID: step.TaskID, Message: assistant}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.PiToolBatch("user-a", view.RunID, owner, PiToolBatchRequest{TaskID: step.TaskID, Calls: []cloudAgentCall{call}}); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := f.svc.PiToolAdvance("user-a", view.RunID, owner, step.TaskID, call.ID)
+	if err != nil || receipt == nil || !receipt.Pending {
+		operation, operationErr := f.svc.repo.AgentOperation("user-a", agentOperationKey(view.RunID, 1, call.ID))
+		t.Fatalf("approval tool should suspend: %+v, %v; operation=%+v operationErr=%v", receipt, err, operation, operationErr)
+	}
+	run, err := f.svc.repo.CloudAgent("user-a", view.RunID)
+	if err != nil || run.Status != "waiting_approval" {
+		t.Fatalf("approval run status = %s, %v", run.Status, err)
+	}
+	approvals, err := f.svc.WorkApprovals("user-a", root.ID)
+	if err != nil || len(approvals) != 1 {
+		t.Fatalf("approval rows = %+v, %v", approvals, err)
+	}
+	if _, err := f.svc.DecideApproval("user-a", DecideApprovalRequest{ApprovalID: approvals[0].ID, Decision: ao.ApprovalApproved, ExpectedAuthorizationVersion: approvals[0].AuthorizationVersion}); err != nil {
+		t.Fatal(err)
+	}
+	run, err = f.svc.repo.CloudAgent("user-a", view.RunID)
+	if err != nil || run.Status != "running" {
+		t.Fatalf("approved Pi run status = %s, %v", run.Status, err)
+	}
+	receipt, err = f.svc.PiToolAdvance("user-a", view.RunID, owner, step.TaskID, call.ID)
+	if err != nil || receipt == nil || receipt.Pending || receipt.IsError {
+		t.Fatalf("approved tool receipt = %+v, %v", receipt, err)
+	}
+	operation, err := f.svc.repo.AgentOperation("user-a", agentOperationKey(view.RunID, 1, call.ID))
+	if err != nil || operation.Status != agentOperationSucceeded {
+		t.Fatalf("approved operation = %+v, %v", operation, err)
 	}
 }
 

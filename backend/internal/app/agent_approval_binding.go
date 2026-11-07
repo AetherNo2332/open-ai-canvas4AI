@@ -11,6 +11,8 @@ import (
 	ao "yingce/backend/internal/agentorchestration"
 	as "yingce/backend/internal/agentservice"
 	cp "yingce/backend/internal/creationplatform"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // agentApprovalThresholdMicrocredits is the product policy confirmed for B1:
@@ -81,6 +83,9 @@ func (s *Service) resumeApprovedAgentOperations(ownerID, approvalID string) erro
 		return err
 	}
 	for _, operation := range operations {
+		if err := s.resumeGenericPiApproval(ownerID, operation); err != nil {
+			return err
+		}
 		if err := s.repo.ResetAgentTurnForReplay(ownerID, operation.SessionID, operation.TurnMessageID); err != nil {
 			return err
 		}
@@ -89,6 +94,30 @@ func (s *Service) resumeApprovedAgentOperations(ownerID, approvalID string) erro
 		s.wakeAgentRunner()
 	}
 	return nil
+}
+
+func (s *Service) resumeGenericPiApproval(ownerID string, operation model.AgentOperation) error {
+	conversationID := agentSessionPiConversationID(operation.SessionID)
+	session, _, err := s.repo.CloudAgentPiSession(ownerID, conversationID)
+	if err != nil || session == nil || session.ActiveRunID == "" {
+		return nil
+	}
+	run, err := s.repo.CloudAgent(ownerID, session.ActiveRunID)
+	if err != nil {
+		return err
+	}
+	if run.Status != "waiting_approval" {
+		return nil
+	}
+	state, err := cloudAgentDecode(run)
+	if err != nil || state.Execution == nil {
+		return err
+	}
+	return s.repo.MutateCloudAgent(ownerID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		current.Status, current.WaitKind, current.WaitID, current.WaitReason = "running", "", "", ""
+		state.event(run.ID, "approval_resumed", map[string]any{"approvalId": operation.ApprovalID, "operationId": operation.OperationKey})
+		return cloudAgentSave(current, &state)
+	})
 }
 
 // agentWorkAuthorizationLive reports whether a work tree's budget grant is
@@ -115,4 +144,3 @@ func (s *Service) agentWorkAuthorizationLive(ownerID, grantID string) (bool, err
 	}
 	return !ao.WorkTerminal(work.Status), nil
 }
-

@@ -33,25 +33,37 @@ func (s *Service) executeGenericPiToolCall(run *model.CloudAgentExecution, state
 		invocation.WorkItemID, invocation.BudgetGrantID = binding.WorkItemID, binding.BudgetGrantID
 		invocation.AssignmentID, invocation.AssignmentEpoch = binding.AssignmentID, binding.AssignmentEpoch
 	}
-	adapterInvocation := invocation
-	adapterInvocation.OperationID = ""
 	result, err := s.executeAgentOperation(context.Background(), invocation, func() (as.ToolResult, error) {
 		session, sessionErr := s.agentSessionForOwner(run.UserID, state.Execution.SessionID)
 		if sessionErr != nil {
 			return as.ToolResult{}, sessionErr
 		}
 		if session.Role == as.RoleSupervisor {
-			return s.executeSupervisorTool(context.Background(), session, adapterInvocation)
+			return s.executeSupervisorTool(context.Background(), session, invocation)
 		}
-		return s.executeBusinessTool(context.Background(), adapterInvocation)
+		return s.executeBusinessToolForPi(context.Background(), invocation)
 	})
 	if err != nil {
+		if operation, operationErr := s.repo.AgentOperation(run.UserID, invocation.OperationID); operationErr == nil && operation.Status == agentOperationAwaitingApproval {
+			return s.pauseGenericPiForApproval(run, state, call, operation.ApprovalID)
+		}
 		if _, ok := as.AsError(err); ok {
 			return s.recordCloudAgentToolReceipt(run, state, call, nil, err)
 		}
 		return err
 	}
 	return s.recordCloudAgentToolReceipt(run, state, call, result, nil)
+}
+
+func (s *Service) pauseGenericPiForApproval(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, approvalID string) error {
+	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		current.Status = "waiting_approval"
+		current.WaitKind = "approval"
+		current.WaitID = approvalID
+		current.WaitReason = "等待用户批准"
+		state.event(run.ID, "approval_requested", map[string]any{"approvalId": approvalID, "toolName": call.Function.Name, "callId": call.ID, "text": "工具报价达到审批阈值，等待用户批准"})
+		return cloudAgentSave(current, state)
+	})
 }
 
 func genericPiToolFrozen(tools []as.ToolSpec, name string) bool {
