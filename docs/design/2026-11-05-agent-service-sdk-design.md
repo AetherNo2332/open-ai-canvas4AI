@@ -1,5 +1,7 @@
 # 平台 Agent 服务与总控：设计合同
 
+> 当前架构已按用户要求明确为全业务 Pi Agent 服务，总控通过消息与业务 Session 协作。运行器与消息设计以[Pi 对齐设计](2026-11-07-pi-agent-service-alignment.md)及[实施计划](../plans/2026-11-07-pi-agent-service-alignment.md)为准。
+
 状态：设计草案，未实施、未运行验收。本文承接[首版基础 SDK](../plans/2026-11-05-internal-platform-sdk-rollout.md)，实施切片见[Agent 落地计划](../plans/2026-11-05-agent-service-sdk-rollout.md)。不授权提交、推送、部署或生产变更。
 
 ## 1. 目标、前提与范围

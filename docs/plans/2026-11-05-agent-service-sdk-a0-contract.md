@@ -1,5 +1,7 @@
 # 平台 Agent 服务与总控：A0 接缝映射与合同冻结
 
+> 架构修订。用户已明确所有业务与总控使用画布同源 Pi Worker，R-A0-1、R-A0-3 中非画布 Go 循环的选择已被[Pi 对齐设计](../design/2026-11-07-pi-agent-service-alignment.md)取代。下文保留对应实现的历史记录。
+
 > 对应计划：[2026-11-05-agent-service-sdk-rollout.md](2026-11-05-agent-service-sdk-rollout.md) A0；设计合同：[2026-11-05-agent-service-sdk-design.md](../design/2026-11-05-agent-service-sdk-design.md)。
 > 分支 `feat/agent-service-sdk`，叠在 `feat/creation-platform-sdk`（PR #130，`d6fdc5169`）之上。A0 是执行门槛，只产出映射与合同，不计作运行功能。
 
