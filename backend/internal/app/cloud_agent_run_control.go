@@ -15,6 +15,19 @@ import (
 
 func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, reason string, mediaSettings ...*CloudAgentMediaSettings) error {
 	defer s.wakeAgentTools()
+	for attempt := 0; attempt < 3; attempt++ {
+		err := s.decideCloudAgentApprovalOnce(userID, id, approvalID, decision, reason, mediaSettings...)
+		if !errors.Is(err, repository.ErrCreationConflict) {
+			return err
+		}
+	}
+	return creationConflict("审批状态正在变化，请刷新后重试")
+}
+
+// Worker heartbeats and tool polling can advance the revision while a user
+// decides. Re-read the full authority/approval state after each CAS conflict;
+// never replay a stale mutation or retry unrelated storage failures.
+func (s *Service) decideCloudAgentApprovalOnce(userID, id, approvalID, decision, reason string, mediaSettings ...*CloudAgentMediaSettings) error {
 	// Resource leases are a protection mechanism only. Expiry cleanup is safe to
 	// run on the control-plane path and never changes the approval decision.
 	if err := s.repo.ReleaseExpiredCloudAgentResourceLeases(time.Now().UTC()); err != nil {
