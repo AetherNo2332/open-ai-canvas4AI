@@ -37,6 +37,18 @@ func TestMigrationListCoversSchemaModels(t *testing.T) {
 	}
 }
 
+func TestAgentServiceMigrationContractIsCopied(t *testing.T) {
+	migrationsByName := make(map[string]bool)
+	for _, migration := range migrations() {
+		migrationsByName[migration.name] = true
+	}
+	for _, contract := range database.AgentServiceMigrationContract() {
+		if !migrationsByName[contract.Name] {
+			t.Errorf("agent migration contract table %q is absent from copier", contract.Name)
+		}
+	}
+}
+
 func TestCanvasHistoryCompositeKeyMigration(t *testing.T) {
 	source, err := database.Open(database.Config{Driver: "sqlite", DSN: "file:history-migration-source?mode=memory&cache=shared"})
 	if err != nil {

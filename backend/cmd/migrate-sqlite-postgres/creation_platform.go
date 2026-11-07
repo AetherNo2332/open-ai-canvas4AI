@@ -1,6 +1,9 @@
 package main
 
-import "yingce/backend/internal/model"
+import (
+	"yingce/backend/internal/database"
+	"yingce/backend/internal/model"
+)
 
 // creationPlatformTableMigrations 是创作平台的表，依赖 tasks 与 billing_orders，放在迁移清单末尾。
 func creationPlatformTableMigrations() []tableMigration {
@@ -15,6 +18,33 @@ func creationPlatformTableMigrations() []tableMigration {
 
 // agentServiceTableMigrations 是 Agent 服务的表（schema v86 起），放在平台表之后。
 func agentServiceTableMigrations() []tableMigration {
+	byName := make(map[string]tableMigration)
+	for _, migration := range agentServiceTableMigrationDefinitions() {
+		byName[migration.name] = migration
+	}
+	contractNames := make(map[string]bool)
+	for _, contract := range database.AgentServiceMigrationContract() {
+		contractNames[contract.Name] = true
+	}
+	for name := range byName {
+		if !contractNames[name] {
+			panic("agent copier table is missing from migration contract: " + name)
+		}
+	}
+	ordered := make([]tableMigration, 0, len(byName))
+	for _, contract := range database.AgentServiceMigrationContract() {
+		migration, ok := byName[contract.Name]
+		if !ok {
+			// Existing Cloud Agent/Pi tables are registered in main.go's
+			// application list; this function owns only schema v86+ tables.
+			continue
+		}
+		ordered = append(ordered, migration)
+	}
+	return ordered
+}
+
+func agentServiceTableMigrationDefinitions() []tableMigration {
 	return []tableMigration{
 		migrateTable[model.AgentSession]("agent_sessions"),
 		migrateTable[model.AgentSessionMessage]("agent_session_messages"),
