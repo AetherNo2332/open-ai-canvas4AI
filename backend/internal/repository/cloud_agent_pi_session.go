@@ -28,41 +28,76 @@ func (r *Repository) AttachCloudAgentPiSession(run *model.CloudAgentExecution) e
 	if createdAt.IsZero() {
 		createdAt = time.Now()
 	}
+	session, created, err := r.findOrCreateCloudAgentPiSession(run, conversationID, createdAt)
+	if err != nil {
+		return err
+	}
+	if created {
+		return nil
+	}
+	if err := validateCloudAgentPiSession(run, conversationID, session); err != nil {
+		return err
+	}
+	return r.advanceCloudAgentPiSession(run, conversationID, session)
+}
+
+func (r *Repository) findOrCreateCloudAgentPiSession(run *model.CloudAgentExecution, conversationID string, createdAt time.Time) (*model.CloudAgentPiSession, bool, error) {
 	var session model.CloudAgentPiSession
 	err := r.db.First(&session, "user_id = ? AND conversation_id = ?", run.UserID, conversationID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		sessionID := model.PiSessionStorageID(run.UserID, conversationID)
-		header, err := json.Marshal(map[string]any{
-			"type": "session", "version": cloudAgentPiSessionFormatVersion, "id": sessionID,
-			"timestamp": createdAt.UTC().Format(time.RFC3339Nano), "cwd": "canvas://" + run.CanvasID,
-		})
-		if err != nil {
-			return err
+		created, createErr := newCloudAgentPiSession(run, conversationID, createdAt)
+		if createErr != nil {
+			return nil, false, createErr
 		}
-		session = model.CloudAgentPiSession{
-			ID: sessionID, UserID: run.UserID, ConversationID: conversationID, CanvasID: run.CanvasID,
-			FormatVersion: cloudAgentPiSessionFormatVersion, HeaderJSON: string(header), Revision: 1,
-			ActiveRunID: run.ID, CreatedAt: createdAt, UpdatedAt: time.Now(),
+		result := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(created)
+		if result.Error != nil {
+			return nil, false, result.Error
 		}
-		created := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&session)
-		if created.Error != nil {
-			return created.Error
-		}
-		if created.RowsAffected != 0 {
-			return nil
+		if result.RowsAffected != 0 {
+			return created, true, nil
 		}
 		if err := r.db.First(&session, "user_id = ? AND conversation_id = ?", run.UserID, conversationID).Error; err != nil {
-			return err
+			return nil, false, err
 		}
-	} else if err != nil {
-		return err
+		return &session, false, nil
 	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &session, false, nil
+}
+
+func newCloudAgentPiSession(run *model.CloudAgentExecution, conversationID string, createdAt time.Time) (*model.CloudAgentPiSession, error) {
+	sessionID := model.PiSessionStorageID(run.UserID, conversationID)
+	cwd := "canvas://" + run.CanvasID
+	if run.CanvasID == "" {
+		cwd = "agent://" + conversationID
+	}
+	header, err := json.Marshal(map[string]any{
+		"type": "session", "version": cloudAgentPiSessionFormatVersion, "id": sessionID,
+		"timestamp": createdAt.UTC().Format(time.RFC3339Nano), "cwd": cwd,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &model.CloudAgentPiSession{
+		ID: sessionID, UserID: run.UserID, ConversationID: conversationID, CanvasID: run.CanvasID,
+		FormatVersion: cloudAgentPiSessionFormatVersion, HeaderJSON: string(header), Revision: 1,
+		ActiveRunID: run.ID, CreatedAt: createdAt, UpdatedAt: time.Now(),
+	}, nil
+}
+
+func validateCloudAgentPiSession(run *model.CloudAgentExecution, conversationID string, session *model.CloudAgentPiSession) error {
 	if session.CanvasID != run.CanvasID || session.ConversationID != conversationID {
 		return fmt.Errorf("Pi session %q owner or canvas does not match run", conversationID)
 	}
 	if session.FormatVersion != cloudAgentPiSessionFormatVersion {
 		return fmt.Errorf("unsupported Pi session format version %d", session.FormatVersion)
 	}
+	return nil
+}
+
+func (r *Repository) advanceCloudAgentPiSession(run *model.CloudAgentExecution, conversationID string, session *model.CloudAgentPiSession) error {
 	if session.ActiveRunID == run.ID {
 		return nil
 	}

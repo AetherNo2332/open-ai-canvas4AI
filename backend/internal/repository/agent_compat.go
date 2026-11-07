@@ -32,6 +32,26 @@ func (r *Repository) CreateCloudAgentHoldingTask(task *model.Task, order *model.
 	})
 }
 
+// CreateAgentSessionPiRun stores a generic Session run and its durable Pi
+// session in one transaction. Generic runs do not have a canvas holding task or
+// a separate billing reservation here; their work authorization is frozen in
+// the run state and charged by the business gateway.
+func (r *Repository) CreateAgentSessionPiRun(run *model.CloudAgentExecution) error {
+	if run == nil || run.UserID == "" || run.ID == "" || run.ConversationID == "" {
+		return errors.New("Agent Session Pi run identity is incomplete")
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		repo := r.transactionRepository(tx)
+		if err := repo.LockCanvasWrite(run.UserID, ""); err != nil {
+			return err
+		}
+		if err := repo.EnsureCloudAgent(run); err != nil {
+			return err
+		}
+		return repo.AttachCloudAgentPiSession(run)
+	})
+}
+
 func createCloudAgentHoldingTask(tx *gorm.DB, task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int, skillRows ...[]model.AgentConversationSkill) error {
 	return createCloudAgentHoldingTaskGuarded(tx, task, order, run, activeTaskLimit, false, skillRows...)
 }

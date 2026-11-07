@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	as "yingce/backend/internal/agentservice"
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
@@ -44,32 +45,43 @@ type PiPendingInterjection struct {
 }
 
 type PiAgentSnapshot struct {
-	Subagent                 *SubagentRuntime             `json:"subagent,omitempty"`
-	RunID                    string                       `json:"runId"`
-	PiSessionID              string                       `json:"piSessionId"`
-	PiSessionRevision        int64                        `json:"piSessionRevision"`
-	PiSessionLeaseEpoch      int64                        `json:"piSessionLeaseEpoch"`
-	PiSessionHeader          json.RawMessage              `json:"piSessionHeader"`
-	PiSessionEntries         []PiAgentSessionEntry        `json:"piSessionEntries"`
-	HistoricalToolReceipts   []PiHistoricalToolReceipt    `json:"historicalToolReceipts,omitempty"`
-	VisionBatchBudget        *cloudAgentVisionBatchBudget `json:"visionBatchBudget,omitempty"`
-	PiActiveLeafID           string                       `json:"piActiveLeafId,omitempty"`
-	UserID                   string                       `json:"userId"`
-	Revision                 int64                        `json:"revision"`
-	Status                   string                       `json:"status"`
-	Request                  CloudAgentRequest            `json:"request"`
-	ModelLimits              PiAgentModelLimits           `json:"modelLimits"`
-	Canonical                canonicalAgentRequest        `json:"canonical"`
-	ActiveTask               string                       `json:"activeTaskId,omitempty"`
-	LastTaskID               string                       `json:"lastTaskId,omitempty"`
-	PendingToolBatch         *PiToolBatchRequest          `json:"pendingToolBatch,omitempty"`
-	NoToolTaskID             string                       `json:"noToolTaskId,omitempty"`
-	NoToolNudge              string                       `json:"noToolNudge,omitempty"`
-	ModelFailureTaskID       string                       `json:"modelFailureTaskId,omitempty"`
-	ModelFailureNudge        string                       `json:"modelFailureNudge,omitempty"`
-	PendingInterjections     []PiPendingInterjection      `json:"pendingInterjections,omitempty"`
-	PendingContextCompaction *PiPendingContextCompaction  `json:"pendingContextCompaction,omitempty"`
-	Tools                    []PiAgentToolSpec            `json:"tools"`
+	Subagent               *SubagentRuntime             `json:"subagent,omitempty"`
+	RunID                  string                       `json:"runId"`
+	PiSessionID            string                       `json:"piSessionId"`
+	PiSessionRevision      int64                        `json:"piSessionRevision"`
+	PiSessionLeaseEpoch    int64                        `json:"piSessionLeaseEpoch"`
+	PiSessionHeader        json.RawMessage              `json:"piSessionHeader"`
+	PiSessionEntries       []PiAgentSessionEntry        `json:"piSessionEntries"`
+	HistoricalToolReceipts []PiHistoricalToolReceipt    `json:"historicalToolReceipts,omitempty"`
+	VisionBatchBudget      *cloudAgentVisionBatchBudget `json:"visionBatchBudget,omitempty"`
+	PiActiveLeafID         string                       `json:"piActiveLeafId,omitempty"`
+	UserID                 string                       `json:"userId"`
+	Revision               int64                        `json:"revision"`
+	Status                 string                       `json:"status"`
+	// Generic execution identity. Canvas runs leave these empty: their
+	// identity stays in the canvas canonical/request fields below.
+	ProtocolVersion          string                      `json:"protocolVersion,omitempty"`
+	SessionID                string                      `json:"sessionId,omitempty"`
+	DefinitionID             string                      `json:"definitionId,omitempty"`
+	DefinitionVersion        string                      `json:"definitionVersion,omitempty"`
+	Role                     string                      `json:"role,omitempty"`
+	Scope                    *as.Scope                   `json:"scope,omitempty"`
+	TriggerMessageID         string                      `json:"triggerMessageId,omitempty"`
+	Execution                *as.ExecutionBinding        `json:"execution,omitempty"`
+	EffectiveTools           []as.EffectiveTool          `json:"effectiveTools,omitempty"`
+	Request                  CloudAgentRequest           `json:"request"`
+	ModelLimits              PiAgentModelLimits          `json:"modelLimits"`
+	Canonical                canonicalAgentRequest       `json:"canonical"`
+	ActiveTask               string                      `json:"activeTaskId,omitempty"`
+	LastTaskID               string                      `json:"lastTaskId,omitempty"`
+	PendingToolBatch         *PiToolBatchRequest         `json:"pendingToolBatch,omitempty"`
+	NoToolTaskID             string                      `json:"noToolTaskId,omitempty"`
+	NoToolNudge              string                      `json:"noToolNudge,omitempty"`
+	ModelFailureTaskID       string                      `json:"modelFailureTaskId,omitempty"`
+	ModelFailureNudge        string                      `json:"modelFailureNudge,omitempty"`
+	PendingInterjections     []PiPendingInterjection     `json:"pendingInterjections,omitempty"`
+	PendingContextCompaction *PiPendingContextCompaction `json:"pendingContextCompaction,omitempty"`
+	Tools                    []PiAgentToolSpec           `json:"tools"`
 	// ToolCatalog 是 Pi 会话的终身工具白名单（平台工具全集）。它不是授权：运行中切换
 	// 权限后新允许的工具要能在下一边界注册，是否可用仍由 tools[].allowed 与服务端校验决定。
 	ToolCatalog []string          `json:"toolCatalog,omitempty"`
@@ -266,6 +278,9 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 		}
 	}
 	tools := piSnapshotToolSpecs(&state)
+	if state.Execution != nil {
+		tools = piExecutionToolSpecs(state.Execution.Tools)
+	}
 	session, sessionEntries, err := s.repo.CloudAgentPiSession(run.UserID, firstNonEmpty(run.ConversationID, run.ID))
 	if err != nil {
 		return nil, err
@@ -299,7 +314,7 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 	if state.PiToolBatchTaskID != "" && len(state.Calls) > 0 {
 		pendingBatch = &PiToolBatchRequest{TaskID: state.PiToolBatchTaskID, Calls: state.Calls}
 	}
-	return &PiAgentSnapshot{
+	snapshot := &PiAgentSnapshot{
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
 		Subagent:    state.Subagent,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
@@ -311,7 +326,9 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 		VisionBatchBudget: visionBudget,
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。
 		Harness: cloudAgentFrozenHarness(state.Snapshot),
-	}, nil
+	}
+	applyPiExecutionSnapshot(snapshot, state.Execution)
+	return snapshot, nil
 }
 
 func piAgentMessages(run *model.CloudAgentExecution) []json.RawMessage {

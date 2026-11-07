@@ -154,14 +154,16 @@ func TestInternalAgentProtocolIdentityMatchesSharedArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	var identity struct {
-		ProtocolVersion      string `json:"protocolVersion"`
-		PiSDKVersion         string `json:"piSdkVersion"`
-		SessionFormatVersion string `json:"sessionFormatVersion"`
+		ProtocolVersion          string `json:"protocolVersion"`
+		ExecutionProtocolVersion string `json:"executionProtocolVersion"`
+		PiSDKVersion             string `json:"piSdkVersion"`
+		SessionFormatVersion     string `json:"sessionFormatVersion"`
 	}
 	if err := json.Unmarshal(data, &identity); err != nil {
 		t.Fatal(err)
 	}
 	if identity.ProtocolVersion != internalAgentWireVersion ||
+		identity.ExecutionProtocolVersion != internalAgentExecutionVersion ||
 		identity.PiSDKVersion != internalAgentPiSDKVersion ||
 		identity.SessionFormatVersion != internalAgentSessionFormat {
 		t.Fatalf("Go protocol identity diverged from shared artifact: %#v", identity)

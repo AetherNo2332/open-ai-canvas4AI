@@ -159,14 +159,33 @@ func (s *Service) agentTurnModel(turn model.AgentTurn, session *model.AgentSessi
 	if turn.ModelJSON != "" && json.Unmarshal([]byte(turn.ModelJSON), &frozen) == nil {
 		return frozen, nil
 	}
+	selection, err := s.resolveAgentSessionModel(turn.OwnerID, session)
+	if err != nil {
+		return cp.ModelSelection{}, err
+	}
+	raw, _ := json.Marshal(selection)
+	updated, err := s.updateQueuedTurn(turn, map[string]any{"model_json": string(raw)})
+	if err != nil {
+		return cp.ModelSelection{}, err
+	}
+	if !updated {
+		return cp.ModelSelection{}, as.NewError(as.CodeSessionConflict, "轮次已由其他运行器接管")
+	}
+	return selection, nil
+}
+
+// resolveAgentSessionModel reads the model a Session would use without
+// freezing it on a turn. The drama project's text model wins when configured;
+// otherwise the first available text model is the same list the picker offers.
+func (s *Service) resolveAgentSessionModel(ownerID string, session *model.AgentSession) (cp.ModelSelection, error) {
 	choice := DramaModelChoice{}
 	if session.Application == as.ApplicationDrama {
-		if production, err := s.repo.DramaProduction(session.SpaceID); err == nil && production.UserID == turn.OwnerID {
+		if production, err := s.repo.DramaProduction(session.SpaceID); err == nil && production.UserID == ownerID {
 			choice = parseDramaSettings(production.SettingsJSON).Models.Text
 		}
 	}
 	if choice.Empty() {
-		options, _, err := s.dramaModelOptions(turn.OwnerID, "text")
+		options, _, err := s.dramaModelOptions(ownerID, "text")
 		if err != nil {
 			return cp.ModelSelection{}, err
 		}
@@ -178,14 +197,6 @@ func (s *Service) agentTurnModel(turn model.AgentTurn, session *model.AgentSessi
 	selection := cp.ModelSelection{LogicalModelID: choice.LogicalModelID}
 	if selection.LogicalModelID == "" {
 		selection.ChannelID, selection.ModelKey = choice.ChannelID, choice.ModelKey
-	}
-	raw, _ := json.Marshal(selection)
-	updated, err := s.updateQueuedTurn(turn, map[string]any{"model_json": string(raw)})
-	if err != nil {
-		return cp.ModelSelection{}, err
-	}
-	if !updated {
-		return cp.ModelSelection{}, as.NewError(as.CodeSessionConflict, "轮次已由其他运行器接管")
 	}
 	return selection, nil
 }

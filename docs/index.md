@@ -13,6 +13,7 @@
 ## 设计沉淀
 
 - [全业务 Pi Agent 与总控设计](design/2026-11-07-pi-agent-service-alignment.md)及[对齐实施计划](plans/2026-11-07-pi-agent-service-alignment.md)明确同源 Pi Worker、总控与业务 Session 消息协作，以及 C0–C6 的 28 项验收。
+- [C1 通用 Worker 协议证据](design/2026-11-07-pi-agent-alignment-c1-worker.md)记录非画布 Session 的 Pi 身份、准入、租约接管和 Node Bridge 验证。
 
 - [平台内部创作 SDK：实施设计与分片验收](plans/2026-11-05-internal-platform-sdk-rollout.md)及 [S0 合同锁定与迁移清单](plans/2026-11-05-internal-platform-sdk-s0-contract.md)：模型生成、任务、计费、媒体资源的统一合同、调用方迁移矩阵与 S0–S8 验收（实施中，S0 完成）。
 

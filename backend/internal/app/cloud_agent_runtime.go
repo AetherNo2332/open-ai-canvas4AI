@@ -115,11 +115,14 @@ type cloudAgentRuntime struct {
 	SkillRuntimeMode    string                   `json:"skillRuntimeMode,omitempty"`
 	Request             CloudAgentRequest        `json:"request"`
 	Policy              cloudAgentPolicySnapshot `json:"policy"`
-	ParentID            string                   `json:"parentId,omitempty"`
-	Fingerprint         string                   `json:"fingerprint,omitempty"`
-	CreativeAnchor      cloudAgentCreativeAnchor `json:"creativeAnchor,omitempty"`
-	TextHistory         []providerTextMessage    `json:"textHistory,omitempty"`
-	Skills              []cloudAgentSkill        `json:"skills"`
+	// Execution identifies a business-neutral run created from an AgentSession.
+	// Canvas runs leave it nil and keep their canvas canonical/policy contract.
+	Execution      *cloudAgentExecutionState `json:"execution,omitempty"`
+	ParentID       string                    `json:"parentId,omitempty"`
+	Fingerprint    string                    `json:"fingerprint,omitempty"`
+	CreativeAnchor cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
+	TextHistory    []providerTextMessage     `json:"textHistory,omitempty"`
+	Skills         []cloudAgentSkill         `json:"skills"`
 	// Memory 是建 run 时冻结的长期记忆快照（只读参考数据）；本轮内的修改只体现在工具回执里。
 	Memory            cloudAgentMemorySnapshot `json:"memory,omitempty"`
 	SkillReads        map[string]bool          `json:"skillReads,omitempty"`

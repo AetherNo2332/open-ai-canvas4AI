@@ -24,6 +24,11 @@ func (s *Service) cloudAgentRefreshToolLoadout(run *model.CloudAgentExecution) (
 		if err != nil {
 			return nil, err
 		}
+		if state.Execution != nil {
+			// A generic run freezes its tools with the Session definition; there
+			// is no canvas disclosure pipeline to refresh.
+			return run, nil
+		}
 		names := cloudAgentNextAdvertisedToolNames(&state)
 		if slices.Equal(names, state.AdvertisedToolNames) {
 			return run, nil

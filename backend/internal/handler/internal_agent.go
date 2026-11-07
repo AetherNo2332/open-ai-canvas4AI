@@ -16,6 +16,7 @@ import (
 
 const (
 	internalAgentWireVersion      = "canvas-pi-wire/v4"
+	internalAgentExecutionVersion = "pi-execution/v1"
 	internalAgentPiSDKVersion     = "0.87.1"
 	internalAgentSessionFormat    = "3"
 	internalAgentProtocolMismatch = "Pi Agent worker protocol version mismatch"
@@ -64,7 +65,9 @@ func internalAgentAuth(svc *service.Service) gin.HandlerFunc {
 			c.Set("agentWorkerID", worker.ID)
 			c.Set("agentWorkerUserID", worker.UserID)
 		}
-		if c.GetHeader("X-Agent-Protocol-Version") != internalAgentWireVersion ||
+		executionVersion := c.GetHeader("X-Agent-Execution-Protocol")
+		if (executionVersion != "" && executionVersion != internalAgentExecutionVersion) ||
+			c.GetHeader("X-Agent-Protocol-Version") != internalAgentWireVersion ||
 			c.GetHeader("X-Pi-SDK-Version") != internalAgentPiSDKVersion ||
 			c.GetHeader("X-Pi-Session-Format") != internalAgentSessionFormat {
 			c.AbortWithStatusJSON(http.StatusUpgradeRequired, gin.H{

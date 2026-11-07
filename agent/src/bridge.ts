@@ -19,9 +19,13 @@ const NON_RETRYABLE_BRIDGE_STATUSES = new Set([400, 401, 403, 404, 405, 406, 410
 
 export const CANVAS_PI_WIRE_IDENTITY = {
   protocolVersion: "canvas-pi-wire/v4",
+  executionProtocolVersion: "pi-execution/v1",
   piSdkVersion: "0.87.1",
   sessionFormatVersion: "3",
 } as const;
+
+/** Execution identity shared by canvas and business-neutral Pi Sessions. */
+export const PI_EXECUTION_PROTOCOL_VERSION = CANVAS_PI_WIRE_IDENTITY.executionProtocolVersion;
 
 export interface PiCanonical {
   systemPrompt: string;
@@ -73,6 +77,22 @@ export interface PiSkillReadPage {
 export interface PiSnapshot {
 	runAuthorization?: string;
 	subagent?: SubagentRuntime;
+	/** Business-neutral execution contract. Canvas runs may omit these fields. */
+	protocolVersion?: typeof PI_EXECUTION_PROTOCOL_VERSION;
+	sessionId?: string;
+	definitionId?: string;
+	definitionVersion?: string;
+	role?: "business" | "supervisor";
+	scope?: { application: string; spaceType: string; spaceId: string };
+	triggerMessageId?: string;
+	execution?: {
+		workItemId?: string;
+		assignmentId?: string;
+		assignmentEpoch?: number;
+		budgetGrantId?: string;
+		authorizationVersion?: number;
+	};
+	effectiveTools?: Array<{ name: string; description?: string; parameters: Record<string, unknown>; charges?: boolean; approvalRequired?: boolean }>;
 
   skillRuntimeMode?: "pi-native" | "legacy-go";
   skills?: PiSkillSnapshot[];
@@ -88,7 +108,7 @@ export interface PiSnapshot {
   userId: string;
   revision: number;
   status: string;
-  request: { prompt: string; canvasId?: string; model?: string; channelModelKey?: string; visionEnabled?: boolean; subagentEnabled?: boolean };
+  request: { prompt: string; canvasId?: string; model?: string; channelModelKey?: string; visionEnabled?: boolean; subagentEnabled?: boolean; permissionMode?: string };
   modelLimits: { contextWindowTokens: number; maxOutputTokens: number; reservedOutputTokens?: number;
     overheadTokens?: number; inputBudgetTokens?: number; compactAtTokens?: number; configured: boolean; source: string;
     version?: string; digest?: string; compactionReserveTokens?: number; keepRecentTokens?: number; summaryOutputTokens?: number };
@@ -306,7 +326,8 @@ export class CanvasBridge {
         try {
           const response = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent/events`, {
             headers: { Authorization: `Bearer ${this.token}`, "X-Agent-Identity": this.identity, Accept: "text/event-stream", "Last-Event-ID": String(cursor),
-              "X-Agent-Protocol-Version": CANVAS_PI_WIRE_IDENTITY.protocolVersion,
+	              "X-Agent-Protocol-Version": CANVAS_PI_WIRE_IDENTITY.protocolVersion,
+              "X-Agent-Execution-Protocol": CANVAS_PI_WIRE_IDENTITY.executionProtocolVersion,
               "X-Pi-SDK-Version": CANVAS_PI_WIRE_IDENTITY.piSdkVersion, "X-Pi-Session-Format": CANVAS_PI_WIRE_IDENTITY.sessionFormatVersion }, signal,
           });
           if (!response.ok || !response.body) throw new Error(`Agent event stream HTTP ${response.status}`);
@@ -523,6 +544,7 @@ export class CanvasBridge {
       "X-Agent-Identity": this.identity,
       Accept: "application/json",
       "X-Agent-Protocol-Version": CANVAS_PI_WIRE_IDENTITY.protocolVersion,
+      "X-Agent-Execution-Protocol": CANVAS_PI_WIRE_IDENTITY.executionProtocolVersion,
       "X-Pi-SDK-Version": CANVAS_PI_WIRE_IDENTITY.piSdkVersion,
       "X-Pi-Session-Format": CANVAS_PI_WIRE_IDENTITY.sessionFormatVersion,
     };
@@ -546,7 +568,7 @@ export class CanvasBridge {
       }
     };
     const response = this.scheduler && run && !path.endsWith("/renew")
-      ? await this.scheduler.step(`${run.userId}:${run.request.canvasId ?? run.runId}`, send, signal) : await send();
+      ? await this.scheduler.step(`${run.userId}:${run.sessionId ?? run.request.canvasId ?? run.runId}`, send, signal) : await send();
     if (!response.ok) {
       let publicMessage = "";
       let publicReason = "";

@@ -92,16 +92,18 @@ func (s *Service) piModelStepState(run *model.CloudAgentExecution) (cloudAgentRu
 	if err != nil {
 		return state, err
 	}
-	if err := validateCloudAgentPolicySnapshot(state.Policy); err != nil {
-		message := "本轮使用旧版执行合同，已归档；请在新一轮继续对话"
-		if cloudAgentAwaitingFirstStep(&state) {
-			if failErr := s.failCloudAgentFirstStepAdmission(run, &state, kernel.Forbidden(message)); failErr != nil {
+	if state.Execution == nil {
+		if err := validateCloudAgentPolicySnapshot(state.Policy); err != nil {
+			message := "本轮使用旧版执行合同，已归档；请在新一轮继续对话"
+			if cloudAgentAwaitingFirstStep(&state) {
+				if failErr := s.failCloudAgentFirstStepAdmission(run, &state, kernel.Forbidden(message)); failErr != nil {
+					return state, failErr
+				}
+			} else if failErr := s.failCloudAgent(run, &state, message); failErr != nil {
 				return state, failErr
 			}
-		} else if failErr := s.failCloudAgent(run, &state, message); failErr != nil {
-			return state, failErr
+			return state, kernel.Forbidden(message)
 		}
-		return state, kernel.Forbidden(message)
 	}
 	state.StepLimits, err = s.cloudAgentStepLimits()
 	if err != nil {
@@ -174,7 +176,7 @@ func piModelStepCheckDisclosure(state *cloudAgentRuntime, request PiModelStepReq
 		// Retired tools can leave the next model loadout only after that batch
 		// settles; current tools and all new calls retain normal disclosure checks.
 		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && previous == "read"
-		if state.CallIndex >= len(state.Calls) && !nativeRead && !cloudAgentToolAllowed(state.Request, previous) {
+		if state.CallIndex >= len(state.Calls) && !nativeRead && state.Execution == nil && !cloudAgentToolAllowed(state.Request, previous) {
 			continue
 		}
 		if !cloudAgentContainsString(requestedNames, previous) {
@@ -190,6 +192,9 @@ func piModelStepCheckDisclosure(state *cloudAgentRuntime, request PiModelStepReq
 }
 
 func piModelStepRequestedToolsDisclosed(state *cloudAgentRuntime, request PiModelStepRequest) error {
+	if state.Execution != nil {
+		return piModelStepGenericToolsDisclosed(state, request)
+	}
 	allowed := map[string]bool{}
 	nextNames := state.AdvertisedToolNames
 	if len(nextNames) == 0 {
@@ -206,6 +211,20 @@ func piModelStepRequestedToolsDisclosed(state *cloudAgentRuntime, request PiMode
 		name := stringField(function, "name")
 		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
 		if !allowed[name] || (!nativeRead && !cloudAgentToolAllowed(state.Request, name)) {
+			return kernel.Forbidden("Pi 模型请求包含未披露工具")
+		}
+	}
+	return nil
+}
+
+func piModelStepGenericToolsDisclosed(state *cloudAgentRuntime, request PiModelStepRequest) error {
+	allowed := make(map[string]bool, len(state.Execution.Tools))
+	for _, tool := range state.Execution.Tools {
+		allowed[tool.Name] = true
+	}
+	for _, tool := range request.Canonical.Tools {
+		function, _ := tool["function"].(map[string]any)
+		if !allowed[stringField(function, "name")] {
 			return kernel.Forbidden("Pi 模型请求包含未披露工具")
 		}
 	}

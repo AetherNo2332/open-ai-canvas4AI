@@ -61,7 +61,7 @@ func admissionKey(run model.CloudAgentExecution) string {
 	if run.CanvasID != "" {
 		return run.UserID + ":" + run.CanvasID
 	}
-	return run.UserID + ":session:" + run.ConversationID + ":" + run.ID
+	return run.UserID + ":session:" + run.ConversationID
 }
 
 func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback model.AgentSchedulerSetting, userScope ...string) (*model.CloudAgentExecution, error) {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	as "yingce/backend/internal/agentservice"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/platform"
 	"yingce/backend/internal/prompts"
@@ -42,6 +43,9 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 }
 
 func validateCloudAgentRuntimeRequest(_ *model.CloudAgentExecution, state *cloudAgentRuntime) error {
+	if state.Execution != nil {
+		return validateCloudAgentExecutionState(state)
+	}
 	if state.Request.CanvasID == "" || state.Request.Prompt == "" || state.Request.PermissionMode == "" {
 		return errors.New("Agent runtime request is incomplete")
 	}
@@ -55,6 +59,55 @@ func validateCloudAgentRuntimeRequest(_ *model.CloudAgentExecution, state *cloud
 		return errors.New("Agent runtime permission mode is invalid")
 	}
 	return validateCloudAgentPolicySnapshotStructure(state.Policy)
+}
+
+// validateCloudAgentExecutionState validates the business-neutral identity of a
+// generic Pi run. Canvas policy, canonical prompt and tool disclosure are not
+// part of this contract; the frozen definition and execution binding are.
+func validateCloudAgentExecutionState(state *cloudAgentRuntime) error {
+	execution := state.Execution
+	if execution.ProtocolVersion != as.PiExecutionProtocolVersion {
+		return errors.New("Agent execution protocol is unsupported")
+	}
+	if strings.TrimSpace(execution.SessionID) == "" || strings.TrimSpace(execution.DefinitionID) == "" ||
+		strings.TrimSpace(execution.DefinitionVersion) == "" || strings.TrimSpace(execution.TriggerMessageID) == "" {
+		return errors.New("Agent execution identity is incomplete")
+	}
+	if execution.Role != as.RoleBusiness && execution.Role != as.RoleSupervisor {
+		return errors.New("Agent execution role is invalid")
+	}
+	scope := execution.Scope.Normalized()
+	if scope.Application == "" || scope.SpaceType == "" || scope.SpaceID == "" {
+		return errors.New("Agent execution scope is incomplete")
+	}
+	if strings.TrimSpace(state.Request.Prompt) == "" || !cloudAgentValidPermissionMode(state.Request.PermissionMode) {
+		return errors.New("Agent execution request is invalid")
+	}
+	if err := validateAgentExecutionBinding(execution.Binding); err != nil {
+		return err
+	}
+	if execution.Role == as.RoleBusiness && len(execution.Tools) == 0 {
+		return errors.New("Agent execution has no tools")
+	}
+	for _, tool := range execution.Tools {
+		if strings.TrimSpace(tool.Name) == "" || len(tool.Parameters) == 0 {
+			return errors.New("Agent execution tool is invalid")
+		}
+	}
+	return nil
+}
+
+func validateAgentExecutionBinding(binding *as.ExecutionBinding) error {
+	if binding == nil || strings.TrimSpace(binding.WorkItemID) == "" {
+		return nil
+	}
+	if strings.TrimSpace(binding.AssignmentID) == "" || binding.AssignmentEpoch <= 0 {
+		return errors.New("Agent execution assignment is incomplete")
+	}
+	if strings.TrimSpace(binding.BudgetGrantID) == "" || binding.AuthorizationVersion <= 0 {
+		return errors.New("Agent execution work binding is incomplete")
+	}
+	return nil
 }
 
 // validateCloudAgentRuntimeCounters checks step, budget and call-limit counters
@@ -130,20 +183,39 @@ func validateCloudAgentRuntimeCursor(_ *model.CloudAgentExecution, state *cloudA
 // validateCloudAgentRuntimeTaskHistory checks the first-step wait, task ID
 // uniqueness and that active, media and pending tasks are in the history.
 func validateCloudAgentRuntimeTaskHistory(_ *model.CloudAgentExecution, state *cloudAgentRuntime) error {
+	if state.Execution != nil && len(state.TaskIDs) == 0 {
+		return validateGenericPiTaskHistory(state)
+	}
 	if len(state.TaskIDs) == 0 {
-		// 只有"等首个模型步"的运行允许空任务历史：建 run 只创建占位任务（不进 TaskIDs），
-		// 真实首步任务在首个 PiModelStep 里才落库。其他任何阶段的空历史都是坏状态。
-		if err := cloudAgentFirstStepWaitError(state); err != nil {
+		return cloudAgentFirstStepWaitError(state)
+	} else if cloudAgentAwaitingFirstStep(state) {
+		if err := validateFirstStepTaskHistory(state); err != nil {
 			return err
 		}
-	} else if cloudAgentAwaitingFirstStep(state) {
-		// 相位表示"首步合同尚未冻结"，不表示"没有任何任务历史"：压缩摘要等内部
-		// 任务可以先落库并占用 ActiveTaskID —— 它们不是本轮的一步。真正禁止的是
-		// **步进**已经推进，那意味着占位预留与任务历史已经对不上账。
-		if state.Step != 0 || state.CallIndex != 0 || len(state.Calls) != 0 {
-			return errors.New("Agent runtime first-step wait has advanced work")
-		}
 	}
+	return validateTaskHistoryIDs(state)
+}
+
+// validateGenericPiTaskHistory permits a generic run to exist before its first
+// Go model task is admitted. It has no canvas holding task to place in TaskIDs.
+func validateGenericPiTaskHistory(state *cloudAgentRuntime) error {
+	if state.ActiveTaskID != "" || state.MediaTaskID != "" || state.PiNoToolTaskID != "" ||
+		state.Step != 0 || state.CallIndex != 0 || len(state.Calls) != 0 {
+		return errors.New("Agent runtime first-step wait has advanced work")
+	}
+	return nil
+}
+
+func validateFirstStepTaskHistory(state *cloudAgentRuntime) error {
+	// The awaiting phase may contain an internal compaction task, but the model
+	// step itself must not have advanced before the first-step contract freezes.
+	if state.Step != 0 || state.CallIndex != 0 || len(state.Calls) != 0 {
+		return errors.New("Agent runtime first-step wait has advanced work")
+	}
+	return nil
+}
+
+func validateTaskHistoryIDs(state *cloudAgentRuntime) error {
 	seenTasks := make(map[string]struct{}, len(state.TaskIDs))
 	for _, taskID := range state.TaskIDs {
 		if err := validateCloudAgentID(taskID, "任务 ID", 80); err != nil {
