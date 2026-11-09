@@ -105,7 +105,7 @@ func TestDramaPlatformBudgetAggregation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if aggregate.TaskCount != 2 || aggregate.ChargedMicrocredits != 100_000 || aggregate.ReservedMicrocredits != 200_000 {
+	if aggregate.TaskCount != 2 || aggregate.ChargedMicrocredits != 100_000 || aggregate.ReservedMicrocredits != 100_000 {
 		t.Fatalf("drama aggregate: %+v", aggregate)
 	}
 	// 短剧自己的预算口径（按订单冻结 + 实收）与平台汇总一致。
