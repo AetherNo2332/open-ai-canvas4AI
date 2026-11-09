@@ -21,6 +21,7 @@ tags:
   - name: canvas
   - name: resources
   - name: tasks
+  - name: creation-platform
   - name: assets
   - name: models
   - name: agent
@@ -2929,6 +2930,224 @@ paths:
           $ref: "#/components/responses/Envelope"
         "403":
           $ref: "#/components/responses/Error"
+  /platform/v1/generations:
+    post:
+      tags: [creation-platform]
+      summary: 按平台合同提交生成任务（文本、图片、视频、音频）
+      description: 身份来自登录会话；business 仅为归属标签。只支持逻辑模型或系统渠道模型，自定义渠道仍用 /tasks。任务、费用冻结与提交记录同一事务写入，提交后才唤醒 worker。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformGenerationRequest"
+      responses:
+        "200":
+          description: 提交回执，data 为 { snapshot, replayed }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/PlatformError"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/PlatformError"
+        "429":
+          $ref: "#/components/responses/PlatformError"
+  /platform/v1/models:
+    get:
+      tags: [creation-platform]
+      summary: 列出当前用户可提交的模型选择
+      description: 复用用户分组可见的系统渠道目录；开放前台模型时附带逻辑模型。返回的 selection 可直接放进生成请求的 model。
+      parameters:
+        - in: query
+          name: capability
+          required: true
+          schema: { type: string, enum: [text, image, video, audio] }
+      responses:
+        "200":
+          description: "data 为 { models: [{ selection, capability, label, billingMode, available }] }"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/PlatformError"
+        "401":
+          $ref: "#/components/responses/Error"
+  /platform/v1/quotes:
+    post:
+      tags: [creation-platform]
+      summary: 按平台合同报价，不冻结费用、不创建任务
+      description: 与提交同口径解析模型与价格；返回的 quoteHash 绑定价格签名与生成规格，提交时带上可防止价格变化后被静默按新价冻结。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformGenerationRequest"
+      responses:
+        "200":
+          description: 报价，data 为 Quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/PlatformError"
+        "401":
+          $ref: "#/components/responses/Error"
+  /platform/v1/billing/balance:
+    get:
+      tags: [creation-platform]
+      summary: 读取当前用户可用与冻结额度
+      responses:
+        "200":
+          description: "data 为 { availableMicrocredits, reservedMicrocredits }"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+  /platform/v1/billing/aggregate:
+    get:
+      tags: [creation-platform]
+      summary: 按业务归属汇总平台任务费用
+      description: 只汇总当前用户经平台提交的任务；冻结、实收、退款与待核对分列。
+      parameters:
+        - in: query
+          name: application
+          required: true
+          schema: { type: string, enum: [canvas, drama, ecommerce, test] }
+        - in: query
+          name: projectId
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为 BillingAggregate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/PlatformError"
+        "401":
+          $ref: "#/components/responses/Error"
+  /platform/v1/events:
+    get:
+      tags: [creation-platform]
+      summary: 按游标续读平台任务事件
+      description: 按 taskId，或按 application（可选 projectId）读取本人事件。游标是提交顺序，after 取上一页 nextCursor；事件至少交付一次，按 id 去重。游标早于已清理水位时返回 resyncRequired=true，须先读快照再从 nextCursor 继续。
+      parameters:
+        - { in: query, name: taskId, schema: { type: string } }
+        - { in: query, name: application, schema: { type: string, enum: [canvas, drama, ecommerce, test] } }
+        - { in: query, name: projectId, schema: { type: string } }
+        - { in: query, name: after, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          description: "data 为 { events, nextCursor, resyncRequired }"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "400":
+          $ref: "#/components/responses/PlatformError"
+        "401":
+          $ref: "#/components/responses/Error"
+  /platform/v1/tasks/{id}/cancel:
+    post:
+      tags: [creation-platform]
+      summary: 取消平台任务（上游已提交后普通用户不可取消）
+      description: 只有快照 actions 包含该动作时才会执行；否则返回 409（action_not_allowed，费用待核对时重试返回 billing_pending_review）。返回执行后的快照。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为 TaskSnapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/PlatformError"
+        "409":
+          $ref: "#/components/responses/PlatformError"
+  /platform/v1/tasks/{id}/retry:
+    post:
+      tags: [creation-platform]
+      summary: 重试失败或已取消的平台任务（重新冻结费用）
+      description: 只有快照 actions 包含该动作时才会执行；否则返回 409（action_not_allowed，费用待核对时重试返回 billing_pending_review）。返回执行后的快照。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为 TaskSnapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/PlatformError"
+        "409":
+          $ref: "#/components/responses/PlatformError"
+  /platform/v1/tasks/{id}/recover-media:
+    post:
+      tags: [creation-platform]
+      summary: 重试保存已生成但交付失败的作品，不重新生成或扣费
+      description: 只有快照 actions 包含该动作时才会执行；否则返回 409（action_not_allowed，费用待核对时重试返回 billing_pending_review）。返回执行后的快照。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: data 为 TaskSnapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/PlatformError"
+        "409":
+          $ref: "#/components/responses/PlatformError"
+  /platform/v1/tasks/{id}:
+    get:
+      tags: [creation-platform]
+      summary: 读取平台任务快照（执行、资源交付与费用三类状态分列）
+      description: 只返回当前用户经平台提交的任务；其他任务一律 404。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 任务快照，data 为 TaskSnapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/PlatformError"
   /tasks:
     post:
       tags: [tasks]
@@ -3338,6 +3557,64 @@ components:
         reason:
           type: string
           description: 仅失败时出现。稳定机器可读原因。
+    PlatformGenerationRequest:
+      type: object
+      required: [contractVersion, capability, model, prompt, business, idempotencyKey]
+      properties:
+        contractVersion: { type: integer, enum: [1] }
+        capability: { type: string, enum: [text, image, video, audio] }
+        operation: { type: string }
+        model:
+          type: object
+          description: logicalModelId 与 channelId+modelKey 二选一
+          properties:
+            logicalModelId: { type: string }
+            channelId: { type: string }
+            modelKey: { type: string }
+        prompt: { type: string }
+        parameters: { type: object, additionalProperties: true }
+        references:
+          type: array
+          items:
+            type: object
+            required: [resourceId, kind]
+            properties:
+              resourceId: { type: string }
+              kind: { type: string, enum: [image, video, audio] }
+              role: { type: string }
+        business:
+          type: object
+          required: [application]
+          properties:
+            application: { type: string, enum: [canvas, drama, ecommerce, test] }
+            projectId: { type: string }
+            objectType: { type: string }
+            objectId: { type: string }
+            operationId: { type: string }
+        cost:
+          type: object
+          properties:
+            maxMicrocredits: { type: integer, format: int64, minimum: 0 }
+            quoteHash: { type: string }
+        idempotencyKey: { type: string, minLength: 1, maxLength: 160 }
+        traceId: { type: string }
+    PlatformErrorEnvelope:
+      type: object
+      required: [code, data, msg, reason]
+      properties:
+        code: { type: integer }
+        data: { nullable: true }
+        msg: { type: string }
+        reason:
+          type: string
+          description: 创作平台合同错误码
+          enum: [invalid_request, unauthorized, forbidden, not_found, model_unavailable, model_not_supported, reference_unavailable, insufficient_credits, cost_limit_exceeded, quote_expired, idempotency_conflict, active_task_limit, action_not_allowed, billing_pending_review, media_delivery_failed, unavailable, internal]
+        details:
+          type: object
+          properties:
+            retryable: { type: boolean }
+            taskId: { type: string }
+            requestId: { type: string }
     ErrorEnvelope:
       allOf:
         - $ref: "#/components/schemas/Envelope"
@@ -3397,6 +3674,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Envelope"
+    PlatformError:
+      description: 创作平台失败信封，reason 为合同错误码
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PlatformErrorEnvelope"
     Error:
       description: 业务失败信封
       content:

@@ -1,0 +1,17 @@
+{
+  "contractVersion": 1,
+  "capability": "text",
+  "operation": "text_generation",
+  "model": { "logicalModelId": "lm-text-default" },
+  "prompt": "为第 3 集写三句剧情梗概",
+  "parameters": { "maxTokens": 800 },
+  "business": {
+    "application": "drama",
+    "projectId": "proj-1",
+    "objectType": "episode",
+    "objectId": "ep-3",
+    "operationId": "job-42:attempt-1"
+  },
+  "cost": { "maxMicrocredits": 50000 },
+  "idempotencyKey": "drama:job-42:attempt-1"
+}

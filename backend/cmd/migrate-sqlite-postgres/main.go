@@ -383,7 +383,7 @@ func verifyMigrationCoverage(db *gorm.DB) error {
 }
 
 func migrations() []tableMigration {
-	return []tableMigration{
+	return append([]tableMigration{
 		migrateTable[model.Tool]("tools"),
 		migrateTable[model.ToolFavorite]("tool_favorites"),
 		migrateTable[model.User]("users"),
@@ -541,5 +541,5 @@ func migrations() []tableMigration {
 		migrateTable[model.TaskTextDelta]("task_text_delta"),
 		migrateTable[model.TaskLog]("task_logs"),
 		migrateTable[model.Result]("results"),
-	}
+	}, creationPlatformTableMigrations()...)
 }

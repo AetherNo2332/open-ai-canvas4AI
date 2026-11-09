@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "taskId": "task-3",
+  "revision": 4,
+  "capability": "image",
+  "execution": "failed",
+  "stage": "费用待核对",
+  "progress": 100,
+  "resources": "none",
+  "billing": {
+    "status": "pending_review",
+    "reservedMicrocredits": 120000,
+    "refundedMicrocredits": 0
+  },
+  "actions": [],
+  "business": {
+    "application": "canvas",
+    "objectType": "node",
+    "objectId": "img-1"
+  },
+  "error": {
+    "code": "billing_pending_review",
+    "reason": "failed_precondition",
+    "message": "上游调用结果未知，费用核对中",
+    "retryable": false,
+    "taskId": "task-3"
+  },
+  "createdAt": "2026-11-05T08:00:00Z",
+  "updatedAt": "2026-11-05T08:01:00Z"
+}

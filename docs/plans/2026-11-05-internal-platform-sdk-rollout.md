@@ -1,0 +1,304 @@
+# 平台内部创作 SDK：实施设计与分片验收
+
+> 状态：S0–S8 隔离集成验收完成，Codex 审查的 8 项问题已修复；F1 与 F8 未勾选：真实页面（电商、短剧、画布）、真实供应商与对象存储尚未验证。
+> 执行约定：只有用户明确要求开始实现后，才按 `executing-plans` 逐片推进。本文不授权提交、推送、部署或生产操作。
+
+**Goal：** 将模型生成、任务、计费、媒体资源整理为平台内部共用能力，短剧、电商、画布通过统一合同接入。
+
+**Architecture：** 沿用 Go 后端、现有 Worker、数据库与存储；建立 Go 内部能力接口、HTTP 适配和 TypeScript SDK。业务适配层负责业务对象、编排、版本和采用；平台负责生成执行、费用和资源交付。
+
+**Tech Stack：** 基线为 Go 1.25、Gin、GORM、SQLite/PostgreSQL、Redis，以及现有 Bun/TypeScript 前端工具链；实施前重新读取锁文件与工具链约束，不自行升级。
+
+**Spec：** 本文第 1–4 节为设计约束，第 5–7 节为实施与验收计划；未决项见第 3 节。
+
+阅读建议：先看第 1 节范围、第 3 节待决事项，再按第 5 节逐片实施。每片的 `Sx-A` 等编号是可追踪验收项，最终以第 7 节总验收收口。
+
+## 1. 已确定的边界
+
+- 使用对象：平台内部业务，不面向第三方发布 SDK，不引入独立微服务或外部租户体系。
+- 首版范围：模型生成、任务、计费、媒体资源；生成包括文本、图片、视频、音频。
+- 短剧负责原文、分集、设定、镜头、剧情段、审阅、制作顺序和采用规则。
+- 电商负责商品信息、场景模板、批次组织与作品筛选；整批后台编排不是首版前置要求。
+- 画布负责节点、连线、文档、编辑版本、任务目标绑定与结果放置。
+- 平台返回任务标识、进度事件、费用状态和资源结果，不直接决定业务采用哪个结果。
+- Agent 运行、会话、记忆、技能、工具注册与子代理不纳入首版；现有 Agent 作为相邻调用方做回归验证。
+- 通用工作流引擎、充值与支付管理、角色卡等完整素材业务、独立渲染 SDK 均不扩入首版。
+- 现有时间线渲染保留原能力，迁移生成调用不能破坏短剧成片和画布导出。
+
+## 2. 源码基线与缺口
+
+分析基线：`canvas4ai/main`，提交 `5a0ad2ce674e4fe980a40512ac36be0372532f42`。
+以下路径相对仓库根；按 `git show <上述提交>:<路径>` 复查，不将其他分支的同名文件视为基线。
+
+| 现有源码                                                                                              | 已有能力                             | 本轮需要解决的问题                                                    |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------- |
+| `backend/internal/app/task_creation.go`、`service.go`                                                 | 模型解析、任务准入、额度与计费关联   | 请求含 `canvas_*` 和自由 Input；缺少所有业务共用的幂等提交合同        |
+| `backend/internal/generation/types.go`、`deps.go`、`engine.go`                                        | 生成执行器与媒体、计费、渠道依赖端口 | 执行配置含密钥、协议和 Agent 字段，不宜直接暴露为 SDK 请求            |
+| `backend/internal/app/canvas_task_submitter.go`                                                       | Prepare、事务 Commit、提交后 Wake    | 机制可复用，但合同依赖画布权限和类型                                  |
+| `backend/internal/app/creation.go`                                                                    | 报价准备、确认、幂等执行             | 混合画布、提案和创作会话，不能整体搬成通用 SDK                        |
+| `backend/internal/app/task_billing.go`、`task_output.go`                                              | 冻结、结算、退款、待核对及费用摘要   | 通用授权、归属与用量查询合同尚未收敛                                  |
+| `backend/internal/app/task_media_assets.go`                                                           | 生成媒体登记、产物去重、项目关联     | `Task.ProjectID` 会先按画布解析再解析项目；文件交付与业务素材登记交织 |
+| `backend/internal/handler/routes.go`、`agent.go`                                                      | 任务查询、文本 SSE、Agent 事件       | 缺少普通生成任务共用的持久事件与消费恢复合同                          |
+| `web/src/services/api/generation-task.ts`、`task-center.ts`、`resources.ts`                           | 提交、等待、上传、访问资源           | 依赖配置 store、画布/Agent 类型及浏览器副作用，需要形成独立调用层     |
+| `backend/internal/app/workbench_bridge.go`、`drama_orchestrator.go`、`backend/internal/canvas/tasks/` | 三类业务接入点                       | 业务应保留流程，通过适配器使用平台能力                                |
+
+本文是源码设计，不是线上行为证明；“已有”不代表本轮已运行验收。
+
+## 3. 实施前需要关闭的决策
+
+用户已确认首版能力范围，但以下实现建议尚未确认。S0 记录决议；未关闭的项只阻塞依赖它的切片。
+
+| ID  | 问题                       | 建议                                                                                                                   | 影响                                                            |
+| --- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| D1  | 首版是否覆盖自定义渠道     | 首版统一系统渠道与逻辑模型，自定义渠道保留原路径                                                                       | S1 的模型选择合同、S6/S8 的迁移覆盖率                           |
+| D2  | 是否支持平台级累计预算上限 | 首版支持单次费用上限与按业务归属汇总，短剧累计预算策略留在短剧                                                         | S2 的授权；如要求严格累计上限，必须增加事务内预算预留与并发验收 |
+| D3  | 包与接口版本方式           | 同仓库维护；TS 包先放 `web/src/sdk/creation-platform`，Go 合同先放 `backend/internal/creationplatform`；统一合同版本 1 | S1 的目录、导出与传输合同；路径为拟新增                         |
+
+D1 若选择同时覆盖自定义渠道，需先补充凭据来源、计费适用性、受信任配置和回归清单；不能把“不走平台计费”显示成“免费”。
+
+## 4. 目标合同与全局规则
+
+### 4.1 对外使用面
+
+| 分组        | 建议语义                                   | 边界                                                   |
+| ----------- | ------------------------------------------ | ------------------------------------------------------ |
+| Models      | 查询可用模型与能力                         | 复用用户分组、系统渠道和逻辑模型规则                   |
+| Generations | 报价、提交、读取结果                       | 统一文本/图片/视频/音频意图；模型参数按能力类型定义    |
+| Tasks       | 获取、列举、订阅、取消、受控重试、恢复媒体 | 返回可执行动作和机器可读原因，SDK 不自行判断是否可退款 |
+| Billing     | 读取额度、任务费用、按业务范围汇总         | 费用写入只由任务生命周期推进，无任意扣款/退款入口      |
+| Resources   | 上传、查询、获取授权访问地址               | 返回稳定资源身份，临时 URL 不能成为持久身份            |
+
+S1 固化准确的 Go/TS 签名、HTTP 映射与 JSON 样例，再实施后续切片；现有 HTTP 可适配复用，不创建两套并行执行引擎。
+
+### 4.2 请求与结果
+
+- `GenerationRequest`：合同版本、能力、操作、模型选择、提示词、按能力定义的参数、参考资源、业务关联、费用授权、幂等键。
+- `BusinessRef`：`application`（drama/ecommerce/canvas 等）、可选 `projectId`、`objectType`、`objectId`、`operationId`。不含节点/镜头专属字段；业务映射存在适配层。
+- 身份由登录态或受信任 Go 调用上下文注入；业务归属由适配器验证。BusinessRef 不是授权凭证。
+- 模型选择采用显式的逻辑模型或系统渠道模型联合类型；禁止同时选择两条路线。平台解析协议、价格、凭据和能力。
+- `TaskSnapshot`：任务 ID、修订号、执行状态、阶段、进度、资源就绪状态、费用状态、允许动作与错误。
+- `GenerationResult`：最终文本或资源列表；资源含稳定 ID、类型、尺寸/时长等事实信息，不含上游凭据和原始受保护配置。
+- 金额延续整数 microcredits，不用浮点金额；缺少实收或尚待核对不能填 0。
+- `TaskEvent`：事件 ID、任务 ID、任务修订号、类型、时间和最小状态载荷；可重新查询完整快照。
+- `PlatformError`：稳定 code、reason、是否可重试、任务/请求追踪标识；展示文案不作为控制分支依据。
+
+### 4.3 一致性与失败语义
+
+1. 幂等作用域为用户＋application＋幂等键。同键同内容返回同一任务；同键不同内容返回冲突。指纹不包含追踪 ID 或临时 URL，资源使用稳定 ID。
+2. Prepare 阶段不扣费、不派发。任务、费用授权、幂等记录和业务绑定在同一数据库事务提交；事务提交后才唤醒 Worker。
+3. 提供受限事务绑定端口，业务适配器在事务中写业务任务关系；SDK 合同不暴露 GORM、repository 或任意数据库操作。
+4. 报价复用现有定价逻辑；提交时重新校验模型与价格。授权上限不能被后台静默突破；失效/涨价超过授权返回可识别错误。
+5. 执行、资源、费用三个状态分别表达；上游成功但下载失败走媒体恢复，不直接再次调用付费模型。
+6. 普通用户取消已提交上游的任务沿用当前限制；取消失败不能伪装成功。费用不明进入待核对，不能无条件退款和重试。
+7. 状态与事件在同一事务持久化，交付至少一次；消费者以事件 ID/业务操作 ID 去重。断线按游标续读；过期游标明确要求重新取快照。
+8. 页面停止等待只取消订阅，不等于取消服务端任务。Go 编排不能依赖浏览器常驻。
+9. 平台保存文件和生产结果；业务采用结果单独记账。陈旧业务版本不能覆盖新版本，仍应保留可追溯结果。
+
+### 4.4 依赖与迁移约束
+
+- `creationplatform` 放合同与用例端口，不导入 `app`、`service` 或业务模型；具体实现先由组合根注入现有能力，再按切片迁移，禁止形成循环依赖。
+- TS 核心只依赖传输和基础类型，不依赖 React、Zustand、AntD、画布类型、window 或配置 store；UI 提示与钱包刷新由业务订阅处理。
+- 复用现有计费、资源和模型代码，不建立第二套价格计算或资源持久化。
+- 不修改无关用户改动；实施时从当时确认的 main 建隔离工作区，不把当前功能分支直接当实施基线。
+- 新表/索引/字段遵循实际迁移序列，不硬编码本文基线中的迁移号。兼容旧在途任务，回退不得删除已收费任务、账单或新资源。
+- 现有 `canvas_*` 任务类型允许内部过渡映射；SDK 合同使用通用能力。是否迁移历史类型另评估，不为改名大范围改库。
+- 遵守仓库实际架构守卫；不提高 baseline，不用 helper 透传掩盖职责混杂。
+
+## 5. 实施切片
+
+每片先补真实入口的失败用例，再做最小实现并验证；完成后记录证据，用户授权提交时才创建提交。
+表内测试名是实施时拟新增的验收用例名称，不表示已有测试或已通过。
+
+### S0：锁定合同与迁移清单
+
+**依赖：** 无。**交付：** D1–D3 决议、合同样例、调用方清单、准确文件规划。
+
+**源码落点：** 本文第 2 节全部入口；`backend/internal/handler/model_catalog.go`；`backend/internal/service/aliases_types.go`。
+
+- [x] S0-A：逐项记录 D1–D3 的选择、理由与确认状态，不能将建议标成已批准。
+- [x] S0-B：Go/TS 合同覆盖四种生成能力、两种模型选择、三类状态、错误和事件；没有密钥字段和业务专用目标字段。
+- [x] S0-C：逐个登记电商、短剧、画布、Agent 相邻调用方及自定义渠道、工作流、渲染例外；明确迁移或保留理由。
+- [x] S0-D：为每个现存与拟新增文件登记责任、输入输出；解析、准入、持久化、业务采用分开；后续切片可直接引用确定签名。
+
+**证据：** 合同 JSON 样例、依赖方向检查结果、迁移矩阵。S0 只是设计通过，不能计为运行功能完成。记录见 [S0 合同锁定与迁移清单](2026-11-05-internal-platform-sdk-s0-contract.md)。
+
+### S1：一张图片的真实提交闭环
+
+**依赖：** S0，D1/D3 已关闭。**交付：** Go 内部入口与 HTTP 适配调用同一服务，复用原 Worker 完成图片生成。
+
+**源码落点：** `task_creation.go`、`canvas_task_submitter.go`、`generation/`、`handler/routes.go`；拟新增 `internal/creationplatform/contract.go`、`ports.go` 及按 S0 确定的 app/handler 适配文件。
+
+- [x] S1-A：通过 Go 与 HTTP 分别提交图片任务，均能查到可访问的资源结果；真实调用链到达现有 Worker 与媒体保存逻辑。
+- [x] S1-B：逻辑模型和系统渠道模型各有有效用例；无效参数、模型停用或无权限在调用上游前拒绝。
+- [x] S1-C：用户 B 不能提交用户 A 的参考资源，不能读取其任务和资源；伪造 BusinessRef 不产生越权绑定。
+- [x] S1-D：现有模型分组、能力及额度规则仍生效；未被迁移的旧入口仍可工作。
+
+**用例：** `TestPlatformImageSubmitViaHTTPAndGo`、`TestPlatformRejectsForeignReference`、`TestPlatformRejectsInvalidModelBeforeProviderCall`。
+
+**S1 证据（隔离 SQLite + 本地假图片上游，未用真实供应商）：** Go 入口 `TestPlatformImageSubmitViaGoReachesWorkerAndStoredResource`（系统渠道、逻辑模型各一次，真实 `ClaimNextTask` + `processClaimedTask`）；HTTP 入口 `TestPlatformImageSubmitViaHTTP`（真实 `StartWorker` 后台派发，资源按本人可读、他人不可读）；`TestPlatformRejectsInvalidModelBeforeProviderCall`（6 种拒绝，零任务、零冻结、零上游调用）；`TestPlatformRejectsForeignReferenceAndForeignReads`（已用移除归属校验的变异验证会失败）；`TestPlatformLegacyTaskEntryStillWorks`。实际测试名与计划拟定名不同：Go 与 HTTP 分成两个用例，因为 HTTP 用例需要 handler 包。
+
+### S2：重复提交与费用授权闭环
+
+**依赖：** S1，D2 已关闭。**交付：** 所有首版提交共用幂等和事务提交，费用授权失败不留下可执行任务。
+
+**源码落点：** `task_creation.go`、`creation.go`、`task_billing.go`、`canvas_task_submitter.go`；`repository/billing_authorization.go`、`repository/creation.go` 及新提交记录/迁移。
+
+- [x] S2-A：20 个并发同键同内容请求只产生 1 个任务、1 份费用授权、1 个业务绑定；所有成功响应指向同一任务。
+- [x] S2-B：同键改提示词/模型/资源返回冲突；其他用户同键互不影响；响应丢失后重投仍取得原任务。
+- [x] S2-C：分别在任务、账单、业务绑定写入处注入失败，整个事务回滚，无扣费孤儿、任务孤儿或提前执行。
+- [x] S2-D：余额不足、模型变更、授权超限被拒绝；授权与报价价格版本一致，余额变化不被估价缓存掩盖。
+- [x] S2-E：成功、未提交失败、费用不明分别进入结算、退款、待核对；媒体恢复不再次生成和扣一笔新生成费。
+
+**用例：** `TestPlatformConcurrentIdempotentSubmit`、`TestPlatformSubmitRollbackAtEachWrite`、`TestPlatformQuoteAuthorizationAndBillingStates`。
+**数据库门槛：** SQLite 与隔离 PostgreSQL 上都验证唯一约束和事务；PostgreSQL 协调使用隔离 Redis。
+
+**S2 证据（SQLite + 隔离 PostgreSQL 17 / Redis 7.4 容器，本地假图片上游）：** `TestPlatformConcurrentIdempotentSubmit`（S2-A）、`TestPlatformIdempotencyScopeAndConflict`（S2-B）、`TestPlatformSubmitRollbackAtEachWrite`（S2-C，四张表逐一注入写入失败）、`TestPlatformQuoteAuthorizationAndBillingStates`（S2-D）、`TestPlatformBillingOutcomesAndAggregate`（S2-E）每个都在两种数据库上通过。把提交记录移出任务事务的变异会让 S2-A、S2-C 失败。S2-E 的“媒体恢复不再次扣费”由既有 `TestMediaRecoveryDownloadFailureResumesSameTaskAfterRestart` 覆盖，平台快照对恢复中状态的投影在 S3 补专项用例。
+
+### S3：可恢复的任务事件与媒体结果
+
+**依赖：** S2。**交付：** 统一快照、持久事件、订阅恢复和资源结果合同。
+
+**源码落点：** `task_output.go`、`task_terminal.go`、`task_media_recovery.go`、`task_media_assets.go`、`handler/routes.go`、`internal/assets/`；拟新增事件记录、仓储与迁移。
+
+- [x] S3-A：排队、执行、媒体保存、终态、费用变化均有版本化事件；事件不能早于相应数据库提交对外可见。
+- [x] S3-B：断线、进程重启和重复投递后可续读；旧事件不会倒退状态；游标过期返回明确的快照恢复指示。
+- [x] S3-C：模拟上游成功但转存失败，快照区分执行结果与资源未就绪；恢复后返回同一任务的可用资源，不重新生成。
+- [x] S3-D：账单待核对时 charged 未知，不能显示成 0 或已退款；费用终态变化可被消费者观察。
+- [x] S3-E：任务结果和事件无密钥/上游受保护配置；按用户鉴权；相同资源跨模块复用不复制物理文件。
+
+**用例：** `TestPlatformEventsResumeAndReplay`、`TestPlatformMediaRecoveryWithoutRegeneration`、`TestPlatformPendingBillingIsNotZero`。
+
+**S3 证据（SQLite + 隔离 PostgreSQL 17 / Redis 7.4，本地假上游）：** 上述三个用例加 `TestPlatformEventsExpiredCursorRequiresResync`（S3-B 过期游标）、`TestPlatformActionsFollowServerRules`（允许动作）、`TestPlatformSnapshotsAndEventsCarryNoSecrets`（S3-E）均在两种数据库通过；HTTP 层 `TestPlatformImageSubmitViaHTTP` 覆盖事件续读与动作 409。删除 SQLite 费用触发器的变异让 `TestPlatformEventsResumeAndReplay`、`TestPlatformPendingBillingIsNotZero` 失败。PostgreSQL 提交时取号已用探针验证：后开始先提交的事务拿到更小游标，回滚事务不占号。“事件不能早于数据库提交对外可见”由触发器与业务写入同事务保证，读取只返回已分配游标的行。
+
+### S4：TypeScript SDK 与四种生成能力
+
+**依赖：** S3。**交付：** 内部 TS SDK 覆盖查询模型、报价、上传、生成、等待、订阅、读取费用和资源。
+
+**源码落点：** 拟新增 `web/src/sdk/creation-platform/`；迁移 `api/generation-task.ts`、`task-center.ts`、`resources.ts` 中通用调用，业务包装层继续留在原位置。
+
+- [x] S4-A：文本、图片、视频、音频各完成一次通过真实后端的 SDK 调用；文本增量与最终文本可恢复，媒体返回稳定资源 ID。
+- [x] S4-B：SDK 在无 window、React 和 store 的测试环境可导入；认证和传输可注入，不读取业务配置和弹 UI 提示。
+- [x] S4-C：模拟请求响应丢失，重试使用同一幂等键；取消订阅只结束本地等待，刷新后仍能找回服务端任务。
+- [x] S4-D：取消、重试、恢复操作遵循服务端允许动作；HTTP 错误和业务信封错误统一为 PlatformError，未知状态不静默成功。
+- [x] S4-E：Go/TS 对同一组合同样例解释一致；类型检查和实际 SDK 包测试通过。
+
+**用例：** `sdk-no-browser-dependencies`、`sdk-submit-replay`、`sdk-four-capabilities`、`sdk-subscription-abort-keeps-task`。
+
+**S4 证据：** `web/test/creation-platform-sdk.test.ts`（11 个用例：核心文件无浏览器/React/store/axios 依赖、响应丢失后同键重投、无效请求不发送、HTTP 与信封错误统一为 PlatformError、未知状态与未知 reason 不当作成功、动作遵循服务端 actions、按 revision 续读并忽略旧事件、游标过期重读快照、中止不取消服务端任务、待核对实收缺失、上传与资源访问走注入传输）；`web/test/creation-platform-contract.test.ts` 与 Go 共用合同样例（S4-E）；S4-A 由 `TestPlatformSDKFourCapabilitiesAgainstRealBackend` 在真实路由、后台 worker 与本地假上游上驱动 `web/test/creation-platform-sdk.e2e.test.ts`，四种能力与参考图生成 5/5 通过，文本增量可从 text-deltas 读回。计划中的四个用例名对应上述测试块，未单独建同名文件。
+
+### S5：电商工作台首个业务迁移
+
+**依赖：** S4。**交付：** 商品参考素材到图片/视频作品，通过 SDK 完成；模板和批次继续由工作台管理。
+
+**源码落点：** `workbench_bridge.go`、`internal/workbench/tasks.go`；`pages/workbench/image-workbench-page.tsx`、`workbench-batches.ts`、`services/api/workbench.ts`。
+
+- [x] S5-A：真实工作台选择场景、参考图和模型生成图片与视频；报价、任务、作品、费用可相互追踪。
+- [x] S5-B：一个批次部分提交失败，可继续提交未接受的部分；已接受项不会因整批重试重新创建和授权费用。
+- [x] S5-C：刷新后恢复已接受任务与批次归组；不宣称未提交的部分会自动后台执行。
+- [x] S5-D：模板/参数复用、取消、下载、图片转视频不回归；自定义渠道按 D1 明确保留或迁移。
+
+**证据：** 真实页面操作记录＋对应任务/账单/资源/批次记录；禁止用脱离组件的 HTML 替代。
+
+**S5 证据（后端）：** `TestWorkbenchSubmitsThroughPlatform`（S5-A：工作台任务即平台任务，归属 ecommerce/批次，可按批次汇总，列表仍可见）；`TestWorkbenchBatchRetryDoesNotDuplicateAcceptedItems`（S5-B：中途积分不足后整批重投只新建未接受项，同槽改内容冲突；去掉批次键的变异会失败）；`TestWorkbenchWithoutBatchKeepsCreatingNewTasks`；既有 `TestCreateWorkbenchVideoTaskUsesReferenceModeAndPrice` 等工作台用例通过（S5-D）。S5-C 刷新恢复沿用服务端 `GET /workbench/tasks` 与 `clientContext.batchId` 分组，页面代码未改。真实页面操作待用户确认启动 dev server 后补录。
+
+### S6：短剧服务端编排迁移
+
+**依赖：** S3；可与 S4/S5 错峰实施，最终需使用 S0 的同一合同。**交付：** 短剧在 Go 内调用平台，不经过浏览器/HTTP 自调用。
+
+**源码落点：** `drama_orchestrator.go`、`drama_segment_video.go`、`drama_billing.go`、`drama_canvas.go`；保留 `internal/production/` 规则和 Drama 业务模型。
+
+- [x] S6-A：关闭浏览器后，短剧仍可推进文本、参考图、剧情段视频，既有成片渲染链路继续成功。
+- [x] S6-B：调度器重启/同一作业重复调度找回原任务；不重复生成或重复冻结费用。
+- [x] S6-C：手动媒体放行、审阅、尾帧续接和并行出片仍按设置工作；修改剧情段后旧结果不会覆盖新版本。
+- [x] S6-D：短剧与关联精修画布的费用归属正确，冻结/实收/退款不重复汇总；预算拒绝路径保持有效。
+
+**用例：** `TestDramaPlatformResumeWithoutBrowser`、`TestDramaPlatformJobReplay`、`TestDramaPlatformLateResultAndBudget`，并回归原短剧专项测试。
+
+**S6 证据：** `TestDramaPlatformSubmitsInGoWithBusinessAttribution`（S6-A：调度在 Go 内经平台提交、真实 worker 完成，无浏览器依赖）、`TestDramaPlatformJobReplay`（S6-B；去掉作业键的变异会失败）、`TestDramaPlatformBudgetAggregation`（S6-D：平台汇总与短剧预算口径一致）；原短剧专项用例全部通过（S6-C：样片门、手动放行、审阅、尾帧续接、预算暂停、剧情段修订）。计划中的测试名按实际职责调整，见左列。
+
+### S7：画布事务绑定与结果采用迁移
+
+**依赖：** S4，复用 S2 的事务端口。**交付：** 画布经适配器调用平台，保留命令回执、目标绑定、版本与引用校验。
+
+**源码落点：** `canvas_task_submitter.go`、`internal/canvas/tasks/service.go`、`materializer.go`、`internal/canvas/mediaversions/`；前端 `services/canvas-generation-consumer.ts` 与真实生成入口。
+
+- [x] S7-A：节点、分镜表行和批量单元的生成结果各自回到正确目标；任务、费用授权、绑定事务一致。
+- [x] S7-B：提交前后切换节点版本、删除目标、重拆分镜，迟到结果不会复活删除对象或覆盖新编辑；保留可追踪产物。
+- [x] S7-C：多窗口、Agent 与用户并发写入沿用实体版本和冲突规则；重放事件不会重复增加节点或版本。
+- [x] S7-D：短剧投送/显式采用/过期同步继续生效；生成完成与采用到短剧是独立动作。
+- [x] S7-E：Agent 相邻生成路径不被迁移绕过审批、权限和预算；不把 Agent 业务扩入首版 SDK。
+
+**证据：** 命令回执/数据库专项测试＋真实画布页面验证；视觉与状态结果分别记录。
+
+**S7 证据（后端）：** `TestCanvasSubmitIsPlatformTaskInSameTransaction`（S7-A：任务、冻结、画布绑定与平台记录一一对应，命令重放不新增记录）、`TestCanvasSubmitRollsBackWithPlatformRecord`（平台记录写失败整体回滚；改为事务外写入的变异会失败）；`internal/canvas/...` 全部用例通过（S7-B/S7-C：版本、删除目标、重拆、并发冲突、重放去重）；Agent 媒体与分镜用例通过（S7-D/S7-E）。真实画布页面验证待用户确认启动 dev server 后补录。
+
+### S8：接入收口与首版总验收
+
+**依赖：** S5、S6、S7。**交付：** 三类业务走同一能力合同，完成部署环境之外的隔离集成验收。
+
+- [x] S8-A：核对 S0 的全部调用清单，每个入口有迁移位置或显式例外；已迁移业务不再另写模型协议、价格计算和平台结果解析。
+- [x] S8-B：四种生成能力通过真实 SDK/HTTP/Go/Worker/存储链路；隔离模型服务返回确定性响应，验证上游调用次数和失败恢复。
+- [x] S8-C：SQLite 与 PostgreSQL＋Redis 的相关集成测试、架构守卫、TS 类型检查和真实前端构建通过。
+- [x] S8-D：旧在途任务能查询、完成、恢复媒体和结算；切片撤回不会丢任务、账单、事件和资源，撤回后不能重新执行已收费请求。
+- [x] S8-E：HTTP/OpenAPI、数据库说明、代码地图及待测试记录与实际实施同步；清除无调用的迁移桥接，不为凑覆盖率删除有效旧路径。
+- [x] S8-F：新增一个仅测试用的业务适配器可完成生成与结果接收，平台合同无需增加商品、镜头、节点专属字段。
+
+真实付费模型和实际对象存储只在指定环境与费用范围明确后验证；隔离模型通过不能标成真实供应商验收通过。
+
+**S8 证据：** 见 [验收记录](../reports/2026-11-05-internal-platform-sdk-acceptance.md)（`docs/reports` 按仓库规则不入库，在工作区内）。S8-D `TestCreationPlatformUpgradeKeepsInFlightLegacyTasks`；S8-F `TestPlatformSupportsNewBusinessWithoutContractChanges`；S8-C 全量回归仅余基线已有失败，前端 `bun run build` 通过。
+
+## 6. 依赖顺序与执行纪律
+
+顺序：`S0 → S1 → S2 → S3 → S4 → S5`；`S3 → S6`；`S4 → S7`；`S5＋S6＋S7 → S8`。
+
+本文不要求并行代理；默认逐片执行。每片使用已通过的上游接口，接口变更先更新合同与依赖片验收项。
+
+| 环节 | 执行要求                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------- |
+| 开始 | 读取目标源码和调用方，核对基线漂移与工作区状态，确认本片准确文件清单                        |
+| 测试 | 先添加能复现缺口的真实边界测试，确认失败原因；不因缺符号失败就当业务回归已覆盖              |
+| 实现 | 最小充分职责拆分，复用原有执行、计费与资源逻辑，不跨片扩功能                                |
+| 验证 | 运行本片专项测试、必要相邻回归；记录命令、退出码、数据库与依赖环境                          |
+| 迁移 | 新持久结构先添加；每业务切换单独评估。不得影子双写付费任务或生成请求                        |
+| 回退 | 有在途请求时先停止接收并完成/核对；保留幂等映射、账单和数据。无法安全降级时停留当前片并修复 |
+| 交付 | 仅证据满足才勾选；说明未验证部分，待用户明确授权后再提交/推送/部署                          |
+
+验证命令模板（在对应目录执行；新增用例落地后固定文件名与过滤表达式）：
+
+```text
+backend/: go test ./internal/app -run '<本片准确测试名>' -count=1
+backend/: go test ./internal/repository -run '<本片准确测试名>' -count=1
+backend/: go test ./internal/architecture -count=1
+web/: bun test <本片实际测试文件>
+web/: bun run typecheck
+web/: bun run build
+```
+
+数据库与真实跨进程验证必须使用隔离数据目录、数据库和存储。推送前检查以实施分支当时的 AGENTS.md 和 CI 为准；本文不替代仓库门禁。
+
+## 7. 验收证据与最终完成标准
+
+每片在实际执行时复制以下表格，验收记录写入同主题 reports 文档；不提前创建空的“通过报告”。
+
+| 字段          | 必填内容                                                    |
+| ------------- | ----------------------------------------------------------- |
+| 切片/代码版本 | S 编号、分支与实际提交；未提交则明确记录工作区状态          |
+| 验收项        | 对应 Sx-A 等 ID，逐项通过/失败/未验证                       |
+| 环境          | 数据库、Redis、Worker、模型服务类型、存储类型、前端构建版本 |
+| 验证证据      | 精确命令、退出码、日志位置、任务/订单/事件/资源对应关系     |
+| 异常演练      | 注入故障、响应丢失、重启、并发、跨用户场景及实际结果        |
+| 页面证据      | 电商/短剧/画布真实路由和操作结果，必要截图；未做则明确说明  |
+| 风险与回退    | 在途数据处理、兼容范围、回退验证结果和遗留项                |
+
+首版完成必须同时满足：
+
+- [ ] F1：S0–S8 全部强制项有证据，无未关闭的首版范围决策。
+- [x] F2：短剧、电商、画布使用同一能力合同，业务模型、编排和采用继续由业务维护。
+- [x] F3：网络重投、并发和重启不重复创建已接受请求的任务或费用授权。
+- [x] F4：业务能可靠找回任务、恢复事件、取得可用资源，并区分费用冻结与实收。
+- [x] F5：失败、费用不明、越权、资源未就绪和陈旧采用均返回真实状态，不伪造成功或 0 费用。
+- [x] F6：新增业务无需修改平台合同增加业务专属字段，Go 与 TS 两种接入均成立。
+- [x] F7：现有 Agent、短剧成片、自定义渠道等已登记相邻能力无未说明回归。
+- [ ] F8：隔离集成、真实页面、实际供应商/存储验证分别记录；未做的外部验收不得被概括为全部上线验证通过。
+
+当前进度：仅本设计与分片验收文档已形成；实现、测试、迁移、供应商验证和部署均未执行。

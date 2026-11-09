@@ -256,6 +256,8 @@ HTTP 请求 -> handler -> service（稳定导入面 / 别名）-> app（组合�
 
 `internal/service` 只再导出 `internal/app` 的类型、常量和包级函数，handler/cmd 仍 import `internal/service`。组合根和尚未拆出的业务实现在 `internal/app`。已抽出的域包不得 import `service` 或 `app`（防回环），由 `internal/architecture` 的依赖规则强制。共享错误码与 ID/字符串工具在 `internal/kernel`。
 
+创作平台：TS SDK 在 `web/src/sdk/creation-platform`（`contract.ts` 合同与校验、`transport.ts` 可注入传输与 fetch 实现、`client.ts` 提交重投、等待与动作；`http-transport.ts` 是唯一依赖应用 `http.raw` 的适配）；合同与端口在 `internal/creationplatform`（不导入 app/service/repository/model）；组合根实现在 `app/creation_platform.go`（合同 → 既有 `CreateTask` 输入、错误映射）与 `app/creation_platform_snapshot.go`（任务行 + 费用订单 → 快照）；报价、费用上限与幂等回放在 `app/creation_platform_billing.go`（准备阶段复用 `CreateTask` 的不落库模式，提交阶段显式写库）；提交记录与按归属汇总在 `repository/creation_platform.go`，经 `CreateTaskWithCreditReservation` / `CreateTaskWithActiveLimit` 与任务同事务写入；业务接入：适配器入口 `app/creation_platform_adapter.go`（`submitResolved`：已解析请求 → 幂等、准入、单事务提交）；电商工作台在 `workbench_bridge.go` 以“批次 ID + 序号”为键接入；短剧在 `drama_platform.go` 以“作业 ID + 已提交次数”为键接入；画布命令提交在 `canvas_task_submitter.go` 的 Commit 里与画布绑定同事务登记平台记录（`canvas_platform.go`）。事件读取、游标、清理与允许动作在 `app/creation_platform_events.go` 与 `repository/creation_platform_events.go`，事件由 `database/migrations_creation_platform.go` 的触发器写入；HTTP 适配在 `handler/creation_platform.go`。
+
 ### 目标业务域
 
 | 域包 | 职责 | 现状 |

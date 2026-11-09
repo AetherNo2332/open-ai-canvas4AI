@@ -1,0 +1,7 @@
+{
+  "code": "idempotency_conflict",
+  "reason": "conflict",
+  "message": "同一幂等键已用于不同内容的请求",
+  "retryable": false,
+  "requestId": "req-77"
+}

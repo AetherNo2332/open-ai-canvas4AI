@@ -1,0 +1,14 @@
+{
+  "contractVersion": 1,
+  "capability": "audio",
+  "operation": "text_to_speech",
+  "model": { "logicalModelId": "lm-voice" },
+  "prompt": "欢迎来到影策。",
+  "parameters": { "audioVoice": "female-warm", "audioFormat": "mp3" },
+  "business": {
+    "application": "canvas",
+    "objectType": "node",
+    "objectId": "audio-node-1"
+  },
+  "idempotencyKey": "canvas:audio-node-1:1"
+}

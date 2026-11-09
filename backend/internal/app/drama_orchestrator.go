@@ -104,6 +104,7 @@ type dramaRun struct {
 	newJobs    []model.DramaJob
 	// imageSizes 缓存本轮调度中“期望画幅 → 模型尺寸参数”的换算，避免每张参考图重复读取能力合同。
 	imageSizes map[string]dramaImageRequest
+	submitting *model.DramaJob // 正在派发的作业：平台提交据此生成幂等键与业务归属
 }
 
 func dramaJobKey(kind, episodeID, shotID, castID string) string {
@@ -204,7 +205,7 @@ type dramaSyncDeferred struct{ err error }
 func (e *dramaSyncDeferred) Error() string { return e.err.Error() }
 
 func (r *dramaRun) syncRunningJob(job *model.DramaJob) error {
-	task, err := r.s.repo.Task(job.TaskID)
+	task, err := r.taskFor(job)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return r.failJob(job, "任务记录丢失")
 	}
@@ -666,6 +667,7 @@ func (r *dramaRun) dispatch() error {
 			return nil
 		}
 		job := &queued[i]
+		r.submitting = job
 		task, skip, err := r.submit(job)
 		if err != nil {
 			message := err.Error()
@@ -1293,9 +1295,10 @@ func (r *dramaRun) createTaskWith(choice DramaModelChoice, capability string, op
 	}
 	input["config"], input["mode"], input["prompt"] = config, capability, prompt
 	req := CreateTaskRequest{ProjectID: r.project.ID, Type: "canvas_" + capability, Operation: operation, Prompt: prompt, LogicalModelID: choice.LogicalModelID, Model: choice.ModelKey, Input: input}
-	task, err := r.s.submitDramaTask(r.project.UserID, req)
-
-	return task, err
+	if r.s.dramaTaskHook != nil {
+		return r.s.dramaTaskHook(r.project.UserID, req, nil)
+	}
+	return r.submitDramaPlatformTask(req)
 }
 
 // imageRequest 把某类参考图的期望画幅与分辨率换算到该类所用图片模型真正支持的尺寸；一轮调度内按模型、画幅与档位缓存。
@@ -1560,17 +1563,6 @@ func (r *dramaRun) submitRender(job *model.DramaJob) (*model.Task, bool, error) 
 		return nil, false, err
 	}
 	return r.s.createDramaRenderTask(r.project, timeline)
-}
-
-func (s *Service) submitDramaTask(userID string, req CreateTaskRequest) (*model.Task, error) {
-	if s.dramaTaskHook != nil {
-		return s.dramaTaskHook(userID, req, nil)
-	}
-	task, err := s.CreateTask(userID, req)
-	if err == nil {
-		s.wakeTaskDispatcher()
-	}
-	return task, err
 }
 
 func (s *Service) createDramaRenderTask(project *model.Project, timeline renderProject) (*model.Task, bool, error) {
