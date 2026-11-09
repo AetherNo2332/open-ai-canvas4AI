@@ -393,7 +393,7 @@ func TestPlatformBillingOutcomesAndAggregate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := cp.BillingAggregate{Application: "ecommerce", ProjectID: "batch-9", TaskCount: 3, ReservedMicrocredits: 300_000, ChargedMicrocredits: 100_000, RefundedMicrocredits: 100_000, PendingReviewCount: 1}
+		want := cp.BillingAggregate{Application: "ecommerce", ProjectID: "batch-9", TaskCount: 3, ReservedMicrocredits: 100_000, ChargedMicrocredits: 100_000, RefundedMicrocredits: 100_000, PendingReviewCount: 1}
 		if aggregate != want {
 			t.Fatalf("aggregate = %+v, want %+v", aggregate, want)
 		}

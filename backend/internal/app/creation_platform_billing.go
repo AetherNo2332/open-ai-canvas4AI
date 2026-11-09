@@ -80,7 +80,9 @@ func (p *creationPlatform) quoteFor(_ string, req cp.GenerationRequest, task *mo
 		quote.BillingMode, quote.Quantity, quote.AmountMicrocredits = order.BillingMode, order.Quantity, order.AmountMicrocredits
 		quote.Estimated = order.BillingMode == "token"
 	}
-	quote.QuoteHash = creationHash([]any{signature, quote.BillingMode, quote.Quantity, quote.AmountMicrocredits, platformQuoteSpec(req)})
+	// 签名已覆盖全部线路的计费配置。随机选线的金额、模式与数量不能成为报价身份，
+	// 单次扣费仍由 MaxMicrocredits 独立约束。
+	quote.QuoteHash = creationHash([]any{signature, platformQuoteSpec(req)})
 	return quote, nil
 }
 

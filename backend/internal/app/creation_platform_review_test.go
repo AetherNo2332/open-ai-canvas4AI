@@ -99,13 +99,13 @@ func TestPlatformSnapshotRevisionNeverNewerThanState(t *testing.T) {
 	}
 }
 
-// 审查 F6：统一定价的逻辑模型有多条同价可用线路时，报价与提交各自随机选线，签名不能因此不同。
-func TestPlatformQuoteStableAcrossEqualPriceRoutes(t *testing.T) {
+// 不同价格线路随机选线时，未变化的价格目录与生成规格必须得到相同报价签名。
+func TestPlatformQuoteStableAcrossDifferentPriceRoutes(t *testing.T) {
 	f := newPlatformImageFixture(t)
 	if _, err := f.svc.UpdateFeatureAvailability(&model.User{ID: "admin", Role: model.UserRoleAdmin}, FeatureAvailability{TaskCenterEnabled: true, CreditsEnabled: true, FrontendModelsEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	// 第二条同价线路：同一渠道下另一个渠道模型，能力与价格相同。
+	// 第二条线路能力相同、价格不同。
 	var original model.ChannelModel
 	if err := f.db.First(&original, "id = ?", "platform-cm").Error; err != nil {
 		t.Fatal(err)
@@ -113,7 +113,8 @@ func TestPlatformQuoteStableAcrossEqualPriceRoutes(t *testing.T) {
 	second := original
 	second.ID, second.ModelKey, second.ProviderModelKey = "platform-cm-2", "gpt-image-2-b", "gpt-image-2-b"
 	second.PriceTiers = nil
-	for _, row := range []any{&second, &model.ChannelModelPriceTier{ID: "platform-tier-2", ChannelModelID: "platform-cm-2", SelectorKey: "{}", SelectorJSON: "{}", BillingMode: "fixed_request", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true}, &model.LogicalModelRoute{ID: "platform-route-2", LogicalModelRevisionID: "platform-revision", ChannelModelID: "platform-cm-2", Enabled: true, Weight: 1}} {
+	second.UnitPriceMicrocredits = 200_000
+	for _, row := range []any{&second, &model.ChannelModelPriceTier{ID: "platform-tier-2", ChannelModelID: "platform-cm-2", SelectorKey: "{}", SelectorJSON: "{}", BillingMode: "fixed_request", UnitPriceMicrocredits: 200_000, PriceConfigured: true, Enabled: true}, &model.LogicalModelRoute{ID: "platform-route-2", LogicalModelRevisionID: "platform-revision", ChannelModelID: "platform-cm-2", Enabled: true, Weight: 1}} {
 		if err := f.db.Create(row).Error; err != nil {
 			t.Fatal(err)
 		}

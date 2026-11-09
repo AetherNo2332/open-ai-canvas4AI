@@ -64,11 +64,11 @@ func (r *Repository) PlatformBillingTotals(userID, application, projectRef strin
 	}
 	err := query.Select(
 		"COUNT(DISTINCT ps.id) AS task_count, "+
-			"COALESCE(SUM(bo.amount_microcredits), 0) AS reserved_microcredits, "+
+			"COALESCE(SUM(CASE WHEN bo.id = t.billing_order_id AND bo.status NOT IN (?, ?) THEN bo.amount_microcredits ELSE 0 END), 0) AS reserved_microcredits, "+
 			"COALESCE(SUM(CASE WHEN bo.status = ? THEN bo.actual_amount_microcredits ELSE 0 END), 0) AS charged_microcredits, "+
 			"COALESCE(SUM(bo.refunded_amount_microcredits), 0) AS refunded_microcredits, "+
 			"COALESCE(SUM(CASE WHEN bo.status = ? THEN 1 ELSE 0 END), 0) AS pending_review_count",
-		model.BillingStatusSettled, model.BillingStatusUncertain,
+		model.BillingStatusSettled, model.BillingStatusRefunded, model.BillingStatusSettled, model.BillingStatusUncertain,
 	).Scan(&totals).Error
 	return totals, err
 }

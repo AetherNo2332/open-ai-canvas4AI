@@ -28,7 +28,7 @@ description: 信封、错误码与 OpenAPI
 - 幂等：作用域为 用户 + `business.application` + `idempotencyKey`。同键同内容（指纹不含 `traceId`）返回原任务且 `replayed=true`；同键不同内容返回 409 `idempotency_conflict`；不同用户或不同 application 的同键互不影响。并发同键只有一个事务成功，其余整体回滚后按成功者回放。
 - `GET /api/platform/v1/models?capability=`：当前用户分组可见、可直接提交的模型选择（系统渠道模型；开放前台模型时附带逻辑模型），`selection` 原样放进请求的 `model`。
 - 未给 `operation` 时由模型能力声明的默认操作决定（例如视频为 `text_to_video`）。文本默认流式，增量写入既有文本回放存储，可用 `GET /api/tasks/:id/text-deltas` 续读；`parameters.stream=false` 关闭。
-- `POST /api/platform/v1/quotes`：与提交同口径解析模型与价格，不冻结、不建任务。`quoteHash` 绑定价格签名（渠道模型、价格档、分组与计费设置）和生成规格；提交时带上它，价格或规格已变化返回 409 `quote_expired`。
+- `POST /api/platform/v1/quotes`：与提交同口径解析模型与价格，不冻结、不建任务。`quoteHash` 绑定价格签名（渠道模型、价格档、分组与计费设置）和生成规格；提交时带上它，价格或规格已变化返回 409 `quote_expired`。逻辑模型的签名覆盖全部启用线路，随机选中的线路金额不参与报价身份；单次费用授权继续由 `maxMicrocredits` 强校验。
 - `cost.maxMicrocredits` 是单次费用上限：报价超过上限返回 `cost_limit_exceeded`；上限写入费用订单，冻结与结算按它校验，后台不能静默突破。
 - `GET /api/platform/v1/billing/balance` 读取当前可用与冻结额度；`GET /api/platform/v1/billing/aggregate?application=&projectId=` 按归属汇总本人平台任务的冻结、实收、退款与待核对数。
 - `GET /api/platform/v1/events?taskId=|application=&projectId=&after=&limit=`：按提交顺序续读本人平台任务事件（`task.submitted` / `task.state_changed` / `task.billing_changed`），事件与状态在同一事务写入，回滚的事务不产生事件。`after` 取上一页 `nextCursor`，交付至少一次，消费者按事件 `id` 去重；快照 `revision` 等于该任务最新事件的游标，用于丢弃旧状态。事件保留 7 天（每个任务的最新事件永久保留）；游标早于清理水位时返回 `resyncRequired=true`，须先读快照再从 `nextCursor` 继续。

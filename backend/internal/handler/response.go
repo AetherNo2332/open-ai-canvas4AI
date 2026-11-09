@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	cp "yingce/backend/internal/creationplatform"
 	"yingce/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,10 @@ func fail(c *gin.Context, status int, err error) {
 }
 
 func failService(c *gin.Context, err error) {
+	if _, isPlatform := cp.AsError(err); isPlatform {
+		failPlatform(c, err)
+		return
+	}
 	var cooldown *service.EmailCodeCooldownError
 	if errors.As(err, &cooldown) {
 		c.Header("Retry-After", strconv.Itoa(cooldown.Seconds))
