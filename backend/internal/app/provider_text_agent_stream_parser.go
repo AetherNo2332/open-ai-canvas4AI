@@ -325,6 +325,9 @@ func (p *streamingAgentParser) result() (map[string]interface{}, error) {
 	if p.err != nil {
 		return nil, p.err
 	}
+	if !p.terminalEventSeen && !p.streamDoneSeen {
+		return nil, errors.New("上游流式响应提前中断：未收到结束标记")
+	}
 	if p.completed != nil {
 		result, err := parseAgentToolPayload(p.completed, p.protocol)
 		if err != nil {

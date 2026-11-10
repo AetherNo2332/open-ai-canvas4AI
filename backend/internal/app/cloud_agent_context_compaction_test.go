@@ -154,7 +154,7 @@ func TestCloudAgentCompactionResumesStepLoopWithCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	options, _ := taskInput["textOptions"].(map[string]any)
-	if options["stream"] != false || options["thinking"] != false || !strings.Contains(task.Prompt, "scriptDesign") {
+	if options["stream"] != false || options["thinkingLevel"] != ThinkingLevelOff || !strings.Contains(task.Prompt, "scriptDesign") {
 		t.Fatalf("original structured compaction contract was not routed to Go: %+v", taskInput)
 	}
 	checkpoint := agentcontext.Checkpoint{

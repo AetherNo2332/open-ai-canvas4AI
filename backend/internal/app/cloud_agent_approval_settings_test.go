@@ -211,6 +211,21 @@ func TestCloudAgentImageApprovalEditsAreValidatedAndIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	approvedRun, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvedState, err := cloudAgentDecode(approvedRun)
+	if err != nil || approvedState.Approval == nil {
+		t.Fatalf("edited approval checkpoint missing: %v", err)
+	}
+	var editedArgs cloudAgentMediaArgs
+	if err := json.Unmarshal([]byte(approvedState.Approval.Call.Function.Arguments), &editedArgs); err != nil {
+		t.Fatal(err)
+	}
+	if editedArgs.ImageResolution != settings.Quality || editedArgs.Quality != "" {
+		t.Fatalf("edited approval lost canonical resolution: quality=%q resolution=%q", editedArgs.Quality, editedArgs.ImageResolution)
+	}
 	var orders int64
 	db.Model(&model.BillingOrder{}).Count(&orders)
 	if orders != before {

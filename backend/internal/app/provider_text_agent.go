@@ -65,6 +65,7 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 	}
 	body["model"] = input.Config.Model
 	applyAgentOutputLimit(body, agentStepOutputLimit(input), protocol)
+	applyAgentStrictTools(body, input.TextOptions.StrictTools)
 	thinking := applyAgentThinking(body, input, protocol)
 	normalizeAgentToolChoice(body, thinking, protocol)
 	result, err := postAgentRequest(ctx, input, path, body, protocol)
@@ -167,6 +168,7 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 			return nil, errors.New("声明式 Agent 请求体必须是 JSON 对象")
 		}
 		applyAgentOutputLimit(body, agentStepOutputLimit(input), wire)
+		applyAgentStrictTools(body, input.TextOptions.StrictTools)
 		thinking := applyAgentThinking(body, input, wire)
 		normalizeAgentToolChoice(body, thinking, wire)
 		spec.Body = body

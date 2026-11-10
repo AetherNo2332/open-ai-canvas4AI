@@ -293,7 +293,7 @@ func TestCloudAgentTruncatedOutputEscalatesThenNeverPublishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options := stepTaskTextOptions(t, s, task); options["thinking"] != false {
+	if options := stepTaskTextOptions(t, s, task); options["thinkingLevel"] != ThinkingLevelOff {
 		t.Fatalf("重试请求没有关思考: %+v", options)
 	}
 

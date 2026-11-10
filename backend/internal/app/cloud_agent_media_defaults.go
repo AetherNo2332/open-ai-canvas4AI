@@ -22,6 +22,7 @@ func applyCloudAgentResolvedMediaDefaults(req *CreateTaskRequest, plan *cloudAge
 	plan.Args.Size = stringValue(config["size"])
 	if plan.Args.Mode == "image" {
 		plan.Args.Quality = stringValue(config["quality"])
+		plan.Args.ImageResolution = stringValue(config["imageResolution"])
 	}
 	if plan.Args.Mode == "video" {
 		plan.Args.Quality = stringValue(config["vquality"])
