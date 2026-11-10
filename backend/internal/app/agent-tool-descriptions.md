@@ -413,16 +413,16 @@ add/replace 必填：一两句话，跨会话仍成立
 
 ## generate_media_batch
 
-一次审批批量生成同一模式的占位节点。items 传节点 ID，提示词与参考连线取自节点。一张审批卡列明细、合计积分、并发与重试额度，批准后后台并发提交、逐条回写，结束后回执交回你。先用相同参数调 canvas_preflight。视频依赖关键帧时先跑关键帧批次。
+一次审批批量生成同模式占位节点。items 传节点 ID，提示词与参考取自节点。审批卡列明细、积分、并发和重试额度，批准后逐条提交回写，结束返回回执。先以相同参数调用 canvas_preflight，视频依赖关键帧时先生成关键帧。
 
 ## media_batch_control
 
-在已批准的批次额度内操作。continue 放行试跑后的其余条目。retry 重跑已结束条目，可改 prompt，规格保持批准值，成功条目在旁新建节点。cancel 取消未提交条目。status 查看进度。
+在已批准额度内操作。continue 放行试跑余项。retry 重跑已结束项，可改 prompt，规格保持批准值，成功项在旁新建节点。cancel 取消未提交项。status 查看进度。
 
 ## canvas_build_board
 
-按分镜一次搭好制作看板，包含总控说明、人物/场景/道具资产占位、每行关键帧与视频占位、按幕着色的背板，以及资产到关键帧、行到关键帧/视频、关键帧到视频首帧的连线。建占位不收费，提示词取行的 imageGenerationPrompt/videoMotionPrompt，缺省取 plotDescription。
+按分镜搭建总控、人物/场景/道具、关键帧、视频占位与分幕背板，连接资产到关键帧、行到产物、关键帧到视频首帧。占位不收费。提示词取 imageGenerationPrompt/videoMotionPrompt，缺省取 plotDescription。
 
 ## canvas_preflight
 
-批量生成前只读检查，参数同 generate_media_batch。检查节点能否提交、提示词、参考就绪与 @ 标签。带模型时再做无扣费准入，核对能力、报价和剩余预算。返回失败/警告数与逐条问题。
+批量只读检查，参数同 generate_media_batch。检查节点、提示词、参考就绪与 @ 标签。带模型时无扣费核对能力、报价与预算，返回失败/警告数及逐条问题。
