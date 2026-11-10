@@ -117,6 +117,10 @@ export function fromCanonical(snapshot: PiSnapshot, model: Model<any>): AgentMes
     if (role === "assistant") {
       const blocks: AssistantMessage["content"] = [];
       const text = textContent(source.content);
+      if (typeof source.reasoning_content === "string" || Array.isArray(source.reasoning_blocks)) {
+        blocks.push({ type: "thinking", thinking: typeof source.reasoning_content === "string" ? source.reasoning_content : "",
+          thinkingSignature: JSON.stringify({ wire: source.reasoning_wire, blocks: source.reasoning_blocks }) });
+      }
       if (text) blocks.push({ type: "text", text });
       const rawCalls = Array.isArray(source.tool_calls) ? source.tool_calls as PiToolCall[] : [];
       for (const call of rawCalls) {
@@ -152,9 +156,21 @@ export function toCanonical(messagesIn: readonly Message[], cacheKey?: string): 
       content: (message as unknown as Record<string, unknown>).canvasContent || textContent(message.content) });
     if (message.role === "assistant") {
       const calls = message.content.filter((block) => block.type === "toolCall").map(canvasToolCallToRaw);
+      const reasoning: Record<string, unknown> = {};
+      for (const block of message.content) {
+        if (block.type !== "thinking" || !block.thinkingSignature) continue;
+        try {
+          const saved = JSON.parse(block.thinkingSignature) as { wire?: string; blocks?: unknown[] };
+          if (saved.wire) {
+            reasoning.reasoning_content = block.thinking;
+            reasoning.reasoning_wire = saved.wire;
+            if (saved.blocks) reasoning.reasoning_blocks = saved.blocks;
+          }
+        } catch { /* Native provider signatures are opaque and remain in the Pi transcript. */ }
+      }
       messages.push({ role: "assistant",
         content: message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n"),
-        ...(calls.length ? { tool_calls: calls } : {}) });
+        ...reasoning, ...(calls.length ? { tool_calls: calls } : {}) });
     }
     if (message.role === "toolResult") messages.push({ role: "tool", tool_call_id: message.toolCallId,
       content: textContent(message.content) });

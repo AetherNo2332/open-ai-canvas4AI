@@ -14,13 +14,14 @@ type ResourceVariant string
 type DeliveryMode string
 
 const (
-	PurposeDisplay  AccessPurpose   = "display"
-	PurposeCopy     AccessPurpose   = "copy"
-	PurposeDownload AccessPurpose   = "download"
-	PurposeProcess  AccessPurpose   = "browser-process"
-	PurposeProvider AccessPurpose   = "provider-input"
-	VariantOriginal ResourceVariant = "original"
-	VariantPlayback ResourceVariant = "playback"
+	PurposeDisplay         AccessPurpose   = "display"
+	PurposeCopy            AccessPurpose   = "copy"
+	PurposeDownload        AccessPurpose   = "download"
+	PurposeProcess         AccessPurpose   = "browser-process"
+	PurposeEcommerceExport AccessPurpose   = "ecommerce-export"
+	PurposeProvider        AccessPurpose   = "provider-input"
+	VariantOriginal        ResourceVariant = "original"
+	VariantPlayback        ResourceVariant = "playback"
 	// VariantThumbnail 是画布展示档位；缩略图未生成前回落原件，保证请求不会因变体失败而退回平台重定向。
 	VariantThumbnail ResourceVariant = "thumbnail"
 	DeliveryCDN      DeliveryMode    = "cdn"
@@ -70,7 +71,7 @@ func NormalizeAccessOptions(options AccessOptions, allowProvider bool) (AccessOp
 		options.Variant = VariantOriginal
 	}
 	switch options.Purpose {
-	case PurposeDisplay, PurposeCopy, PurposeDownload, PurposeProcess:
+	case PurposeDisplay, PurposeCopy, PurposeDownload, PurposeProcess, PurposeEcommerceExport:
 	case PurposeProvider:
 		if !allowProvider {
 			return options, kernel.Forbidden("不允许请求模型输入凭据")
@@ -81,7 +82,7 @@ func NormalizeAccessOptions(options AccessOptions, allowProvider bool) (AccessOp
 	if options.Variant != VariantOriginal && options.Variant != VariantPlayback && options.Variant != VariantThumbnail {
 		return options, kernel.BadAuthRequest("资源变体无效")
 	}
-	if options.Purpose == PurposeCopy || options.Purpose == PurposeDownload || options.Purpose == PurposeProvider {
+	if options.Purpose == PurposeCopy || options.Purpose == PurposeDownload || options.Purpose == PurposeProvider || options.Purpose == PurposeEcommerceExport {
 		options.Variant = VariantOriginal
 	}
 	if options.Purpose != PurposeDownload {
@@ -104,27 +105,14 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 	if resource.Status != model.ResourceStatusReady {
 		return nil, AccessError(http.StatusConflict, "resource_not_ready", "资源尚未上传完成")
 	}
-	// 有效期来自后台「资源与请求策略」；未注入运行时策略时回落到存储层默认值（均为 4 小时）。
-	runtime := storage.NormalizeSettings(storage.Settings{Runtime: setting.Runtime}).Runtime
-	ttl := runtime.AccessURLTTL
-	if options.Purpose == PurposeProvider {
-		ttl = runtime.ProviderAccessURLTTL
+	if options.Purpose == PurposeEcommerceExport {
+		if err := validateEcommerceExportResource(resource); err != nil {
+			return nil, err
+		}
 	}
-	// 浏览器读取的签名地址按固定时间窗对齐：窗口内同一对象的签名地址逐字节相同，
-	// 刷新页面或多实例签发都能命中浏览器 HTTP 缓存，不会重复从对象存储拉取字节。
-	signedAt := time.Time{}
-	if browserCacheable(options.Purpose) {
-		signedAt = alignedSigningTime(now, ttl)
-	}
-	expires := now.Add(ttl)
-	if !signedAt.IsZero() {
-		expires = signedAt.Add(ttl)
-	}
-	if !options.ExpiresAt.IsZero() && options.ExpiresAt.Before(expires) {
-		expires = options.ExpiresAt
-	}
-	if !expires.After(now) {
-		return nil, kernel.Forbidden("资源授权已过期")
+	signedAt, expires, err := resourceAccessValidity(setting, options, now)
+	if err != nil {
+		return nil, err
 	}
 	access := &ResourceAccess{ResourceID: resource.ID, RequestedVariant: options.Variant, ActualVariant: VariantOriginal,
 		IssuedAt: now, ExpiresAt: &expires, RefreshAt: now.Add(expires.Sub(now) * 4 / 5), Revision: resource.ETag + ":" + resource.PlaybackStatus + ":" + storage.DeliveryRevision(setting)}
@@ -138,7 +126,11 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 	if options.Variant == VariantThumbnail {
 		access.FallbackReason = "thumbnail_not_ready"
 	}
-	if resource.Provider == "local" {
+	if options.Purpose == PurposeEcommerceExport {
+		access.Delivery = DeliveryProxy
+		access.FallbackReason = "ecommerce_export_processing"
+		access.ExpiresAt = nil
+	} else if resource.Provider == "local" {
 		access.Delivery = DeliveryLocal
 	} else if !InlineMediaType(resource.MimeType) {
 		// A redirect cannot enforce our attachment and sandbox response headers.
@@ -202,6 +194,18 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 	return access, nil
 }
 
+func validateEcommerceExportResource(resource *model.Resource) error {
+	if resource.Kind != "image" || resource.Size > 32*1024*1024 || resource.Size <= 0 {
+		return AccessError(http.StatusBadRequest, "ecommerce_export_invalid", "电商导出仅支持32 MB以内的PNG、JPEG和WebP商品图片")
+	}
+	switch resource.MimeType {
+	case "image/png", "image/jpeg", "image/webp":
+		return nil
+	default:
+		return AccessError(http.StatusBadRequest, "ecommerce_export_invalid", "电商导出仅支持32 MB以内的PNG、JPEG和WebP商品图片")
+	}
+}
+
 // browserCacheable 标记浏览器直接读取字节、值得复用 HTTP 缓存的用途。
 // 下载地址携带一次性的 Content-Disposition，模型输入由上游服务读取，二者仍按当前时间签发。
 func browserCacheable(purpose AccessPurpose) bool {
@@ -217,4 +221,30 @@ func alignedSigningTime(now time.Time, ttl time.Duration) time.Time {
 	}
 	unix := now.UTC().UnixNano()
 	return time.Unix(0, unix-unix%int64(window)).UTC()
+}
+
+func resourceAccessValidity(setting storage.Settings, options AccessOptions, now time.Time) (time.Time, time.Time, error) {
+	// 有效期来自后台「资源与请求策略」；未注入运行时策略时回落到存储层默认值（均为 4 小时）。
+	runtime := storage.NormalizeSettings(storage.Settings{Runtime: setting.Runtime}).Runtime
+	ttl := runtime.AccessURLTTL
+	if options.Purpose == PurposeProvider {
+		ttl = runtime.ProviderAccessURLTTL
+	}
+	// 浏览器读取的签名地址按固定时间窗对齐：窗口内同一对象的签名地址逐字节相同，
+	// 刷新页面或多实例签发都能命中浏览器 HTTP 缓存，不会重复从对象存储拉取字节。
+	signedAt := time.Time{}
+	if browserCacheable(options.Purpose) {
+		signedAt = alignedSigningTime(now, ttl)
+	}
+	expires := now.Add(ttl)
+	if !signedAt.IsZero() {
+		expires = signedAt.Add(ttl)
+	}
+	if !options.ExpiresAt.IsZero() && options.ExpiresAt.Before(expires) {
+		expires = options.ExpiresAt
+	}
+	if !expires.After(now) {
+		return time.Time{}, time.Time{}, kernel.Forbidden("资源授权已过期")
+	}
+	return signedAt, expires, nil
 }

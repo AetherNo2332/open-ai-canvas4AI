@@ -1,17 +1,54 @@
+import { currentLocale, translate } from "@/i18n";
+import { DEFAULT_LOCALE } from "@/i18n/locales";
+
 /**
- * 后端机器可读错误原因（`ApiError.reason`）。前端按 reason 分支，不解析 msg。
- * 完整列表与 HTTP 状态见 `docs/content/docs/backend/http-api.mdx` 的“错误码”一节。
+ * 后端稳定错误原因（backend/internal/kernel/error_codes.go 的 ErrorReason）。
+ * 页面应按 reason / code 分支，不要解析 msg。
  */
 export const API_ERROR_REASONS = {
-    /** `POST /agent/runs/:id/undo`：本次运行改过的内容之后又被编辑过，撤销未写入。 */
     agentUndoConflict: "agent_undo_conflict",
-    /** `POST /agent/runs/:id/director-preview`：运行不属于当前用户，或 requestId 未知、已完成、已超时。 */
     directorPreviewNotFound: "director_preview_not_found",
-    /** `POST /agent/runs/:id/permission`：运行已结束，所选权限只用于下一轮。 */
     agentRunFinished: "agent_run_finished",
-    /** `POST /agent/runs/:id/permission`：子代理固定为只读，不能切换权限。 */
     agentSubagentPermissionFixed: "agent_subagent_permission_fixed",
     agentApprovalNotPermitted: "agent_approval_not_permitted",
 } as const;
 
-export type ApiErrorReason = (typeof API_ERROR_REASONS)[keyof typeof API_ERROR_REASONS];
+export const STANDARD_API_ERROR_REASONS = [
+    "invalid_argument",
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "project_name_conflict",
+    "skill_version_conflict",
+    "canvas_history_resources_missing",
+    "failed_precondition",
+    "quota_exceeded",
+    "storage_capacity_exceeded",
+    "storage_read_only",
+    "drama_budget_exhausted",
+    "drama_segment_changed",
+    "drama_episode_confirm_required",
+    "agent_interjection_run_finished",
+    "agent_interjection_already_delivered",
+    "agent_run_state_busy",
+    "rate_limited",
+    "account_not_registered",
+    "unavailable",
+    "timeout",
+    "internal",
+    "bad_gateway",
+    "upstream_dns_failed",
+] as const;
+
+export type ApiErrorReason = (typeof STANDARD_API_ERROR_REASONS)[number] | (typeof API_ERROR_REASONS)[keyof typeof API_ERROR_REASONS];
+
+// 这些原因的含义足够明确，非中文界面可直接用本地化文案替换后端中文 msg；
+// 其他原因（invalid_argument、conflict 等）的具体信息只在 msg 里，保留原文。
+const LOCALIZED_REASONS = new Set<string>(["unauthorized", "forbidden", "not_found", "rate_limited", "quota_exceeded", "storage_capacity_exceeded", "storage_read_only", "unavailable", "timeout", "bad_gateway", "upstream_dns_failed", "internal"]);
+
+/** 返回面向用户的错误文案：中文界面保留后端原文，其他语言对明确的 reason 使用本地化文案。 */
+export function localizedApiErrorMessage(reason: string | undefined, fallback: string): string {
+    if (!reason || currentLocale() === DEFAULT_LOCALE || !LOCALIZED_REASONS.has(reason)) return fallback;
+    return translate(`errors.reason.${reason}`);
+}

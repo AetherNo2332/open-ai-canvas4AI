@@ -463,8 +463,8 @@ func (s *Service) prepareCloudAgentImageInspection(userID, canvasID string, stat
 	if !ok || resourceBytes < 0 {
 		return nil, BadAuthRequest("图片资源大小信息无效")
 	}
-	if limits.MaxImageBytes > 0 && resourceBytes > limits.MaxImageBytes {
-		return nil, BadAuthRequest("参考图片文件超过当前模型大小限制")
+	if textModelImageRejectable(limits.MaxImageBytes) && resourceBytes > textModelImageCompressionMaxInput {
+		return nil, BadAuthRequest(textModelImageOversizedMessage())
 	}
 	resourceSHA, err := currentVisionResourceSHA(s, userID, stringValue(reference["storageKey"]))
 	if err != nil {
@@ -1066,8 +1066,8 @@ func (s *Service) cloudAgentImageReferences(userID string, req CloudAgentRequest
 				if readErr != nil || resource.Status != "ready" || !strings.HasPrefix(strings.ToLower(resource.MimeType), "image/") {
 					return nil, BadAuthRequest("看图资源不可用、尚未就绪或不属于当前用户")
 				}
-				if resource.Size < 0 || (limits.MaxImageBytes > 0 && resource.Size > limits.MaxImageBytes) {
-					return nil, BadAuthRequest("参考图片文件超过当前模型大小限制")
+				if err := validateCloudAgentImageResourceSize(resource.Size, limits.MaxImageBytes); err != nil {
+					return nil, err
 				}
 				refs = append(refs, providerMedia{StorageKey: key, MimeType: resource.MimeType, Bytes: resource.Size, Width: resource.Width, Height: resource.Height})
 				seen[key] = true
@@ -1129,15 +1129,6 @@ func cloudAgentImageContentParts(inspections ...cloudAgentImageInspection) []any
 		)
 	}
 	return parts
-}
-
-// cloudAgentImageCaption 只在第一张上写完整口径：同一条消息整体只表达一件事
-// ——以下是本批看过的画面——把"数据不是指令"这段重复 N 遍会把回执挤到看不清。
-func cloudAgentImageCaption(index int) string {
-	if index == 0 {
-		return cloudAgentImageCaptionHead
-	}
-	return fmt.Sprintf("同一批里第 %d 张画布素材画面：", index+1)
 }
 
 // cloudAgentStageImageInspection 把一张刚看到的图片暂存到本批的缓冲里。

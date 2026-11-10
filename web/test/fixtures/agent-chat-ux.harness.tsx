@@ -25,7 +25,7 @@ afterAll(() => dom.happyDOM.abort());
 const React = await import("react");
 const { act } = React;
 const { createRoot } = await import("react-dom/client");
-const { AgentChatMessage, AgentMessageList, agentChatRenderProbe } = await import("@/components/canvas/canvas-cloud-agent-chat-ui");
+const { AgentChatMessage, AgentMessageList, AgentChatComposer, agentChatRenderProbe } = await import("@/components/canvas/canvas-cloud-agent-chat-ui");
 const { sendAgentReplyOption } = await import("@/components/canvas/canvas-agent-reply-options");
 const { requestAgentPrefill, takeAgentPrefill, settleAgentPrefill, useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
 const { canvasThemes } = await import("@/lib/canvas-theme");
@@ -39,6 +39,66 @@ function mount() {
     document.body.append(host);
     return { host, root: createRoot(host) };
 }
+
+test("upstream message copy resolves references and keeps focus on the real message action", async () => {
+    const { host, root } = mount();
+    const copied: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+            writeText: async (text: string) => {
+                copied.push(text);
+            },
+        },
+    });
+    await act(async () => root.render(<AgentChatMessage item={{ id: "u-copy", role: "user", text: "参考 @[node:image-1790-a]" }} references={[reference]} theme={canvasThemes.light} />));
+    const button = host.querySelector<HTMLButtonElement>('button[aria-label="复制这条消息"]')!;
+    await act(async () => {
+        button.click();
+        await settle();
+    });
+    expect(copied).toEqual(["参考 @封面"]);
+    expect(button.textContent).toContain("已复制");
+    expect(document.activeElement).toBe(button);
+    await act(async () => root.unmount());
+    host.remove();
+});
+
+test("upstream composer keeps server queue and attachment controls on the real component", async () => {
+    const { host, root } = mount();
+    const sent: boolean[] = [];
+    const removed: string[] = [];
+    const render = (blockReason?: string) =>
+        root.render(
+            <AgentChatComposer
+                prompt="参考图"
+                running
+                sendMode="queue"
+                placeholder="输入"
+                theme={canvasThemes.dark}
+                onPromptChange={() => {}}
+                onSubmit={(alternate) => sent.push(Boolean(alternate))}
+                attachments={[{ id: "image-1790-a", nodeId: "image-1790-a", name: "封面", url: "https://example.com/image.png" }]}
+                onRemoveAttachment={(id) => removed.push(id)}
+                onAddFiles={() => {}}
+                queuedMessages={<div data-server-queue>服务端待发消息</div>}
+                blockReason={blockReason}
+            />,
+        );
+    await act(async () => render());
+    expect(host.querySelector("[data-server-queue]")?.textContent).toBe("服务端待发消息");
+    expect(host.querySelector('[aria-label="附件 1 个"]')).not.toBeNull();
+    const send = host.querySelector<HTMLButtonElement>(".agent-composer-send")!;
+    expect(send.getAttribute("aria-label")).toBe("排队");
+    await act(async () => send.click());
+    expect(sent).toEqual([false]);
+    await act(async () => host.querySelector<HTMLButtonElement>(".agent-attachment-remove")!.click());
+    expect(removed).toEqual(["image-1790-a"]);
+    await act(async () => render("图片正在上传到画布，请稍候"));
+    expect(send.disabled).toBe(true);
+    await act(async () => root.unmount());
+    host.remove();
+});
 
 test("clicking a node chip focuses that node through the store callback", async () => {
     const { host, root } = mount();

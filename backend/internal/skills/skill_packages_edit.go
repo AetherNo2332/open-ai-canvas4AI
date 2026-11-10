@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -65,54 +66,49 @@ func (s *Service) EditSkillPackageFiles(userID string, skillID string, req Skill
 	if err != nil {
 		return nil, err
 	}
-	if skill.SourceType == "github" {
-		appErr := kernel.NewAppError(http.StatusConflict, "GitHub 技能以仓库内容为准，请在仓库修改后执行同步")
-		appErr.Reason = kernel.ReasonFailedPrecondition
-		return nil, appErr
-	}
-	if len(req.Operations) == 0 {
-		return nil, kernel.BadAuthRequest("没有需要保存的文件修改")
-	}
-	if len(req.Operations) > maxSkillEditOperations {
-		return nil, kernel.BadAuthRequest("单次最多提交 256 个文件操作")
-	}
-	baseVersionID := strings.TrimSpace(req.BaseVersionID)
-	if baseVersionID != skill.CurrentVersionID {
-		return nil, skillVersionConflict(skill.CurrentVersionID)
-	}
-	snapshot, err := s.loadSkillPackageSnapshot(userID, skill.ID)
+	files, changed, err := s.editSkillPackage(skill, req, nil)
 	if err != nil {
 		return nil, err
 	}
-	current := snapshot.contents
-	if current == nil {
-		current, err = readSkillArchiveEntries(s.dataDir, snapshot.version.PackageKey)
-		if err != nil {
-			return nil, err
-		}
-	}
-	next := make(map[string][]byte, len(current)+len(req.Operations))
-	for filePath, content := range current {
-		next[filePath] = content
-	}
-	for index, operation := range req.Operations {
-		if err := applySkillFileOperation(next, operation); err != nil {
-			return nil, prefixSkillOperationError(index, err)
-		}
-	}
-	if err := validateSkillPackageTree(next); err != nil {
+	item, err := s.SkillDetail(userID, skill.ID)
+	if err != nil {
 		return nil, err
+	}
+	return &SkillPackageEditResult{Skill: item, Files: files, Changed: changed}, nil
+}
+
+// editSkillPackage 在已完成权限校验的技能上应用文件操作并以乐观锁生成新版本，返回最新文件清单。
+// adminEditedAt 非空表示管理员修改，会随新版本一起写入 admin_content_edited_at。
+func (s *Service) editSkillPackage(skill *model.Skill, req SkillPackageEditRequest, adminEditedAt *time.Time) ([]SkillPackageFileItem, bool, error) {
+	if skill.SourceType == "github" {
+		appErr := kernel.NewAppError(http.StatusConflict, "GitHub 技能以仓库内容为准，请在仓库修改后执行同步")
+		appErr.Reason = kernel.ReasonFailedPrecondition
+		return nil, false, appErr
+	}
+	if len(req.Operations) == 0 {
+		return nil, false, kernel.BadAuthRequest("没有需要保存的文件修改")
+	}
+	if len(req.Operations) > maxSkillEditOperations {
+		return nil, false, kernel.BadAuthRequest("单次最多提交 256 个文件操作")
+	}
+	baseVersionID := strings.TrimSpace(req.BaseVersionID)
+	if baseVersionID != skill.CurrentVersionID {
+		return nil, false, skillVersionConflict(skill.CurrentVersionID)
+	}
+	snapshot, err := s.skillPackageSnapshot(skill)
+	if err != nil {
+		return nil, false, err
+	}
+	next, err := s.applySkillPackageEdits(snapshot, req.Operations)
+	if err != nil {
+		return nil, false, err
 	}
 	hash, total := contentHashAndSize(next)
 	if total > maxSkillPackageBytes {
-		return nil, kernel.BadAuthRequest("技能包总大小不能超过 20MB")
+		return nil, false, kernel.BadAuthRequest("技能包总大小不能超过 20MB")
 	}
 	if !snapshot.legacy && hash == snapshot.version.ContentHash {
-		item, err := s.SkillDetail(userID, skill.ID)
-		if err != nil {
-			return nil, err
-		}
-		return &SkillPackageEditResult{Skill: item, Files: skillFileItems(snapshot), Changed: false}, nil
+		return skillFileItems(snapshot), false, nil
 	}
 
 	metadata := parseSkillPackageMetadata(next["SKILL.md"])
@@ -124,7 +120,7 @@ func (s *Service) EditSkillPackageFiles(userID string, skillID string, req Skill
 	}
 	archive, err := finalizeSkillArchive(next, metadata)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	sourceType := strings.TrimSpace(skill.SourceType)
 	switch {
@@ -135,18 +131,45 @@ func (s *Service) EditSkillPackageFiles(userID string, skillID string, req Skill
 		sourceType = "zip"
 	}
 	skill.Instruction = string(next["SKILL.md"])
+	if adminEditedAt != nil {
+		skill.AdminContentEditedAt = adminEditedAt
+	}
 	if err := s.addSkillArchiveVersionIfCurrent(skill, archive, sourceType, baseVersionID); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	item, err := s.SkillDetail(userID, skill.ID)
+	latest, err := s.repo.SkillAnyStatus(skill.ID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	files, err := s.SkillPackageFiles(userID, skill.ID)
+	saved, err := s.skillPackageSnapshot(latest)
 	if err != nil {
+		return nil, false, err
+	}
+	return skillFileItems(saved), true, nil
+}
+
+func (s *Service) applySkillPackageEdits(snapshot *skillPackageSnapshot, operations []SkillPackageFileOperation) (map[string][]byte, error) {
+	var err error
+	current := snapshot.contents
+	if current == nil {
+		current, err = readSkillArchiveEntries(s.dataDir, snapshot.version.PackageKey)
+		if err != nil {
+			return nil, err
+		}
+	}
+	next := make(map[string][]byte, len(current)+len(operations))
+	for filePath, content := range current {
+		next[filePath] = content
+	}
+	for index, operation := range operations {
+		if err := applySkillFileOperation(next, operation); err != nil {
+			return nil, prefixSkillOperationError(index, err)
+		}
+	}
+	if err := validateSkillPackageTree(next); err != nil {
 		return nil, err
 	}
-	return &SkillPackageEditResult{Skill: item, Files: files, Changed: true}, nil
+	return next, nil
 }
 
 func (s *Service) addSkillArchiveVersionIfCurrent(skill *model.Skill, archive skillPackageArchive, sourceType string, baseVersionID string) error {
@@ -171,7 +194,7 @@ func (s *Service) addSkillArchiveVersionIfCurrent(skill *model.Skill, archive sk
 	}
 	if !applied {
 		removePackage()
-		latest, latestErr := s.repo.Skill(skill.ID)
+		latest, latestErr := s.repo.SkillAnyStatus(skill.ID)
 		if latestErr != nil {
 			return skillVersionConflict("")
 		}

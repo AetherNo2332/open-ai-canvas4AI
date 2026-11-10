@@ -207,6 +207,10 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 	if run.Status == "waiting_approval" && state.Approval != nil && state.Approval.Decision == "" {
 		return &PiToolReceipt{CallID: callID, Pending: true}, nil
 	}
+	if batch := state.MediaBatch; batch.active() && batch.CallID == callID {
+		s.startCloudAgentMediaBatchRunner(userID, runID)
+		return &PiToolReceipt{CallID: callID, Pending: true}, nil
+	}
 	var advanceErr error
 	if cloudAgentLegacyBlockingMedia(&state) {
 		advanceErr = s.executeCloudAgentMediaCall(run, &state, state.Calls[state.CallIndex])

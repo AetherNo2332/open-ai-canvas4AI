@@ -71,7 +71,11 @@ func (s *Service) cloudAgentModelIntentFromDocument(userID, projectID, arguments
 	if a.Mode == "video" && rowDuration > 0 {
 		refs["config"] = map[string]any{"videoSeconds": strconv.Itoa(rowDuration)}
 	}
-	intent := ModelRequestIntentFromTaskInput(refs, "canvas_"+a.Mode, cloudAgentMediaOperation(a.Mode, refs))
+	operation := cloudAgentMediaOperation(a.Mode, refs)
+	if a.Mode == "video" {
+		operation = ""
+	}
+	intent := ModelRequestIntentFromTaskInput(refs, "canvas_"+a.Mode, operation)
 	return &intent, nil
 }
 

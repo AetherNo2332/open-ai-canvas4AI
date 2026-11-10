@@ -12,10 +12,17 @@ import { DEFAULT_CANVAS_APPEARANCE, agentCopy } from "@/lib/canvas/agent-appeara
 const noop = () => {};
 
 test("pending messages expose their first preview and accessible actions without expanding", () => {
-    const queue: AgentMessageQueue = { conversationId: "test", canvasId: "test", revision: 1, paused: false, latestRunId: "test", items: [
-        { id: "1", conversationId: "test", canvasId: "test", sequence: 1, revision: 1, mode: "queue", status: "queued", prompt: "先补充第二场", createdAt: "", updatedAt: "" },
-        { id: "2", conversationId: "test", canvasId: "test", sequence: 2, revision: 1, mode: "queue", status: "queued", prompt: "再补充第三场", createdAt: "", updatedAt: "" },
-    ] };
+    const queue: AgentMessageQueue = {
+        conversationId: "test",
+        canvasId: "test",
+        revision: 1,
+        paused: false,
+        latestRunId: "test",
+        items: [
+            { id: "1", conversationId: "test", canvasId: "test", sequence: 1, revision: 1, mode: "queue", status: "queued", prompt: "先补充第二场", createdAt: "", updatedAt: "" },
+            { id: "2", conversationId: "test", canvasId: "test", sequence: 2, revision: 1, mode: "queue", status: "queued", prompt: "再补充第三场", createdAt: "", updatedAt: "" },
+        ],
+    };
     const html = renderToStaticMarkup(<AgentMessageQueueList queue={queue} onEdit={async () => true} onPromote={async () => true} onRemove={async () => true} onResume={async () => true} onRetry={noop} />);
     expect(html).toContain("先补充第二场");
     expect(html).not.toContain("再补充第三场");
@@ -24,9 +31,24 @@ test("pending messages expose their first preview and accessible actions without
 });
 
 test("Skills uses only an icon and active color while retaining its accessible count and dialog state", () => {
-    const html = renderToStaticMarkup(<AgentHeader theme={canvasThemes.dark} hasMessages statusLabel="运行中" statusColor="green" nodeCount={12}
-        onNew={noop} onHistory={noop} onSettings={noop} onCollapse={noop} onExport={noop} exporting={false}
-        skillsOpen selectedSkillCount={3} onSkills={noop} />);
+    const html = renderToStaticMarkup(
+        <AgentHeader
+            theme={canvasThemes.dark}
+            hasMessages
+            statusLabel="运行中"
+            statusColor="green"
+            nodeCount={12}
+            onNew={noop}
+            onHistory={noop}
+            onSettings={noop}
+            onCollapse={noop}
+            onExport={noop}
+            exporting={false}
+            skillsOpen
+            selectedSkillCount={3}
+            onSkills={noop}
+        />,
+    );
     const skillsButton = html.match(/<button\b[^>]*class="[^"]*\bagent-header-skills\b[^"]*"[^>]*>[\s\S]*?<\/button>/)?.[0];
     expect(skillsButton).toBeDefined();
     expect(skillsButton).toContain("lucide-sparkles");
@@ -83,7 +105,7 @@ test("compact send button preserves empty-draft and sending guards", () => {
         const html = renderToStaticMarkup(<AgentChatComposer prompt={prompt} sending={sending} placeholder="聊聊想法" theme={canvasThemes.dark} onPromptChange={noop} onSubmit={noop} />);
         const button = html.match(/<button\b[^>]*class="agent-composer-send [^"]*"[^>]*>/)?.[0];
         expect(button).toBeDefined();
-        expect(button).toContain("size-7");
+        expect(button).toContain("h-7");
         expect(button?.includes('disabled=""')).toBe(disabled);
         expect(button).not.toContain("box-shadow:");
     }

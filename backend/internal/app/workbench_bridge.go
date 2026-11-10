@@ -108,15 +108,11 @@ func (s *Service) SetWorkbenchPresetEnabled(actor *model.User, id string, enable
 }
 
 func (s *Service) CreateWorkbenchTask(userID string, req WorkbenchTaskInput, traceID, requestID string) (*model.Task, error) {
-	if req.Kind == WorkbenchKindImage {
-		if err := s.RequireFeature(FeatureImageWorkbench); err != nil {
-			return nil, err
-		}
-	} else if req.Kind == WorkbenchKindVideo {
-		if err := s.RequireFeature(FeatureVideoWorkbench); err != nil {
-			return nil, err
-		}
-	} else {
+	projectID := strings.TrimSpace(req.EcommerceProjectID)
+	if err := s.requireTaskGenerationFeatures(userID, "", "canvas_"+req.Kind, "", req.Kind, map[string]any{"metadata": map[string]any{"ecommerceProjectId": projectID}}); err != nil {
+		return nil, err
+	}
+	if req.Kind != WorkbenchKindImage && req.Kind != WorkbenchKindVideo {
 		return nil, BadAuthRequest("工作台类型无效")
 	}
 	resolved, err := s.workbenchDomain().ResolveTask(userID, req)
@@ -128,13 +124,16 @@ func (s *Service) CreateWorkbenchTask(userID string, req WorkbenchTaskInput, tra
 		return nil, err
 	}
 	resolved.Input["config"] = providerConfig
+	if projectID != "" {
+		resolved.Input["metadata"].(map[string]any)["ecommerceProjectId"] = projectID
+	}
 	modelName, ok := providerConfig["model"].(string)
 	if !ok || strings.TrimSpace(modelName) == "" {
 		return nil, BadAuthRequest("所选系统模型不可用")
 	}
 	resolved.Model = modelName
-	taskReq := CreateTaskRequest{Type: resolved.TaskType, Operation: resolved.Operation, Prompt: resolved.Prompt, Model: resolved.Model, LogicalModelID: resolved.LogicalModelID, Input: resolved.Input, TraceID: traceID, RequestID: requestID, workbenchKind: req.Kind}
-	submission := adapterSubmission{UserID: userID, TaskReq: taskReq, Business: cp.BusinessRef{Application: "ecommerce", ObjectType: "workbench_" + req.Kind, ObjectID: req.ToolID}}
+	taskReq := CreateTaskRequest{ProjectID: projectID, Type: resolved.TaskType, Operation: resolved.Operation, Prompt: resolved.Prompt, Model: resolved.Model, LogicalModelID: resolved.LogicalModelID, Input: resolved.Input, TraceID: traceID, RequestID: requestID, workbenchKind: req.Kind}
+	submission := adapterSubmission{UserID: userID, TaskReq: taskReq, Business: cp.BusinessRef{Application: "ecommerce", ProjectID: projectID, ObjectType: "workbench_" + req.Kind, ObjectID: req.ToolID}}
 	// 批次项按“批次 + 序号”幂等：整批重提时已接受的项回放原任务，不重新建任务或冻结费用。
 	if req.Batch != nil && workbench.ValidTaskBatch(req.Batch.ID, req.Batch.Index, req.Batch.Count) {
 		operation := fmt.Sprintf("%s:%d", req.Batch.ID, req.Batch.Index)
@@ -145,15 +144,7 @@ func (s *Service) CreateWorkbenchTask(userID string, req WorkbenchTaskInput, tra
 }
 
 func (s *Service) WorkbenchTasks(userID, kind string, activeOnly bool, limit int) ([]TaskSummary, error) {
-	if kind == WorkbenchKindImage {
-		if err := s.RequireFeature(FeatureImageWorkbench); err != nil {
-			return nil, err
-		}
-	} else if kind == WorkbenchKindVideo {
-		if err := s.RequireFeature(FeatureVideoWorkbench); err != nil {
-			return nil, err
-		}
-	} else {
+	if kind != WorkbenchKindImage && kind != WorkbenchKindVideo {
 		return nil, BadAuthRequest("工作台类型无效")
 	}
 	return s.TasksWithOptions(userID, TaskListOptions{Limit: limit, ActiveOnly: activeOnly, WorkbenchKind: kind})

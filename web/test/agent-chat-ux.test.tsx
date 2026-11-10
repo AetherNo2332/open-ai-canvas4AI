@@ -44,7 +44,7 @@ test("off canvas the same mention is plain text, not a link or button", () => {
     const html = renderToStaticMarkup(<AgentChatMessage item={assistant("新节点 ID：video-1790385749473-q4157")} theme={canvasThemes.light} references={[videoReference]} />);
     expect(html).not.toContain("agent-message-node-link");
     expect(html).not.toContain("#agent-node:");
-    expect(html).not.toContain("<button");
+    expect(html).toContain('aria-label="复制这条消息"');
     expect(html).toContain('class="agent-message-node-text"');
     expect(html).toContain("视频节点 · 片头镜头");
 });

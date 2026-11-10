@@ -6,6 +6,7 @@ import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-ret
 import { nativeSkillEventPresentation } from "@/lib/canvas/agent-tool-presentation";
 import { agentRunUndoneMessageId } from "@/lib/canvas/agent-run-undo";
 import { agentPermissionChangedText, agentPermissionModeValue } from "@/lib/canvas/agent-permission-switch";
+import { mergeAgentMediaBatchProgress } from "@/lib/canvas/cloud-agent-media-batch";
 import { agentAssistantFinality, agentControlMessage, type CloudAgentChatMessage, type CloudAgentPlanItem } from "@/components/canvas/canvas-cloud-agent-chat-ui";
 
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
@@ -18,6 +19,17 @@ export function applyAgentEvent(
     setPrompt?: Dispatch<SetStateAction<string>>,
 ) {
     const payload = event.payload || {};
+    if (event.type === "media_batch_progress") {
+        setMessages((current) => {
+            const id = `media-batch-${event.runId}-${String(payload.batchId || "")}`;
+            const previous = current.find((message) => message.id === id);
+            const mediaBatch = mergeAgentMediaBatchProgress(previous?.mediaBatch, payload);
+            if (!mediaBatch) return current;
+            const next: CloudAgentChatMessage = { id, role: "tool", text: "", runId: event.runId, mediaBatch };
+            return previous ? current.map((message) => (message.id === id ? next : message)) : [...current, next];
+        });
+        return;
+    }
     const text = String(payload.text || payload.summary || payload.message || "");
     const nativeSkill = nativeSkillEventPresentation(event.type, payload);
     if (nativeSkill) {

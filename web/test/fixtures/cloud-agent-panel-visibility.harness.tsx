@@ -185,7 +185,13 @@ async function mount({ compact = false, docked = true, reduced = false, approval
                 capability: "text",
                 billingMode: "token",
                 unitPriceMicrocredits: 0,
-                capabilityConfig: { version: 1, text: { thinking: true, references: { promptMaxChars: 1000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 } } },
+                capabilityConfig: {
+                    version: 1,
+                    text: {
+                        thinking: { mode: "levels", levels: ["off", "low", "medium", "high"], switch: { kind: "omit" }, intensity: { kind: "effort" } },
+                        references: { promptMaxChars: 1000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 },
+                    },
+                },
             },
         ],
     });
@@ -491,7 +497,7 @@ test("programmatic close removes the settings model-picker portal", async () => 
 for (const popup of [
     { label: "model picker", trigger: '[aria-label="选择文本模型"]', portal: ".canvas-model-picker-popover", focus: '[role="listbox"]' },
     { label: "permission dropdown", trigger: '[aria-label^="执行权限："]', portal: ".ant-dropdown", focus: '[role="menuitem"]' },
-    { label: "reasoning dropdown", trigger: '[aria-label="选择 Agent 推理模式"]', portal: ".ant-dropdown", focus: '[role="menuitem"]' },
+    { label: "reasoning popover", trigger: ".agent-thinking-trigger", portal: ".ant-popover", focus: 'input[aria-label="思考等级"]' },
 ])
     test(`programmatic panel close dismisses the real ${popup.label} portal`, async () => {
         const mounted = await mount();

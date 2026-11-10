@@ -283,6 +283,9 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 		return nil
 	}
 	if taskInput.Mode == "text" {
+		if err := ValidateThinkingLevelRequest(taskInput.TextOptions.ThinkingLevel); err != nil {
+			return newModelCapabilityArgumentError("thinkingLevel", "unsupported_value", err)
+		}
 		return s.validateTextTaskReferences(taskInput)
 	}
 	if taskInput.Mode != "image" && taskInput.Mode != "video" && taskInput.Mode != "audio" {
@@ -303,40 +306,7 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 		channelID = systemChannelIDFromBaseURL(taskInput.Config.BaseURL)
 	}
 	if channelID == "" {
-		if taskInput.Mode == "image" {
-			profile := DefaultImageCapabilityConfig(taskInput.Config.InterfaceType, taskInput.Config.Model)
-			if taskInput.Config.CapabilityConfig != nil && taskInput.Config.CapabilityConfig.Image != nil {
-				profile = taskInput.Config.CapabilityConfig.Image
-			}
-			normalized, err := NormalizeModelCapabilityConfigForModel("image", taskInput.Config.InterfaceType, taskInput.Config.Model, &ModelCapabilityConfig{Version: 1, Image: profile}, s.protocolRegistry())
-			if err != nil {
-				return err
-			}
-			profile = normalized.Image
-			if profile.Parameters == nil {
-				fillMissingImageSizePresets(profile, taskInput.Config.InterfaceType)
-			}
-			if presetErr := imageSizePresetReadyError(profile, taskInput.Config.InterfaceType); presetErr != nil {
-				return presetErr
-			}
-			return validateImageTaskWithResolvedSize(input, &taskInput, profile)
-		}
-		profile := taskInput.Config.CapabilityConfig
-		if profile == nil || profile.Video == nil {
-			if taskInput.Config.InterfaceType != string(model.ChannelInterfaceAgnesVideo) {
-				return nil
-			}
-			profile = DefaultModelCapabilityConfigForModel(taskInput.Config.InterfaceType, taskInput.Config.Model)
-		}
-		normalized, normalizeErr := NormalizeModelCapabilityConfigForModel("video", taskInput.Config.InterfaceType, taskInput.Config.Model, profile)
-		if normalizeErr != nil || normalized == nil || normalized.Video == nil {
-			return BadAuthRequest("当前视频模型能力参数无效")
-		}
-		applyAutoDLVideoScreenSpec(&taskInput, normalized.Video)
-		if config, ok := input["config"].(map[string]any); ok {
-			config["size"], config["vquality"] = taskInput.Config.Size, taskInput.Config.VQuality
-		}
-		return validateVideoTask(normalized.Video, taskInput)
+		return s.validateCustomChannelTaskCapability(input, taskInput)
 	}
 	item, err := s.repo.ChannelModelByKey(channelID, providerChannelModelKey(taskInput.Config))
 	if err != nil {
@@ -378,21 +348,21 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 	return validateVideoTask(normalized.Video, taskInput)
 }
 
-// validateTextTaskReferences 在预授权扣费前拦下发给不支持看图的文字模型的参考图；放行后上游只会返回 400。
-// 系统渠道按渠道模型的能力合同判断，未声明文字能力视为不支持图片（与看图工具同一口径）；
+// validateTextTaskReferences 在预授权扣费前拦下发给不支持看图 / 视频识别的文字模型的参考素材；放行后上游只会返回 400。
+// 系统渠道按渠道模型的能力合同判断，未声明文字能力视为不支持图片和视频（与看图工具同一口径）；
 // 自定义渠道只在请求附带了文字能力配置时判断，未附带时不推断。
+// 视频识别默认关闭：管理员在模型能力里勾选「支持视频识别」（maxVideos > 0）后才放行参考视频。
 func (s *Service) validateTextTaskReferences(input canvasGenerationInput) error {
-	if len(input.ReferenceImages) == 0 || isWorkflowProviderInterface(input.Config.InterfaceType) {
+	if (len(input.ReferenceImages) == 0 && len(input.ReferenceVideos) == 0) || isWorkflowProviderInterface(input.Config.InterfaceType) {
 		return nil
 	}
-	unsupported := newModelCapabilityArgumentError("referenceNodeIds", "unsupported_value", BadAuthRequest("当前文字模型不支持图片输入，请选择支持看图的文字模型"))
 	channelID := strings.TrimSpace(input.Config.ChannelID)
 	if channelID == "" {
 		channelID = systemChannelIDFromBaseURL(input.Config.BaseURL)
 	}
 	if channelID == "" {
-		if profile := input.Config.CapabilityConfig; profile != nil && profile.Text != nil && profile.Text.References.MaxImages <= 0 {
-			return unsupported
+		if profile := input.Config.CapabilityConfig; profile != nil && profile.Text != nil {
+			return validateTextReferenceLimits(profile.Text.References, input)
 		}
 		return nil
 	}
@@ -407,8 +377,29 @@ func (s *Service) validateTextTaskReferences(input canvasGenerationInput) error 
 	if err != nil {
 		return BadAuthRequest("当前文字模型能力参数无效")
 	}
-	if profile == nil || profile.Text == nil || profile.Text.References.MaxImages <= 0 {
-		return unsupported
+	if profile == nil || profile.Text == nil {
+		return validateTextReferenceLimits(TextReferenceConfig{}, input)
+	}
+	return validateTextReferenceLimits(profile.Text.References, input)
+}
+
+func validateTextReferenceLimits(references TextReferenceConfig, input canvasGenerationInput) error {
+	if len(input.ReferenceImages) > 0 && references.MaxImages <= 0 {
+		return newModelCapabilityArgumentError("referenceNodeIds", "unsupported_value", BadAuthRequest("当前文字模型不支持图片输入，请选择支持看图的文字模型"))
+	}
+	if len(input.ReferenceVideos) == 0 {
+		return nil
+	}
+	if references.MaxVideos <= 0 {
+		return newModelCapabilityArgumentError("referenceNodeIds", "unsupported_value", BadAuthRequest("当前文字模型未开启视频识别，请选择支持视频识别的文字模型"))
+	}
+	if len(input.ReferenceVideos) > references.MaxVideos {
+		return newModelCapabilityArgumentError("referenceNodeIds", "item_count", BadAuthRequest(fmt.Sprintf("当前文字模型最多识别 %d 个参考视频", references.MaxVideos)))
+	}
+	for _, media := range input.ReferenceVideos {
+		if references.MaxVideoBytes > 0 && media.Bytes > references.MaxVideoBytes {
+			return newModelCapabilityArgumentError("referenceNodeIds", "unsupported_value", BadAuthRequest("参考视频文件超过当前文字模型大小限制"))
+		}
 	}
 	return nil
 }

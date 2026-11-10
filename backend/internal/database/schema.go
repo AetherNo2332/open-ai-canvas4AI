@@ -19,6 +19,10 @@ func Models() []any {
 }
 
 func appModels() []any {
+	return append(baseAppModels(), businessModels()...)
+}
+
+func baseAppModels() []any {
 	return []any{
 		&model.CloudAgentExecution{},
 		&model.UploadReservation{},
@@ -44,6 +48,8 @@ func appModels() []any {
 		&model.UserIdentity{},
 		&model.OAuthState{},
 		&model.EmailVerificationCode{},
+		&model.EmailLog{},
+		&model.UserNotificationSetting{},
 		&model.AuthVerification{},
 		&model.NotificationQuota{},
 		&model.SMSChannel{},
@@ -80,6 +86,10 @@ func appModels() []any {
 		&model.PluginPlatformState{},
 		&model.UserPluginState{},
 		&model.ArkPrivateAssetBinding{},
+		&model.ArkPortraitSession{},
+		&model.ArkPortraitGroup{},
+		&model.ArkPortraitAsset{},
+		&model.ArkPortraitGroupGrant{},
 		&model.UserOSSSetting{},
 		&model.StorageLocation{},
 		&model.UserDailyUploadUsage{},
@@ -104,7 +114,20 @@ func appModels() []any {
 		&model.AssetRepresentation{},
 		&model.VoiceProfile{},
 		&model.CharacterVoiceBinding{},
+	}
+}
+
+func businessModels() []any {
+	return []any{
 		&model.Project{},
+		&model.EcommerceProject{},
+		&model.EcommerceKnowledgeSource{},
+		&model.EcommerceKnowledgeEntry{},
+		&model.EcommerceCreativeRecommendation{},
+		&model.EcommerceAgentAnalysis{},
+		&model.EcommerceAgentRun{},
+		&model.EcommerceAgentPage{},
+		&model.EcommerceAgentCanvasVersion{},
 		&model.StyleProfile{},
 		&model.ProjectUnit{},
 		&model.CanvasUnitLink{},
@@ -124,6 +147,9 @@ func appModels() []any {
 		&model.CanvasEditLease{},
 		&model.WorkbenchTool{},
 		&model.WorkbenchPreset{},
+		&model.PoseLibrarySource{},
+		&model.PoseLibraryItem{},
+		&model.InspirationFeedEntry{},
 		&model.CanvasShare{},
 		&model.PromptTemplate{},
 		&model.UserPromptCustomization{},

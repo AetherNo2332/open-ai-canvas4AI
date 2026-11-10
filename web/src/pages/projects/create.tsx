@@ -5,9 +5,11 @@ import { AlertTriangle, ArrowLeft, BookOpenText, ClipboardPaste, FileUp, Cpu, Pl
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
+import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { DEFAULT_DRAMA_STYLE_ID, findDramaStyle } from "@/lib/drama/drama-styles";
 import { decodeNovelText } from "@/lib/canvas/canvas-document";
-import { analyzeNovel, EPISODE_GROUP_CHARS, EPISODE_SOURCE_CHARS, sourceChars, titleFromFileName } from "@/lib/drama/novel-parse";
+import { analyzeNovel, EPISODE_GROUP_CHARS, EPISODE_SOURCE_CHARS, sourceChars, titleFromFileName, type NovelAnalysis } from "@/lib/drama/novel-parse";
+import { defaultChapterSelection, groupChapterEpisodes } from "@/lib/drama/chapter-selection";
 import { ApiError } from "@/services/api/request";
 import { linkCanvasToDrama } from "@/services/drama-canvas";
 import { dramaChoiceKey, dramaVideoOptionFits, dramaVideoRatioIssue, dramaVideoResolutionIssue } from "@/lib/drama/model-choice";
@@ -15,6 +17,8 @@ import { DEFAULT_STORYBOARD } from "@/lib/drama/storyboard";
 import {
     createDrama,
     estimateDrama,
+    getDramaDraft,
+    saveDramaDraft,
     type DramaAssetSettings,
     type DramaCapability,
     type DramaEpisodeMode,
@@ -23,6 +27,7 @@ import {
     type DramaReviewMode,
     type DramaSkillRef,
     type DramaSourceFormat,
+    type DramaTextThinking,
     type DramaStoryboardSettings,
     type DramaVideoContinuity,
 } from "@/services/api/drama";
@@ -33,6 +38,7 @@ import { DramaModelPicker, useDramaModelCatalog } from "./drama-model-picker";
 import { DramaAssetImageModels, DramaTextSteps, VideoResolutionField } from "./step-settings";
 import { EpisodeDurationInput, StoryboardRules } from "./storyboard-rules";
 import { DramaStylePicker } from "./style-picker";
+import { ChapterPickList } from "./chapter-pick-list";
 import "./drama.css";
 
 const MAX_FILE_BYTES = 40 * 1024 * 1024;
@@ -56,17 +62,6 @@ const EPISODE_MODES: Array<{ value: DramaEpisodeMode; title: string; detail: str
     { value: "auto", title: "整本导入，自动分集", detail: "由模型按剧情把章节规划成集（可合并或拆分章节），适合一次导入整本小说；章节多时耗时更长。" },
 ];
 
-/** 按章分集时的章节分组预览，与服务端 groupDramaChapterEpisodes 一致。 */
-function groupChapters(chapters: Array<{ text: string }>, size: number) {
-    const groups: Array<{ label: string; chars: number }> = [];
-    for (let start = 0; start < chapters.length; start += size) {
-        const end = Math.min(start + size, chapters.length);
-        const chars = chapters.slice(start, end).reduce((sum, chapter) => sum + sourceChars(chapter.text), 0);
-        groups.push({ label: end - start > 1 ? `第 ${start + 1}–${end} 章` : `第 ${start + 1} 章`, chars });
-    }
-    return groups;
-}
-
 export default function DramaCreatePage() {
     const navigate = useNavigate();
     const { message } = App.useApp();
@@ -76,6 +71,8 @@ export default function DramaCreatePage() {
     const [searchParams] = useSearchParams();
     const [pasteMode, setPasteMode] = useState(searchParams.get("paste") === "1");
     const [pasteText, setPasteText] = useState("");
+    // ?draft=<作品 ID>：回到创建页继续编辑草稿，保存时整体替换这个草稿而不是新建作品。
+    const draftId = searchParams.get("draft") || "";
     const [sourceText, setSourceText] = useState("");
     const [sourceFormat, setSourceFormat] = useState<DramaSourceFormat>("novel");
     // 默认逐集：一次只让流水线处理一集，长篇整本导入容易让改编任务超时。
@@ -86,8 +83,26 @@ export default function DramaCreatePage() {
     // 剧本与分镜每个标题就是一集；小说按章分集时可每 N 章合成一集。
     const chaptersPerEpisode = sourceFormat === "novel" && perEpisode ? groupSize : 1;
     const analysis = useMemo(() => (sourceText ? analyzeNovel(sourceText, { perEpisode }) : null), [perEpisode, sourceText]);
-    const episodeGroups = useMemo(() => (analysis && perEpisode ? groupChapters(analysis.chapters, chaptersPerEpisode) : []), [analysis, chaptersPerEpisode, perEpisode]);
+    // 选章跟随这一次的拆章结果：换素材或切换分集方式会重新拆章，选择回到默认（长篇只选前几章）。
+    const [picked, setPicked] = useState<{ source: NovelAnalysis; chapters: Set<number> } | null>(null);
+    const selection = useMemo(() => (analysis ? (picked?.source === analysis ? picked.chapters : defaultChapterSelection(analysis.chapters.length)) : new Set<number>()), [analysis, picked]);
+    const selectedIndexes = useMemo(() => [...selection].filter((index) => analysis && index < analysis.chapters.length).sort((left, right) => left - right), [analysis, selection]);
+    const selectedWords = useMemo(() => selectedIndexes.reduce((sum, index) => sum + (analysis?.chapters[index]?.words || 0), 0), [analysis, selectedIndexes]);
+    const allSelected = Boolean(analysis) && selectedIndexes.length === analysis?.chapters.length;
+    const episodeGroups = useMemo(
+        () =>
+            analysis && perEpisode
+                ? groupChapterEpisodes(
+                      selectedIndexes.map((index) => ({ position: index, chars: sourceChars(analysis.chapters[index].text) })),
+                      chaptersPerEpisode,
+                  )
+                : [],
+        [analysis, chaptersPerEpisode, perEpisode, selectedIndexes],
+    );
     const oversizedGroup = episodeGroups.find((group) => group.chars > EPISODE_GROUP_CHARS);
+    // 单章原文上限只约束选中的章节；预留章节加入制作时再检查。
+    const longChapters = useMemo(() => (analysis && perEpisode ? analysis.chapters.flatMap((chapter, index) => (sourceChars(chapter.text) > EPISODE_SOURCE_CHARS ? [index] : [])) : []), [analysis, perEpisode]);
+    const longSelected = longChapters.filter((index) => selection.has(index)).length;
     const [name, setName] = useState("");
     const [aspectRatio, setAspectRatio] = useState("9:16");
     const [episodeSeconds, setEpisodeSeconds] = useState(90);
@@ -101,6 +116,7 @@ export default function DramaCreatePage() {
     const [promptSkill, setPromptSkill] = useState<DramaSkillRef>();
     const [bibleSkill, setBibleSkill] = useState<DramaSkillRef>();
     const [scriptSkill, setScriptSkill] = useState<DramaSkillRef>();
+    const [textThinking, setTextThinking] = useState<DramaTextThinking>({});
     const [videoResolution, setVideoResolution] = useState<string>();
     const [models, setModels] = useState<Partial<DramaModels>>({});
     const [budgetCredits, setBudgetCredits] = useState<number | null>(null);
@@ -146,6 +162,7 @@ export default function DramaCreatePage() {
         ...(promptSkill ? { promptSkill } : {}),
         ...(bibleSkill ? { bibleSkill } : {}),
         ...(scriptSkill ? { scriptSkill } : {}),
+        ...(Object.keys(textThinking).length ? { textThinking } : {}),
         ...(videoResolution ? { videoResolution } : {}),
         concurrency: 4,
         models: resolvedModels,
@@ -156,8 +173,8 @@ export default function DramaCreatePage() {
     const estimateQuery = useQuery({
         queryKey: [
             "drama-estimate",
-            analysis?.chapters.length,
-            analysis?.words,
+            selectedIndexes.length,
+            selectedWords,
             episodeMode,
             chaptersPerEpisode,
             episodeSeconds,
@@ -168,8 +185,8 @@ export default function DramaCreatePage() {
             videoResolution || "",
             JSON.stringify(resolvedModels || {}),
         ],
-        queryFn: ({ signal }) => estimateDrama({ chapterCount: analysis!.chapters.length, wordCount: analysis!.words, settings, episodeMode }, signal),
-        enabled: Boolean(analysis && resolvedModels),
+        queryFn: ({ signal }) => estimateDrama({ chapterCount: selectedIndexes.length, wordCount: selectedWords, settings, episodeMode }, signal),
+        enabled: Boolean(analysis && resolvedModels && selectedIndexes.length),
         staleTime: 30_000,
     });
     const estimate = estimateQuery.data;
@@ -219,6 +236,45 @@ export default function DramaCreatePage() {
         // 文件与预填内容只用于首次进入，清掉路由状态避免刷新或返回时重复解析。
         navigate(".", { replace: true, state: null });
     }, [handedFile, prefill]); // eslint-disable-line react-hooks/exhaustive-deps
+    const draftQuery = useQuery({ queryKey: ["drama-draft", draftId], queryFn: ({ signal }) => getDramaDraft(draftId, signal), enabled: Boolean(draftId), staleTime: Infinity, gcTime: 0 });
+    const hydratedRef = useRef("");
+    // 草稿选章要等原文按回填的分集方式拆好章后才能对上，先记下来，拆章结果出来后再套用。
+    const pendingSelectionRef = useRef<{ indexes: number[]; count: number } | null>(null);
+    useEffect(() => {
+        const draft = draftQuery.data;
+        if (!draft || hydratedRef.current === draft.projectId) return;
+        hydratedRef.current = draft.projectId;
+        const saved = draft.settings;
+        setName(draft.name);
+        setSourceFormat(draft.sourceFormat);
+        if (saved.episodeMode) setChapterMode(saved.episodeMode);
+        if (saved.chaptersPerEpisode) setGroupSize(saved.chaptersPerEpisode);
+        if (saved.aspectRatio) setAspectRatio(saved.aspectRatio);
+        if (saved.episodeSeconds) setEpisodeSeconds(saved.episodeSeconds);
+        if (draft.form.styleId && findDramaStyle(draft.form.styleId)) setStyleId(draft.form.styleId);
+        if (saved.language) setLanguage(saved.language);
+        if (saved.reviewMode) setReviewMode(saved.reviewMode);
+        if (saved.mediaMode) setMediaMode(saved.mediaMode);
+        if (saved.videoContinuity) setVideoContinuity(saved.videoContinuity);
+        if (saved.storyboard) setStoryboard(saved.storyboard);
+        setPromptSkill(saved.promptSkill);
+        setBibleSkill(saved.bibleSkill);
+        setScriptSkill(saved.scriptSkill);
+        setTextThinking(saved.textThinking || {});
+        setVideoResolution(saved.videoResolution || undefined);
+        if (saved.models) setModels(saved.models);
+        if (saved.assets) setAssetDraft(saved.assets);
+        setBudgetCredits(Math.ceil(draft.budgetMicrocredits / 1_000_000));
+        pendingSelectionRef.current = { indexes: draft.selectedChapters, count: draft.chapterCount };
+        setSourceText(draft.form.sourceText);
+    }, [draftQuery.data]);
+    useEffect(() => {
+        const pending = pendingSelectionRef.current;
+        if (!analysis || !pending) return;
+        pendingSelectionRef.current = null;
+        // 拆章规则变化导致章数对不上时回到默认选择，不按下标硬套到别的章节上。
+        if (analysis.chapters.length === pending.count) setPicked({ source: analysis, chapters: new Set(pending.indexes) });
+    }, [analysis]);
     const onDrop = (event: DragEvent<HTMLDivElement>) => {
         event.preventDefault();
         setDragOver(false);
@@ -226,30 +282,68 @@ export default function DramaCreatePage() {
         if (file) void loadFile(file);
     };
 
+    // start=false 保存为草稿（status=draft），连同原始正文与画风一起保存，之后从作品列表回到这里继续编辑。
     const create = useMutation({
-        mutationFn: () =>
-            createDrama({
+        mutationFn: (start: boolean) => {
+            const input = {
                 name: name.trim(),
                 chapters: analysis!.chapters.map((chapter) => ({ title: chapter.title, text: chapter.text })),
                 settings: { ...settings, models: resolvedModels },
                 budgetMicrocredits: Math.max(0, Math.round((budgetCredits || 0) * 1_000_000)),
-                start: true,
+                start,
                 sourceFormat,
                 episodeMode,
-            }),
-        onSuccess: async (summary) => {
+                // 没选中的章节照常上传，保存为预留章节，之后在制作台加入。
+                ...(allSelected ? {} : { selectedChapters: selectedIndexes }),
+                ...(start ? {} : { draft: { sourceText, styleId } }),
+            };
+            return draftId ? saveDramaDraft(draftId, input) : createDrama(input);
+        },
+        onSuccess: async (summary, start) => {
             const canvasId = linkCanvasRef.current;
             if (canvasId) {
+                linkCanvasRef.current = undefined;
                 const { warning } = await linkCanvasToDrama(canvasId, summary.project.id);
                 if (warning) message.warning(warning);
             }
-            navigate(`/projects/${summary.project.id}`, { replace: true });
+            if (start) {
+                navigate(`/projects/${summary.project.id}`, { replace: true });
+                return;
+            }
+            message.success("已保存为草稿，可在作品列表里继续编辑");
+            // 新建的草稿换成草稿地址，再次保存时替换同一个草稿而不是再建一个。
+            if (!draftId) {
+                hydratedRef.current = summary.project.id;
+                navigate(`/projects/new?draft=${encodeURIComponent(summary.project.id)}`, { replace: true });
+            }
         },
         onError: (error) => message.error(error instanceof ApiError || error instanceof Error ? error.message : "创建失败"),
     });
-    const tooLong = Boolean(analysis?.issues.some((issue) => issue.kind === "too_long")) || Boolean(oversizedGroup);
-    const canStart = Boolean(analysis && name.trim() && resolvedModels && missingCapabilities.length === 0 && !videoRatioProblem && !videoResolutionProblem && !tailFrameProblem && !tooLong && !create.isPending);
-    const unitLabel = perEpisode && chaptersPerEpisode === 1 ? "集" : "章";
+    const tooLong = longSelected > 0 || Boolean(oversizedGroup);
+    // 草稿不要求模型齐全（服务端只在开工时检查），但画幅、分辨率与续接方式仍会被服务端校验。
+    const canSaveDraft = Boolean(analysis && selectedIndexes.length && name.trim() && resolvedModels && !videoRatioProblem && !videoResolutionProblem && !tailFrameProblem && !tooLong && !create.isPending);
+    const canStart = canSaveDraft && missingCapabilities.length === 0;
+    const reservedCount = analysis ? analysis.chapters.length - selectedIndexes.length : 0;
+    // 超长章节的提示按选择拆开：选中的必须拆开才能开工，没选中的只提醒加入制作前要拆。
+    const issues = useMemo(() => {
+        if (!analysis) return [];
+        const list: Array<{ key: string; message: string; blocking: boolean }> = analysis.issues.filter((issue) => issue.kind !== "too_long").map((issue) => ({ key: issue.kind, message: issue.message, blocking: false }));
+        const limit = `${EPISODE_SOURCE_CHARS / 10_000} 万字`;
+        if (longSelected) list.push({ key: "too_long_selected", message: `选中的 ${longSelected} ${perEpisode && chaptersPerEpisode === 1 ? "集" : "章"}原文超过 ${limit}，请用“第 N 集”标题拆开，或先取消选中`, blocking: true });
+        const longReserved = longChapters.length - longSelected;
+        if (longReserved) list.push({ key: "too_long_reserved", message: `另有 ${longReserved} 章原文超过 ${limit}，暂未选中；加入制作前需要拆开`, blocking: false });
+        return list;
+    }, [analysis, chaptersPerEpisode, longChapters.length, longSelected, perEpisode]);
+    const chapterItems = useMemo(
+        () =>
+            (analysis?.chapters || []).map((chapter, index) => ({
+                key: `${index}-${chapter.title}`,
+                title: chapter.title,
+                words: chapter.words,
+                warn: perEpisode ? sourceChars(chapter.text) > EPISODE_SOURCE_CHARS : chapter.words < 200,
+            })),
+        [analysis, perEpisode],
+    );
 
     const previewChapter = analysis?.chapters[previewIndex];
     const reset = () => {
@@ -257,7 +351,21 @@ export default function DramaCreatePage() {
         setPasteText("");
         setName("");
         setPreviewIndex(0);
+        setPicked(null);
     };
+
+    // 刚保存的新草稿换成草稿地址时表单已在页面上，不再显示读取状态。
+    if (draftId && !draftQuery.data && hydratedRef.current !== draftId) {
+        return (
+            <WorkspacePage fluid scroll={false}>
+                {draftQuery.isError ? (
+                    <WorkspaceErrorState title="草稿不可用" description={draftQuery.error instanceof Error ? draftQuery.error.message : "草稿不存在或已开始制作"} actionLabel="返回作品列表" onRetry={() => navigate("/projects")} />
+                ) : (
+                    <WorkspaceLoadingState label="正在打开草稿" />
+                )}
+            </WorkspacePage>
+        );
+    }
 
     if (!analysis) {
         return (
@@ -350,56 +458,42 @@ export default function DramaCreatePage() {
                         <Link to="/projects">
                             <Button type="text" shape="circle" icon={<ArrowLeft className="size-4" />} aria-label="返回作品列表" />
                         </Link>
-                        <h1>新建短剧</h1>
+                        <h1>{draftId ? "编辑草稿" : "新建短剧"}</h1>
                         <Button size="small" type="text" className="!ml-auto" onClick={reset}>
                             换素材
                         </Button>
                     </header>
                     <div className="drama-stats">
                         <div className="drama-stat">
-                            <div className="drama-stat-value">{formatCount(analysis.chapters.length)}</div>
-                            <div className="drama-stat-label">{perEpisode ? "段原文" : "章节"}</div>
+                            <div className="drama-stat-value">
+                                {formatCount(selectedIndexes.length)}
+                                {reservedCount ? <small className="drama-stat-total"> / {formatCount(analysis.chapters.length)}</small> : null}
+                            </div>
+                            <div className="drama-stat-label">{perEpisode ? "选中段落" : "选中章节"}</div>
                         </div>
                         <div className="drama-stat">
-                            <div className="drama-stat-value">{formatCount(analysis.words)}</div>
+                            <div className="drama-stat-value">{formatCount(selectedWords)}</div>
                             <div className="drama-stat-label">字</div>
                         </div>
                         <div className="drama-stat">
-                            <div className="drama-stat-value">{estimate ? `≈${estimate.episodes}` : "—"}</div>
+                            <div className="drama-stat-value">{estimate && selectedIndexes.length ? `≈${estimate.episodes}` : "—"}</div>
                             <div className="drama-stat-label">集</div>
                         </div>
                     </div>
-                    {analysis.issues.length ? (
+                    {issues.length ? (
                         <div className="drama-issues">
-                            {analysis.issues.map((issue) => (
-                                <div key={issue.kind} className="drama-issue">
+                            {issues.map((issue) => (
+                                <div key={issue.key} className={`drama-issue ${issue.blocking ? "is-blocking" : ""}`} role={issue.blocking ? "alert" : undefined}>
                                     <AlertTriangle className="size-3.5" />
                                     {issue.message}
                                 </div>
                             ))}
                         </div>
                     ) : null}
-                    <div className="drama-chapter-list thin-scrollbar" role="listbox" aria-label="章节">
-                        {analysis.chapters.slice(0, 600).map((chapter, index) => (
-                            <button
-                                key={`${index}-${chapter.title}`}
-                                type="button"
-                                role="option"
-                                aria-selected={index === previewIndex}
-                                className={`drama-chapter-row ${(perEpisode ? sourceChars(chapter.text) > EPISODE_SOURCE_CHARS : chapter.words < 200) ? "is-warn" : ""}`}
-                                onClick={() => setPreviewIndex(index)}
-                            >
-                                <span className="is-num">{String(index + 1).padStart(3, "0")}</span>
-                                <span className="truncate text-left">{chapter.title}</span>
-                                <span className="is-count">{formatCount(chapter.words)}</span>
-                            </button>
-                        ))}
-                        {analysis.chapters.length > 600 ? (
-                            <div className="px-4 py-3 text-center text-[var(--fs-tiny)] text-foreground/40">
-                                另有 {analysis.chapters.length - 600} {unitLabel}
-                            </div>
-                        ) : null}
-                    </div>
+                    <ChapterPickList items={chapterItems} selected={selection} onChange={(next) => setPicked({ source: analysis, chapters: next })} previewIndex={previewIndex} onPreview={setPreviewIndex} />
+                    <p className="drama-chapter-pick-note">
+                        {reservedCount ? `只改编选中的章节，资产也只从这些章节提取；其余 ${formatCount(reservedCount)} 章原文会一起保存，之后在制作台“原著章节”里继续加入。` : "全部章节都会加入制作。长篇可以先只选前几章，确认效果后再在制作台继续加入。"}
+                    </p>
                 </aside>
 
                 {/* 中：风格与审阅，下方原文预览 */}
@@ -441,13 +535,15 @@ export default function DramaCreatePage() {
                     <section>
                         <div className="drama-section-title">
                             <h2>文字步骤</h2>
-                            <span>每一步可以单独选文本模型和写作技能；不选就用默认文本模型和内置写法</span>
+                            <span>每一步可以单独设置思考意图、文本模型和写作技能；思考档位按实际使用模型归一</span>
                         </div>
                         <DramaTextSteps
                             models={resolvedModels}
                             onModelsChange={(patch) => setModels((current) => ({ ...current, ...patch }))}
                             skills={{ bible: bibleSkill, script: scriptSkill, prompt: promptSkill }}
                             onSkillChange={(step, value) => (step === "bible" ? setBibleSkill(value) : step === "script" ? setScriptSkill(value) : setPromptSkill(value))}
+                            textThinking={textThinking}
+                            onThinkingChange={(step, level) => setTextThinking((current) => ({ ...current, [step]: level === "auto" ? undefined : level }))}
                         />
                     </section>
                     <section>
@@ -636,8 +732,13 @@ export default function DramaCreatePage() {
                             <div className="text-[var(--fs-tiny)] text-foreground/50">先做第 1 集样片，约 {formatCredits(estimate.sampleMicrocredits)} 积分，确认后再跑全剧</div>
                         ) : null}
                         {estimate?.note ? <div className="text-[var(--fs-micro)] text-foreground/40">{estimate.note}</div> : null}
-                        <Button type="primary" size="large" block icon={<Play className="size-4" />} disabled={!canStart} loading={create.isPending} onClick={() => create.mutate()}>
+                        {!selectedIndexes.length ? <div className="text-[var(--fs-tiny)] text-[var(--status-error)]">请至少选择 1 章</div> : null}
+                        <Button type="primary" size="large" block icon={<Play className="size-4" />} disabled={!canStart} loading={create.isPending && create.variables === true} onClick={() => create.mutate(true)}>
                             {mediaMode === "manual" ? "开始改编剧本与分镜" : "开始自动制作"}
+                            {reservedCount && selectedIndexes.length ? `（${formatCount(selectedIndexes.length)} 章）` : ""}
+                        </Button>
+                        <Button size="large" block disabled={!canSaveDraft} loading={create.isPending && create.variables === false} onClick={() => create.mutate(false)}>
+                            保存为草稿
                         </Button>
                     </footer>
                 </aside>

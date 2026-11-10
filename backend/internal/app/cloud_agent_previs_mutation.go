@@ -1147,6 +1147,7 @@ func cloudAgentPrevisApplyObjectPatch(objects *[]map[string]any, operation cloud
 			return cloudAgentApprovalPreviewItem{}, err
 		}
 		position, rotation, scale := []float64{0, 0.5, 0}, []float64{0, 0, 0}, []float64{1, 1, 1}
+		position = cloudAgentPrevisDefaultPosition(operation.Kind, primitive, position)
 		if operation.Position != nil {
 			position = *operation.Position
 		}
@@ -1180,18 +1181,7 @@ func cloudAgentPrevisApplyObjectPatch(objects *[]map[string]any, operation cloud
 				return cloudAgentApprovalPreviewItem{}, err
 			}
 		}
-		defaultColor := "#8795a5"
-		if operation.Kind == "actor" {
-			// Assign a distinct colour based on current actor count so each new actor stands out
-			actorCount := 0
-			for _, obj := range items {
-				if stringValue(obj["kind"]) == "actor" {
-					actorCount++
-				}
-			}
-			actorColors := []string{"#2f7de1", "#d84949", "#dfae3f", "#34a276", "#8b5cf6", "#e879f9"}
-			defaultColor = actorColors[actorCount%len(actorColors)]
-		}
+		defaultColor := cloudAgentPrevisObjectColor(items, operation.Kind)
 		item := map[string]any{"id": operation.ID, "name": name, "kind": operation.Kind, "primitive": primitive, "transform": map[string]any{"position": cloudAgentPrevisVec3(position), "rotation": cloudAgentPrevisVec3(rotation), "scale": cloudAgentPrevisVec3(scale)}, "color": defaultColor, "visible": true, "castShadow": true, "receiveShadow": true, "keyframes": []any{}}
 		if operation.Color != nil {
 			item["color"] = *operation.Color

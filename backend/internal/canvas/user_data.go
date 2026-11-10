@@ -102,6 +102,10 @@ func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataS
 		if existingErr != nil && !errors.Is(existingErr, gorm.ErrRecordNotFound) {
 			return existingErr
 		}
+		// 方舟认证分类只由服务端写入认证结果时设置；客户端只能保留已在该分类的素材。
+		if asset.Category == model.AssetCategoryArk && (existing == nil || existing.Category != model.AssetCategoryArk) {
+			return kernel.BadAuthRequest("方舟认证分类由认证结果自动设置，不能手动选择")
+		}
 		if existing != nil && existing.PayloadJSON != asset.PayloadJSON {
 			if err := s.ValidateAssetCanvasReferences(userID, asset); err != nil {
 				return err
@@ -306,50 +310,10 @@ func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasO
 				existing = nil
 			}
 			isCreate := existing == nil
-			if isCreate && (len(req.Operations) == 0 || req.Operations[0].Type != "create_canvas") {
-				return kernel.NotFound("画布不存在或已删除")
-			}
-			if !isCreate {
-				for _, operation := range req.Operations {
-					if operation.Type == "create_canvas" {
-						return canvasOperationConflict("画布 %q 已存在，不能重复创建", canvasID)
-					}
-				}
-			}
-			if req.BaseRevision != nil && *req.BaseRevision > 0 && isCreate {
-				return canvasMutationError("canvas_invalid_base", "新画布不能使用已有版本作为基线")
-			}
 			now := time.Now().UTC()
-			var payload map[string]json.RawMessage
-			var operations []CanvasOperation
-			if isCreate {
-				create := req.Operations[0]
-				if create.ID != "" && create.ID != canvasID {
-					return kernel.BadAuthRequest("画布创建操作的 ID 与请求路径不一致")
-				}
-				payload = map[string]json.RawMessage{
-					"id":          jsonRawValue(canvasID),
-					"nodes":       json.RawMessage(`[]`),
-					"connections": json.RawMessage(`[]`),
-				}
-				for field, value := range create.Patch {
-					if !allowedCanvasOperationField(field) {
-						return kernel.BadAuthRequest("不支持的新画布字段")
-					}
-					payload[field] = append(json.RawMessage(nil), value...)
-				}
-				operations = req.Operations[1:]
-			} else {
-				// 客户端的 beforeValue 来自 GET 返回的投影（title/projectId 等以数据库列为准），
-				// 字段基线校验必须对同一份投影进行，否则 projectId 列为 "" 而 payload 缺省时会误判冲突。
-				base, err := canvasProjectPayload(*existing)
-				if err != nil {
-					return err
-				}
-				if err := json.Unmarshal(base, &payload); err != nil {
-					return err
-				}
-				operations = req.Operations
+			payload, operations, err := canvasOperationsPayload(canvasID, existing, req)
+			if err != nil {
+				return err
 			}
 			if err := applyCanvasOperations(payload, operations); err != nil {
 				if errors.Is(err, ErrCanvasObjectMissing) || errors.Is(err, ErrCanvasOperationConflict) {
@@ -370,6 +334,12 @@ func (s *Service) ApplyUserCanvasOperations(userID, canvasID string, req CanvasO
 			raw, err := json.Marshal(payload)
 			if err != nil {
 				return err
+			}
+			if existing != nil {
+				raw, err = New(tx, nil).repairPurgedCanvasMediaReferences(userID, json.RawMessage(existing.PayloadJSON), raw)
+				if err != nil {
+					return err
+				}
 			}
 			if err := New(tx, nil).ValidateCanvasMediaAssets(userID, raw); err != nil {
 				return err

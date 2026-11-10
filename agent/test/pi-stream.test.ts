@@ -30,6 +30,21 @@ test("bridges a billed model result into Pi tool events", async () => {
   });
 });
 
+test("provider reasoning survives stream, canonical persistence and restoration", async () => {
+  for (const reasoning of ["Inspecting", ""]) {
+    const reasoningBlocks = [{ type: "redacted_thinking", data: "provider-state" }];
+    const fn = createCanvasStreamFn(async () => ({ text: "Working", reasoning, reasoningWire: "claude-api", reasoningBlocks }));
+    const stream = await fn(model, { messages: [] } as never);
+    for await (const _ of stream) { /* drain the real SDK stream */ }
+    const canonical = toCanonical([await stream.result()]);
+    assert.equal(canonical.messages[0]!.reasoning_content, reasoning);
+    assert.equal(canonical.messages[0]!.reasoning_wire, "claude-api");
+    assert.deepEqual(canonical.messages[0]!.reasoning_blocks, reasoningBlocks);
+    const snapshot = { canonical, modelLimits: { contextWindowTokens: 8192, maxOutputTokens: 2048 } } as PiSnapshot;
+    assert.deepEqual(toCanonical(fromCanonical(snapshot, model) as never).messages, canonical.messages);
+  }
+});
+
 test("missing provider usage stays unknown instead of becoming zero", async () => {
   const fn = createCanvasStreamFn(async () => ({ text: "No usage reported" }));
   const stream = await fn(model, { messages: [] } as never);

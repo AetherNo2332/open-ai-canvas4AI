@@ -52,8 +52,12 @@
                 background: #ffffff;
             }
             @keyframes appearance-bootstrap-sweep {
-                0% { transform: translateX(-100%); }
-                100% { transform: translateX(400%); }
+                0% {
+                    transform: translateX(-100%);
+                }
+                100% {
+                    transform: translateX(400%);
+                }
             }
             @media (prefers-reduced-motion: reduce) {
                 #root:empty::after {
@@ -72,7 +76,7 @@
             } catch (e) {}
         </script>
     </head>
-    <body class="bg-background text-foreground antialiased" style="background:#ffffff">
+    <body class="bg-background text-foreground antialiased">
         <div id="root"></div>
         <script type="module" src="/src/main.tsx"></script>
     </body>

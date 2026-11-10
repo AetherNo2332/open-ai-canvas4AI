@@ -14,6 +14,7 @@ func (r *dramaRun) submitDramaPlatformTask(req CreateTaskRequest) (*model.Task, 
 	business := cp.BusinessRef{Application: "drama", ProjectID: r.project.ID}
 	submission := adapterSubmission{UserID: r.project.UserID, Business: business, TaskReq: req}
 	if job := r.submitting; job != nil {
+		submission.DramaJob = job
 		settled, err := r.s.repo.PlatformSettledSubmissionCount(r.project.UserID, "drama", job.ID+":")
 		if err != nil {
 			return nil, err
@@ -22,9 +23,16 @@ func (r *dramaRun) submitDramaPlatformTask(req CreateTaskRequest) (*model.Task, 
 		submission.Key = "drama:" + operation
 		submission.Business.ObjectType, submission.Business.ObjectID, submission.Business.OperationID = job.Kind, firstNonEmpty(job.ShotID, job.CastID, job.EpisodeID), operation
 	}
-	task, _, err := (&creationPlatform{s: r.s}).submitResolved(submission)
+	task, replayed, err := (&creationPlatform{s: r.s}).submitResolved(submission)
 	if err != nil {
 		return nil, err
+	}
+	if replayed && r.submitting != nil {
+		bound, err := r.s.repo.DramaJob(r.project.ID, r.submitting.ID)
+		if err != nil {
+			return nil, err
+		}
+		*r.submitting = *bound
 	}
 	r.s.wakeTaskDispatcher()
 	return task, nil

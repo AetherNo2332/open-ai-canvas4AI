@@ -205,27 +205,9 @@ func (s *Service) materializeTaskMedia(ctx context.Context, task *model.Task, co
 			return nil, &mediaRecoveryError{stage: "register", retryable: true, cause: err}
 		}
 		if resource == nil || resource.Status != model.ResourceStatusReady {
-			path := s.mediaTempPath(item.TempName)
-			info, statErr := os.Lstat(path)
-			if path == "" || statErr != nil || !info.Mode().IsRegular() {
-				if item.Reference.URL == "" {
-					return nil, &mediaRecoveryError{stage: "download", cause: errors.New("暂存结果已过期且上游没有可重新下载的地址")}
-				}
-				if err := s.saveMediaCheckpoint(task, checkpoint, "download"); err != nil {
-					return nil, err
-				}
-				config, err = s.resolveProviderConfig(config)
-				if err != nil {
-					return nil, &mediaRecoveryError{stage: "download", cause: err}
-				}
-				item.TempName, item.MIMEType, err = s.downloadTaskMedia(ctx, config, item.Reference.URL, checkpoint.Mode)
-				if err != nil {
-					return nil, &mediaRecoveryError{stage: "download", retryable: retryableMediaRecovery(err), cause: err}
-				}
-				path = s.mediaTempPath(item.TempName)
-				if err := s.saveMediaCheckpoint(task, checkpoint, "download"); err != nil {
-					return nil, err
-				}
+			path, err := s.ensureTaskMediaDownload(ctx, task, &config, checkpoint, item)
+			if err != nil {
+				return nil, err
 			}
 			stage := "local_save"
 			_, _, oss, settingErr := s.activeResourceOSSSetting(task.UserID)
@@ -253,8 +235,17 @@ func (s *Service) materializeTaskMedia(ctx context.Context, task *model.Task, co
 			}
 		}
 		item.ResourceID = resource.ID
+		stagedName := item.TempName
+		// The durable resource is now the recovery source. Persist that fact
+		// before deleting the staging copy so a crash cannot lose the only path.
+		item.TempName = ""
 		if err := s.saveMediaCheckpoint(task, checkpoint, "register"); err != nil {
 			return nil, err
+		}
+		if path := s.mediaTempPath(stagedName); path != "" {
+			if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+				_ = s.log(task.UserID, task.ID, "warn", "清理作品暂存文件失败", "")
+			}
 		}
 		url := resourceFileURL(resource.ID)
 		items = append(items, map[string]interface{}{"dataUrl": url, "url": url, "resourceId": resource.ID, "storageKey": "resource:" + resource.ID, "mimeType": resource.MimeType, "bytes": resource.Size, "width": resource.Width, "height": resource.Height, "durationMs": resource.DurationMs})
@@ -275,6 +266,9 @@ func (s *Service) materializeTaskMedia(ctx context.Context, task *model.Task, co
 var errMediaRecoveryBusy = errors.New("作品保存并发已满")
 
 func retryableMediaRecovery(err error) bool {
+	if errors.Is(err, errMediaStagingFull) {
+		return true
+	}
 	if retryableProtocolMediaDownload(err) || errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}

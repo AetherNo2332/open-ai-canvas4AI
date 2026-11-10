@@ -16,8 +16,9 @@ type adapterSubmission struct {
 	UserID   string
 	Business cp.BusinessRef
 	// Key 为空表示不做幂等（每次新建任务），用于保留“再生成一次”的旧语义。
-	Key     string
-	TaskReq CreateTaskRequest
+	Key      string
+	TaskReq  CreateTaskRequest
+	DramaJob *model.DramaJob
 }
 
 // submitResolved 走与 Submit 相同的准备、提交与回放流程；返回落库后的任务行。
@@ -42,7 +43,7 @@ func (p *creationPlatform) submitResolved(in adapterSubmission) (*model.Task, bo
 	}
 	task, order, err := p.prepareResolvedTask(in.UserID, in.TaskReq)
 	if err == nil {
-		err = p.commitPlatformTask(task, order, adapterSubmissionRecord(in, application, key, fingerprint))
+		err = p.commitPlatformTask(task, order, adapterSubmissionRecord(in, application, key, fingerprint), in.DramaJob)
 	}
 	if err != nil {
 		replay, lookupErr := replayConcurrentWinner(lookup, err)

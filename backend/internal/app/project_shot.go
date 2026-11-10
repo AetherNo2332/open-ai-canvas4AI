@@ -321,24 +321,11 @@ func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, 
 		name := strings.TrimSpace(input.Name)
 		nameKey := model.AssetCandidateNameKey(name)
 		category := model.AssetCategory(strings.TrimSpace(input.Category))
-		if name == "" || nameKey == "" || !validAssetCategory(category) {
+		if name == "" || nameKey == "" || !validAssetCategory(category) || category == model.AssetCategoryArk {
 			return nil, BadAuthRequest("资产候选名称或分类无效")
 		}
-		if category == model.AssetCategoryCharacter && source != assetCandidateSourceChapterCharacter {
-			return nil, BadAuthRequest("角色候选只能从剧情章节的角色提取流程创建")
-		}
-		if category == model.AssetCategoryCharacter && strings.TrimSpace(input.UnitID) == "" {
-			return nil, BadAuthRequest("角色候选必须关联剧情章节")
-		}
-		if input.UnitID != "" {
-			if _, err := s.repo.ProjectUnit(projectID, input.UnitID); err != nil {
-				return nil, err
-			}
-		}
-		if input.ShotID != "" {
-			if _, err := s.repo.ShotForProject(projectID, input.ShotID); err != nil {
-				return nil, err
-			}
+		if err := s.validateAssetCandidateOrigin(projectID, source, category, input); err != nil {
+			return nil, err
 		}
 		detailsJSON, err := marshalProjectDetails(input.Details)
 		if err != nil {
@@ -370,6 +357,26 @@ func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, 
 		}
 	}
 	return candidates, nil
+}
+
+func (s *Service) validateAssetCandidateOrigin(projectID, source string, category model.AssetCategory, input AssetCandidateInput) error {
+	if category == model.AssetCategoryCharacter && source != assetCandidateSourceChapterCharacter {
+		return BadAuthRequest("角色候选只能从剧情章节的角色提取流程创建")
+	}
+	if category == model.AssetCategoryCharacter && strings.TrimSpace(input.UnitID) == "" {
+		return BadAuthRequest("角色候选必须关联剧情章节")
+	}
+	if input.UnitID != "" {
+		if _, err := s.repo.ProjectUnit(projectID, input.UnitID); err != nil {
+			return err
+		}
+	}
+	if input.ShotID != "" {
+		if _, err := s.repo.ShotForProject(projectID, input.ShotID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func projectAssetCandidateIdentityKeys(candidates []model.ProjectAssetCandidate, assets []model.Asset) map[string]struct{} {

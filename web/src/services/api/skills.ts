@@ -327,7 +327,8 @@ function normalizeAddedSkillReference(skill: AddedSkillReference): Skill {
     };
 }
 
-function invalidateAddedSkillsCache() {
+/** 技能写入后清空已加入技能缓存并通知页面刷新；后台技能管理同样需要调用。 */
+export function invalidateAddedSkillsCache() {
     addedSkillsCacheVersion += 1;
     addedSkillsCache = null;
     addedSkillsRequest = null;

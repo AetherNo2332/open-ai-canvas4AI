@@ -18,6 +18,9 @@ func dramaPlatformRun(t *testing.T, f *platformImageFixture) (*dramaRun, *model.
 	}
 	job := &model.DramaJob{ID: "drama-job-1", ProjectID: project.ID, Kind: model.DramaJobCastImage, CastID: "cast-1", Status: model.DramaJobQueued}
 	run := &dramaRun{s: f.svc, project: project, production: &model.DramaProduction{ProjectID: project.ID, UserID: "user-a"}, settings: DramaSettings{Models: DramaModels{Image: DramaModelChoice{ChannelID: f.channelID, ModelKey: f.modelKey}}}}
+	if err := f.db.Create(job).Error; err != nil {
+		t.Fatal(err)
+	}
 	run.submitting = job
 	return run, job
 }
@@ -30,7 +33,7 @@ func dramaImageInput() map[string]any {
 func TestDramaPlatformSubmitsInGoWithBusinessAttribution(t *testing.T) {
 	f := newPlatformImageFixture(t)
 	run, job := dramaPlatformRun(t, f)
-	task, err := run.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "白衣少女站在大厅中央", dramaImageInput())
+	task, err := run.createTaskWith(run.submitting, run.settings.Models.Image, "image", "text_to_image", "白衣少女站在大厅中央", dramaImageInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,14 +58,14 @@ func TestDramaPlatformSubmitsInGoWithBusinessAttribution(t *testing.T) {
 func TestDramaPlatformJobReplay(t *testing.T) {
 	f := newPlatformImageFixture(t)
 	run, job := dramaPlatformRun(t, f)
-	first, err := run.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "白衣少女站在大厅中央", dramaImageInput())
+	first, err := run.createTaskWith(run.submitting, run.settings.Models.Image, "image", "text_to_image", "白衣少女站在大厅中央", dramaImageInput())
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 重启后的调度器只读到未更新的作业行（TaskID 为空、无历次提交），用同样的输入再次提交。
 	restarted := &dramaRun{s: &Service{repo: f.svc.repo, dataDir: f.svc.dataDir, activeCancels: f.svc.activeCancels, coordinator: f.svc.coordinator}, project: run.project, production: run.production, settings: run.settings}
 	restarted.submitting = &model.DramaJob{ID: job.ID, ProjectID: job.ProjectID, Kind: job.Kind, CastID: job.CastID, Status: model.DramaJobQueued}
-	again, err := restarted.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "白衣少女站在大厅中央", dramaImageInput())
+	again, err := restarted.createTaskWith(restarted.submitting, run.settings.Models.Image, "image", "text_to_image", "白衣少女站在大厅中央", dramaImageInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +80,7 @@ func TestDramaPlatformJobReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	recordDramaAttempt(restarted.submitting, first.ID, string(model.TaskStatusFailed), "上游失败", 0)
-	retry, err := restarted.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "白衣少女站在大厅中央", dramaImageInput())
+	retry, err := restarted.createTaskWith(restarted.submitting, run.settings.Models.Image, "image", "text_to_image", "白衣少女站在大厅中央", dramaImageInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,19 +96,22 @@ func TestDramaPlatformJobReplay(t *testing.T) {
 func TestDramaPlatformBudgetAggregation(t *testing.T) {
 	f := newPlatformImageFixture(t)
 	run, _ := dramaPlatformRun(t, f)
-	if _, err := run.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "白衣少女", dramaImageInput()); err != nil {
+	if _, err := run.createTaskWith(run.submitting, run.settings.Models.Image, "image", "text_to_image", "白衣少女", dramaImageInput()); err != nil {
 		t.Fatal(err)
 	}
 	f.runQueued(t)
 	run.submitting = &model.DramaJob{ID: "drama-job-2", ProjectID: "drama-project", Kind: model.DramaJobCastImage, CastID: "cast-2"}
-	if _, err := run.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "黑发少年", dramaImageInput()); err != nil {
+	if err := f.db.Create(run.submitting).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run.createTaskWith(run.submitting, run.settings.Models.Image, "image", "text_to_image", "黑发少年", dramaImageInput()); err != nil {
 		t.Fatal(err)
 	}
 	aggregate, err := f.svc.CreationPlatform().BillingAggregate(context.Background(), cp.Caller{UserID: "user-a"}, cp.BusinessRef{Application: "drama", ProjectID: "drama-project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if aggregate.TaskCount != 2 || aggregate.ChargedMicrocredits != 100_000 || aggregate.ReservedMicrocredits != 200_000 {
+	if aggregate.TaskCount != 2 || aggregate.ChargedMicrocredits != 100_000 || aggregate.ReservedMicrocredits != 100_000 {
 		t.Fatalf("drama aggregate: %+v", aggregate)
 	}
 	// 短剧自己的预算口径（按订单冻结 + 实收）与平台汇总一致。
@@ -122,7 +128,7 @@ func TestDramaPlatformBudgetAggregation(t *testing.T) {
 func TestDramaPlatformCondenseContinuationReplays(t *testing.T) {
 	f := newPlatformImageFixture(t)
 	run, job := dramaPlatformRun(t, f)
-	first, err := run.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "撰写", dramaImageInput())
+	first, err := run.createTaskWith(run.submitting, run.settings.Models.Image, "image", "text_to_image", "撰写", dramaImageInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,14 +136,14 @@ func TestDramaPlatformCondenseContinuationReplays(t *testing.T) {
 	// 同步阶段：每轮新建 dramaRun，派发字段为空；续作必须仍带作业身份。
 	sync := &dramaRun{s: f.svc, project: run.project, production: run.production, settings: run.settings}
 	sync.submitting = &model.DramaJob{ID: job.ID, ProjectID: job.ProjectID, Kind: job.Kind, CastID: job.CastID, TaskID: first.ID, Status: model.DramaJobRunning}
-	condense, err := sync.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "精简", dramaImageInput())
+	condense, err := sync.createTaskWith(sync.submitting, run.settings.Models.Image, "image", "text_to_image", "精简", dramaImageInput())
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 崩溃：作业行没保存 TaskID=condense。下一轮同步再次处理同一个成功任务、再次提交同样的续作。
 	again := &dramaRun{s: f.svc, project: run.project, production: run.production, settings: run.settings}
 	again.submitting = &model.DramaJob{ID: job.ID, ProjectID: job.ProjectID, Kind: job.Kind, CastID: job.CastID, TaskID: first.ID, Status: model.DramaJobRunning}
-	replayed, err := again.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "精简", dramaImageInput())
+	replayed, err := again.createTaskWith(again.submitting, run.settings.Models.Image, "image", "text_to_image", "精简", dramaImageInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +161,7 @@ func TestDramaPlatformRetryIdentityIgnoresHistoryTrim(t *testing.T) {
 	}
 	previous := ""
 	for round := 0; round < 3; round++ {
-		task, err := run.createTaskWith(run.settings.Models.Image, "image", "text_to_image", "白衣少女", dramaImageInput())
+		task, err := run.createTaskWith(run.submitting, run.settings.Models.Image, "image", "text_to_image", "白衣少女", dramaImageInput())
 		if err != nil {
 			t.Fatalf("round %d: %v", round, err)
 		}

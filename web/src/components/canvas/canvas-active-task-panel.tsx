@@ -1,7 +1,9 @@
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { ChevronDown, ChevronUp, Clock3, Coins, ListTodo, LoaderCircle, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
+import { formatCredits } from "@/constant/credits";
 import { taskBillingLabel } from "@/lib/generation-task-billing";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canCancelGenerationTask, formatTaskKind, generationTaskShowsProgress, generationTaskStageLabel, generationTaskStatusLabel } from "@/lib/generation-task-display";
@@ -12,6 +14,7 @@ import { useUserStore } from "@/stores/use-user-store";
 
 // 顶栏是绝对定位浮层，面板必须按调用方传入的 topInset 避让；专注模式隐藏顶栏时传小间距。
 export function CanvasActiveTaskPanel({ tasks, align = "right", topInset = "var(--canvas-topbar-offset)", onCancelTask }: { tasks: GenerationTask[]; align?: "left" | "right"; topInset?: string; onCancelTask?: (task: GenerationTask) => void }) {
+    const { t } = useTranslation();
     const theme = canvasThemes[useActiveTheme()];
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const reducedMotion = useReducedMotion();
@@ -38,61 +41,66 @@ export function CanvasActiveTaskPanel({ tasks, align = "right", topInset = "var(
                 className={`pointer-events-none absolute z-[var(--z-panel-floating)] w-[var(--canvas-panel-width)] ${align === "left" ? "left-3" : "right-3"}`}
                 style={{ top: topInset }}
             >
-                <section
-                    className="pointer-events-auto overflow-hidden rounded-[var(--panel-radius)] border backdrop-blur-2xl"
-                    style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 24px 72px ${theme.spatial.shadow}` }}
-                    aria-label="当前画布生成任务"
-                >
-                    <button
-                        type="button"
-                        className="flex min-h-12 w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
-                        onClick={() => setOpen((value) => !value)}
-                        aria-expanded={open}
-                        aria-controls="canvas-active-task-list"
+                <LayoutGroup id="canvas-active-tasks">
+                    <motion.section
+                        layout
+                        className="pointer-events-auto overflow-hidden rounded-[var(--panel-radius)] border backdrop-blur-2xl"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 24px 72px ${theme.spatial.shadow}` }}
+                        aria-label={t("canvasA.activeTasks.label")}
                     >
-                        <span className="flex min-w-0 items-center gap-2">
-                            <span className="grid size-8 shrink-0 place-items-center rounded-[var(--dock-item-radius)]" style={{ background: theme.accent.primarySoft, color: theme.accent.primary }}>
-                                <ListTodo className="size-4" />
-                            </span>
-                            <span className="min-w-0">
-                                <span className="block text-sm font-semibold leading-5">生成任务</span>
-                                <span className="block truncate text-[var(--fs-label)]" style={{ color: theme.node.muted }} aria-live="polite">
-                                    当前画布 · {tasks.length} 个进行中
+                        <motion.button
+                            type="button"
+                            layout
+                            className="flex min-h-12 w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]"
+                            onClick={() => setOpen((value) => !value)}
+                            aria-expanded={open}
+                            aria-controls="canvas-active-task-list"
+                        >
+                            <span className="flex min-w-0 items-center gap-2">
+                                <span className="grid size-8 shrink-0 place-items-center rounded-[var(--dock-item-radius)]" style={{ background: theme.accent.primarySoft, color: theme.accent.primary }}>
+                                    <ListTodo className="size-4" />
+                                </span>
+                                <span className="min-w-0">
+                                    <span className="block text-sm font-semibold leading-5">{t("canvasA.activeTasks.title")}</span>
+                                    <span className="block truncate text-[var(--fs-label)]" style={{ color: theme.node.muted }} aria-live="polite">
+                                        {t("canvasA.activeTasks.inProgress", { count: tasks.length })}
+                                    </span>
                                 </span>
                             </span>
-                        </span>
-                        <span className="flex shrink-0 items-center gap-2" style={{ color: theme.accent.primary }}>
-                            <LoaderCircle className="size-4 animate-spin opacity-70 motion-reduce:animate-none" />
-                            {open ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
-                        </span>
-                    </button>
+                            <span className="flex shrink-0 items-center gap-2" style={{ color: theme.accent.primary }}>
+                                <LoaderCircle className="size-4 animate-spin opacity-70 motion-reduce:animate-none" />
+                                {open ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                            </span>
+                        </motion.button>
 
-                    <AnimatePresence initial={false}>
-                        {open ? (
-                            <motion.div
-                                id="canvas-active-task-list"
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: "auto" }}
-                                exit={{ opacity: 0, height: 0 }}
-                                transition={motionTransition}
-                                className="thin-scrollbar max-h-[min(70vh,520px)] space-y-2 overflow-y-auto px-2 pb-2"
-                            >
-                                {tasks.map((task) => (
-                                    <ActiveTaskCard
-                                        key={task.id}
-                                        task={task}
-                                        theme={theme}
-                                        expanded={expandedTaskId === task.id}
-                                        onToggle={() => setExpandedTaskId((current) => (current === task.id ? null : task.id))}
-                                        onCancelTask={onCancelTask}
-                                        reducedMotion={Boolean(reducedMotion)}
-                                        creditsEnabled={creditsEnabled}
-                                    />
-                                ))}
-                            </motion.div>
-                        ) : null}
-                    </AnimatePresence>
-                </section>
+                        <AnimatePresence initial={false}>
+                            {open ? (
+                                <motion.div
+                                    id="canvas-active-task-list"
+                                    layout
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={motionTransition}
+                                    className="thin-scrollbar max-h-[min(70vh,520px)] space-y-2 overflow-y-auto px-2 pb-2"
+                                >
+                                    {tasks.map((task) => (
+                                        <ActiveTaskCard
+                                            key={task.id}
+                                            task={task}
+                                            theme={theme}
+                                            expanded={expandedTaskId === task.id}
+                                            onToggle={() => setExpandedTaskId((current) => (current === task.id ? null : task.id))}
+                                            onCancelTask={onCancelTask}
+                                            reducedMotion={Boolean(reducedMotion)}
+                                            creditsEnabled={creditsEnabled}
+                                        />
+                                    ))}
+                                </motion.div>
+                            ) : null}
+                        </AnimatePresence>
+                    </motion.section>
+                </LayoutGroup>
             </motion.div>
         </AnimatePresence>
     );
@@ -115,19 +123,20 @@ function ActiveTaskCard({
     reducedMotion: boolean;
     creditsEnabled: boolean;
 }) {
+    const { t } = useTranslation();
     const showsProgress = generationTaskShowsProgress(task);
     const progress = showsProgress && typeof task.progress === "number" ? Math.max(0, Math.min(100, Math.round(task.progress))) : showsProgress && task.status === "queued" ? 0 : undefined;
-    const billingLabel = task.billing ? taskBillingLabel(task.billing) : "未计费";
+    const billingLabel = task.billing ? taskBillingLabel(task.billing) : t("canvasA.activeTasks.unbilled");
     const statusTone = task.status === "running" ? theme.accent.primary : theme.node.muted;
     const transition = reducedMotion ? { duration: 0 } : aceternityMotion.spring.panel;
 
     return (
-        <article className="overflow-hidden rounded-xl border" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>
+        <motion.article layout layoutId={`canvas-active-task-${task.id}`} className="overflow-hidden rounded-xl border" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>
             <button type="button" className="block w-full p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px]" onClick={onToggle} aria-expanded={expanded}>
                 <div className="flex min-w-0 items-start gap-2">
-                    <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md" style={{ background: `${statusTone}18`, color: statusTone }}>
+                    <motion.span layout="position" className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md" style={{ background: `${statusTone}18`, color: statusTone }}>
                         <ListTodo className="size-3.5" />
-                    </span>
+                    </motion.span>
                     <span className="min-w-0 flex-1">
                         <span className="flex items-center justify-between gap-2">
                             <span className="truncate text-xs font-semibold" title={formatTaskKind(task)}>
@@ -201,7 +210,7 @@ function ActiveTaskCard({
                         style={{ borderColor: theme.toolbar.border, color: theme.node.muted }}
                     >
                         <div className="flex items-center justify-between gap-2">
-                            <span>当前阶段</span>
+                            <span>{t("canvasA.activeTasks.stage")}</span>
                             <span className="max-w-[200px] truncate text-right" style={{ color: theme.node.text }}>
                                 {generationTaskStageLabel(task)}
                             </span>
@@ -218,24 +227,25 @@ function ActiveTaskCard({
                                 onMouseDown={(event) => event.stopPropagation()}
                             >
                                 <XCircle className="size-3" />
-                                取消任务
+                                {t("canvasA.activeTasks.cancel")}
                             </button>
                         ) : null}
                     </motion.div>
                 ) : null}
             </AnimatePresence>
-        </article>
+        </motion.article>
     );
 }
 
 function TaskDuration({ task }: { task: GenerationTask }) {
+    const { t } = useTranslation();
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => {
         const timer = window.setInterval(() => setNow(Date.now()), 1_000);
         return () => window.clearInterval(timer);
     }, []);
     const elapsed = Math.max(0, now - parseTime(task.startedAt || task.createdAt));
-    const label = `${task.status === "queued" ? "已等待" : "已运行"} ${formatDuration(elapsed)}`;
+    const label = t(task.status === "queued" ? "canvasA.activeTasks.waited" : "canvasA.activeTasks.running", { duration: formatDuration(elapsed) });
     return <span title={label}>{label}</span>;
 }
 

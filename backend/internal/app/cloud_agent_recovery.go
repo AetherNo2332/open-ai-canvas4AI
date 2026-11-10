@@ -69,35 +69,17 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 		}
 		run = refreshed
 	}
-	seen := map[string]bool{}
-	for _, id := range []string{run.ID, activeID, mediaID} {
-		if id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		task, err := s.repo.TaskForUser(run.UserID, id)
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			continue
-		}
+	seen, err := s.cancelCloudAgentCleanupTasks(ctx, run, activeID, mediaID)
+	if err != nil {
+		return err
+	}
+	if decodeErr == nil && state.MediaBatch != nil {
+		waiting, err := s.cleanupCloudAgentMediaBatch(ctx, run, &state, seen)
 		if err != nil {
 			return err
 		}
-		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
-			source := model.TaskCancellationParentFailed
-			if run.Status == "cancelled" {
-				source = model.TaskCancellationParentCancelled
-			}
-			if _, err = s.taskLifecycle().cancelTaskWithIntent(ctx, run.UserID, id, model.TaskCancellationIntent{Source: source}); err != nil {
-				// Completion may win the cancellation race. Re-read rather than
-				// treating a truthful terminal result as a permanent cleanup error.
-				latest, readErr := s.repo.TaskForUser(run.UserID, id)
-				if readErr != nil || !cloudAgentTaskTerminal(latest.Status) {
-					return err
-				}
-			}
+		if waiting {
+			return nil
 		}
 	}
 	if mediaID != "" && decodeErr == nil && state.CallIndex < len(state.Calls) {
@@ -170,4 +152,76 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 		}
 		return nil
 	})
+}
+
+func (s *Service) cleanupCloudAgentMediaBatch(ctx context.Context, run *model.CloudAgentExecution, state *cloudAgentRuntime, seen map[string]bool) (bool, error) {
+	// 批次条目与单个媒体任务同一规则：已进入上游的继续生成并回写，其余在途任务取消。
+	for _, item := range state.MediaBatch.Items {
+		id := item.taskID()
+		if item.Status != cloudAgentMediaBatchItemSubmitted || id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		task, err := s.repo.TaskForUser(run.UserID, id)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if model.TaskStatusActive(task.Status) || cloudAgentTaskTerminal(task.Status) {
+			continue
+		}
+		source := model.TaskCancellationParentFailed
+		if run.Status == "cancelled" {
+			source = model.TaskCancellationParentCancelled
+		}
+		if _, err = s.taskLifecycle().cancelTaskWithIntent(ctx, run.UserID, id, model.TaskCancellationIntent{Source: source}); err != nil {
+			latest, readErr := s.repo.TaskForUser(run.UserID, id)
+			if readErr != nil || !cloudAgentTaskTerminal(latest.Status) {
+				return false, err
+			}
+		}
+	}
+	if state.MediaBatch.inFlight() > 0 || state.MediaBatch.active() {
+		// 批次执行器把在途条目的最终状态回写画布后，会再次进入这里完成收尾。
+		s.startCloudAgentMediaBatchRunner(run.UserID, run.ID)
+		return true, nil
+	}
+	return false, nil
+}
+
+func (s *Service) cancelCloudAgentCleanupTasks(ctx context.Context, run *model.CloudAgentExecution, activeID, mediaID string) (map[string]bool, error) {
+	seen := map[string]bool{}
+	for _, id := range []string{run.ID, activeID, mediaID} {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		task, err := s.repo.TaskForUser(run.UserID, id)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
+			source := model.TaskCancellationParentFailed
+			if run.Status == "cancelled" {
+				source = model.TaskCancellationParentCancelled
+			}
+			if _, err = s.taskLifecycle().cancelTaskWithIntent(ctx, run.UserID, id, model.TaskCancellationIntent{Source: source}); err != nil {
+				// Completion may win the cancellation race. Re-read rather than
+				// treating a truthful terminal result as a permanent cleanup error.
+				latest, readErr := s.repo.TaskForUser(run.UserID, id)
+				if readErr != nil || !cloudAgentTaskTerminal(latest.Status) {
+					return nil, err
+				}
+			}
+		}
+	}
+	return seen, nil
 }

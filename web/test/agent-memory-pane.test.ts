@@ -7,7 +7,7 @@ test("memory settings pane uses the memory document API only", async () => {
     for (const call of ["getAgentMemory", "updateAgentMemoryMode", "decideAgentMemoryRevision", "undoAgentMemoryRevision", "saveAgentMemory", "listAgentMemoryRevisions"]) {
         expect(pane).toContain(call);
     }
-    expect(pane).toContain('ariaLabel="长期记忆模式"');
+    expect(pane).toContain('ariaLabel={t("account.settings.memory.mode")}');
     expect(pane).not.toContain("agent-memories");
     expect(pane).not.toContain("exportAgentMemories");
     const api = await Bun.file(new URL("../src/services/api/agent-memory.ts", import.meta.url)).text();

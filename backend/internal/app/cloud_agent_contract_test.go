@@ -357,6 +357,28 @@ func TestCloudAgentDurablePolicySnapshotRejectsMissingOrUnsupportedContracts(t *
 	}
 }
 
+func TestCloudAgentReasoningLevelsSurvivePolicySnapshot(t *testing.T) {
+	for _, mode := range []string{"off", "auto", "deep", "minimal", "low", "medium", "high", "max"} {
+		t.Run(mode, func(t *testing.T) {
+			request := agentTestRequest()
+			request.ReasoningMode = mode
+			if err := validateCloudAgentRequest(&request); err != nil {
+				t.Fatal(err)
+			}
+			_, snapshot, err := compileCloudAgentPolicies(request, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateCloudAgentPolicySnapshot(snapshot); err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.ReasoningMode != mode || cloudAgentThinkingLevel(snapshot.ReasoningMode, false) != mode {
+				t.Fatalf("reasoning level changed after persistence: %q", snapshot.ReasoningMode)
+			}
+		})
+	}
+}
+
 func TestCloudAgentHarnessChangeBlocksContinuation(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CANVAS_AGENT_HARNESS_DIR", dir)

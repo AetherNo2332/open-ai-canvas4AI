@@ -35,6 +35,8 @@ const (
 	FeatureImageWorkbench        = platform.FeatureImageWorkbench
 	FeatureVideoWorkbench        = platform.FeatureVideoWorkbench
 	FeatureAgentSubagents        = platform.FeatureAgentSubagents
+	FeatureEcommerce             = platform.FeatureEcommerce
+	FeatureEcommerceVideo        = platform.FeatureEcommerceVideo
 )
 
 type platformHost struct {
@@ -156,6 +158,7 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
+	s.closeCloudAgentMediaBatches()
 	if s.coordinator == nil {
 		return nil
 	}

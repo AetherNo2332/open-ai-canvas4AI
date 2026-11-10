@@ -1,4 +1,4 @@
-import { lazy, Suspense, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { ConfigProvider } from "antd";
 
@@ -7,6 +7,7 @@ import { useAgentPanelDock } from "@/components/canvas/use-agent-panel-dock";
 import { cn } from "@/lib/utils";
 import { isSpatialWorkbenchPath } from "@/lib/workspace-routes";
 import { getWorkspaceAntThemeConfig } from "@/lib/app-theme";
+import { preloadWorkspaceNavigationPages } from "@/lib/workspace-route-modules";
 import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { GlobalAgentPanelBoundary } from "./global-agent-panel-boundary";
@@ -32,6 +33,19 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     useLayoutEffect(() => {
         setAgentCanvasRoute(canvasEditor);
     }, [canvasEditor, setAgentCanvasRoute]);
+    const creationWorkspace = pathname === "/" || pathname === "/create";
+    const wasCanvasEditorRef = useRef(canvasEditor);
+    // 从画布编辑器回到创作首页时收起 Agent：画布里停靠在右侧的面板到首页会变成浮窗，挡住首页。
+    // 只收起面板，对话和运行照常继续；在绘制前收起，首页不会先闪出浮窗。
+    useLayoutEffect(() => {
+        const leftCanvasEditor = wasCanvasEditorRef.current && !canvasEditor;
+        wasCanvasEditorRef.current = canvasEditor;
+        if (leftCanvasEditor && creationWorkspace) useGlobalAgentStore.getState().closeAgent();
+    }, [canvasEditor, creationWorkspace]);
+    // 登录后空闲预取侧栏页面代码，首次切换页面不再闪出加载提示。
+    useEffect(() => {
+        if (userId) preloadWorkspaceNavigationPages();
+    }, [userId]);
 
     useLayoutEffect(() => {
         // Ant Design 浮层挂载在 body，必须用路由级标记隔离用户工作台与画布编辑器、运营后台。

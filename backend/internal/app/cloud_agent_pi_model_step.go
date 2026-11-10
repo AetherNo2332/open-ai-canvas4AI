@@ -256,7 +256,7 @@ func (s *Service) piModelStepTaskInput(run *model.CloudAgentExecution, state *cl
 	if remaining <= 0 {
 		return nil, cloudAgentContextBudget{}, BadAuthRequest("Agent 累计预算已耗尽")
 	}
-	stepThinking := cloudAgentReasoningEnabled(state.Policy.ReasoningMode) && !state.ForceThinkingOff
+	stepThinking := cloudAgentThinkingLevel(state.Policy.ReasoningMode, state.ForceThinkingOff)
 	stepOutputTokens := cloudAgentStepOutputBudget(state.StepLimits, state.BoostStepOutputBudget)
 	modelBudget := s.cloudAgentContextBudgetForRequest(state.Request)
 	if stepOutputTokens <= 0 || stepOutputTokens > modelBudget.MaxOutputTokens {
@@ -266,7 +266,7 @@ func (s *Service) piModelStepTaskInput(run *model.CloudAgentExecution, state *cl
 		"mode": "text", "prompt": state.Request.Prompt,
 		"agentRequests": map[string]any{"canonical": request.Canonical},
 		"config":        map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)},
-		"textOptions":   map[string]any{"stream": true, "thinking": stepThinking, "maxOutputTokens": stepOutputTokens},
+		"textOptions":   map[string]any{"stream": true, "thinkingLevel": stepThinking, "maxOutputTokens": stepOutputTokens},
 	}
 	if len(references) > 0 {
 		input["referenceImages"] = references

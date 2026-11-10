@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AgentChatComposer } from "@/components/canvas/canvas-cloud-agent-chat-ui";
+import { canvasThemes } from "@/lib/canvas-theme";
 
 // 自研（2026-09-17）：Agent 运行中插话。
 //
@@ -33,11 +37,26 @@ test("运行中不再锁死输入框，发送沿用会话消息入口", async ()
 test("输入框运行中同时给出「发送（插话）」与「停止」", async () => {
     const composer = await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent-chat-ui.tsx", import.meta.url)).text();
 
-    // 关键改动：canStop 不再等于 sending —— 否则运行中两个动作只能二选一
-    expect(composer).toContain("const canStop = Boolean(running && onStop);");
-    expect(composer).toContain("const canSubmit = !disabled && !sending && Boolean(prompt.trim() || attachments.length);");
-    expect(composer).not.toContain("const canStop = Boolean(sending && onStop);");
-    expect(composer).toContain('aria-label="停止本轮"');
+    for (const sending of [false, true]) {
+        const html = renderToStaticMarkup(
+            createElement(AgentChatComposer, {
+                prompt: "补充镜头要求",
+                running: true,
+                sending,
+                sendMode: "interject",
+                placeholder: "输入",
+                theme: canvasThemes.light,
+                onPromptChange: () => {},
+                onSubmit: () => {},
+                onStop: () => {},
+            }),
+        );
+        expect(html).toContain('aria-label="停止本轮"');
+        const send = html.match(/<button\b[^>]*class="agent-composer-send [^"]*"[^>]*>/)?.[0];
+        expect(send).toBeDefined();
+        expect(send).toContain('aria-label="插队"');
+        expect(send?.includes('disabled=""')).toBe(sending);
+    }
     // 插话/未送达要有可见标记
     // 状态标签与上游面板一致，并区分「已送达 / 已撤回」（撤回动作在 U8 接入）。
     expect(composer).toContain('export type AgentInterjectionStatus = "sent" | "delivered" | "undelivered" | "withdrawn";');

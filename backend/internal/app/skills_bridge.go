@@ -32,6 +32,8 @@ type (
 	SkillUploadPreview                    = skills.SkillUploadPreview
 	SkillUploadInstallResult              = skills.SkillUploadInstallResult
 	SkillGitHubInstallRequest             = skills.SkillGitHubInstallRequest
+	SkillGitHubDiscoverRequest            = skills.SkillGitHubDiscoverRequest
+	SkillGitHubDiscovery                  = skills.SkillGitHubDiscovery
 	SkillPackageFileItem                  = skills.SkillPackageFileItem
 	SkillPackageFileContent               = skills.SkillPackageFileContent
 	SkillPackageBundleFile                = skills.SkillPackageBundleFile
@@ -47,6 +49,10 @@ type (
 	SkillRecommendationInstallRequest     = skills.SkillRecommendationInstallRequest
 	SkillRecommendationInstallResult      = skills.SkillRecommendationInstallResult
 )
+
+func (s *Service) DiscoverGitHubSkills(ctx context.Context, userID string, req SkillGitHubDiscoverRequest) (*SkillGitHubDiscovery, error) {
+	return s.skillDomain().DiscoverGitHubSkills(ctx, userID, req)
+}
 
 // SkillRecommendations 返回按行业分组的推荐技能及当前用户的安装状态。
 func (s *Service) SkillRecommendations(userID string) (*SkillRecommendationList, error) {

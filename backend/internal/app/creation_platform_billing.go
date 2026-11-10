@@ -115,7 +115,7 @@ func (p *creationPlatform) prepareResolvedTask(userID string, taskReq CreateTask
 }
 
 // commitPlatformTask 在一个事务里冻结费用、写任务与提交记录；提交成功后才唤醒 worker。
-func (p *creationPlatform) commitPlatformTask(task *model.Task, order *model.BillingOrder, record *model.PlatformSubmission) error {
+func (p *creationPlatform) commitPlatformTask(task *model.Task, order *model.BillingOrder, record *model.PlatformSubmission, dramaJob ...*model.DramaJob) error {
 	var input map[string]any
 	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
 		return err
@@ -128,6 +128,10 @@ func (p *creationPlatform) commitPlatformTask(task *model.Task, order *model.Bil
 		return err
 	}
 	task.InputJSON = string(encoded)
+	if len(dramaJob) == 1 && dramaJob[0] != nil {
+		_, err := p.s.persistDramaTask(dramaJob[0], task, order, record)
+		return err
+	}
 	if order != nil {
 		task.BillingOrderID = order.ID
 	}
