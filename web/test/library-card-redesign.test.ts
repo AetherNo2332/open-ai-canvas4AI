@@ -6,7 +6,10 @@ import { formatAbsoluteDateTime, formatRelativeTime } from "../src/lib/relative-
 import { skillAccent, skillAccentNames, skillGlyph } from "../src/pages/skills/skill-catalog";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
-const css = read("../src/styles/workspace-product.css").replace(/\/\*[\s\S]*?\*\//g, "");
+// CSS 声明保持原样，仅忽略注释、换行和缩进，避免格式化改变源码契约测试结果。
+const css = read("../src/styles/workspace-product.css")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\s+/g, " ");
 
 describe("relative time", () => {
     const now = Date.parse("2026-10-24T12:00:00+08:00");
@@ -60,7 +63,7 @@ describe("canvas library card", () => {
     });
     test("secondary actions are revealed on hover/focus and always visible without hover", () => {
         expect(card).toContain("canvas-collection-rename");
-        expect(css).toMatch(/\.canvas-collection-card:is\(:hover, :focus-within\) :is\(\.canvas-collection-select, \.canvas-collection-rename, \.canvas-collection-actions\)/);
+        expect(css).toMatch(/\.canvas-collection-card:is\(:hover, :focus-within\) :is\(\.canvas-collection-select, \.canvas-collection-rename, \.canvas-collection-actions\)[^{]*\{[^}]*opacity: 1;/);
         expect(css).toMatch(/@media \(hover: none\) \{ :is\(\.canvas-collection-select, \.canvas-collection-rename, \.canvas-collection-actions\) \{ opacity: 1; \} \}/);
     });
 });
