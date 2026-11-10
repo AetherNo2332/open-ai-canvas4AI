@@ -38,6 +38,7 @@ const { setActiveUserScope } = await import("@/lib/user-scope");
 const { useUserStore } = await import("@/stores/use-user-store");
 const { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } = await import("@/stores/use-config-store");
 const { useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
+type InsertAgentFiles = NonNullable<import("@/stores/use-global-agent-store").AgentCanvasContext["insertAgentFiles"]>;
 let reducedMotion = false;
 let queueItems: AgentQueuedMessage[] = [];
 let receiveEvent: ((event: AgentEvent) => void) | undefined;
@@ -127,7 +128,18 @@ function toolbarVisibility(host: HTMLElement) {
     snapshot.remove();
     return visibility;
 }
-async function mount({ compact = false, docked = true, reduced = false, approval = false, queued = false, streaming = false, references = [] as CanvasResourceReference[], draft = savedConversation.draft } = {}) {
+async function mount({
+    compact = false,
+    docked = true,
+    reduced = false,
+    approval = false,
+    queued = false,
+    streaming = false,
+    strict = false,
+    references = [] as CanvasResourceReference[],
+    draft = savedConversation.draft,
+    insertAgentFiles = undefined as InsertAgentFiles | undefined,
+} = {}) {
     reducedMotion = reduced;
     receiveEvent = undefined;
     currentConversation = approval
@@ -171,7 +183,7 @@ async function mount({ compact = false, docked = true, reduced = false, approval
     dom.happyDOM.setWindowSize({ width: compact ? 600 : 1440, height: 900 });
     window.localStorage.clear();
     // 面板改为读全局 store：画布上下文与开合状态都由 store 提供。
-    useGlobalAgentStore.setState({ open: true, prefillRequest: null, dock: { docked, width: 440 }, canvas: { canvasId: "canvas", nodeCount: 1, selectedNodeIds: [], references } });
+    useGlobalAgentStore.setState({ open: true, prefillRequest: null, dock: { docked, width: 440 }, canvas: { canvasId: "canvas", nodeCount: 1, selectedNodeIds: [], references, insertAgentFiles } });
     setActiveUserScope("visibility-user");
     useUserStore.setState({ hydrated: true, user: { id: "visibility-user", username: "test", displayName: "test", role: "user", status: "active" }, features: { agentSubagentsEnabled: false, customChannelsEnabled: true } as any });
     const channel = createModelChannel({
@@ -200,14 +212,15 @@ async function mount({ compact = false, docked = true, reduced = false, approval
     host.className = "canvas-editor-shell";
     document.body.append(host);
     const root = createRoot(host);
+    const Wrapper = strict ? React.StrictMode : React.Fragment;
     const render = async (open: boolean) =>
         act(async () => {
             useGlobalAgentStore.setState({ open });
             root.render(
-                <>
+                <Wrapper>
                     <div className="canvas-main-toolbar">Toolbar</div>
                     <CanvasCloudAgentPanel launcher={false} />
-                </>,
+                </Wrapper>,
             );
             await settle();
         });
@@ -727,6 +740,160 @@ test("dock toggle uses aria-pressed and switches between docked and floating", a
         await mounted.close();
     }
 });
+
+async function dropAgentFiles(host: HTMLElement, files: File[]) {
+    const transfer = { types: ["Files"], files, items: files.map((file) => ({ kind: "file", type: file.type, getAsFile: () => file })), dropEffect: "none" };
+    const target = host.querySelector<HTMLElement>('[aria-label="Agent 输入"]')!;
+    const over = new Event("dragover", { bubbles: true, cancelable: true });
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(over, "dataTransfer", { value: transfer });
+    Object.defineProperty(drop, "dataTransfer", { value: transfer });
+    await act(async () => {
+        target.dispatchEvent(over);
+        target.dispatchEvent(drop);
+        await settle();
+    });
+    expect(over.defaultPrevented).toBe(true);
+    expect(drop.defaultPrevented).toBe(true);
+}
+
+function publishUploadedImage(nodeId: string, file: File) {
+    const canvas = useGlobalAgentStore.getState().canvas!;
+    useGlobalAgentStore.getState().setCanvas({
+        ...canvas,
+        references: [...canvas.references, { id: nodeId, nodeId, kind: "image", label: file.name, title: file.name, active: true, previewUrl: "https://example.test/image.png" }],
+    });
+    return [nodeId];
+}
+
+test("real Agent composer drops images and retries only the failed original file after partial success", async () => {
+    const first = new File(["first"], "first.png", { type: "image/png" });
+    const second = new File(["second"], "second.png", { type: "image/png" });
+    const calls: File[][] = [];
+    const nodeIds: string[][] = [];
+    const mounted = await mount({
+        strict: true,
+        draft: "请看这些图片",
+        insertAgentFiles: async (files, _signal, ids) => {
+            calls.push(files);
+            nodeIds.push([...(ids || [])]);
+            if (files[0] === second && calls.length === 2) throw new Error("第二张上传失败");
+            return publishUploadedImage(files[0] === first ? "first-node" : "second-node", files[0]);
+        },
+    });
+    try {
+        await dropAgentFiles(mounted.host, [first, second]);
+        expect(calls).toEqual([[first], [second]]);
+        expect(mounted.host.textContent).toContain("第二张上传失败");
+        expect(mounted.host.querySelector<HTMLButtonElement>(".is-failed .agent-attachment-label")!.disabled).toBe(true);
+        expect(mounted.host.querySelector<HTMLButtonElement>(".agent-composer-send")!.disabled).toBe(true);
+        const retry = mounted.host.querySelector<HTMLButtonElement>(".agent-attachment-retry");
+        expect(retry).not.toBeNull();
+        await act(async () => {
+            retry!.click();
+            await settle();
+        });
+        expect(calls).toEqual([[first], [second], [second]]);
+        expect(calls[2][0]).toBe(second);
+        expect(nodeIds[1]).toHaveLength(1);
+        expect(nodeIds[2]).toEqual(nodeIds[1]);
+        expect(mounted.host.querySelector(".agent-attachment-error")).toBeNull();
+        expect(mounted.host.querySelectorAll(".agent-attachment")).toHaveLength(2);
+        expect(mounted.host.querySelector<HTMLButtonElement>(".agent-composer-send")!.disabled).toBe(false);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("an empty upload receipt remains a removable failure and never becomes a node reference", async () => {
+    const mounted = await mount({ draft: "原草稿", insertAgentFiles: async () => [] });
+    try {
+        await dropAgentFiles(mounted.host, [new File(["local"], "local.png", { type: "image/png" })]);
+        expect(mounted.host.textContent).toContain("图片尚未保存到服务器");
+        expect(mounted.host.querySelector<HTMLButtonElement>(".agent-composer-send")!.disabled).toBe(true);
+        expect(mounted.host.querySelector('[aria-label="Agent 输入"]')!.textContent).toBe("原草稿");
+        await act(async () => mounted.host.querySelector<HTMLButtonElement>(".agent-attachment-remove")!.click());
+        expect(mounted.host.querySelector(".agent-attachment")).toBeNull();
+        expect(mounted.host.querySelector<HTMLButtonElement>(".agent-composer-send")!.disabled).toBe(false);
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("removing an uploading attachment withdraws the message reference while retaining its canvas upload", async () => {
+    let complete!: (ids: string[]) => void;
+    let signal: AbortSignal | undefined;
+    const mounted = await mount({
+        draft: "保留原草稿",
+        insertAgentFiles: async (_files, uploadSignal) => {
+            signal = uploadSignal;
+            return new Promise<string[]>((resolve) => {
+                complete = resolve;
+            });
+        },
+    });
+    try {
+        await dropAgentFiles(mounted.host, [new File(["image"], "image.png", { type: "image/png" })]);
+        const remove = mounted.host.querySelector<HTMLButtonElement>(".agent-attachment-remove")!;
+        expect(remove.title).toContain("上传继续并保存在画布");
+        await act(async () => remove.click());
+        expect(signal?.aborted).toBe(false);
+        await act(async () => {
+            complete(["uploaded-node"]);
+            await settle();
+        });
+        expect(mounted.host.querySelector(".agent-attachment")).toBeNull();
+        expect(mounted.host.querySelector('[aria-label="Agent 输入"]')!.textContent).toBe("保留原草稿");
+    } finally {
+        await mounted.close();
+    }
+});
+
+for (const changedScope of ["conversation", "canvas", "user"] as const) {
+    test(`Agent attachments cancel in-flight work and discard failures on ${changedScope} changes`, async () => {
+        let complete!: (ids: string[]) => void;
+        let uploadSignal: AbortSignal | undefined;
+        const first = new File(["failed"], "failed.png", { type: "image/png" });
+        const second = new File(["pending"], "pending.png", { type: "image/png" });
+        const calls: File[][] = [];
+        const mounted = await mount({
+            insertAgentFiles: async (files, signal?: AbortSignal) => {
+                calls.push(files);
+                if (files[0] === first) throw new Error("保留此失败供当前会话重试");
+                uploadSignal = signal;
+                return new Promise<string[]>((resolve) => {
+                    complete = resolve;
+                });
+            },
+        });
+        try {
+            await dropAgentFiles(mounted.host, [first, second]);
+            expect(mounted.host.textContent).toContain("保留此失败供当前会话重试");
+            await act(async () => {
+                if (changedScope === "conversation") mounted.host.querySelector<HTMLButtonElement>('[aria-label="新建对话"]')!.click();
+                else if (changedScope === "canvas") {
+                    const canvas = useGlobalAgentStore.getState().canvas!;
+                    useGlobalAgentStore.getState().setCanvas({ ...canvas, canvasId: "other-canvas", references: [] });
+                } else {
+                    setActiveUserScope("other-user");
+                    useUserStore.setState({ user: { ...useUserStore.getState().user!, id: "other-user" } });
+                }
+                await settle();
+            });
+            expect(uploadSignal?.aborted).toBe(true);
+            expect(mounted.host.querySelector(".agent-attachment")).toBeNull();
+            await act(async () => {
+                complete(["stale-upload-node"]);
+                await settle();
+            });
+            expect(mounted.host.querySelector(".agent-attachment")).toBeNull();
+            expect(mounted.host.textContent).not.toContain("stale-upload-node");
+            expect(calls).toEqual([[first], [second]]);
+        } finally {
+            await mounted.close();
+        }
+    });
+}
 
 test("off canvas the panel keeps the conversation readable but disables the composer with the canvas hint", async () => {
     const mounted = await mount();

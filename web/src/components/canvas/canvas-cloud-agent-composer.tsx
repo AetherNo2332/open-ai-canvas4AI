@@ -478,7 +478,22 @@ export function AgentChatComposer({
           ];
 
     return (
-        <div className="agent-composer-wrap min-w-0 shrink-0" onWheelCapture={(event) => event.stopPropagation()}>
+        <div
+            className="agent-composer-wrap min-w-0 shrink-0"
+            onWheelCapture={(event) => event.stopPropagation()}
+            onDragOver={(event) => {
+                if (!onAddFiles || !Array.from(event.dataTransfer.types).includes("Files")) return;
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = visible && !disabled ? "copy" : "none";
+            }}
+            onDrop={(event) => {
+                if (!onAddFiles || !Array.from(event.dataTransfer.types).includes("Files")) return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (visible && !disabled) void onAddFiles(Array.from(event.dataTransfer.files));
+            }}
+        >
             {/* 有队列条或底部附加内容时，外壳托住它们与输入卡片，形成一张整卡。 */}
             <div className="agent-composer-shell relative" data-has-footer={wrapped ? "" : undefined}>
                 <AnimatePresence initial={false}>
@@ -568,12 +583,12 @@ export function AgentChatComposer({
                                                 className="agent-attachment-remove"
                                                 onClick={() => onRemoveAttachment(item.id)}
                                                 aria-label={`移除 ${name}`}
-                                                title={item.nodeId ? "移除：这次放到画布、还没连线的节点会一起删除（可撤销）" : "移除"}
+                                                title={busy ? "移除本条消息的附件引用，上传继续并保存在画布" : "移除本条消息的附件引用，保留画布节点"}
                                             >
                                                 <X className="size-3" aria-hidden="true" />
                                             </button>
                                         ) : null}
-                                        <button type="button" className="agent-attachment-label" title={`在输入框里插入 @${name}`} onClick={() => insertAttachmentMention(item)}>
+                                        <button type="button" className="agent-attachment-label" disabled={busy || failed} title={`在输入框里插入 @${name}`} onClick={() => insertAttachmentMention(item)}>
                                             <AtSign className="size-2.5 shrink-0" aria-hidden="true" />
                                             <span className="truncate">{label}</span>
                                         </button>

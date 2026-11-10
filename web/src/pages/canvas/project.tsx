@@ -794,6 +794,7 @@ function CanvasViewportPage() {
         pasteSystemClipboard,
         replaceNodeMedia,
         createFileNode,
+        insertAgentFiles,
         startUploadStatus,
         uploadModalOpen,
         uploadTimelineMedia,
@@ -810,6 +811,7 @@ function CanvasViewportPage() {
         setSelectedConnectionId,
         setContextMenu,
         setDialogNodeId,
+        prepareCanvasForServerAction,
     });
     const replaceCanvasNodeMedia = useCallback((node: CanvasNodeData) => handleUploadRequest(node.id), [handleUploadRequest]);
     const { actions: batchReferences, pickerModal: batchReferencePickerModal } = useCanvasBatchReferences({ nodesRef, connectionsRef, setNodes, setConnections, createFileNode });
@@ -2694,19 +2696,6 @@ function CanvasViewportPage() {
         focusCanvasNode(nodeId);
     };
     const handleAgentFocusNode = useCallback((nodeId: string) => agentFocusNodeRef.current(nodeId), []);
-    const insertAgentFiles = useCallback(
-        async (files: File[]) => {
-            const ids: string[] = [];
-            for (const file of files) {
-                const id = await createFileNode(file, getCanvasCenter(), undefined, { quiet: { nodeId: `image-${nanoid()}` } });
-                const node = id ? nodesRef.current.find((item) => item.id === id) : undefined;
-                if (node?.metadata?.storageKey && resourceIdFromStorageKey(node.metadata.storageKey)) ids.push(id!);
-                else message.error(`「${file.name}」尚未上传到服务器，请在画布中重试上传后引用`);
-            }
-            return ids;
-        },
-        [createFileNode, getCanvasCenter, message, nodesRef],
-    );
     // 平台唯一的 Agent 面板挂在布局上；画布只发布自己的上下文。画布加载完成前不发布，避免以未保存画布绑定运行。
     const publishAgentCanvas = useGlobalAgentStore((state) => state.setCanvas);
     useEffect(() => {

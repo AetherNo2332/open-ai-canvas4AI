@@ -90,8 +90,8 @@ import { useAgentPanelLayout } from "./use-agent-panel-layout";
 import { useAgentPanelDock } from "./use-agent-panel-dock";
 import { settleAgentPrefill, takeAgentPrefill, useGlobalAgentStore, type AgentPrefillRequest } from "@/stores/use-global-agent-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { canvasNodeMentionToken } from "@/lib/canvas/canvas-resource-references";
-import { appendAgentNodeReferences, checkAgentAttachmentFiles, removeAgentNodeReference } from "@/lib/canvas/agent-composer-attachments";
+import { appendAgentNodeReferences } from "@/lib/canvas/agent-composer-attachments";
+import { useAgentComposerAttachments } from "./use-agent-composer-attachments";
 import { AgentWelcome } from "./canvas-agent-welcome";
 import { DEFAULT_CANVAS_APPEARANCE, agentAvatarClipForState, agentAvatarStateForRunStatus, agentCopy, isAgentAvatarBundleManifest, type AgentAvatarBundleManifest } from "@/lib/canvas/agent-appearance";
 import { agentAvatarBundleFileURL, live2DModelURL } from "@/services/api/appearance";
@@ -419,29 +419,16 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     const conversationScope = `${userScope}:${canvasId}:${activeConversationId}`;
     const currentScope = useRef(conversationScope);
     currentScope.current = conversationScope;
-    const [uploadingScope, setUploadingScope] = useState<string | null>(null);
-    const uploadingScopeRef = useRef<string | null>(null);
-    const composerAttachments = references
-        .filter((reference) => reference.kind === "image" && reference.nodeId && prompt.includes(canvasNodeMentionToken(reference.nodeId)))
-        .map((reference) => ({ id: reference.nodeId, nodeId: reference.nodeId, name: reference.label, url: reference.previewUrl || "" }));
-    const addComposerFiles = async (input: FileList | File[] | null) => {
-        if (!insertAgentFiles || uploadingScopeRef.current) return;
-        const check = checkAgentAttachmentFiles(Array.from(input || []), { existingCount: composerAttachments.length, existingKeys: new Set(), maxBytes: Math.max(1, useUserStore.getState().runtimeLimits.resourceUploadMB || 50) * 1024 * 1024 });
-        if (check.problems.length) void appMessage.warning(check.problems.join("；"));
-        if (!check.accepted.length) return;
-        const scope = conversationScope;
-        uploadingScopeRef.current = scope;
-        setUploadingScope(scope);
-        try {
-            const ids = await insertAgentFiles(check.accepted);
-            if (currentScope.current === scope) setPrompt((value) => appendAgentNodeReferences(value, ids));
-        } catch (error) {
-            void appMessage.error(error instanceof Error ? error.message : "图片上传失败，请重试");
-        } finally {
-            uploadingScopeRef.current = null;
-            setUploadingScope(null);
-        }
-    };
+    const composerAttachments = useAgentComposerAttachments({
+        scope: conversationScope,
+        userScope,
+        prompt,
+        references,
+        insertFiles: insertAgentFiles,
+        maxBytes: Math.max(1, useUserStore.getState().runtimeLimits.resourceUploadMB || 50) * 1024 * 1024,
+        onPromptChange: setPrompt,
+        onWarning: (text) => void appMessage.warning(text),
+    });
     const historyStateRef = useRef({ activeConversationId, messages, run, prompt, busy });
     historyStateRef.current = { activeConversationId, messages, run, prompt, busy };
     const running = Boolean(run?.cleanupPending) || run?.status === "running" || run?.status === "queued" || run?.status === "waiting_approval";
@@ -1043,7 +1030,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         const value = (override ?? prompt).trim();
         // 没有画布时绝不发送：fork 后端以 canvasId 归属运行，离开画布后旧 canvasId 也不能再用。
         if (!canvasId) return false;
-        if (!value || busy || uploadingScopeRef.current === conversationScope || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return false;
+        if (!value || busy || composerAttachments.blockReason || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return false;
         if (subagentsAvailable && (!subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicy.canvasId !== canvasId || subagentPolicySaving || subagentPolicyError)) {
             setSubagentPolicyError("请先加载并确认子代理授权设置，再发送消息");
             return false;
@@ -1730,10 +1717,11 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                         </>
                                     }
                                     prompt={prompt}
-                                    attachments={composerAttachments}
-                                    onAddFiles={insertAgentFiles ? addComposerFiles : undefined}
-                                    onRemoveAttachment={(id) => setPrompt((value) => removeAgentNodeReference(value, id))}
-                                    blockReason={uploadingScope === conversationScope ? "图片正在上传到画布，请稍候" : undefined}
+                                    attachments={composerAttachments.attachments}
+                                    onAddFiles={insertAgentFiles ? composerAttachments.addFiles : undefined}
+                                    onRemoveAttachment={composerAttachments.remove}
+                                    onRetryAttachment={composerAttachments.retry}
+                                    blockReason={composerAttachments.blockReason}
                                     addMenu={{ selectionCount: selectedNodeIds.length, onReferenceSelection: () => setPrompt((value) => appendAgentNodeReferences(value, selectedNodeIds)) }}
                                     disabled={!onCanvas || activeHistoryState?.status === "unavailable" || !historyHydrated || !pendingHydrated}
                                     sending={busy}

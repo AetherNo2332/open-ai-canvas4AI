@@ -1187,6 +1187,7 @@ export function AgentChatComposer({
     onSubmit,
     onAddFiles,
     onRemoveAttachment,
+    onRetryAttachment,
     left,
     submitAccessory,
     onStop,
@@ -1215,6 +1216,7 @@ export function AgentChatComposer({
     stopping?: boolean;
     onAddFiles?: (files: FileList | File[] | null) => void | Promise<void>;
     onRemoveAttachment?: (id: string) => void;
+    onRetryAttachment?: (id: string) => void;
     left?: ReactNode;
     /** 发送按钮左侧的附属控件，例如上下文用量环。 */
     submitAccessory?: ReactNode;
@@ -1251,6 +1253,7 @@ export function AgentChatComposer({
             stopping={stopping}
             onAddFiles={onAddFiles}
             onRemoveAttachment={onRemoveAttachment}
+            onRetryAttachment={onRetryAttachment}
             left={left}
             submitAccessory={
                 <>
