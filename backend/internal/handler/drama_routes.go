@@ -1,11 +1,11 @@
 package handler
 
 import (
+	"github.com/gin-gonic/gin"
 	"log/slog"
 	"mime"
 	"net/http"
 	"yingce/backend/internal/service"
-	"github.com/gin-gonic/gin"
 )
 
 // dramaRoute 统一短剧接口的鉴权、请求体上限和响应封装；业务校验与归属检查全部在 service 内完成。

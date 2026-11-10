@@ -132,6 +132,12 @@ func (s *Service) validateEcommerceDraftTasks(id string, userID string, req *Sav
 }
 
 func (s *Service) validateEcommercePlanHistory(userID string, req *SaveEcommerceProjectRequest) error {
+	if req.HistoryMode != "" && req.HistoryMode != "rounds" {
+		return BadAuthRequest("不支持的保存历史模式")
+	}
+	if req.HistoryMode == "rounds" {
+		return validateEcommerceActivePlan(req.Plan)
+	}
 	if req.Plan != nil {
 		if len(req.Plan.Images) == 0 && len(req.Plan.PreviousImages) == 0 {
 			return BadAuthRequest("策划图片不能为空")
@@ -157,6 +163,23 @@ func (s *Service) validateEcommercePlanHistory(userID string, req *SaveEcommerce
 		}
 	}
 
+	return nil
+}
+
+func validateEcommerceActivePlan(plan *model.EcommercePlan) error {
+	if plan == nil {
+		return nil
+	}
+	if len(plan.PreviousImages) > 0 {
+		return BadAuthRequest("历史轮次由服务端单独保存，请刷新页面后重试")
+	}
+	seen := map[string]bool{}
+	for _, image := range plan.Images {
+		if image.ID == "" || seen[image.ID] {
+			return BadAuthRequest("画布图片ID重复或为空")
+		}
+		seen[image.ID] = true
+	}
 	return nil
 }
 

@@ -150,8 +150,8 @@ func (r *dramaRun) submitScript(job *model.DramaJob) (*model.Task, bool, error) 
 
 func (r *dramaRun) submitCastImage(job *model.DramaJob) (*model.Task, bool, error) {
 	cast, err := r.s.repo.DramaCast(r.project.ID, job.CastID)
-	// 槽位处于 running 可能是本工作的上一轮尝试，只有已就绪或锁定时才不再需要。
-	if err != nil || cast.Locked || cast.ImageStatus == model.DramaMediaReady || cast.ImageStatus == model.DramaMediaDraft {
+	// 槽位处于 running 可能是本工作的上一轮尝试，只有已就绪、已失败（终态）或锁定时才不再需要。
+	if err != nil || cast.Locked || cast.ImageStatus == model.DramaMediaReady || cast.ImageStatus == model.DramaMediaDraft || cast.ImageStatus == model.DramaMediaFailed {
 		return nil, true, nil
 	}
 	appearance := firstNonEmpty(cast.Appearance, cast.Description, cast.Role)

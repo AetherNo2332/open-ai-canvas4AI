@@ -121,6 +121,7 @@ func businessModels() []any {
 	return []any{
 		&model.Project{},
 		&model.EcommerceProject{},
+		&model.EcommerceRound{},
 		&model.EcommerceKnowledgeSource{},
 		&model.EcommerceKnowledgeEntry{},
 		&model.EcommerceCreativeRecommendation{},

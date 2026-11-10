@@ -2,10 +2,10 @@ package handler
 
 import (
 	"errors"
+	"github.com/gin-gonic/gin"
 	"io"
 	"net/http"
 	"yingce/backend/internal/service"
-	"github.com/gin-gonic/gin"
 )
 
 // RegisterPoseLibraryRoutes 注册站点姿势库：登录用户浏览、预览和选用，管理员导入、同步和维护。

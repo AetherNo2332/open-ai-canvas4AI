@@ -296,20 +296,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"resource": resource})
 	})
-	r.GET("/resources/:id/file", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		options := resourceAccessOptions(c)
-		delivery, err := svc.PrepareResourceDelivery(user.ID, c.Param("id"), options, c.GetHeader("Range"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		serveResourceDelivery(c, delivery, "private, no-cache", "")
-	})
+	r.GET("/resources/:id/file", resourceFileHandler(svc))
 	publicResourceHandler := func(c *gin.Context) {
 		options := resourceAccessOptions(c)
 		delivery, err := svc.PreparePublicResourceDelivery(c.Param("id"), c.Query("expires"), c.Query("signature"), options, c.GetHeader("Range"))

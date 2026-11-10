@@ -337,7 +337,9 @@ Schema 45 新增 `upload_reservations`：`id`、`user_id`、`size`、`day`、`ex
 
 `auth_sessions.reauthenticated_at` 记录当前会话的 Linux.do 重新核验时间，有效 5 分钟；`o_auth_states.reauth_user_id/reauth_session_id` 绑定发起重新核验的账号及会话。重新核验只允许原绑定的第三方身份，不创建账号或新登录会话。`auth_verifications.session_id/credential_hash` 将 `profile_email` 用途的验证码绑定到当前用户、当前会话和密码状态。密码、邮箱修改及旧会话撤销在同一事务提交；登录会话签发同时检查账号凭据，阻止并发旧密码登录在撤销之后再创建会话。升级执行 `migrate-schema up` / `verify`，禁止手工修改既有迁移记录。
 
-当前结构版本为 100。上游 v78–v92 在本 fork 映射为 v86–v100，已发布的 fork v78–v85 保持原编号与校验值。版本 75–77 沿用上游迁移，迁移计划要求版本严格递增。
+当前结构版本为 101。上游 v78–v93 在本 fork 映射为 v86–v101，已发布的 fork v78–v85 保持原编号与校验值。版本 75–77 沿用上游迁移，迁移计划要求版本严格递增。
+
+版本 101 `ecommerce_round_history` 沿用上游 v93 的名称与校验值，为 `ecommerce_projects` 增加可空的 `active_round_id` 并创建 `ecommerce_rounds`。历史轮次保存用户与项目归属、递增序号、去重键、草稿和计划 JSON、图片数量及乐观锁版本，项目内轮次序号和去重键各有唯一索引。旧项目在首次保存时转换为轮次结构，升级期间保留原草稿、计划与任务引用。SQLite → PostgreSQL 搬迁清单同步包含轮次表。应先运行结构迁移及版本校验再启动后端，回退到旧程序前需恢复升级前备份，以保留完整的轮次历史。
 
 版本 83 `fork_subagent_write_permissions`（`database/migrations_subagent_write.go`）为 `agent_subagent_policies` 增加 `write_enabled`（boolean，画布级子代理写授权开关）、`agent_subagent_links` 增加 `write_granted`（boolean，spawn 时定型的子代理写标记）；两列已存在时跳过，旧行回填 false（只读语义不变）。
 

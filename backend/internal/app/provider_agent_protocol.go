@@ -467,5 +467,4 @@ func canonicalAgentGeminiAssistantParts(message map[string]interface{}, parts in
 		converted = append(converted, part)
 	}
 	return converted
-	return parts
 }

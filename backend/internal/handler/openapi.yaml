@@ -120,6 +120,16 @@ paths:
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [ecommerce-agent]
+      summary: 通过重复 resourceId 查询参数下载当前用户的原图 ZIP
+      parameters:
+        - {"name": "resourceId", "in": "query", "required": true, "style": "form", "explode": true, "schema": {"type": "array", "minItems": 1, "maxItems": 500, "items": {"type": "string"}}}
+      responses:
+        "200": {description: ZIP 归档附件, content: {application/zip: {schema: {type: string, format: binary}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
   /admin/ecommerce/categories:
     get:
       tags: [admin]
@@ -373,7 +383,7 @@ paths:
             schema:
               {
                 type: string,
-                enum: [password, email, sms, linuxdo, verification, unknown],
+                enum: [password, email, sms, linuxdo, oidc, verification, unknown],
               },
           }
         - {
@@ -1735,43 +1745,6 @@ paths:
           description: 信封 data 含 scannedRuns、searchCalls 与按启用次数降序的 skills；每个技能含 runsEnabled、searchHits、readCalls、readFailures、entryReads、cardReads 与 topCards（最多 5 条最热卡路径）。统计仅覆盖调用方本人最近的运行，且不含任何技能正文
         "401":
           description: 未登录
-  /agent/profile:
-    get:
-      tags: [agent]
-      summary: 读取生效的用户、项目、画布 Agent 偏好层
-      parameters:
-        - in: query
-          name: scope
-          schema:
-            type: string
-            enum: [user, project, canvas]
-        - in: query
-          name: projectId
-          schema:
-            type: string
-        - in: query
-          name: canvasId
-          schema:
-            type: string
-      responses:
-        "200":
-          description: 信封 data 为合并 revision、hash 和按 user/project/canvas 顺序排列的 layers；每层含独立数字 revision
-        "403":
-          description: 项目或画布不属于当前用户
-    patch:
-      tags: [agent]
-      summary: 使用单层 revision CAS 更新 Agent 偏好
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AgentProfileRequest"
-      responses:
-        "200":
-          description: 返回更新后的生效偏好视图
-        "409":
-          description: 偏好 revision 已变化，须重新读取后保存
   /agent/memory:
     get:
       tags: [agent]
@@ -1866,365 +1839,6 @@ paths:
         "401": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
         "409": {description: 记忆文件已在待确认修改之后变化，须重新查看}
-  /agent/memories:
-    get:
-      tags: [agent]
-      summary: 列出当前用户的 Agent 记忆
-      parameters:
-        - in: query
-          name: status
-          schema:
-            type: string
-            enum: [pending, approved, rejected, expired]
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 500
-      responses:
-        "200":
-          description: 当前用户的记忆，含可选来源运行与工具执行证据；计数不是有效性评分
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        required: [memories]
-                        properties:
-                          memories:
-                            type: array
-                            items: { $ref: "#/components/schemas/AgentMemory" }
-        "401":
-          $ref: "#/components/responses/Error"
-    post:
-      tags: [agent]
-      summary: 手动添加一条个人记忆（直接批准）
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [topic, category, situation]
-              properties:
-                topic: { type: string }
-                category: { type: string }
-                situation: { type: string }
-                lesson: { type: string }
-                source: { type: string }
-                steps:
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      tool: { type: string }
-                      action: { type: string }
-                      note: { type: string }
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/export:
-    get:
-      tags: [agent]
-      summary: 导出当前用户的 Agent 记忆
-      responses:
-        "200":
-          description: 信封 data 为 version/kind/exportedAt/memories
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/import:
-    post:
-      tags: [agent]
-      summary: 导入 Agent 记忆 JSON
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                version: { type: integer }
-                kind: { type: string }
-                memories: { type: array }
-      responses:
-        "200":
-          description: 信封 data 含 imported、merged、skipped
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/settings:
-    get:
-      tags: [agent]
-      summary: 读取当前用户的记忆压缩设置与最近一次压缩状态
-      responses:
-        "200":
-          description: 压缩设置与最新提案状态；awaiting_review 不表示记忆已经修改
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        { $ref: "#/components/schemas/AgentMemoryCompactView" }
-        "401":
-          $ref: "#/components/responses/Error"
-    patch:
-      tags: [agent]
-      summary: 更新记忆压缩周期和文本模型
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                compactInterval:
-                  type: string
-                  enum: [off, daily, weekly, monthly]
-                logicalModelId: { type: string }
-                channelId: { type: string }
-                channelModelKey: { type: string }
-                model: { type: string }
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/compact:
-    post:
-      tags: [agent]
-      summary: 生成一次待审批的个人记忆压缩提案（走用户文本模型计费）
-      description: 每批最多80条、输入最多48KiB，按稳定ID公平轮转。模型回调只保存提案，不修改已批准记忆；需由本人带version批准才应用。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                logicalModelId: { type: string }
-                channelId: { type: string }
-                channelModelKey: { type: string }
-                model: { type: string }
-      responses:
-        "200":
-          description: 信封 data 为含 taskId/proposalId 的压缩设置视图；通常为 queued，快速完成时可已进入 awaiting_review
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        { $ref: "#/components/schemas/AgentMemoryCompactView" }
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/proposals:
-    get:
-      tags: [agent]
-      summary: 列出当前用户的记忆压缩提案
-      parameters:
-        - in: query
-          name: limit
-          schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
-      responses:
-        "200":
-          description: 按创建时间倒序的用户私有压缩提案
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        required: [proposals]
-                        properties:
-                          proposals:
-                            type: array
-                            items:
-                              {
-                                $ref: "#/components/schemas/AgentMemoryProposal",
-                              }
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/proposals/{proposalId}/decide:
-    parameters:
-      - in: path
-        name: proposalId
-        required: true
-        schema: { type: string }
-    post:
-      tags: [agent]
-      summary: 按版本批准或拒绝当前用户的压缩提案
-      description: 批准前锁定全部源记忆并比较输入快照，任一内容或状态变化时整批409且不留下部分修改。批准保留完整恢复版本；拒绝不改变记忆。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/AgentMemoryProposalDecision" }
-      responses:
-        "200":
-          description: 操作成功后的压缩提案视图
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data: { $ref: "#/components/schemas/AgentMemoryProposal" }
-        "400":
-          description: 缺少或无效version、决定无效或请求包含未知字段
-        "401":
-          $ref: "#/components/responses/Error"
-        "404":
-          description: 对象不存在或不属于当前用户
-        "409":
-          description: version或记忆内容前置条件不匹配；整批未执行
-  /agent/memories/revisions:
-    get:
-      tags: [agent]
-      summary: 列出当前用户的记忆可恢复版本
-      parameters:
-        - in: query
-          name: limit
-          schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
-      responses:
-        "200":
-          description: 按创建时间倒序的用户私有可恢复版本
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        required: [revisions]
-                        properties:
-                          revisions:
-                            type: array
-                            items:
-                              {
-                                $ref: "#/components/schemas/AgentMemoryRevision",
-                              }
-        "401":
-          $ref: "#/components/responses/Error"
-  /agent/memories/revisions/{revisionId}/restore:
-    parameters:
-      - in: path
-        name: revisionId
-        required: true
-        schema: { type: string }
-    post:
-      tags: [agent]
-      summary: 按版本恢复一次已应用压缩前的记忆
-      description: 要求全部保留条目仍匹配应用后快照，且被删除ID未被复用；有后续编辑、删除或ID复用时整批409。不能覆盖他人记录，同一版本只成功恢复一次。
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/AgentMemoryRevisionRestore" }
-      responses:
-        "200":
-          description: 操作成功后的可恢复版本视图
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/Envelope"
-                  - type: object
-                    properties:
-                      data: { $ref: "#/components/schemas/AgentMemoryRevision" }
-        "400":
-          description: 缺少或无效version、决定无效或请求包含未知字段
-        "401":
-          $ref: "#/components/responses/Error"
-        "404":
-          description: 对象不存在或不属于当前用户
-        "409":
-          description: version或记忆内容前置条件不匹配；整批未执行
-  /agent/memories/{id}:
-    parameters:
-      - in: path
-        name: id
-        required: true
-        schema: { type: string }
-    patch:
-      tags: [agent]
-      summary: 更新一条属于当前用户的记忆
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "401":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
-    delete:
-      tags: [agent]
-      summary: 删除一条属于当前用户的记忆
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "401":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
-  /agent/memories/{id}/decide:
-    post:
-      tags: [agent]
-      summary: 批准或拒绝一条属于当前用户的待审记忆
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [decision]
-              properties:
-                decision:
-                  type: string
-                  enum: [approve, reject]
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
   /agent/conversations:
     get:
       tags: [agent]
@@ -2378,26 +1992,6 @@ paths:
           description: 信封 data.accepted 与 data.pending
         "409":
           description: 本轮已结束，应改为新一轮发送
-  /agent/runs/{id}/interjections/{messageId}:
-    parameters:
-      - $ref: "#/components/parameters/AgentRunID"
-      - name: messageId
-        in: path
-        required: true
-        schema:
-          type: string
-          maxLength: 160
-    delete:
-      tags: [agent]
-      summary: 撤回尚未送达模型的插话
-      description: 只从待送队列移除并发出 user_interjection_withdrawn 事件；不停止本轮，也不取消已提交的生成任务。
-      responses:
-        "200":
-          description: 信封 data.withdrawn
-        "404":
-          description: 插话不存在
-        "409":
-          description: reason=agent_interjection_already_delivered 表示已送达模型或本轮已结束，不能撤回；reason=agent_run_state_busy 表示并发写入冲突，可重试
   /agent/runs/{id}/cancel:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
@@ -2811,55 +2405,6 @@ paths:
           $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
-  /admin/agent-lessons:
-    get:
-      tags: [admin]
-      summary: 按用户筛选查看个人 Agent 记忆
-      parameters:
-        - in: query
-          name: status
-          schema:
-            type: string
-            enum: [pending, approved, rejected]
-        - in: query
-          name: userId
-          schema:
-            type: string
-        - in: query
-          name: keyword
-          schema:
-            type: string
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 200
-      responses:
-        "200":
-          description: 信封 data.lessons 含解析后的 steps、authorUserId、authorUsername、authorDisplayName
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-  /admin/agent-lessons/{id}:
-    delete:
-      tags: [admin]
-      summary: 删除一条用户的 Agent 记忆
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          $ref: "#/components/responses/Envelope"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
-        "404":
-          $ref: "#/components/responses/Error"
   /auth/profile:
     get:
       tags: [auth]
@@ -3192,6 +2737,36 @@ paths:
         "401":
           $ref: "#/components/responses/Error"
         "404":
+          $ref: "#/components/responses/Error"
+  /auth/oidc/start:
+    get:
+      tags: [auth]
+      security: []
+      summary: 发起 OIDC 登录
+      parameters:
+        - { name: next, in: query, schema: { type: string } }
+        - { name: acceptedTerms, in: query, schema: { type: boolean } }
+      responses:
+        "302":
+          description: 设置一次性状态 Cookie 并重定向到 OIDC 提供方
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+  /auth/oidc/callback:
+    get:
+      tags: [auth]
+      security: []
+      summary: 处理 OIDC 授权码回调
+      parameters:
+        - { name: state, in: query, schema: { type: string } }
+        - { name: code, in: query, schema: { type: string } }
+      responses:
+        "302":
+          description: 登录后设置会话 Cookie 并跳转，或返回登录页显示认证错误
+        "400":
+          $ref: "#/components/responses/Error"
+        "429":
           $ref: "#/components/responses/Error"
   /projects:
     get:
@@ -4728,6 +4303,1376 @@ paths:
                             totalBytes: {type: integer, format: int64, minimum: 0}
         "400": {description: 文件、目录、技能元数据或容量不符合要求}
         "401": {description: 未登录}
+  /admin/ark-portraits/assets/{id}:
+    delete:
+      tags: [admin]
+      summary: 管理员删除方舟素材
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /admin/ark-portraits/groups:
+    get:
+      tags: [admin]
+      summary: 管理员分页查询方舟素材组
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "kind", "in": "query", "schema": {"type": "string"}}
+        - {"name": "scope", "in": "query", "schema": {"type": "string"}}
+        - {"name": "expiry", "in": "query", "schema": {"type": "string"}}
+        - {"name": "keyword", "in": "query", "schema": {"type": "string"}}
+        - {"name": "page", "in": "query", "schema": {"type": "integer"}}
+        - {"name": "pageSize", "in": "query", "schema": {"type": "integer"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+    post:
+      tags: [admin]
+      summary: 管理员创建平台方舟素材组
+      description: 服务端校验当前账号的管理员权限。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"kind": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"}, "groupId": {"type": "string"}, "grantAll": {"type": "boolean"}, "grantUserIds": {"type": "array", "items": {"type": "string"}}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/ark-portraits/groups/{id}:
+    delete:
+      tags: [admin]
+      summary: 管理员删除方舟素材组
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [admin]
+      summary: 管理员读取方舟素材组详情
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    patch:
+      tags: [admin]
+      summary: 管理员更新方舟素材组与授权范围
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"name": {"type": "string"}, "description": {"type": "string"}, "grantAll": {"type": "boolean"}, "grantUserIds": {"type": "array", "items": {"type": "string"}}, "expiresAt": {"type": "string", "format": "date-time"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /admin/ark-portraits/groups/{id}/assets:
+    post:
+      tags: [admin]
+      summary: 管理员向方舟素材组添加素材
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"resourceId": {"type": "string"}, "name": {"type": "string"}, "libraryAssetId": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /admin/ark-portraits/reviews:
+    get:
+      tags: [admin]
+      summary: 管理员分页读取方舟素材审核队列
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "status", "in": "query", "schema": {"type": "string"}}
+        - {"name": "page", "in": "query", "schema": {"type": "integer"}}
+        - {"name": "pageSize", "in": "query", "schema": {"type": "integer"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/ark-portraits/reviews/approve:
+    post:
+      tags: [admin]
+      summary: 管理员批量通过方舟素材审核
+      description: 服务端校验当前账号的管理员权限。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/ark-portraits/reviews/reject:
+    post:
+      tags: [admin]
+      summary: 管理员批量拒绝方舟素材审核
+      description: 服务端校验当前账号的管理员权限。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}, "reason": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/ark-portraits/sessions:
+    post:
+      tags: [admin]
+      summary: 管理员发起平台真人素材认证
+      description: 服务端校验当前账号的管理员权限。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"name": {"type": "string"}, "description": {"type": "string"}, "lang": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/email-logs:
+    get:
+      tags: [admin]
+      summary: 管理员按用途状态与时间筛选邮件发送记录
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "keyword", "in": "query", "schema": {"type": "string"}}
+        - {"name": "purpose", "in": "query", "schema": {"type": "string"}}
+        - {"name": "status", "in": "query", "schema": {"type": "string"}}
+        - {"name": "from", "in": "query", "schema": {"type": "string"}}
+        - {"name": "to", "in": "query", "schema": {"type": "string"}}
+        - {"name": "page", "in": "query", "schema": {"type": "integer"}}
+        - {"name": "pageSize", "in": "query", "schema": {"type": "integer"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/settings/email/test:
+    post:
+      tags: [admin]
+      summary: 管理员发送测试邮件
+      description: 服务端校验当前账号的管理员权限。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"recipient": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/skills:
+    get:
+      tags: [admin]
+      summary: 管理员分页查询技能
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "keyword", "in": "query", "schema": {"type": "string"}}
+        - {"name": "status", "in": "query", "schema": {"type": "string"}}
+        - {"name": "sourceType", "in": "query", "schema": {"type": "string"}}
+        - {"name": "tag", "in": "query", "schema": {"type": "string"}}
+        - {"name": "page", "in": "query", "schema": {"type": "integer"}}
+        - {"name": "pageSize", "in": "query", "schema": {"type": "integer"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /admin/skills/{id}:
+    delete:
+      tags: [admin]
+      summary: 管理员删除技能
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [admin]
+      summary: 管理员读取技能详情
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [admin]
+      summary: 管理员更新技能基本信息
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                skillName:
+                  type: string
+                description:
+                  type: string
+                tag:
+                  type: string
+                markdownUrl:
+                  type: string
+                showcaseMedia:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      showcaseUri:
+                        type: string
+                      showcaseUrl:
+                        type: string
+                extraInfo:
+                  type: string
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /admin/skills/{id}/file:
+    get:
+      tags: [admin]
+      summary: 管理员读取技能包文本文件
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "path", "in": "query", "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /admin/skills/{id}/file/raw:
+    get:
+      tags: [admin]
+      summary: 管理员读取技能包原始文件
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "path", "in": "query", "schema": {"type": "string"}}
+      responses:
+        "200": {description: 技能包原始文件，响应 MIME 根据文件内容确定, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /admin/skills/{id}/files:
+    get:
+      tags: [admin]
+      summary: 管理员列出技能包文件
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [admin]
+      summary: 按技能版本修改技能包文件
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"baseVersionId": {"type": "string"}, "operations": {"type": "array", "items": {"type": "object", "properties": {"op": {"type": "string"}, "path": {"type": "string"}, "to": {"type": "string"}, "content": {"type": "string"}}}}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {description: 提交的项目或内容版本已过期，应重新读取后重试}
+  /admin/skills/{id}/status:
+    patch:
+      tags: [admin]
+      summary: 管理员上架或下架技能
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits:
+    get:
+      tags: [resources]
+      summary: 读取当前用户可访问的方舟素材概览
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ark-portraits/assets/{id}:
+    delete:
+      tags: [resources]
+      summary: 删除当前用户的方舟素材
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits/assets/{id}/file:
+    get:
+      tags: [resources]
+      summary: 按资源交付策略读取方舟素材文件
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {description: 资源字节或 access 查询请求的资源访问描述}
+        "206": {description: 请求范围内的资源字节}
+        "302": {description: 重定向到签名资源地址}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits/assets/{id}/library:
+    post:
+      tags: [resources]
+      summary: 将方舟素材加入当前用户素材库
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits/assets/{id}/refresh:
+    post:
+      tags: [resources]
+      summary: 刷新当前用户方舟素材的处理状态
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits/callback/{state}:
+    get:
+      tags: [resources]
+      summary: 接收一次性方舟认证回调并跳转
+      parameters:
+        - {"name": "state", "in": "path", "required": true, "schema": {"type": "string"}}
+      security: []
+      responses:
+        "302": {description: 根据认证状态跳转到回调结果页}
+        "400": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits/groups:
+    post:
+      tags: [resources]
+      summary: 创建当前用户的虚拟方舟素材组
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"kind": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ark-portraits/groups/{id}:
+    delete:
+      tags: [resources]
+      summary: 删除当前用户的方舟素材组
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    patch:
+      tags: [resources]
+      summary: 更新当前用户方舟素材组信息
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"name": {"type": "string"}, "description": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits/groups/{id}/assets:
+    post:
+      tags: [resources]
+      summary: 向当前用户的方舟素材组添加素材
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"resourceId": {"type": "string"}, "name": {"type": "string"}, "libraryAssetId": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits/sessions:
+    post:
+      tags: [resources]
+      summary: 发起当前用户的真人素材认证
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"name": {"type": "string"}, "lang": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ark-portraits/sessions/{id}:
+    get:
+      tags: [resources]
+      summary: 读取当前用户的方舟认证会话
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits/sessions/{id}/cancel:
+    post:
+      tags: [resources]
+      summary: 取消当前用户的方舟认证会话
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ark-portraits/sessions/{id}/check:
+    post:
+      tags: [resources]
+      summary: 向方舟核对当前用户的认证结果
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /auth/notification-settings:
+    get:
+      tags: [auth]
+      summary: 读取当前用户的邮件订阅设置
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [auth]
+      summary: 保存当前用户的消费日报邮件订阅
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"consumptionReportEnabled": {"type": "boolean"}}, "required": ["consumptionReportEnabled"]}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/asset-package:
+    post:
+      tags: [drama]
+      summary: 下载短剧素材与提示词归档
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: {"type": "object", "properties": {"episodeId": {"type": "array", "items": {"type": "string"}}, "media": {"type": "string"}, "prompts": {"type": "string"}}}
+      responses:
+        "200": {description: ZIP 归档附件, content: {application/zip: {schema: {type: string, format: binary}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/cast/{castId}/looks:
+    post:
+      tags: [drama]
+      summary: 为角色添加造型
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "castId", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"lookName": {"type": "string"}, "appearance": {"type": "string"}, "imagePrompt": {"type": "string"}, "fromChapter": {"type": "integer"}, "toChapter": {"type": "integer"}, "restyleSegments": {"type": "boolean"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/cast/{castId}/voice:
+    delete:
+      tags: [drama]
+      summary: 清除角色绑定音色
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "castId", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "restyleSegments", "in": "query", "schema": {"type": "boolean"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [drama]
+      summary: 设置角色绑定音色与参考音频
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "castId", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"voiceProfileId": {"type": "string"}, "sampleResourceId": {"type": "string"}, "voiceName": {"type": "string"}, "restyleSegments": {"type": "boolean"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/chapters:
+    get:
+      tags: [drama]
+      summary: 读取短剧原文章节大纲
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/chapters/produce:
+    post:
+      tags: [drama]
+      summary: 将选定原文章节加入短剧制作
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"chapterIds": {"type": "array", "items": {"type": "string"}}, "chaptersPerEpisode": {"type": "integer"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/draft:
+    get:
+      tags: [drama]
+      summary: 读取可编辑短剧草稿的创建表单
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [drama]
+      summary: 替换尚未开工的短剧草稿
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                chapters:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      title:
+                        type: string
+                      text:
+                        type: string
+                settings:
+                  type: object
+                  properties:
+                    promptSkill:
+                      type: object
+                    bibleSkill:
+                      type: object
+                    scriptSkill:
+                      type: object
+                    reviewMode:
+                      type: string
+                    mediaMode:
+                      type: string
+                    concurrency:
+                      type: integer
+                    models:
+                      type: object
+                    textThinking:
+                      type: object
+                    referenceLimit:
+                      type: integer
+                    episodeMode:
+                      type: string
+                    chaptersPerEpisode:
+                      type: integer
+                    videoContinuity:
+                      type: string
+                    videoResolution:
+                      type: string
+                budgetMicrocredits:
+                  type: integer
+                start:
+                  type: boolean
+                sourceFormat:
+                  type: string
+                episodeMode:
+                  type: string
+                selectedChapters:
+                  type: array
+                  items:
+                    type: integer
+                draft:
+                  type: object
+                  properties:
+                    sourceText:
+                      type: string
+                    styleId:
+                      type: string
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/episodes/{episodeId}:
+    delete:
+      tags: [drama]
+      summary: 删除指定短剧单集
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "episodeId", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "confirm", "in": "query", "schema": {"type": "string"}, "description": "已生成过视频的单集需要输入对应的第 N 集确认文字。"}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/episodes/{episodeId}/jianying-draft:
+    post:
+      tags: [drama]
+      summary: 下载单集剪映草稿归档
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "episodeId", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: {"type": "object", "properties": {"draftRoot": {"type": "string"}, "captions": {"type": "string"}}}
+      responses:
+        "200": {description: ZIP 归档附件, content: {application/zip: {schema: {type: string, format: binary}}}}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /dramas/{id}/looks/{lookId}:
+    delete:
+      tags: [drama]
+      summary: 删除角色造型
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "lookId", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "restyleSegments", "in": "query", "schema": {"type": "boolean"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    patch:
+      tags: [drama]
+      summary: 更新角色造型与适用章节
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "lookId", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"lookName": {"type": "string"}, "appearance": {"type": "string"}, "imagePrompt": {"type": "string"}, "fromChapter": {"type": "integer"}, "toChapter": {"type": "integer"}, "restyleSegments": {"type": "boolean"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ecommerce/agent-setting:
+    get:
+      tags: [ecommerce-agent]
+      summary: 读取管理员指定的电商 Agent 模型配置
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ecommerce/creative-directions:
+    post:
+      tags: [ecommerce-agent]
+      summary: 按商品信息推荐电商创作方向
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                projectId:
+                  type: string
+                productName:
+                  type: string
+                category:
+                  type: string
+                description:
+                  type: string
+                claims:
+                  type: string
+                materials:
+                  type: string
+                colors:
+                  type: string
+                specifications:
+                  type: string
+                platform:
+                  type: string
+                region:
+                  type: string
+                language:
+                  type: string
+                imageType:
+                  type: string
+                count:
+                  type: integer
+                instruction:
+                  type: string
+                style:
+                  type: string
+                stylePrompt:
+                  type: string
+                referenceMode:
+                  type: string
+                materialPlan:
+                  type: string
+                referenceCount:
+                  type: integer
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ecommerce/creative-directions/{id}/select:
+    post:
+      tags: [ecommerce-agent]
+      summary: 确认推荐记录中的电商风格
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"directionId": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ecommerce/knowledge/entries:
+    get:
+      tags: [ecommerce-agent]
+      summary: 管理员分页检索电商知识条目
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "page", "in": "query", "schema": {"type": "integer"}}
+        - {"name": "limit", "in": "query", "schema": {"type": "integer"}}
+        - {"name": "keyword", "in": "query", "schema": {"type": "string"}}
+        - {"name": "status", "in": "query", "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ecommerce/knowledge/entries/{id}/review:
+    patch:
+      tags: [ecommerce-agent]
+      summary: 管理员审核电商知识条目
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"status": {"type": "string"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ecommerce/knowledge/orchestration:
+    get:
+      tags: [ecommerce-agent]
+      summary: 管理员读取电商知识编排设置
+      description: 服务端校验当前账号的管理员权限。
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [ecommerce-agent]
+      summary: 管理员保存电商知识编排设置
+      description: 服务端校验当前账号的管理员权限。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: integer
+                enabled:
+                  type: boolean
+                vision:
+                  type: object
+                  properties:
+                    model:
+                      type: object
+                    fallback:
+                      type: object
+                    reuse:
+                      type: string
+                    thinkingLevel:
+                      type: string
+                marketing:
+                  type: object
+                  properties:
+                    model:
+                      type: object
+                    fallback:
+                      type: object
+                    reuse:
+                      type: string
+                    thinkingLevel:
+                      type: string
+                director:
+                  type: object
+                  properties:
+                    model:
+                      type: object
+                    fallback:
+                      type: object
+                    reuse:
+                      type: string
+                    thinkingLevel:
+                      type: string
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ecommerce/knowledge/sources/{id}:
+    patch:
+      tags: [ecommerce-agent]
+      summary: 管理员启用或停用电商知识源
+      description: 服务端校验当前账号的管理员权限。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"enabled": {"type": "boolean"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ecommerce/knowledge/stats:
+    get:
+      tags: [ecommerce-agent]
+      summary: 管理员读取电商知识库统计
+      description: 服务端校验当前账号的管理员权限。
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ecommerce/knowledge/sync:
+    post:
+      tags: [ecommerce-agent]
+      summary: 管理员同步电商知识源
+      description: 服务端校验当前账号的管理员权限。
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ecommerce/projects:
+    delete:
+      tags: [ecommerce-agent]
+      summary: 按指定项目或当前总数批量删除电商项目
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}, "all": {"type": "boolean"}, "expectedTotal": {"type": "integer"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+    get:
+      tags: [ecommerce-agent]
+      summary: 分页读取当前用户的电商项目
+      parameters:
+        - {"name": "page", "in": "query", "schema": {"type": "integer"}}
+        - {"name": "pageSize", "in": "query", "schema": {"type": "integer", "enum": [20, 50, 100], "default": 100}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+    post:
+      tags: [ecommerce-agent]
+      summary: 创建当前用户的电商项目
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /ecommerce/projects/{id}:
+    get:
+      tags: [ecommerce-agent]
+      summary: 读取电商项目与当前活动轮次
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "history", "in": "query", "schema": {"type": "string"}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [ecommerce-agent]
+      summary: 按项目版本保存电商草稿与活动轮次
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                revision:
+                  type: integer
+                name:
+                  type: string
+                draft:
+                  type: object
+                  properties:
+                    productName:
+                      type: string
+                    category:
+                      type: string
+                    brand:
+                      type: string
+                    description:
+                      type: string
+                    claims:
+                      type: string
+                    materials:
+                      type: string
+                    colors:
+                      type: string
+                    specifications:
+                      type: string
+                    packaging:
+                      type: string
+                    dimensions:
+                      type: string
+                    audience:
+                      type: string
+                    scene:
+                      type: string
+                    pricePosition:
+                      type: string
+                    lockedDetails:
+                      type: string
+                    platform:
+                      type: string
+                    region:
+                      type: string
+                    imageType:
+                      type: string
+                    count:
+                      type: integer
+                    language:
+                      type: string
+                    noText:
+                      type: boolean
+                    agentModel:
+                      type: string
+                    imageModel:
+                      type: string
+                    ratio:
+                      type: string
+                    resolution:
+                      type: string
+                    style:
+                      type: string
+                    stylePrompt:
+                      type: string
+                    fidelity:
+                      type: string
+                    instruction:
+                      type: string
+                    skillIds:
+                      type: array
+                      items:
+                        type: string
+                    modelEnabled:
+                      type: boolean
+                    primaryModelResourceId:
+                      type: string
+                    planningTaskId:
+                      type: string
+                    directionsTaskId:
+                      type: string
+                    creativeRecommendationId:
+                      type: string
+                    creativeDirectionId:
+                      type: string
+                    typeOptions:
+                      type: object
+                    cloneOptions:
+                      type: object
+                    creativeOptions:
+                      type: object
+                    referenceMode:
+                      type: string
+                    layoutReferenceId:
+                      type: string
+                    references:
+                      type: array
+                      items:
+                        type: object
+                    layoutReferences:
+                      type: array
+                      items:
+                        type: object
+                    skus:
+                      type: array
+                      items:
+                        type: object
+                plan:
+                  type: object
+                  properties:
+                    inputSignature:
+                      type: string
+                    productSummary:
+                      type: string
+                    confirmedFacts:
+                      type: array
+                      items:
+                        type: string
+                    uncertainFacts:
+                      type: array
+                      items:
+                        type: string
+                    visualStrategy:
+                      type: string
+                    qualityChecks:
+                      type: array
+                      items:
+                        type: string
+                    images:
+                      type: array
+                      items:
+                        type: object
+                    previousImages:
+                      type: array
+                      items:
+                        type: object
+                    referenceSummary:
+                      type: string
+                historyMode:
+                  type: string
+                advanceRound:
+                  type: boolean
+                activeRoundId:
+                  type: string
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {description: 提交的项目或内容版本已过期，应重新读取后重试}
+        "413": {description: 保存内容超过 4 MiB}
+  /ecommerce/projects/{id}/rounds:
+    get:
+      tags: [ecommerce-agent]
+      summary: 按轮次序号游标分页读取电商历史轮次
+      description: 当前登录用户必须拥有项目，响应包含 rounds、total 与 hasMore，历史图片继续引用原任务与资源。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 10}}
+        - {"name": "before", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ecommerce/projects/{id}/rounds-convert:
+    post:
+      tags: [ecommerce-agent]
+      summary: 按项目版本将已有电商计划转换为轮次结构
+      description: 当前登录用户必须拥有项目，写入使用提交的版本校验并发修改，历史图片继续引用原任务与资源。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"revision": {"type": "integer"}}, "required": ["revision"]}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {description: 提交的项目或内容版本已过期，应重新读取后重试}
+  /ecommerce/projects/{id}/rounds/{roundId}/images/{imageId}:
+    patch:
+      tags: [ecommerce-agent]
+      summary: 按历史轮次版本更新或移除单张图片
+      description: 当前登录用户必须拥有项目，写入使用提交的版本校验并发修改，历史图片继续引用原任务与资源。
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "roundId", "in": "path", "required": true, "schema": {"type": "string"}}
+        - {"name": "imageId", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: integer
+                image:
+                  type: object
+                  properties:
+                    sourceDraft: {}
+                    id:
+                      type: string
+                    imageType:
+                      type: string
+                    platform:
+                      type: string
+                    language:
+                      type: string
+                    goal:
+                      type: string
+                    theme:
+                      type: string
+                    composition:
+                      type: string
+                    displayAssignment:
+                      type: string
+                    mainVisual:
+                      type: string
+                    verifiedClaims:
+                      type: string
+                    performanceAngle:
+                      type: string
+                    informationComponent:
+                      type: string
+                    copy:
+                      type: string
+                    lighting:
+                      type: string
+                    fidelity:
+                      type: string
+                    prompt:
+                      type: string
+                    manualPrompt:
+                      type: boolean
+                    negativePrompt:
+                      type: string
+                    imageModel:
+                      type: string
+                    ratio:
+                      type: string
+                    resolution:
+                      type: string
+                    skuId:
+                      type: string
+                    taskId:
+                      type: string
+                    referenceScreen:
+                      type: object
+                    roundId:
+                      type: string
+                remove:
+                  type: boolean
+              required:
+              - version
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {description: 提交的项目或内容版本已过期，应重新读取后重试}
+  /ecommerce/projects/{id}/tasks:
+    post:
+      tags: [ecommerce-agent]
+      summary: 为电商项目提交策划任务
+      parameters:
+        - {"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"projectId": {"type": "string"}, "type": {"type": "string"}, "operation": {"type": "string"}, "prompt": {"type": "string"}, "provider": {"type": "string"}, "model": {"type": "string"}, "logicalModelId": {"type": "string"}, "input": {"type": "object"}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /ecommerce/skills/prompt:
+    post:
+      tags: [ecommerce-agent]
+      summary: 读取当前用户已安装电商技能的组合提示词
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "properties": {"skillIds": {"type": "array", "items": {"type": "string"}}}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
 components:
   parameters:
     AgentRunID:
@@ -4874,7 +5819,7 @@ components:
         method:
           {
             type: string,
-            enum: [password, email, sms, linuxdo, verification, unknown],
+            enum: [password, email, sms, linuxdo, oidc, verification, unknown],
           }
         source: { type: string, enum: [login, registration, logout] }
         result: { type: string, enum: [success, failed] }

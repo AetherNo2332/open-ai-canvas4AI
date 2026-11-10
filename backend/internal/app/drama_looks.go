@@ -1,8 +1,11 @@
 package app
 
 import (
+	"errors"
 	"strings"
+	"time"
 
+	"gorm.io/gorm"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/production"
 )
@@ -65,4 +68,74 @@ func dramaLookAppearance(character, look model.DramaCast) string {
 		return firstNonEmpty(character.Appearance, character.Description)
 	}
 	return firstNonEmpty(look.Appearance, character.Appearance, character.Description)
+}
+
+func (s *Service) requeueFailedDramaLooks(projectID, castID string) error {
+	casts, err := s.repo.DramaCasts(projectID)
+	if err != nil {
+		return err
+	}
+	for _, look := range casts {
+		if look.ParentID != castID || look.ImageStatus != model.DramaMediaFailed {
+			continue
+		}
+		if _, err := s.repo.UpdateDramaCastIf(look.ID, []string{model.DramaMediaFailed}, map[string]any{"image_status": model.DramaMediaQueued}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *dramaRun) planCastImages() error {
+	for i := range r.casts {
+		cast := &r.casts[i]
+		// "" 表示从未请求，只有放行后才自动生成；queued 是用户明确请求。
+		requested := cast.ImageStatus == model.DramaMediaQueued || (cast.ImageStatus == "" && r.assetsReleased())
+		if !requested || cast.Locked {
+			continue
+		}
+		ready, err := r.castLookBaseReady(cast)
+		if err != nil {
+			return err
+		}
+		if ready {
+			r.enqueue(model.DramaJobCastImage, "", "", cast.ID, castImagePriority(cast.Position), "参考图："+cast.Name, nil)
+		}
+	}
+	return nil
+}
+
+// 造型以角色本体参考图为底图，本体未就绪时等待，失败或删除时记录失败。
+func (r *dramaRun) castLookBaseReady(cast *model.DramaCast) (bool, error) {
+	if cast.ParentID == "" {
+		return true, nil
+	}
+	base, err := r.s.repo.DramaCast(r.project.ID, cast.ParentID)
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return false, r.failCastLook(cast, "角色本体已被删除，无法生成造型参考图")
+	case err != nil:
+		return false, err
+	case base.ImageStatus == model.DramaMediaFailed:
+		return false, r.failCastLook(cast, "角色本体参考图生成失败，请先重试本体")
+	default:
+		return base.ImageStatus == model.DramaMediaReady, nil
+	}
+}
+
+// failCastLook 按造型版本号落失败，同一次失败只创建一条待处理作业。
+func (r *dramaRun) failCastLook(cast *model.DramaCast, reason string) error {
+	applied, err := r.s.repo.UpdateDramaCastRevision(cast.ID, cast.Revision, map[string]any{"image_status": model.DramaMediaFailed})
+	if err != nil || !applied {
+		return err
+	}
+	cast.ImageStatus = model.DramaMediaFailed
+	now := time.Now()
+	job := model.DramaJob{
+		ID: newID(), ProjectID: r.project.ID, Status: model.DramaJobFailed, Kind: model.DramaJobCastImage, CastID: cast.ID,
+		Priority: castImagePriority(cast.Position), Label: truncateRunes("参考图："+cast.Name, 200), Error: truncateRunes(reason, 500),
+		CreatedAt: now, UpdatedAt: now, FinishedAt: &now,
+	}
+	r.newJobs = append(r.newJobs, job)
+	return nil
 }

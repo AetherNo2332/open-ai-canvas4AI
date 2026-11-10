@@ -474,6 +474,7 @@ var baseTableMigrations = []tableMigration{
 	migrateTable[model.Project]("projects"),
 	migrateTable[model.StyleProfile]("style_profiles"),
 	migrateTable[model.EcommerceProject]("ecommerce_projects"),
+	migrateTable[model.EcommerceRound]("ecommerce_rounds"),
 	migrateTable[model.EcommerceKnowledgeSource]("ecommerce_knowledge_sources"),
 	migrateTable[model.EcommerceKnowledgeEntry]("ecommerce_knowledge_entries"),
 	migrateTable[model.EcommerceCreativeRecommendation]("ecommerce_creative_recommendations"),

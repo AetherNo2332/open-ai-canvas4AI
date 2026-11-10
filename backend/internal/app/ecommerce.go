@@ -84,6 +84,11 @@ type SaveEcommerceProjectRequest struct {
 	Name     string               `json:"name"`
 	Draft    EcommerceDraft       `json:"draft"`
 	Plan     *model.EcommercePlan `json:"plan,omitempty"`
+	// Round-aware clients opt in explicitly. Legacy clients leave these empty
+	// and keep the original whole-plan contract byte for byte.
+	HistoryMode   string `json:"historyMode,omitempty"`
+	AdvanceRound  bool   `json:"advanceRound,omitempty"`
+	ActiveRoundID string `json:"activeRoundId,omitempty"`
 }
 
 type DeleteEcommerceProjectsRequest struct {
@@ -141,7 +146,7 @@ func (s *Service) CreateEcommerceProject(userID string) (*model.EcommerceProject
 	if err := s.RequireFeature(FeatureEcommerce); err != nil {
 		return nil, err
 	}
-	project := &model.EcommerceProject{ID: newID(), UserID: userID, Name: "未命名商品", Status: "draft", DraftJSON: "{}", PlanJSON: "{}", Revision: 1}
+	project := &model.EcommerceProject{ID: newID(), UserID: userID, Name: "未命名商品", Status: "draft", DraftJSON: "{}", PlanJSON: "{}", ActiveRoundID: newID(), Revision: 1}
 	if err := s.repo.CreateEcommerceProject(project); err != nil {
 		return nil, err
 	}
@@ -149,6 +154,12 @@ func (s *Service) CreateEcommerceProject(userID string) (*model.EcommerceProject
 }
 
 func (s *Service) EcommerceProject(userID, id string) (*model.EcommerceProject, error) {
+	return s.EcommerceProjectView(userID, id, false)
+}
+
+// EcommerceProjectView optionally returns only the bounded active round. This
+// is a read-only projection: legacy inline history is never converted here.
+func (s *Service) EcommerceProjectView(userID, id string, activeOnly bool) (*model.EcommerceProject, error) {
 	project, err := s.repo.EcommerceProject(userID, id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, NotFound("电商项目不存在")
@@ -180,7 +191,87 @@ func (s *Service) EcommerceProject(userID, id string) (*model.EcommerceProject, 
 			}
 		}
 	}
+	if err == nil {
+		if activeOnly {
+			project.PlanJSON = ecommerceActivePlanJSON(project.PlanJSON)
+		} else if project.ActiveRoundID != "" {
+			// Bounded compatibility view: clients that do not request the active
+			// plan still see the newest rounds, never the full history.
+			project.PlanJSON = s.ecommercePlanWithRecentRounds(userID, project)
+		}
+		if count, countErr := s.repo.EcommerceRoundCount(userID, project.ID); countErr == nil {
+			project.RoundCount = count
+		}
+		s.fillEcommerceCoverTasks(userID, project)
+	}
 	return project, err
+}
+
+func ecommerceActivePlanJSON(planJSON string) string {
+	var plan model.EcommercePlan
+	if json.Unmarshal([]byte(planJSON), &plan) != nil || len(plan.PreviousImages) == 0 {
+		return planJSON
+	}
+	plan.PreviousImages = nil
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		return planJSON
+	}
+	return string(raw)
+}
+
+// ecommercePlanWithRecentRounds keeps old clients working: they get the active
+// plan plus a bounded page of newer history instead of the whole archive.
+func (s *Service) ecommercePlanWithRecentRounds(userID string, project *model.EcommerceProject) string {
+	var plan model.EcommercePlan
+	if json.Unmarshal([]byte(project.PlanJSON), &plan) != nil {
+		return project.PlanJSON
+	}
+	plan.PreviousImages = nil
+	rounds, _, err := s.repo.EcommerceRoundPage(userID, project.ID, ecommerceRoundPageDefault, 0)
+	if err != nil {
+		return project.PlanJSON
+	}
+	previous := make([]model.EcommercePlanTask, 0)
+	for i := len(rounds) - 1; i >= 0; i-- {
+		var archived model.EcommercePlan
+		if json.Unmarshal([]byte(rounds[i].PlanJSON), &archived) != nil {
+			continue
+		}
+		for _, image := range archived.Images {
+			image.RoundID = rounds[i].ID
+			previous = append(previous, image)
+		}
+	}
+	if len(previous) > 0 {
+		plan.PreviousImages = previous
+	}
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		return project.PlanJSON
+	}
+	return string(raw)
+}
+
+func (s *Service) fillEcommerceCoverTasks(userID string, project *model.EcommerceProject) {
+	if project == nil {
+		return
+	}
+	ids := make([]string, 0, 4)
+	var plan model.EcommercePlan
+	if json.Unmarshal([]byte(project.PlanJSON), &plan) == nil {
+		for _, image := range plan.Images {
+			if image.TaskID != "" {
+				ids = append(ids, image.TaskID)
+			}
+		}
+	}
+	if len(ids) < 4 {
+		if more, err := s.repo.EcommerceRoundCoverTaskIDs(userID, project.ID, 4-len(ids)); err == nil {
+			ids = append(ids, more...)
+		}
+	}
+	project.CoverTaskIDs = ids
 }
 
 func (s *Service) EcommerceProjects(userID string) ([]model.EcommerceProject, error) {
@@ -190,6 +281,7 @@ func (s *Service) EcommerceProjects(userID string) ([]model.EcommerceProject, er
 	}
 	for index := range projects {
 		s.refreshEcommerceStatus(userID, &projects[index])
+		s.fillEcommerceListMeta(userID, &projects[index])
 	}
 	return projects, nil
 }
@@ -201,8 +293,16 @@ func (s *Service) EcommerceProjectPage(userID string, page, pageSize int) ([]mod
 	}
 	for index := range projects {
 		s.refreshEcommerceStatus(userID, &projects[index])
+		s.fillEcommerceListMeta(userID, &projects[index])
 	}
 	return projects, total, nil
+}
+
+func (s *Service) fillEcommerceListMeta(userID string, project *model.EcommerceProject) {
+	if count, err := s.repo.EcommerceRoundCount(userID, project.ID); err == nil {
+		project.RoundCount = count
+	}
+	s.fillEcommerceCoverTasks(userID, project)
 }
 
 func (s *Service) DeleteEcommerceProjects(userID string, req DeleteEcommerceProjectsRequest) (int64, error) {
@@ -289,13 +389,7 @@ func (s *Service) SaveEcommerceProject(userID, id string, req SaveEcommerceProje
 		project.Status = "awaiting_confirmation"
 	}
 	s.refreshEcommerceStatus(userID, project)
-	if err := s.repo.SaveEcommerceProject(project, req.Revision); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, BadAuthRequest("项目已更新，请刷新后重试")
-		}
-		return nil, err
-	}
-	return project, nil
+	return s.persistEcommerceProject(project, req)
 }
 
 func ecommerceProjectName(req SaveEcommerceProjectRequest) (string, error) {

@@ -1,9 +1,9 @@
 package handler
 
 import (
+	"github.com/gin-gonic/gin"
 	"strconv"
 	"yingce/backend/internal/service"
-	"github.com/gin-gonic/gin"
 )
 
 func registerDramaSegmentRoutes(r *gin.RouterGroup, svc *service.Service) {

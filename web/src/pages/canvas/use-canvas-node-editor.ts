@@ -5,7 +5,8 @@ import { App } from "antd";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, FRAME_COLLAPSED_HEIGHT, FRAME_COLLAPSED_WIDTH, getFrameChildIds, isCanvasFolderNode, isFrameNode } from "@/lib/canvas/canvas-frame";
-import { buildCanvasMediaDownloadFileName, canDownloadCanvasNodeMedia, isCanvasMediaCompositePending } from "@/lib/canvas/canvas-media-download";
+import { buildCanvasMediaDownloadFileName, canDownloadCanvasNodeMedia, canvasMediaFileExtension, downloadImageConvertedToFormat, isCanvasMediaCompositePending, preferredImageDownloadFormat, withFileExtension } from "@/lib/canvas/canvas-media-download";
+import { resourceIdFromStorageKey, resourceFileUrl } from "@/services/api/resources";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import { applyBatchPrimaryImage, applyNodeConfigPatch } from "@/lib/canvas/canvas-project-domain";
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
@@ -270,6 +271,26 @@ export function useCanvasNodeEditor({ canvasId, canvasTitle, domainProjectId, no
             if (!supported || (!content && !storageKey)) return;
             try {
                 const downloadName = buildCanvasMediaDownloadFileName(canvasTitle, node);
+                // 兑现图像设置里的输出格式：模型/渠道可能忽略 output_format 仍返回 PNG。
+                const targetFormat = preferredImageDownloadFormat(node);
+                const currentExtension = canvasMediaFileExtension(node);
+                const needsConversion = Boolean(targetFormat && currentExtension !== targetFormat && currentExtension !== (targetFormat === "jpeg" ? "jpg" : targetFormat));
+                if (targetFormat && needsConversion) {
+                    // 平台素材由同源接口转码，保留浏览器下载文件名。
+                    if (targetFormat === "jpeg" && storageKey) {
+                        const resourceId = resourceIdFromStorageKey(storageKey);
+                        if (resourceId) {
+                            startBrowserDownload(`${resourceFileUrl(resourceId)}?format=jpeg`, withFileExtension(downloadName, "jpg"));
+                            return;
+                        }
+                    }
+                    try {
+                        await downloadImageConvertedToFormat({ storageKey, url: content, fileName: downloadName, format: targetFormat });
+                        return;
+                    } catch {
+                        // 客户端无法读取跨域素材时，继续下载原图。
+                    }
+                }
                 await downloadBrowserMedia({ storageKey, url: content, fileName: downloadName });
             } catch (error) {
                 message.error(error instanceof Error ? error.message : translate("canvasPage.nodeEditor.downloadFailed"));

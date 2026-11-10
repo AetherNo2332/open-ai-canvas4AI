@@ -4,8 +4,8 @@
 package handler
 
 import (
-	"yingce/backend/internal/service"
 	"github.com/gin-gonic/gin"
+	"yingce/backend/internal/service"
 )
 
 func RegisterAdminSkillRoutes(r *gin.RouterGroup, svc *service.Service) {

@@ -66,6 +66,10 @@ var upstreamNovemberMigrations = []migration{
 		}
 		return nil
 	}},
+	{version: 101, name: "ecommerce_round_history", checksum: "sha256:ecommerce-round-history-v93-20261109", apply: func(tx *gorm.DB) error {
+		// Existing projects retain their plan until the first round-aware save.
+		return tx.AutoMigrate(&model.EcommerceProject{}, &model.EcommerceRound{})
+	}},
 }
 
 // migrateReferenceVideoCostPrice 为价格档成本和账单成本快照增加带参考视频的成本价。

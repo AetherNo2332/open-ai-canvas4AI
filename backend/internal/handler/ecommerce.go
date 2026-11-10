@@ -14,4 +14,5 @@ func RegisterEcommerceRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerEcommerceKnowledgeRoutes(r, svc)
 	registerEcommerceSkillPromptRoutes(r, svc)
 	registerEcommerceProjectRoutes(r, svc)
+	registerEcommerceRoundRoutes(r, svc)
 }

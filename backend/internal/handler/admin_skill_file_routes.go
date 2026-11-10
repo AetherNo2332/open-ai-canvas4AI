@@ -1,10 +1,10 @@
 package handler
 
 import (
+	"github.com/gin-gonic/gin"
 	"mime"
 	"net/http"
 	"yingce/backend/internal/service"
-	"github.com/gin-gonic/gin"
 )
 
 func registerAdminSkillFileRoutes(r *gin.RouterGroup, svc *service.Service) {

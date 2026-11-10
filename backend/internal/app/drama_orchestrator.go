@@ -435,13 +435,8 @@ func (r *dramaRun) plan() error {
 			r.enqueue(model.DramaJobPlan, "", "", "", dramaPriorityPlan, fmt.Sprintf("分集规划：第 %d-%d 章", p.PlanCursor+1, end), dramaPlanPayload{Start: p.PlanCursor, End: end})
 		}
 	}
-	for i := range r.casts {
-		cast := &r.casts[i]
-		// "" 表示从未请求，只有放行后才自动生成；queued 是用户明确请求（重做、重试或按集放行）。
-		requested := cast.ImageStatus == model.DramaMediaQueued || (cast.ImageStatus == "" && r.assetsReleased())
-		if requested && !cast.Locked {
-			r.enqueue(model.DramaJobCastImage, "", "", cast.ID, castImagePriority(cast.Position), "参考图："+cast.Name, nil)
-		}
+	if err := r.planCastImages(); err != nil {
+		return err
 	}
 	episodes, err := r.s.repo.DramaEpisodes(r.project.ID)
 	if err != nil {

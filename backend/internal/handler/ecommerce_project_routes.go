@@ -2,9 +2,9 @@ package handler
 
 import (
 	"errors"
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
-	"github.com/gin-gonic/gin"
 	"yingce/backend/internal/service"
 )
 
@@ -87,7 +87,7 @@ func registerEcommerceProjectRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		project, err := svc.EcommerceProject(user.ID, c.Param("id"))
+		project, err := svc.EcommerceProjectView(user.ID, c.Param("id"), c.Query("history") == "active")
 		if err != nil {
 			failService(c, err)
 			return
@@ -100,9 +100,14 @@ func registerEcommerceProjectRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256<<10)
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<20)
 		var req service.SaveEcommerceProjectRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				fail(c, http.StatusRequestEntityTooLarge, service.BadAuthRequest("保存内容超过 4 MiB 上限，请减少当前轮图片或参数后重试"))
+				return
+			}
 			fail(c, http.StatusBadRequest, err)
 			return
 		}

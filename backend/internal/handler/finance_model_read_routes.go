@@ -2,9 +2,9 @@ package handler
 
 import (
 	"errors"
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"yingce/backend/internal/service"
-	"github.com/gin-gonic/gin"
 )
 
 func registerFinanceModelReadRoutes(r *gin.RouterGroup, svc *service.Service) {
