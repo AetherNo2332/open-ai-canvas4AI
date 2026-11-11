@@ -64,3 +64,39 @@
 - 验证：`bunx tsc --noEmit` 通过；改动文件 Prettier 与 eslint 通过；`bun run test` 完整入口 EXIT=0——regressions 8 文件 0.30s、canvas-grid 1 文件 0.12s、普通 512 文件 3479 pass / 5 skip / 0 fail / 190.89s（5 skip 仍需真实后端，不计通过）。上次同集合 268.61s 与本次 190.89s 环境不同，不据此宣称提速。
 - 新增 helper `web/test/run-bun-harness.ts` 不匹配测试发现模式，普通集合仍为 512 文件。
 - 本批未运行完整推送前 runner；Linux CI、docs 构建、支付双架构等仍未覆盖。待 CI 在 Linux 确认三组与普通集合行为一致。
+
+## T4–T8 实施（2026-11-12 第三批）
+
+在原独立工作区继续，每任务一个提交；未推送，T7 门禁切换未启用。
+
+### T4 长期记忆文档（4ef529122）
+
+- `internal/agentmemory/document`：ApplyOperations/Diff/Summary/Inverse 纯规则与 Service（Ensure/Document/UpdateSettings/Update/Revisions/Undo/Decide/AgentWrite），WriteOutcome 与 CapacityDetail 类型化；容量按整批结果检查、修订保留、call 重放语义保持。
+- app 保留 run 快照冻结/注入（snapshotText/nudge/attach）、工具事件与容量回执拼装、管理员跨用户聚合、类型别名；`cloud_agent_memory_document_api.go` 收敛为纯门面（getter 入 service.go、Admin 聚合独立文件）。
+- 守卫：agentmemory 根包禁 import repository/database/document（fixture RED→GREEN）；原 app 记忆专项 6 个测试迁入新包（fixture 只建文档/修订/旧经验三模型）。
+- 验证：agentmemory/document/architecture 包测试、app 记忆专项 5/5（含 run 冻结组合 2.61s）、handler Memory 专项、baseline unchanged。
+
+### T5 异步轮询（b7c5453f7）
+
+- `internal/generation/polling`：Run/Download 循环、分类计数（NotFound/Malformed/Transient）、Retry-After、Translate 适配钩子；稳定错误事实 HTTPStatusError/ResponseDecodeError/RetryableSignal/UnretryableSignal/DownloadError；IsTransientTransport 导出。
+- app：defaultVideoPollPolicy 构造 + translateVideoPollError（providerHTTPError→HTTPStatusError、熔断/槽位→RetryableSignal、mediaRecovery→UnretryableSignal）+ notify 日志接线测试（warn/info 写 TaskLog）；原 13 个轮询测试迁 polling 包。
+- 实证记录：TestVideoPollContinuesAfterConnectionResetAndEOF 在 Windows 本机失败为迁移前平台差异（a393d137f 同样失败，WSAECONNRESET 与 Linux syscall.ECONNRESET 值不同），Linux CI 不受影响；已记 pending-test。
+
+### T6 职责与协议守卫（fe9fc507b）
+
+- responsibilities.go：facadeFiles 精确登记（当前仅记忆 API 门面），类型别名/直接引用初始化/单 return 透传之外一律报告；handler 禁 import gorm/gorm driver/database/sql。
+- handler/ecommerce_agent.go 摘除 gorm：`service.EcommerceAgentNotFound` 归属记录不存在语义，404 响应不变。
+- 协议负例：document 包改名文件仍受 map 约束；Box[map[string]any]、点导入、跨文件别名、合法递归类型各建 fixture；确认展开封闭性下递归类型不误报（曾把 seen 环改为报违规导致 5 个真实误报，对照实验后还原原语义）。
+
+### T7 影子对照（本地回放部分）
+
+- 本批真实 diff（9fc248c..HEAD）回放：T2 的 workflow/脚本改动正确触发 global 广覆盖；app 未映射文件（轮询适配层）→ backend:full；新包+接线混合 → full。符合"app 仅对审核过的文件集精确映射，其余全量"。
+- 纯函数级验证：纯 document 包改动只选 document 包测试 + 反向闭包（app 记忆专项 pattern、handler、service、cmd 依赖方）+ architecture + baseline，**不含 backend:full**；加一个未映射 app 文件即扩大 full。回放输出存 `.local/cache/verify/replay-t4-t7-plan.json`。
+- 未实施（记 pending-test 待独立 PR）：runner 按 selectedChecks 执行、本地默认 affected、quality.yml affected 选择与汇总校验、切换前后同环境数据输出。
+
+### T8 任务计费与终态（6152e2951）
+
+- `internal/taskruntime`：BillingCoordinator（窄持久化合同、ErrBillingReview、原因脱敏/截断）、TerminalCoordinator（导出接口 + capabilityOf/rejectedSubmission 注入 + 可选探测 LeaseReleaser/AudioDurationBilling/VideoProcessingSettlement）、RecordTaskDiagnostic/SafeTaskDiagnosticMessage、RedactUpstreamAddress。
+- `generation.TerminalError` 承接 providerTaskTerminalError（app 别名）；`service.EcommerceAgentNotFound` 前置于 T6。
+- app：task_billing/task_terminal 原方法名转发；serviceRuntimeAdapter 显式接入文本回放/日志/产物登记/音频视频结算；worker/lifecycle 编排暂留 app。
+- 验证：13 个 stub 测试迁 taskruntime 全过；app Task/Worker/Billing 专项 11.3s 通过；generation/architecture 包测试、baseline unchanged、gofmt/vet 通过。

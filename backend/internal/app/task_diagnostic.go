@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"yingce/backend/internal/generation"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/taskruntime"
 )
 
 func taskHasAgentOrigin(raw string) bool {
@@ -20,31 +20,13 @@ func taskHasAgentOrigin(raw string) bool {
 	return json.Unmarshal([]byte(raw), &input) == nil && input.Metadata.Source == "cloud_agent"
 }
 
+// 诊断清洗与记录的归属在 internal/taskruntime；writeback 展示与读取仍留 app。
 func safeTaskDiagnosticMessage(message string) string {
-	message = strings.TrimSpace(message)
-	if message == "" || !utf8.ValidString(message) || strings.ContainsAny(message, "\r\n\x00") {
-		return "任务未完成，请在任务中心查看诊断"
-	}
-	lower := strings.ToLower(message)
-	for _, marker := range []string{"http://", "https://", "file://", "ftp://", "authorization", "cookie", "secret", "token", "api_key", "apikey", "x-api-key", "/var/", "/tmp/", "\\", "stack trace", "traceback", "sql:", "sqlite", "postgres"} {
-		if strings.Contains(lower, marker) {
-			return "任务未完成，请在任务中心查看诊断"
-		}
-	}
-	return truncateRunes(message, 240)
+	return taskruntime.SafeTaskDiagnosticMessage(message)
 }
 
 func recordTaskDiagnostic(task *model.Task, phase, code, outcome, retryClass string, cause error) {
-	var appErr *AppError
-	if errors.As(cause, &appErr) && appErr.Reason != "" {
-		code = string(appErr.Reason)
-	}
-	diagnostic := &model.TaskExecutionDiagnostic{
-		Code: code, Phase: phase, TaskSubmitted: outcome == "accepted" || outcome == "submitted", SubmissionOutcome: outcome,
-		RetryClass: retryClass, SafeMessage: safeTaskDiagnosticMessage(task.Error), DiagnosticID: task.ID,
-	}
-	raw, _ := json.Marshal(diagnostic)
-	task.ExecutionDiagnosticJSON, task.Diagnostic = string(raw), diagnostic
+	taskruntime.RecordTaskDiagnostic(task, phase, code, outcome, retryClass, cause)
 }
 
 func recordTaskWritebackDiagnostic(task *model.Task, nodeID, outcome, reason string, cause error) {
@@ -118,11 +100,5 @@ func providerRejectedSubmission(err error) bool {
 }
 
 func taskSubmissionOutcome(task *model.Task, notSent bool) string {
-	if notSent {
-		return "not_submitted"
-	}
-	if task.ProviderRequestID != "" {
-		return "accepted"
-	}
-	return "unknown"
+	return taskruntime.TaskSubmissionOutcome(task, notSent)
 }

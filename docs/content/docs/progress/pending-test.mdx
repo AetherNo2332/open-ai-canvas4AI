@@ -9,12 +9,15 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - 已修复九个 Windows Web 测试失败：WSL bash 误选（ci-image-release 127）、路径分隔符白名单（http-ownership）、Bun spawnSync 空闲超时缺陷（oven-sh/bun#33932，23 个 harness 测试改异步 spawn 包装）。本地完整入口 3479 pass / 5 skip / 0 fail。
 - 长期记忆文档已迁入 `internal/agentmemory/document`（条目编辑、修订、审批、撤销、Agent 写入与类型化 `WriteOutcome`）；app 保留 run 快照冻结/注入、工具事件适配、管理员跨用户聚合与类型别名。原记忆专项测试已迁至新包，app 组合测试与 handler 合同保持不变。
 - 上游异步轮询已迁入 `internal/generation/polling`（`Run`/`Download` 与 `HTTPStatusError` 等稳定错误事实）；app 保留默认策略构造、现有错误转换（`translateVideoPollError`）、任务日志通知与类型别名。原 `TestVideoPoll*`/`TestVideoDownload*` 已迁至 polling 包。
+- 任务计费与终态已迁入 `internal/taskruntime`（计费核对策略、终态收尾、任务诊断与退款原因脱敏）；上游明确终态错误归 `generation.TerminalError`；app 保留编排适配层与共享 stub 组合测试。本地 Task/Worker/Billing 专项通过。
+- 职责守卫已启用：迁移门面文件按精确路径登记（`architecture/responsibilities.go`），handler 禁止直接 import ORM/SQL（电商 404 语义经 `service.EcommerceAgentNotFound` 归属）；影子计划已对本批真实 diff 回放核对（新包局部改动只选包测试与反向闭包专项，app 接线改动扩大到 full）。
 - 本机 Windows 上 `TestVideoPollContinuesAfterConnectionResetAndEOF` 失败为迁移前已存在的平台差异：连接中断以 `WSAECONNRESET`(10054) 报出，`polling.IsTransientTransport` 按 Linux `syscall.ECONNRESET` 匹配（已在迁移前提交 a393d137f 实证同样失败）；Linux CI 行为不受影响。
 - [ ] 在真实 PR CI 核对 PR base、影子 artifact、后端基线比较、所有原门禁和 docs 门禁。
 - [ ] 在主干 push 核对 before；无可信基准应失败，不能回退为空基线。
 - [ ] 在 Linux CI 确认 Web 两个原隔离组与普通集合各执行一次，并确认 bash 探测与异步 harness 包装在 Linux 行为一致；记录真实墙钟时间，不承诺提速比例。
 - [ ] 在真实环境回归记忆文件设置/编辑/修订/撤销/采纳路由与 `memory_update` 工具行为，确认与迁包前一致（本地专项已通过，未做浏览器端手工回归）。
 - [ ] 决定是否让传输层中断识别同时匹配 Windows 的 `WSAECONNRESET`（需要平台条件文件）；当前保持 Linux/CI 行为不变。
+- [ ] T7 门禁切换待实施为独立 PR：runner 改为按 `selectedChecks` 执行（app 分片与格式化 env 并入计划声明）、本地默认 affected、quality.yml 增加 affected 选择与「实际任务集合=计划集合」汇总校验；切换 PR 自身仍按完整相关门禁验证，并在同 diff 下输出切换前后选中任务数与墙钟时间。
 
 ## 创作平台 SDK：SQLite → PostgreSQL 全量搬迁修复
 

@@ -1,79 +1,58 @@
 package app
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"time"
-
 	"yingce/backend/internal/model"
-	"yingce/backend/internal/repository"
+	"yingce/backend/internal/taskruntime"
 )
 
-// taskTerminalCoordinator 收敛任务进入终态后的业务策略。
-//
-// 任务执行本身仍由 Service 编排，但失败、取消和成功收尾必须保持一致，
-// 不能散落在 provider/worker 分支中。
+// 任务终态的业务策略归 internal/taskruntime 所有；这里保留既有调用点的
+// 方法名，用显式 adapter 把 Service 的文本回放、日志、产物登记与能力归类
+// 接入 taskruntime.TerminalCoordinator，协调器不感知完整 Service。
+
+type taskTerminalRepository = taskruntime.TerminalRepository
+type taskBillingLifecycle = taskruntime.BillingLifecycle
+type taskReplayLifecycle = taskruntime.ReplayLifecycle
+type taskLifecycleLogger = taskruntime.LifecycleLogger
+type taskOutputLifecycle = taskruntime.OutputLifecycle
+
+type audioDurationTaskBilling = taskruntime.AudioDurationBilling
+type billingOrderReader = taskruntime.BillingOrderReader
+type audioDurationTaskOutput = taskruntime.AudioDurationOutput
+type videoProcessingTaskSettlement = taskruntime.VideoProcessingSettlement
+
 type taskTerminalCoordinator struct {
-	repo              taskTerminalRepository
-	billing           taskBillingLifecycle
-	replay            taskReplayLifecycle
-	logger            taskLifecycleLogger
-	outputs           taskOutputLifecycle
-	userFacingMessage func(error) string
-	logFailedAttempt  func(model.Task, error)
+	runtime *taskruntime.TerminalCoordinator
 }
 
-type taskTerminalRepository interface {
-	Task(id string) (*model.Task, error)
-	UpdateTaskTerminalDiagnostic(task *model.Task, completedAt time.Time) (bool, error)
+// serviceRuntimeAdapter 把 Service 的私有回放/日志/产物能力接到 taskruntime 的导出接口。
+type serviceRuntimeAdapter struct{ s *Service }
+
+func (a serviceRuntimeAdapter) FinalizeTaskTextReplay(taskID string, status model.TaskStatus) error {
+	return a.s.finalizeTaskTextReplay(taskID, status)
 }
 
-type taskBillingLifecycle interface {
-	MarkBillingUncertain(orderID string, errorText string) error
-	RefundBilling(orderID string, errorText string) error
-	BillingFailureRequiresReview(orderID string, taskID string, err error) bool
-	SettleBilling(orderID string, providerRequestID string) error
+func (a serviceRuntimeAdapter) Log(userID string, taskID string, level string, message string, payload string) error {
+	return a.s.log(userID, taskID, level, message, payload)
 }
 
-type taskReplayLifecycle interface {
-	finalizeTaskTextReplay(taskID string, status model.TaskStatus) error
+func (a serviceRuntimeAdapter) RegisterTaskOutputFromTask(task model.Task) error {
+	return a.s.RegisterTaskOutputFromTask(task)
 }
 
-type taskLifecycleLogger interface {
-	log(userID string, taskID string, level string, message string, payload string) error
+func (a serviceRuntimeAdapter) AudioOutputDurationMs(task model.Task) (int64, error) {
+	return a.s.AudioOutputDurationMs(task)
 }
 
-type taskOutputLifecycle interface {
-	RegisterTaskOutputFromTask(task model.Task) error
-}
-
-type audioDurationTaskBilling interface {
-	SettleBillingWithAudioDuration(orderID string, providerRequestID string, durationMs int64) error
-}
-
-type billingOrderReader interface {
-	BillingOrder(orderID string) (*model.BillingOrder, error)
-}
-
-type audioDurationTaskOutput interface {
-	AudioOutputDurationMs(task model.Task) (int64, error)
-}
-
-type videoProcessingTaskSettlement interface {
-	settleVideoProcessingBilling(task model.Task, providerRequestID string) (bool, error)
+func (a serviceRuntimeAdapter) SettleVideoProcessingBilling(task model.Task, providerRequestID string) (bool, error) {
+	return a.s.settleVideoProcessingBilling(task, providerRequestID)
 }
 
 func newTaskTerminalCoordinator(s *Service) *taskTerminalCoordinator {
-	return &taskTerminalCoordinator{
-		repo:              s.repo,
-		billing:           s.taskBilling(),
-		replay:            s,
-		logger:            s,
-		outputs:           s,
-		userFacingMessage: s.UserFacingErrorMessage,
-		logFailedAttempt:  s.ensureFailedProviderAttemptLogged,
-	}
+	adapter := serviceRuntimeAdapter{s: s}
+	return &taskTerminalCoordinator{runtime: taskruntime.NewTerminalCoordinator(
+		s.repo, s.taskBilling(), adapter, adapter, adapter,
+		s.UserFacingErrorMessage, s.ensureFailedProviderAttemptLogged, capabilityFromTaskType, providerRejectedSubmission,
+	)}
 }
 
 func (s *Service) terminalCoordinator() *taskTerminalCoordinator {
@@ -85,244 +64,29 @@ func (s *Service) terminalCoordinator() *taskTerminalCoordinator {
 }
 
 func (c *taskTerminalCoordinator) markPreparationFailure(task *model.Task, stage string, err error, billingUncertain bool, refundReason string) error {
-	c.ensureFailedAttemptLogged(task, err)
-	task.Status = model.TaskStatusFailed
-	task.Stage = stage
-	task.Error = c.userFacingMessage(err)
-	outcome, retryClass := "not_submitted", "correct_input"
-	if billingUncertain {
-		outcome, retryClass = "unknown", "reconcile_submission"
-	}
-	recordTaskDiagnostic(task, "preparation", "preparation_failed", outcome, retryClass, err)
-	if terminalErr := c.markTerminalState(task); terminalErr != nil {
-		return errors.Join(err, terminalErr)
-	}
-	var billingErr error
-	if billingUncertain {
-		billingErr = c.billing.MarkBillingUncertain(task.BillingOrderID, task.Error)
-	} else {
-		billingErr = c.billing.RefundBilling(task.BillingOrderID, refundReason)
-	}
-	if billingErr != nil {
-		return errors.Join(err, fmt.Errorf("任务计费收尾失败：%w", billingErr))
-	}
-	return err
+	return c.runtime.MarkPreparationFailure(task, stage, err, billingUncertain, refundReason)
 }
 
-// handleExecutionFailure 返回 nil 仅表示取消已被正常收尾；普通失败仍返回原始错误，
-// 让 worker 保留重试/监控所需的失败语义。
 func (c *taskTerminalCoordinator) handleExecutionFailure(task *model.Task, err error, providerSucceeded bool, channelSlotFailedBeforeRequest bool) error {
-	if errors.Is(err, context.Canceled) {
-		// 用户取消会先把数据库任务置为 cancelled，再停止 worker context。
-		// 此时不再重复退款/核对，只补齐 worker 侧的回放和日志收尾。
-		if latest, latestErr := c.repo.Task(task.ID); latestErr == nil && latest.Status == model.TaskStatusCancelled {
-			return c.handleAlreadyCancelled(*latest)
-		}
-		task.Status = model.TaskStatusCancelled
-		task.Stage = "任务已取消"
-		task.Error = "任务已取消"
-		now := time.Now()
-		task.CancellationSource, task.CancellationRequestedAt = model.TaskCancellationWorkerContext, &now
-		recordTaskDiagnostic(task, "cancellation", "task_cancelled", taskSubmissionOutcome(task, channelSlotFailedBeforeRequest), "reconcile_cancellation", err)
-		if terminalErr := c.markTerminalState(task); terminalErr != nil {
-			return terminalErr
-		}
-		var billingErr error
-		if channelSlotFailedBeforeRequest {
-			billingErr = c.billing.RefundBilling(task.BillingOrderID, "等待渠道槽位期间取消，上游请求未发出")
-		} else {
-			billingErr = c.billing.MarkBillingUncertain(task.BillingOrderID, "任务取消时上游费用状态不明确")
-		}
-		c.finalizeReplay(task, model.TaskStatusCancelled, "文本回放草稿归并失败")
-		_ = c.logger.log(task.UserID, task.ID, "warn", "任务已取消", "")
-		var resultErr error
-		if billingErr != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("任务取消后的计费收尾失败：%w", billingErr))
-		}
-		return resultErr
-	}
-
-	task.Status = model.TaskStatusFailed
-	c.ensureFailedAttemptLogged(task, err)
-	task.Stage = "任务失败"
-	task.Error = c.userFacingMessage(err)
-	outcome := taskSubmissionOutcome(task, channelSlotFailedBeforeRequest)
-	if providerSucceeded {
-		outcome = "accepted"
-	} else if outcome == "unknown" && providerRejectedSubmission(err) {
-		// 上游明确拒绝（参数、鉴权、余额、模型不存在等 4xx）：请求已被读取并拒收，没有建立任务，
-		// 不是“接单状态未知”。按未接单处理，不把分镜行或节点长期锁在待核对上。
-		outcome = "rejected"
-	}
-	retryClass := "new_generation_authorization"
-	if outcome == "unknown" {
-		retryClass = "reconcile_submission"
-	}
-	recordTaskDiagnostic(task, "execution", "provider_execution_failed", outcome, retryClass, err)
-	if terminalErr := c.markTerminalState(task); terminalErr != nil {
-		return errors.Join(err, terminalErr)
-	}
-	c.finalizeReplay(task, model.TaskStatusFailed, "文本回放草稿归并失败")
-	var billingErr error
-	if providerSucceeded || (!channelSlotFailedBeforeRequest && c.billing.BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)) {
-		billingErr = c.billing.MarkBillingUncertain(task.BillingOrderID, task.Error)
-	} else {
-		billingErr = c.billing.RefundBilling(task.BillingOrderID, task.Error)
-	}
-	_ = c.logger.log(task.UserID, task.ID, "error", "任务处理失败", task.Error)
-	resultErr := err
-	if billingErr != nil {
-		resultErr = errors.Join(resultErr, fmt.Errorf("任务计费收尾失败：%w", billingErr))
-	}
-	return resultErr
-}
-
-func (c *taskTerminalCoordinator) handleAlreadyCancelled(task model.Task) error {
-	c.finalizeReplay(&task, model.TaskStatusCancelled, "文本回放草稿归并失败")
-	_ = c.logger.log(task.UserID, task.ID, "warn", "任务已取消，worker 已停止执行", "")
-	return nil
+	return c.runtime.HandleExecutionFailure(task, err, providerSucceeded, channelSlotFailedBeforeRequest)
 }
 
 func (c *taskTerminalCoordinator) handleCancelledResult(task model.Task) error {
-	c.finalizeReplay(&task, model.TaskStatusCancelled, "文本回放草稿归并失败")
-	billingErr := c.billing.MarkBillingUncertain(task.BillingOrderID, "上游已返回结果，但任务被取消")
-	_ = c.logger.log(task.UserID, task.ID, "warn", "任务已取消，丢弃生成结果", "")
-	var resultErr error
-	if billingErr != nil {
-		resultErr = errors.Join(resultErr, fmt.Errorf("丢弃已生成结果后的计费收尾失败：%w", billingErr))
-	}
-	return resultErr
+	return c.runtime.HandleCancelledResult(task)
 }
 
-// handleResultPersistenceFailure 处理“上游成功但本地结果保存失败”的收尾。
-// 返回 handled=true 表示并发取消已被识别并正常收尾，调用方不应再返回保存错误。
-func (c *taskTerminalCoordinator) handleResultPersistenceFailure(task *model.Task, saveErr error) (handled bool, err error) {
-	if errors.Is(saveErr, repository.ErrTaskStateConflict) {
-		latest, latestErr := c.repo.Task(task.ID)
-		if latestErr == nil && latest.Status == model.TaskStatusCancelled {
-			if billingErr := c.handleCancelledResult(*latest); billingErr != nil {
-				return true, billingErr
-			}
-			return true, nil
-		}
-	}
-
-	task.Status = model.TaskStatusFailed
-	task.Stage = "任务结果保存失败"
-	task.Error = c.userFacingMessage(saveErr)
-	recordTaskDiagnostic(task, "result_persistence", "result_persistence_failed", "accepted", "recover_result", saveErr)
-	if terminalErr := c.markTerminalState(task); terminalErr != nil {
-		return false, errors.Join(saveErr, terminalErr)
-	}
-	c.finalizeReplay(task, model.TaskStatusFailed, "文本回放草稿归并失败")
-	billingErr := c.billing.MarkBillingUncertain(task.BillingOrderID, "上游已成功但任务结果未保存："+task.Error)
-	_ = c.logger.log(task.UserID, task.ID, "error", "任务结果保存失败", task.Error)
-	resultErr := saveErr
-	if billingErr != nil {
-		resultErr = errors.Join(resultErr, fmt.Errorf("任务结果保存失败后的计费收尾失败：%w", billingErr))
-	}
-	return false, resultErr
-}
-
-func (c *taskTerminalCoordinator) ensureFailedAttemptLogged(task *model.Task, err error) {
-	if c.logFailedAttempt == nil || task == nil || err == nil {
-		return
-	}
-	c.logFailedAttempt(*task, err)
+func (c *taskTerminalCoordinator) handleResultPersistenceFailure(task *model.Task, saveErr error) (bool, error) {
+	return c.runtime.HandleResultPersistenceFailure(task, saveErr)
 }
 
 func (c *taskTerminalCoordinator) handleSuccess(task *model.Task) error {
-	return c.handleSuccessWithSettlement(task, nil)
+	return c.runtime.HandleSuccess(task)
 }
 
-// handleSuccessWithSettlement 与 handleSuccess 相同；settle 非 nil 时替换常规结算，
-// 用于订单已退款后再交付作品的场景。
 func (c *taskTerminalCoordinator) handleSuccessWithSettlement(task *model.Task, settle func() error) error {
-	c.finalizeReplay(task, model.TaskStatusSucceeded, "文本回放窗口更新失败")
-	var completionErr error
-	completedTask, fetchErr := c.repo.Task(task.ID)
-	if fetchErr != nil {
-		completionErr = fmt.Errorf("任务成功后读取任务产物失败：%w", fetchErr)
-		_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但读取任务产物失败", fetchErr.Error())
-	} else if completedTask.MediaRecoveryJSON == "" {
-		if registerErr := c.outputs.RegisterTaskOutputFromTask(*completedTask); registerErr != nil {
-			// 任务成功与产物登记分开记账；登记失败保持步骤异常，允许项目页幂等补登记。
-			_ = c.logger.log(task.UserID, task.ID, "error", "任务成功但项目产物登记失败", registerErr.Error())
-			completionErr = fmt.Errorf("任务成功后的项目产物登记失败：%w", registerErr)
-		}
-	}
-	settleBilling := func() error {
-		// 视频处理（画质增强等）按秒订单按实际输出时长结算；拿不到时长时返回错误进入待核对。
-		if processing, ok := c.outputs.(videoProcessingTaskSettlement); ok && completedTask != nil && capabilityFromTaskType(task.Type) == "video" {
-			if handled, err := processing.settleVideoProcessingBilling(*completedTask, ""); handled || err != nil {
-				return err
-			}
-		}
-		if audioBilling, ok := c.billing.(audioDurationTaskBilling); ok && capabilityFromTaskType(task.Type) == "audio" {
-			orderReader, readerOK := c.billing.(billingOrderReader)
-			if readerOK {
-				order, err := orderReader.BillingOrder(task.BillingOrderID)
-				if err != nil {
-					return err
-				}
-				// Only audio orders priced per second need measured output duration.
-				// Fixed-request audio must retain the ordinary settlement path even
-				// when the stored resource has no duration metadata.
-				if order == nil || order.Capability != "audio" || order.BillingMode != "per_second" {
-					return c.billing.SettleBilling(task.BillingOrderID, "")
-				}
-			}
-			output, outputOK := c.outputs.(audioDurationTaskOutput)
-			if outputOK {
-				if completedTask == nil {
-					return errors.New("任务成功后无法读取音频产物")
-				}
-				durationMs, err := output.AudioOutputDurationMs(*completedTask)
-				if err != nil {
-					return err
-				}
-				return audioBilling.SettleBillingWithAudioDuration(task.BillingOrderID, "", durationMs)
-			}
-		}
-		return c.billing.SettleBilling(task.BillingOrderID, "")
-	}
-	if settle != nil {
-		settleBilling = settle
-	}
-	if err := settleBilling(); err != nil {
-		uncertainErr := c.billing.MarkBillingUncertain(task.BillingOrderID, "生成成功但积分结算失败："+err.Error())
-		_ = c.logger.log(task.UserID, task.ID, "error", "积分结算失败，已进入待核对", err.Error())
-		completionErr = errors.Join(completionErr, fmt.Errorf("积分结算失败：%w", err))
-		if uncertainErr != nil {
-			completionErr = errors.Join(completionErr, fmt.Errorf("记录计费待核对状态失败：%w", uncertainErr))
-		}
-	}
-	_ = c.logger.log(task.UserID, task.ID, "info", "任务完成，结果已持久化", "")
-	return completionErr
+	return c.runtime.HandleSuccessWithSettlement(task, settle)
 }
 
-func (c *taskTerminalCoordinator) markTerminalState(task *model.Task) error {
-	completedAt := time.Now()
-	task.CompletedAt = &completedAt
-	updated, err := c.repo.UpdateTaskTerminalDiagnostic(task, completedAt)
-	if err != nil {
-		return fmt.Errorf("写入任务终态失败：%w", err)
-	}
-	if !updated {
-		return repository.ErrTaskStateConflict
-	}
-	if leases, ok := c.repo.(interface {
-		ReleaseCloudAgentResourceLeases(string, string) error
-	}); ok && task.ID != "" {
-		if err := leases.ReleaseCloudAgentResourceLeases(task.UserID, "task:"+task.ID); err != nil {
-			return fmt.Errorf("释放任务资源租约失败：%w", err)
-		}
-	}
-	return nil
-}
-
-func (c *taskTerminalCoordinator) finalizeReplay(task *model.Task, status model.TaskStatus, message string) {
-	if err := c.replay.finalizeTaskTextReplay(task.ID, status); err != nil {
-		_ = c.logger.log(task.UserID, task.ID, "error", message, err.Error())
-	}
+func (c *taskTerminalCoordinator) handleAlreadyCancelled(task model.Task) error {
+	return c.runtime.HandleAlreadyCancelled(task)
 }

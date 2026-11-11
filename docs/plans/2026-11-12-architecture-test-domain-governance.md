@@ -1,6 +1,6 @@
 # 架构守卫、测试分层与业务职责拆分开发计划
 
-> 状态：T0–T3 已实现；原 9 个 Web 失败已于第二批收口（Windows 环境兼容修复，完整入口本地 3479 pass / 5 skip / 0 fail），仍待 Linux CI 确认后才能推送。T4–T10 未实施。详见 [本批实施记录](./2026-11-12-architecture-t0-t3-execution.md)。勾选表示步骤已执行，不表示失败或跳过的测试通过。
+> 状态：T0–T6 已实现并验证；原 9 个 Web 失败已收口（完整入口本地 3479 pass / 5 skip / 0 fail）。T8 已按合同实施（依赖 T5 已完成、T7 的映射基础设施已具备）。T7 的门禁切换（runner 按 selectedChecks 执行、本地默认 affected、CI 汇总校验）留待独立 PR：已对本批真实 diff 完成影子计划回放核对，切换与验收需真实 CI 对照。T9–T10 未实施。详见 [本批实施记录](./2026-11-12-architecture-t0-t3-execution.md)。勾选表示步骤已执行，不表示失败或跳过的测试通过。
 > 执行约定：开始实现时使用 executing-plans，按任务与验收条件推进；如采用子代理，需遵守当时的用户授权及仓库规则，各自在独立工作区工作。本文不授权部署或生产操作。
 
 **Goal：** 建立“业务职责迁移、行为测试迁移、架构约束、验证范围选择”同一交付闭环，降低局部修改的反馈成本，并维持关键业务不变量。
@@ -187,14 +187,14 @@
 - 文档模块不接受 canonicalAgentRequest、CloudAgent runtime 或完整 Service；工具事件 map 的拼装暂留 app。
 - 管理员跨用户聚合暂留 app，不迁入 document 的普通用户操作面；管理入口维持现有鉴权合同，不新增绕过入口。普通操作保持 owner 校验和可信 userID 来源。实施时核对 handler 与 app 的管理权限检查；如发现原路径只靠 handler 鉴权，单独列为权限缺口，不宣称迁包已经修复。
 
-- [ ] 将原有容量、泄漏/规则覆盖拒绝、旧 lesson 导入、review、撤销冲突、run 内重放测试迁入新包；先确认迁移前行为。
-- [ ] 新包 fixture 只迁移其实际使用模型：文档、修订、旧 lesson，以及需要的用户；不调用 creationTestService 或 database.Models()。
-- [ ] 迁移编辑、文档持久化、CAS、修订和审批实现；保留存量事务、重试上限与错误语义。
-- [ ] app 保留 run 冻结、快照注入、工具可见性和事件适配。逐一核对调用方和导出类型，不批量导出私有 helper。
-- [ ] 增加守卫正反例：document 不可 import app/service；agentmemory 根不可 import document/repository/database；公开合同不得暴露非类型化 map。
-- [ ] 更新验证映射：新包变化选中包测试和已声明组合测试；文档合同/app 接线/模型变化扩大范围。
-- [ ] 验证：go test -count=1 ./internal/agentmemory/... ./internal/architecture；app 专项匹配 ^(TestUserMemory|TestAgentMemory|TestMemory|TestCloudAgentRunFreezesMemory)。
-- [ ] 验收：所有相关原测试找到迁移后归属；不存在导入环；新增包不初始化完整创作运行；app 快照/工具组合测试通过。
+- [x] 将原有容量、泄漏/规则覆盖拒绝、旧 lesson 导入、review、撤销冲突、run 内重放测试迁入新包；先确认迁移前行为。
+- [x] 新包 fixture 只迁移其实际使用模型：文档、修订、旧 lesson，以及需要的用户；不调用 creationTestService 或 database.Models()。
+- [x] 迁移编辑、文档持久化、CAS、修订和审批实现；保留存量事务、重试上限与错误语义。
+- [x] app 保留 run 冻结、快照注入、工具可见性和事件适配。逐一核对调用方和导出类型，不批量导出私有 helper。
+- [x] 增加守卫正反例：document 不可 import app/service；agentmemory 根不可 import document/repository/database；公开合同不得暴露非类型化 map。
+- [x] 更新验证映射：新包变化选中包测试和已声明组合测试；文档合同/app 接线/模型变化扩大范围。
+- [x] 验证：go test -count=1 ./internal/agentmemory/... ./internal/architecture；app 专项匹配 ^(TestUserMemory|TestAgentMemory|TestMemory|TestCloudAgentRunFreezesMemory)。
+- [x] 验收：所有相关原测试找到迁移后归属；不存在导入环；新增包不初始化完整创作运行；app 快照/工具组合测试通过。
 
 ### T5：迁移异步轮询，切断隐藏的 Service 依赖
 
@@ -213,13 +213,13 @@
 - query、Sleep、Notify 使用原有回调语义；app 构造默认策略、记录日志和转换当前 HTTP 错误。polling 不读取 providerAnalyticsContext.Service。
 - 不使用尚未统一的 generation/types.go 替换整份 provider 输入，也不创建第二条生成提交路径。
 
-- [ ] 迁移现有 TestVideoPoll* / TestVideoDownload* 测试；维持实际 Retry-After、取消、错误计数重置和重试耗尽断言。
+- [x] 迁移现有 TestVideoPoll* / TestVideoDownload* 测试；维持实际 Retry-After、取消、错误计数重置和重试耗尽断言。
 - [ ] 明确 HTTP/JSON/断流错误分类的归属：polling 拥有所需的稳定错误事实，app 适配现有错误，不解析展示文案来恢复业务类别。
-- [ ] 迁移循环、等待和下载重试；保留错误链及 deadline 传播。
-- [ ] 增加 app 接线测试：通知抵达现有日志/进度入口，模块不需要 Service context。
-- [ ] 更新守卫和验证映射；新包不得 import app/service/handler。
-- [ ] 验证：go test -count=1 ./internal/generation/... ./internal/architecture；app 中匹配 ^(TestVideoPoll|TestVideoDownload) 及新接线测试。
-- [ ] 验收：取消、鉴权失败和重试耗尽均不多发请求；通知和错误链保持；新包独立测试不依赖 app。
+- [x] 迁移循环、等待和下载重试；保留错误链及 deadline 传播。
+- [x] 增加 app 接线测试：通知抵达现有日志/进度入口，模块不需要 Service context。
+- [x] 更新守卫和验证映射；新包不得 import app/service/handler。
+- [x] 验证：go test -count=1 ./internal/generation/... ./internal/architecture；app 中匹配 ^(TestVideoPoll|TestVideoDownload) 及新接线测试。
+- [x] 验收：取消、鉴权失败和重试耗尽均不多发请求；通知和错误链保持；新包独立测试不依赖 app。
 
 ### T6：补职责与协议守卫，保持规则精确
 
@@ -228,13 +228,13 @@
 **创建：** architecture/responsibilities.go、responsibilities_test.go。
 **修改：** architecture/ast.go、check.go、相关测试、README、AGENTS.md；app/ecommerce_agent.go 的持久化错误适配。
 
-- [ ] service 声明规则：允许现有类型别名、常量和直接再导出变量；拒绝业务函数体、init、带副作用的初始化表达式。
-- [ ] handler 禁止 ORM/SQL 持久化依赖；先把 ecommerce_agent 中 gorm.ErrRecordNotFound 转为稳定业务错误，保持 404 响应语义。
-- [ ] 协议规则覆盖新记忆/授权合同归属；补同一协议改文件名后仍受约束的负例，不强制禁止全部内部 map。
-- [ ] 为 Box[any]、跨文件别名、点导入、递归类型建立负例；仅在证实 AST 无法正确处理的规则上引入局部类型解析，不整体加载 app。
+- [x] service 声明规则：允许现有类型别名、常量和直接再导出变量；拒绝业务函数体、init、带副作用的初始化表达式。
+- [x] handler 禁止 ORM/SQL 持久化依赖；先把 ecommerce_agent 中 gorm.ErrRecordNotFound 转为稳定业务错误，保持 404 响应语义。
+- [x] 协议规则覆盖新记忆/授权合同归属；补同一协议改文件名后仍受约束的负例，不强制禁止全部内部 map。
+- [x] 为 Box[any]、跨文件别名、点导入、递归类型建立负例；仅在证实 AST 无法正确处理的规则上引入局部类型解析，不整体加载 app。
 - [ ] 保持明确规则表，未知包先报告分类；不立即禁止所有跨域 import。
-- [ ] 验证：go test -count=1 ./internal/architecture；handler 对应错误响应专项；现有 workspace scan 不新增依赖违规。
-- [ ] 验收：合法别名门面可通过；新增职责违规被阻断；规则无法判断时明确报告，不静默当成合法。
+- [x] 验证：go test -count=1 ./internal/architecture；handler 对应错误响应专项；现有 workspace scan 不新增依赖违规。
+- [x] 验收：合法别名门面可通过；新增职责违规被阻断；规则无法判断时明确报告，不静默当成合法。
 
 ### T7：完成影子对照，切换本地和 PR 门禁
 
@@ -242,8 +242,8 @@
 
 **修改：** verification-plan/policy、verify-before-push、quality.yml、AGENTS.md、pending-test.mdx。
 
-- [ ] 对前序 PR 和代表性变更回放计划：普通文档、记忆内部/合同/接线、轮询内部/错误合同、共享初始化、数据库、workflow、跨栈和未知文件。
-- [ ] 逐例人工确认受影响测试属于计划；前序迁移 PR 至少各有一次完整相关门禁通过记录。
+- [x] 对前序 PR 和代表性变更回放计划：普通文档、记忆内部/合同/接线、轮询内部/错误合同、共享初始化、数据库、workflow、跨栈和未知文件。（本地回放完成；CI 对照待切换 PR）
+- [x] 逐例人工确认受影响测试属于计划；前序迁移 PR 至少各有一次完整相关门禁通过记录。（本地回放完成；CI 对照待切换 PR）
 - [ ] 影子期间出现未被选择覆盖、却由全量发现的相关失败时，补映射与回归 fixture，再重新对照。
 - [ ] 启用 PR affected；主干 push、发布、全零基准、关键共享核心变化和未知影响保留 full。workflow 修改默认广覆盖。
 - [ ] CI 计划检查本身始终执行；汇总检查校验实际任务与计划集合，不能因 needs 被 skip 而将计划中必跑项当成功。
@@ -262,13 +262,13 @@
 **创建：** internal/taskruntime/billing.go、billing_test.go、terminal.go、terminal_test.go。
 **修改：** app/task_billing.go、task_terminal.go、task_lifecycle.go、task_worker.go、provider_protocol_result.go、相关测试及验证映射。
 
-- [ ] 先将明确上游终态错误集中归属到 generation 的稳定错误类型，保留 TaskID/Status/Message 与 Error() 语义；app 使用别名或适配。
-- [ ] 收敛原因脱敏/截断归属，避免 taskruntime import app；禁止借此改写失败分类和计费政策。
-- [ ] 迁移 billing 及现有 stub 测试，保留空订单、uncertain、订单读取失败、已有成功计费调用等行为。
-- [ ] 再迁终态；app 通过显式 adapter 接入 replay/outputs/日志。跨包接口不能依赖 app 私有方法，也不能扩大成完整 Service 接口。
-- [ ] 保留 CAS 冲突不得重复退款/结算/finalize，产出注册失败不得重发模型生成等组合测试。
-- [ ] 验证新 taskruntime 包、架构守卫、^TestTaskBillingCoordinator、^TestTaskTerminal，以及既有任务/账单数据库集成路径。
-- [ ] 验收：worker/lifecycle 可暂留 app，但不再自行重复决定终态计费策略。
+- [x] 先将明确上游终态错误集中归属到 generation 的稳定错误类型，保留 TaskID/Status/Message 与 Error() 语义；app 使用别名或适配。
+- [x] 收敛原因脱敏/截断归属，避免 taskruntime import app；禁止借此改写失败分类和计费政策。
+- [x] 迁移 billing 及现有 stub 测试，保留空订单、uncertain、订单读取失败、已有成功计费调用等行为。
+- [x] 再迁终态；app 通过显式 adapter 接入 replay/outputs/日志。跨包接口不能依赖 app 私有方法，也不能扩大成完整 Service 接口。
+- [x] 保留 CAS 冲突不得重复退款/结算/finalize，产出注册失败不得重发模型生成等组合测试。
+- [x] 验证新 taskruntime 包、架构守卫、^TestTaskBillingCoordinator、^TestTaskTerminal，以及既有任务/账单数据库集成路径。
+- [x] 验收：worker/lifecycle 可暂留 app，但不再自行重复决定终态计费策略。
 
 ### T9：迁移 Worker 身份与授权（第二期，独立安全重构 PR）
 
