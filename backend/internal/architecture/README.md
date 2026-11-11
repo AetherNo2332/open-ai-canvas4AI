@@ -34,6 +34,16 @@
 
 改代码时只能下调或删除基线条目，不得新增或调高。新代码必须满足上限。失败信息里会给出当前值和上限。
 
+跨版本检查同时读取明确 Git 基准的旧基线和当前源码，防止同一提交同时扩大代码和额度：
+
+```bash
+go run ./cmd/check-architecture-baseline --base <可信基准SHA>
+```
+
+PR 使用 PR base，push 使用 before；缺失或全零基准失败。手动/被调用 CI 显式使用当前检出提交的第一父提交并打印说明。本地使用 `--base` 对应的 merge-base。原有 `Check` 和 stale-baseline 校验仍执行。
+
+`baseline-moves.json` 初始为空。迁移声明为 `from/to/reason`，只用于本次比较；源与目标必须一对一，不能链式、复用、改规则或扩额。命令从 Git archive 扫描旧源码，核对旧问题存在、当前源问题消失、目标问题真实存在且实际数值不增长。声明不能证明业务语义等价，必须审查迁移实现；下一批无迁移的改动应清空声明。
+
 ```bash
 cd backend
 go test -count=1 ./internal/architecture

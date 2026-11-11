@@ -24,6 +24,50 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  verification-plan:
+    name: Verification shadow plan
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.base.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - name: Resolve trusted comparison base
+        id: base
+        env:
+          CANDIDATE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT: ${{ github.event_name }}
+        shell: bash
+        run: |
+          base="$CANDIDATE"
+          if [ -z "$base" ] && [ "$EVENT" != push ] && [ "$EVENT" != pull_request ]; then
+            echo "Manual/called run: using checked-out commit's first parent as explicit base"
+            base="$(git rev-parse HEAD^)"
+          fi
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+            echo "::error::A trusted nonzero comparison base is required"
+            exit 1
+          fi
+          git cat-file -e "$base^{commit}"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+      - name: Test plan and Web scheduler
+        run: node --test scripts/verification-plan.test.mjs web/scripts/run-tests.test.mjs
+      - name: Save advisory plan (existing gates remain mandatory)
+        env:
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: node scripts/verification-plan.mjs --base "$BASE_SHA" --head "$GITHUB_SHA" --mode affected --json > verification-shadow.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verification-shadow
+          path: verification-shadow.json
+          if-no-files-found: error
   agent:
     name: Agent checks
     runs-on: ubuntu-latest
@@ -45,6 +89,7 @@ jobs:
   # internal/app 约 1350 个用例在同一进程里串行执行（单包约 5 分钟），是后端检查的关键路径。
   # 这里把它按用例名轮转分成 4 片，其余包作为第 5 片，5 个 Runner 并行；汇总由 Backend checks 完成。
   backend-tests:
+    needs: verification-plan
     name: Backend tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     # go test 自身有 20 分钟超时；这里兜底防止依赖服务卡死时占用 Runner 数小时。
@@ -86,6 +131,8 @@ jobs:
       TEST_AGENT_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_event_integration?sslmode=disable
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
@@ -117,6 +164,11 @@ jobs:
       - name: Check backend architecture
         if: matrix.shard == 'rest'
         run: go test ./internal/architecture -count=1 -timeout=1m
+      - name: Reject cross-revision baseline expansion
+        if: matrix.shard == 'rest'
+        env:
+          BASE_SHA: ${{ needs.verification-plan.outputs.base }}
+        run: go run ./cmd/check-architecture-baseline --base "$BASE_SHA"
       - name: Run Go tests
         shell: bash
         env:

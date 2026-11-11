@@ -14,7 +14,8 @@
  * 只读取 Git 状态，不修改工作区、暂存区或分支；工作区有未提交改动时，格式检查用临时提交对象覆盖它们。
  */
 import { spawn, spawnSync } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { collectPlan, collectChanges } from "./verification-plan.mjs";
 import { cpus, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +32,7 @@ const DETACH_PROCESS_GROUP = process.platform !== "win32";
 const options = parseArgs(process.argv.slice(2));
 
 function parseArgs(argv) {
-    const result = { base: "origin/main", jobs: cpus().length, appShards: 4, skipE2e: false, only: "", all: false };
+    const result = { base: "origin/main", mode: "full", planOnly: false, jobs: cpus().length, appShards: 4, skipE2e: false, only: "", all: false };
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         const value = () => {
@@ -40,6 +41,8 @@ function parseArgs(argv) {
             return next;
         };
         if (arg === "--base") result.base = value();
+        else if (arg === "--mode") result.mode = value();
+        else if (arg === "--plan-only") result.planOnly = true;
         else if (arg === "--jobs") result.jobs = positiveInt(arg, value());
         else if (arg === "--app-shards") result.appShards = positiveInt(arg, value());
         else if (arg === "--skip-e2e") result.skipE2e = true;
@@ -51,6 +54,7 @@ function parseArgs(argv) {
         } else fail(`未知参数：${arg}`);
     }
     if (result.only && !["web", "backend"].includes(result.only)) fail("--only 只支持 web 或 backend");
+    if (!["fast", "affected", "full"].includes(result.mode)) fail("--mode 只支持 fast、affected、full");
     return result;
 }
 
@@ -90,9 +94,18 @@ function snapshotCommit() {
 }
 
 const base = git(["merge-base", "HEAD", options.base]);
+const plan = collectPlan({ root: ROOT, base, mode: options.all ? "full" : options.mode });
+if (options.planOnly) {
+    console.log(JSON.stringify(plan, null, 2));
+    process.exit(0);
+}
+mkdirSync(LOG_DIR, { recursive: true });
+writeFileSync(path.join(LOG_DIR, "verification-plan.json"), JSON.stringify(plan, null, 2));
+writeFileSync(path.join(LOG_DIR, "verification-shadow.json"), JSON.stringify(collectPlan({ root: ROOT, base, mode: "affected" }), null, 2));
+console.log("验证计划仅用于影子对照；实际继续执行完整相关门禁。");
 const behind = Number(git(["rev-list", "--count", `HEAD..${options.base}`]));
 const dirty = lines(git(["status", "--porcelain"]));
-const changed = [...new Set([...lines(git(["diff", "--name-only", base])), ...lines(git(["ls-files", "--others", "--exclude-standard"]))])];
+const changed = [...new Set(collectChanges(ROOT, base).flatMap(change => [change.path, change.oldPath]).filter(Boolean))];
 const workflowChanged = changed.some((file) => file.startsWith(".github/workflows/") || file.startsWith("scripts/verify-before-push"));
 const wantWeb = options.only ? options.only === "web" : options.all || workflowChanged || changed.some((file) => file.startsWith("web/"));
 const wantBackend = options.only ? options.only === "backend" : options.all || workflowChanged || changed.some((file) => file.startsWith("backend/") || file.startsWith(".github/scripts/"));
@@ -107,6 +120,8 @@ const tasks = [];
 const skipped = [];
 const notCovered = ["Payment plugin artifacts（需要 Docker 双架构构建，由 CI 检查）"];
 
+if (workflowChanged) tasks.push({ name: "verification:tests", cwd: ROOT, cmd: "node", args: ["--test", "scripts/verification-plan.test.mjs", "web/scripts/run-tests.test.mjs"], weight: 5 });
+
 if (wantWeb) {
     const leftovers = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock"].filter((file) => existsSync(path.join(WEB, file)));
     if (leftovers.length) {
@@ -117,7 +132,7 @@ if (wantWeb) {
         { name: "web:format", cwd: WEB, cmd: "bun", args: ["scripts/check-changed-formatting.mjs"], env: { BASE_SHA: base, GITHUB_SHA: formatHead }, weight: 10 },
         { name: "web:typecheck", cwd: WEB, cmd: "bun", args: ["run", "typecheck"], weight: 60 },
         { name: "web:lint", cwd: WEB, cmd: "bun", args: ["run", "lint"], weight: 50 },
-        // bun run test 会先跑 pretest，与 CI 一致；直接 bun test 会跳过它。
+        // 唯一调度入口保留隔离进程，且每个文件仅运行一次。
         { name: "web:test", cwd: WEB, cmd: "bun", args: ["run", "test"], weight: 120 },
     );
     // 预演台 E2E 启动 Vite 与真实 Chrome，耗时且对机器负载敏感：只在预演相关改动或 --all 时运行。
@@ -132,6 +147,7 @@ if (wantBackend) {
         console.error("✗ 有后端改动，但本机没有可用的 go；请安装 backend/go.mod 要求的 Go 版本。");
         process.exit(1);
     }
+    tasks.push({ name: "backend:baseline", cwd: BACKEND, cmd: "go", args: ["run", "./cmd/check-architecture-baseline", "--base", base], weight: 10 });
     tasks.push({
         name: "backend:gofmt",
         cwd: BACKEND,

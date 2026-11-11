@@ -155,6 +155,10 @@
 
 ### 推送前验证（必须）
 
+验证计划现阶段仅影子运行：`bun scripts/verify-before-push.mjs --base <ref> --mode full|affected|fast --plan-only` 只输出 JSON，不启动检查。默认 `full`；非 plan-only 时仍执行原有完整相关门禁，`--mode` 不授权跳过任务。计划和 affected 对照保存在 `.local/cache/verify/`。CI 始终上传影子计划，原有各门禁保持执行。后端额外运行 `go run ./cmd/check-architecture-baseline --base <SHA>`，与工作区扫描共同阻断新增/扩大的基线；迁移声明必须经审查且以两版源码核实。
+
+Web 完整测试的唯一调度入口是 `bun run test`（`web/scripts/run-tests.mjs`）。原 pretest 的八文件组与 canvas-grid 独立进程保持，普通集合排除这九个文件；不再设置 pretest。专项仍可直接 `bun test <文件>`。
+
 推送到 `main` 或任何会触发 CI 的分支前，必须在本地通过 CI「Quality checks」中与改动相关的检查；未通过不得推送，也不要推送后再看 CI 修。
 
 1. `git fetch` 后把本地提交 rebase 到最新的远端分支，再验证要推送的那组提交；工作区应干净（未提交改动会混进验证结果）。

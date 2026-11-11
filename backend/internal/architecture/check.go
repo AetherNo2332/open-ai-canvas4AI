@@ -162,7 +162,9 @@ func DecodeBaseline(body []byte) (Baseline, error) {
 }
 
 // Check never writes or expands the baseline. Reductions must lower/remove an
-// existing allowance; additions and increased values fail the check.
+// existing allowance; additions and increased values fail the check. To prevent
+// changing code and allowance together, also run CompareBaselines against the
+// explicit trusted Git base (cmd/check-architecture-baseline).
 func Check(backendRoot string, baseline Baseline) ([]Finding, error) {
 	metrics, err := Scan(backendRoot)
 	if err != nil {
