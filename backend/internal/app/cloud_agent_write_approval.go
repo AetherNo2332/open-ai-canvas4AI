@@ -194,6 +194,8 @@ func checkpointCloudAgentWriteApproval(current *model.CloudAgentExecution, repo 
 func cloudAgentWriteApprovalPreview(repo *repository.Repository, run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) (cloudAgentApprovalPreview, error) {
 	canvasID := state.Request.CanvasID
 	switch call.Function.Name {
+	case "canvas_build_board":
+		return cloudAgentPreviewBuildBoard(repo, run.UserID, canvasID, call)
 	case "canvas_bind_asset":
 		plan, err := prepareCloudAgentAssetBinding(repo, run.UserID, canvasID, call)
 		if err != nil {

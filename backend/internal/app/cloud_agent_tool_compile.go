@@ -57,6 +57,7 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
 		c.addCanvasWriteTools(req)
 		c.addGenerationTools()
+		c.addBatchProductionTools()
 	}
 	if req.SubagentEnabled && req.subagent == nil {
 		c.addSubagentParentTools()

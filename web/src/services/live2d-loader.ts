@@ -16,14 +16,15 @@ export function installLive2DLoader(loader: typeof Loader) {
         const controller = new AbortController();
         const abort = () => controller.abort();
         const deadline = setTimeout(abort, 20000);
-        context.target?.once("destroy", abort);
+        const target: { once(event: "destroy", callback: () => void): unknown; off(event: "destroy", callback: () => void): unknown } | undefined = context.target;
+        target?.once("destroy", abort);
         try {
             const response = await fetch(url, { credentials: "include", signal: controller.signal });
             if (!response.ok) throw new Error(`Live2D 资源加载失败（${response.status}）`);
             context.result = context.type === "json" ? await response.json() : await response.arrayBuffer();
         } finally {
             clearTimeout(deadline);
-            context.target?.off("destroy", abort);
+            target?.off("destroy", abort);
         }
     });
 }

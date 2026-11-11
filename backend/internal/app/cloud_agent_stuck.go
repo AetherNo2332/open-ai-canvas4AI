@@ -40,6 +40,9 @@ func (s *Service) terminateStuckCloudAgent(run *model.CloudAgentExecution) bool 
 }
 
 func (s *Service) cloudAgentHasLiveWork(run *model.CloudAgentExecution, state *cloudAgentRuntime) bool {
+	if cloudAgentMediaBatchActive(state) {
+		return true
+	}
 	taskIDs := []string{state.ActiveTaskID, state.MediaTaskID, state.StoryboardTaskID}
 	// 挂起等待生成时，进行中的生成就是这条运行的活计。
 	if run.WaitKind == cloudAgentGenerationsWaitKind {

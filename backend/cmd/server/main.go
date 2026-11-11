@@ -89,31 +89,7 @@ func run(ctx context.Context) error {
 	if strings.TrimSpace(os.Getenv("CANVAS_AGENT_INTERNAL_TOKEN")) == "" {
 		log.Printf("CANVAS_AGENT_INTERNAL_TOKEN is empty: /internal-agent is not mounted and Cloud Agent runs stay queued until a Pi worker is configured")
 	}
-	if err := svc.EnsureSystemChannelModels(); err != nil {
-		return err
-	}
-	if err := svc.EnsureDefaultUserGroup(); err != nil {
-		return err
-	}
-	if err := svc.EnsureDefaultPromptTemplates(); err != nil {
-		return err
-	}
-	if err := svc.EnsureBuiltinProjectWorkflowTemplate(); err != nil {
-		return err
-	}
-	if err := svc.EnsureBuiltinSkills(); err != nil {
-		return err
-	}
-	if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
-		return err
-	}
-	if err := svc.EnsureSkillPackages(); err != nil {
-		return err
-	}
-	if err := svc.EnsureBuiltinTools(); err != nil {
-		return err
-	}
-	if err := ensureBuiltinWorkbenchCatalog(svc); err != nil {
+	if err := initializeBuiltinCatalogs(svc); err != nil {
 		return err
 	}
 	if summary, err := svc.MigrateLegacyStorage(); err != nil {
@@ -347,4 +323,50 @@ func allowedOriginWithPolicy(c *gin.Context, origin string, policy corsPolicy) b
 	}
 	host := strings.ToLower(parsed.Hostname())
 	return (host == "localhost" || host == "127.0.0.1" || host == "::1") && (parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+func initializeBuiltinCatalogs(svc *service.Service) error {
+	if err := svc.EnsureSystemChannelModels(); err != nil {
+		return err
+	}
+	if err := svc.EnsureDefaultUserGroup(); err != nil {
+		return err
+	}
+	if err := svc.EnsureDefaultPromptTemplates(); err != nil {
+		return err
+	}
+	if _, err := svc.EnsureBundledEcommerceKnowledge(); err != nil {
+		return err
+	}
+	if err := svc.EnsureBuiltinProjectWorkflowTemplate(); err != nil {
+		return err
+	}
+	if err := svc.EnsureBuiltinSkills(); err != nil {
+		return err
+	}
+	if err := svc.EnsureBuiltinAgentSkillDefaults(); err != nil {
+		return err
+	}
+	if err := svc.EnsureSkillPackages(); err != nil {
+		return err
+	}
+	if err := svc.EnsureBuiltinTools(); err != nil {
+		return err
+	}
+	if err := ensureBuiltinWorkbenchCatalog(svc); err != nil {
+		return err
+	}
+	// Initialize the shipped domains and industry dictionary before accepting
+	// requests so a failed upgrade cannot serve an incomplete knowledge catalog.
+	if report, err := svc.EnsureBuiltinEcommerceKnowledge(); err != nil {
+		return fmt.Errorf("initialize builtin ecommerce knowledge: %w", err)
+	} else {
+		slog.Info("builtin ecommerce knowledge ready", "shipped", report.Shipped, "inserted", len(report.Inserted), "updated", len(report.Updated), "unchanged", report.Unchanged, "preservedLocal", len(report.PreservedLocal))
+	}
+	if report, err := svc.EnsureIndustryTaxonomyKnowledge(); err != nil {
+		return fmt.Errorf("initialize industry taxonomy knowledge: %w", err)
+	} else {
+		slog.Info("industry taxonomy ready", "shipped", report.Shipped, "inserted", report.Inserted, "installed", report.AlreadyInstalled)
+	}
+	return nil
 }

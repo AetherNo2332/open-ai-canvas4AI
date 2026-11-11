@@ -100,9 +100,10 @@ type cloudAgentApproval struct {
 	QuoteHash string                    `json:"quoteHash,omitempty"`
 }
 type cloudAgentRuntime struct {
-	ToolSchemaVersion string           `json:"toolSchemaVersion,omitempty"`
-	ActiveSubagents   int              `json:"activeSubagents,omitempty"`
-	Subagent          *SubagentRuntime `json:"subagent,omitempty"`
+	MediaBatch        *cloudAgentMediaBatch `json:"mediaBatch,omitempty"`
+	ToolSchemaVersion string                `json:"toolSchemaVersion,omitempty"`
+	ActiveSubagents   int                   `json:"activeSubagents,omitempty"`
+	Subagent          *SubagentRuntime      `json:"subagent,omitempty"`
 	// SubagentBudgetCarves 记录父运行给仍在运行的子代理切分的积分份额，
 	// 计算父剩余预算时扣减；子代理终态后释放（键为 linkId，单位积分）。
 	SubagentBudgetCarves map[string]float64 `json:"subagentBudgetCarves,omitempty"`

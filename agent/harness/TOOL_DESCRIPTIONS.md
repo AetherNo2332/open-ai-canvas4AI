@@ -410,3 +410,19 @@ add/replace 必填：一两句话，跨会话仍成立
 ## memory_update_reason
 
 可选：为什么这样改，会显示给用户
+
+## generate_media_batch
+
+一次审批批量生成同模式占位节点。items 传节点 ID，提示词与参考取自节点。审批卡列明细、积分、并发和重试额度，批准后逐条提交回写，结束返回回执。先以相同参数调用 canvas_preflight，视频依赖关键帧时先生成关键帧。
+
+## media_batch_control
+
+在已批准额度内操作。continue 放行试跑余项。retry 重跑已结束项，可改 prompt，规格保持批准值，成功项在旁新建节点。cancel 取消未提交项。status 查看进度。
+
+## canvas_build_board
+
+按分镜搭建总控、人物/场景/道具、关键帧、视频占位与分幕背板，连接资产到关键帧、行到产物、关键帧到视频首帧。占位不收费。提示词取 imageGenerationPrompt/videoMotionPrompt，缺省取 plotDescription。
+
+## canvas_preflight
+
+批量只读检查，参数同 generate_media_batch。检查节点、提示词、参考就绪与 @ 标签。带模型时无扣费核对能力、报价与预算，返回失败/警告数及逐条问题。

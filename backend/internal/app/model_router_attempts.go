@@ -271,19 +271,9 @@ func (s *Service) switchTaskToNextRoute(task *model.Task, attempts []model.Route
 	if err != nil {
 		return nil, err
 	}
-	var replacement *model.BillingOrder
-	if logicalModel.PricePolicy == "channel" && task.BillingOrderID != "" {
-		config, _ := nextInput["config"].(map[string]any)
-		capability := normalizeCapability(fmt.Sprint(nextInput["mode"]))
-		if capability == "" {
-			capability = capabilityFromTaskType(task.Type)
-		}
-		priceTierID, _ := config["priceTierId"].(string)
-		replacement, err = s.newBillingOrderWithPriceTier(task.UserID, task.ID, "route-switch:"+task.ID+":"+selected.Route.ID, selected.ChannelModel.ChannelID, selected.ChannelModel.ModelKey, capability, firstNonEmpty(strings.TrimSpace(task.Operation), task.Type), requestedBillingQuantity(capability, config), estimateTaskBillingTokens(nextInput, capability), strings.TrimSpace(priceTierID), intent)
-		if err != nil {
-			return nil, err
-		}
-		replacement.Model = logicalModel.Code
+	replacement, err := s.routeReplacementBillingOrder(task, routed, nextInput)
+	if err != nil {
+		return nil, err
 	}
 	previousRouteID := task.RouteID
 	var costOrder model.BillingOrder
@@ -308,6 +298,29 @@ func (s *Service) switchTaskToNextRoute(task *model.Task, attempts []model.Route
 	task.InputJSON = string(encoded)
 	task.ProviderRequestID = ""
 	return s.createRouteAttempt(task, routed, len(attempts)+1)
+}
+
+func (s *Service) routeReplacementBillingOrder(task *model.Task, routed *RoutedModel, input map[string]any) (*model.BillingOrder, error) {
+	if routed.LogicalModel.PricePolicy != "channel" || task.BillingOrderID == "" {
+		return nil, nil
+	}
+	config, _ := input["config"].(map[string]any)
+	capability := normalizeCapability(fmt.Sprint(input["mode"]))
+	if capability == "" {
+		capability = capabilityFromTaskType(task.Type)
+	}
+	priceTierID, _ := config["priceTierId"].(string)
+	// 换线路仍属于同一次任务：分时 Token 规则沿用原订单创建时的时段。
+	current, err := s.repo.BillingOrder(task.BillingOrderID)
+	if err != nil {
+		return nil, err
+	}
+	replacement, err := s.newBillingOrderWithPriceTierAt(current.CreatedAt, task.UserID, task.ID, "route-switch:"+task.ID+":"+routed.Route.ID, routed.ChannelModel.ChannelID, routed.ChannelModel.ModelKey, capability, firstNonEmpty(strings.TrimSpace(task.Operation), task.Type), requestedBillingQuantity(capability, config), s.estimateTaskBilling(task.UserID, input, capability), strings.TrimSpace(priceTierID), routed.Intent)
+	if err != nil {
+		return nil, err
+	}
+	replacement.Model = routed.LogicalModel.Code
+	return replacement, nil
 }
 
 func (s *Service) nextRouteAttemptAfterFailure(task *model.Task, attempt *model.RouteAttempt, taskErr error) (*model.RouteAttempt, error) {

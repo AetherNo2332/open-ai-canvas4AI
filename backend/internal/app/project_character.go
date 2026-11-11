@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"gorm.io/gorm"
 	"log"
 	"strings"
 	"time"
-
 	"yingce/backend/internal/model"
-
-	"gorm.io/gorm"
 )
 
 type CreateProjectCharacterRequest struct {
@@ -503,47 +501,58 @@ func (s *Service) BindProjectCharacterVoice(userID string, projectID string, ass
 		}
 		return ProjectCharacterDetail{}, BadAuthRequest("角色资产不可用")
 	}
-	var profile *model.VoiceProfile
-	sampleResourceID := strings.TrimSpace(req.SampleResourceID)
-	if sampleResourceID != "" {
-		resource, resourceErr := s.repo.ResourceForUser(userID, sampleResourceID)
-		if resourceErr != nil || resource == nil || resource.Kind != "audio" || resource.Status != model.ResourceStatusReady || !isSupportedVoiceSampleMimeType(resource.MimeType) {
-			return ProjectCharacterDetail{}, BadAuthRequest("请选择已上传完成的支持格式音频：MP3、WAV、M4A/AAC、FLAC、OGG/Opus 或 WebM")
-		}
-		var profileErr error
-		profile, profileErr = s.repo.VoiceProfileBySampleResource(userID, sampleResourceID)
-		if profileErr == nil {
-			if err := s.renameSampleVoiceProfile(userID, profile, req.VoiceName); err != nil {
-				return ProjectCharacterDetail{}, err
-			}
-		}
-		if profileErr != nil {
-			if !errors.Is(profileErr, gorm.ErrRecordNotFound) {
-				return ProjectCharacterDetail{}, profileErr
-			}
-			voiceName := strings.TrimSpace(req.VoiceName)
-			if voiceName == "" {
-				voiceName = "上传声音 · " + sampleResourceID[:min(8, len(sampleResourceID))]
-			}
-			profile = &model.VoiceProfile{ID: newID(), UserID: userID, Name: voiceName, Provider: "user_upload", VoiceKey: "sample:" + sampleResourceID, Language: "按样本使用", Timbre: "用户上传样本", SampleResourceID: sampleResourceID, CompatibleModelsJSON: "[]", Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now()}
-			if err := s.repo.CreateVoiceProfile(profile); err != nil {
-				return ProjectCharacterDetail{}, err
-			}
-		}
-	} else {
-		profile, err = s.repo.VoiceProfileForUser(userID, strings.TrimSpace(req.VoiceProfileID))
-		if err != nil || profile == nil || profile.Status != "active" {
-			return ProjectCharacterDetail{}, BadAuthRequest("选择的声音素材不可用")
-		}
-	}
-	if profile == nil || strings.TrimSpace(profile.ID) == "" {
-		return ProjectCharacterDetail{}, BadAuthRequest("声音素材不可用，请重新选择")
+	profile, err := s.resolveVoiceProfile(userID, req.VoiceProfileID, req.SampleResourceID, req.VoiceName)
+	if err != nil {
+		return ProjectCharacterDetail{}, err
 	}
 	binding := &model.CharacterVoiceBinding{ID: newID(), VoiceProfileID: profile.ID, Instructions: strings.TrimSpace(req.Instructions), CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if _, err := s.createNextCharacterVersion(projectID, asset, asset.Title, "", nil, binding, false); err != nil {
 		return ProjectCharacterDetail{}, err
 	}
 	return s.ProjectCharacter(userID, projectID, asset.ID)
+}
+
+// resolveVoiceProfile 取得要绑定的声音：传了样本音频时复用同一样本已有的声音（并按 voiceName 改名），没有就新建一条用户上传声音；
+// 否则按 voiceProfileID 读取当前用户的声音库。角色库与短剧角色共用这一入口。
+func (s *Service) resolveVoiceProfile(userID, voiceProfileID, sampleResourceID, voiceName string) (*model.VoiceProfile, error) {
+	var profile *model.VoiceProfile
+	sampleResourceID = strings.TrimSpace(sampleResourceID)
+	if sampleResourceID != "" {
+		resource, resourceErr := s.repo.ResourceForUser(userID, sampleResourceID)
+		if resourceErr != nil || resource == nil || resource.Kind != "audio" || resource.Status != model.ResourceStatusReady || !isSupportedVoiceSampleMimeType(resource.MimeType) {
+			return nil, BadAuthRequest("请选择已上传完成的支持格式音频：MP3、WAV、M4A/AAC、FLAC、OGG/Opus 或 WebM")
+		}
+		var profileErr error
+		profile, profileErr = s.repo.VoiceProfileBySampleResource(userID, sampleResourceID)
+		if profileErr == nil {
+			if err := s.renameSampleVoiceProfile(userID, profile, voiceName); err != nil {
+				return nil, err
+			}
+		}
+		if profileErr != nil {
+			if !errors.Is(profileErr, gorm.ErrRecordNotFound) {
+				return nil, profileErr
+			}
+			name := strings.TrimSpace(voiceName)
+			if name == "" {
+				name = "上传声音 · " + sampleResourceID[:min(8, len(sampleResourceID))]
+			}
+			profile = &model.VoiceProfile{ID: newID(), UserID: userID, Name: name, Provider: "user_upload", VoiceKey: "sample:" + sampleResourceID, Language: "按样本使用", Timbre: "用户上传样本", SampleResourceID: sampleResourceID, CompatibleModelsJSON: "[]", Status: "active", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+			if err := s.repo.CreateVoiceProfile(profile); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		var err error
+		profile, err = s.repo.VoiceProfileForUser(userID, strings.TrimSpace(voiceProfileID))
+		if err != nil || profile == nil || profile.Status != "active" {
+			return nil, BadAuthRequest("选择的声音素材不可用")
+		}
+	}
+	if profile == nil || strings.TrimSpace(profile.ID) == "" {
+		return nil, BadAuthRequest("声音素材不可用，请重新选择")
+	}
+	return profile, nil
 }
 
 func isSupportedVoiceSampleMimeType(value string) bool {
@@ -847,42 +856,4 @@ func (s *Service) characterVoiceForProfile(userID, profileID, instructions strin
 		return nil, BadAuthRequest("选择的声音素材不可用")
 	}
 	return &model.CharacterVoiceBinding{ID: newID(), VoiceProfileID: profile.ID, Instructions: strings.TrimSpace(instructions), CreatedAt: now, UpdatedAt: now}, nil
-}
-func normalizedCharacterDefinition(value map[string]any) (json.RawMessage, error) {
-	if value == nil {
-		value = map[string]any{}
-	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return nil, BadAuthRequest("角色设定格式无效")
-	}
-	return encoded, nil
-}
-
-func characterAssetPayload(assetID string, versionID string, name string, definition json.RawMessage, createdAt time.Time, updatedAt time.Time) (string, error) {
-	var value map[string]any
-	if err := json.Unmarshal(definition, &value); err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(map[string]any{
-		"id": assetID, "kind": "entity", "category": model.AssetCategoryCharacter, "status": model.AssetVersionStatusConfirmed,
-		"primaryVersionId": versionID, "title": name, "coverUrl": "", "tags": []string{}, "data": map[string]any{"definition": value},
-		"createdAt": createdAt.Format(time.RFC3339Nano), "updatedAt": updatedAt.Format(time.RFC3339Nano),
-	})
-	return string(payload), err
-}
-
-func voiceProfileSummary(profile model.VoiceProfile) VoiceProfileSummary {
-	compatible := []string{}
-	_ = json.Unmarshal([]byte(profile.CompatibleModelsJSON), &compatible)
-	return VoiceProfileSummary{ID: profile.ID, Name: profile.Name, Provider: profile.Provider, VoiceKey: profile.VoiceKey, Language: profile.Language, Timbre: profile.Timbre, SampleResourceID: profile.SampleResourceID, CompatibleModels: compatible, Status: profile.Status}
-}
-
-func validCharacterRepresentationRole(role string) bool {
-	switch role {
-	case "primary", "front", "side", "back", "turnaround_sheet", "expression_sheet":
-		return true
-	default:
-		return false
-	}
 }

@@ -39,23 +39,8 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if err != nil {
 		return nil, err
 	}
-	if task.MediaRecoveryJSON != "" {
-		return nil, BadAuthRequest("作品已生成，请使用重试保存，不要重复生成")
-	}
-	if task.Status == model.TaskStatusSubmissionUncertain {
-		return nil, BadAuthRequest("上游接单状态尚未确认，请核对原任务，不能重新生成")
-	}
-	if task.CreationSubmissionID != nil {
-		return nil, creationConflict("智能创作重做需要新的报价批准，请回到创作会话继续")
-	}
-	if task.AgentRunID != "" || task.GenerationID != "" || strings.HasPrefix(task.Operation, "cloud_agent") || taskHasAgentOrigin(task.InputJSON) {
-		return nil, BadAuthRequest("Agent 重试需要新的幂等键和预算校验，请回到 Agent 对话重新发送")
-	}
-	if task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
-		return nil, errors.New("only failed or cancelled tasks can be retried")
-	}
-	if task.ProviderCancelStatus == model.ProviderCancelStatusRequested {
-		return nil, BadAuthRequest("上游取消状态仍在确认中，请确认费用结果后再重试")
+	if err := validateTaskRetryState(task); err != nil {
+		return nil, err
 	}
 	if err := s.taskBilling().CheckRetryEligibility(task.BillingOrderID); err != nil {
 		if errors.Is(err, errTaskBillingReview) {
@@ -72,6 +57,9 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	}
 	var billingInput map[string]any
 	if err := json.Unmarshal([]byte(decryptedInput), &billingInput); err != nil {
+		return nil, err
+	}
+	if err := s.requireTaskGenerationFeatures(userID, task.ProjectID, task.Type, task.Operation, task.WorkbenchKind, billingInput); err != nil {
 		return nil, err
 	}
 	if err := s.prepareLogicalTaskRetry(task, billingInput); err != nil {
@@ -91,9 +79,12 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
 		return nil, err
 	}
-	task, err = s.repo.RetryTaskWithBilling(userID, task, billingOrder, policy.Task.ActiveTaskLimit)
+	task, err = s.repo.RetryTaskWithBilling(userID, task, billingOrder, policy.Task.ActiveTaskLimit, authorizeRetryBillingRelease)
 	if errors.Is(err, repository.ErrCanvasTaskRequiresNewVersion) {
 		return nil, &AppError{Status: 409, Code: 409, Reason: "canvas_task_retry_requires_new_version", Message: "请回到画布重新生成，原作品与版本记录会保留"}
+	}
+	if errors.Is(err, repository.ErrTaskBillingReview) {
+		return nil, BadAuthRequest("上一次调用费用仍在核对中，处理完成前不能重复提交")
 	}
 	if errors.Is(err, repository.ErrInsufficientCredits) {
 		return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
@@ -109,6 +100,56 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	}
 	_ = s.log(userID, task.ID, "info", "任务已重新入队", "")
 	return taskForOutput(*task), nil
+}
+
+func validateTaskRetryState(task *model.Task) error {
+	if task.MediaRecoveryJSON != "" {
+		return BadAuthRequest("作品已生成，请使用重试保存，不要重复生成")
+	}
+	if task.Status == model.TaskStatusSubmissionUncertain {
+		return BadAuthRequest("上游接单状态尚未确认，请核对原任务，不能重新生成")
+	}
+	if task.CreationSubmissionID != nil {
+		return creationConflict("智能创作重做需要新的报价批准，请回到创作会话继续")
+	}
+	if task.AgentRunID != "" || task.GenerationID != "" || strings.HasPrefix(task.Operation, "cloud_agent") || taskHasAgentOrigin(task.InputJSON) {
+		return BadAuthRequest("Agent 重试需要新的幂等键和预算校验，请回到 Agent 对话重新发送")
+	}
+	if task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
+		return errors.New("only failed or cancelled tasks can be retried")
+	}
+	if task.ProviderCancelStatus == model.ProviderCancelStatusRequested {
+		return BadAuthRequest("上游取消状态仍在确认中，请确认费用结果后再重试")
+	}
+	return nil
+}
+
+// 只使用锁定的旧执行证据授权释放；缺少诊断或上游状态不明不能推断为未提交。
+func authorizeRetryBillingRelease(repo *repository.Repository, task *model.Task, order *model.BillingOrder) error {
+	diagnostic := taskExecutionDiagnostic(task)
+	if task.MediaRecoveryJSON != "" || task.ResultJSON != "" || task.TextDraft != "" ||
+		task.ProviderCancelStatus == model.ProviderCancelStatusRequested || task.ProviderCancelStatus == model.ProviderCancelStatusUncertain ||
+		(diagnostic != nil && (diagnostic.Code == "result_persistence_failed" || diagnostic.RetryClass == "recover_result")) {
+		return repository.ErrTaskBillingReview
+	}
+	hasSuccessfulCall, err := repo.BillingOrderHasSuccessfulBillableCall(order.ID)
+	if err != nil {
+		return err
+	}
+	if hasSuccessfulCall {
+		return repository.ErrTaskBillingReview
+	}
+	if diagnostic != nil && !diagnostic.TaskSubmitted && diagnostic.SubmissionOutcome == "not_submitted" && task.ProviderRequestID == "" && order.ProviderRequestID == "" {
+		return nil
+	}
+	terminalFailure, err := repo.BillingOrderHasTerminalFailure(order.ID)
+	if err != nil {
+		return err
+	}
+	if !terminalFailure {
+		return repository.ErrTaskBillingReview
+	}
+	return nil
 }
 
 func (w *taskLifecycleCoordinator) cancelTask(ctx context.Context, userID string, id string) (*model.Task, error) {

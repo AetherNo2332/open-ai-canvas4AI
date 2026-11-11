@@ -15,11 +15,13 @@ import (
 	"yingce/backend/internal/canvas"
 	"yingce/backend/internal/canvas/commands"
 	"yingce/backend/internal/canvas/tasks"
+	"yingce/backend/internal/inspirations"
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/observability"
 	"yingce/backend/internal/payment"
 	"yingce/backend/internal/platform"
+	"yingce/backend/internal/poselibrary"
 	"yingce/backend/internal/prompts"
 	"yingce/backend/internal/providercatalog"
 	"yingce/backend/internal/repository"
@@ -36,6 +38,7 @@ type Service struct {
 	registrationMu           sync.Mutex
 	emailCodeMu              sync.Mutex
 	redeemBatchMu            sync.Mutex
+	billingAutoRefund        billingAutoRefundScan
 	storageMu                sync.Mutex
 	storageTestMu            sync.Mutex
 	workerRuntimeMu          sync.Mutex
@@ -97,11 +100,14 @@ type Service struct {
 	canvasCommandMode        bool
 	observability            *observability.Aggregator
 	observabilityExporter    *observability.Exporter
+	mediaBatchMu             sync.Mutex
+	mediaBatchWg             sync.WaitGroup
+	mediaBatchWaiters        map[string]context.CancelFunc
+	mediaBatchClosed         bool
+	poseLibrary              *poselibrary.Service
+	inspirationFeed          *inspirations.Service
 	providerCatalogOnce      sync.Once
 	providerCatalog          *providercatalog.Source
-	creditPolicyMu           sync.RWMutex
-	creditPolicyCache        *CreditPolicy
-	creditPolicyAt           time.Time
 	userGroups               userGroupState
 	modelAvailabilityMu      sync.RWMutex
 	modelAvailabilityCache   map[publicModelAvailabilityKey]*PublicModelAvailability
@@ -111,6 +117,9 @@ type Service struct {
 	// dramaTaskHook 只在测试中替换短剧调度的任务提交，生产路径始终走 CreateTask 准入。
 	dramaTailFrameHook func(userID, resourceID string) (string, error)
 	dramaTaskHook      func(userID string, req CreateTaskRequest, timeline *renderProject) (*model.Task, error)
+	// dramaTails 跟踪调度循环之外的尾帧抽取；dramaBackgroundRunner 为空时用后台 worker，测试替换为同步执行。
+	dramaTails            dramaTailWorker
+	dramaBackgroundRunner func(fn func()) bool
 }
 
 const taskWorkerConcurrency = 3
@@ -177,6 +186,8 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 	service.canvas = canvas.New(service.repo, canvasHost{svc: service})
 	service.canvasRealtime = canvasRealtime
 	service.workbench = workbench.New(service.repo, workbenchAdminGate{svc: service}, workbenchAdminGate{svc: service})
+	service.poseLibrary = poselibrary.New(service.repo, service.dataDir, poseLibraryAdminGate{svc: service})
+	service.inspirationFeed = inspirations.New(service.repo, inspirationFeedAdminGate{svc: service}, service.inspirationFeedLock, service.runWorkerLoop)
 	service.platform = platform.New(service.repo, coordinator, platformHost{svc: service})
 	// Agent 的画布命令与任务回写链路在构造期一次性建立，避免请求并发时惰性初始化竞争。
 	service.CanvasCommandServices()
@@ -201,12 +212,16 @@ func (s *Service) StartWorker() {
 	s.startResourceDeletionWorker(ctx)
 	s.startResourceOffloadWorker()
 	s.startSkillSyncWorker(ctx)
+	s.startEcommerceSkillSyncWorker(ctx)
 	s.startPaymentWorker(ctx)
 	s.startBillingAutoRefundWorker()
+	s.startArkPortraitWorker()
 	s.startDramaScheduler()
 	if s.canvasTasks != nil {
 		s.startCanvasMaterializer()
 	}
+	s.startInspirationFeedWorker()
+	s.startConsumptionReportWorker()
 }
 
 // RecordObservability 记录 Agent 运行时的结构化观测事件（内存聚合 + 可选导出）。

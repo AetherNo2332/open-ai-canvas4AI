@@ -7,10 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"gorm.io/gorm"
 	"strings"
 	"time"
+	"yingce/backend/internal/emailtpl"
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
@@ -189,19 +189,30 @@ func (s *Service) StartVerification(ctx context.Context, actor *model.User, req 
 		}
 	}
 	if email != "" {
-		_, setting, err := s.readEmailSetting()
-		if err != nil {
+		if err := s.sendVerificationEmail(req.Purpose, userID, email, emailCode); err != nil {
 			return nil, err
-		}
-		setting = resolveEmailSender(setting, s.host.BrandName())
-		if err := s.deliverEmail(setting, email, setting.FromName+"身份验证码", fmt.Sprintf("您的验证码是：%s\n10 分钟内有效，仅用于本次身份验证。请勿向他人透露验证码。", emailCode)); err != nil {
-			return nil, kernel.NewAppError(503, "邮件发送失败，请稍后重试")
 		}
 	}
 	if err := s.repo.SetAuthVerificationReady(v.ID); err != nil {
 		return nil, err
 	}
 	return ticket, nil
+}
+
+func (s *Service) sendVerificationEmail(purpose, userID, email, code string) error {
+	_, setting, err := s.readEmailSetting()
+	if err != nil {
+		return err
+	}
+	setting = resolveEmailSender(setting, s.host.BrandName())
+	rendered, err := codeMail(emailtpl.CodeEmail{Brand: setting.FromName, Heading: verificationHeading(purpose), Intro: "你正在" + setting.FromName + "进行" + verificationHeading(purpose) + "。请在页面中输入下方验证码完成身份验证。", Code: code, TTLMinutes: 10, Recipient: email})
+	if err != nil {
+		return err
+	}
+	if err := s.deliverEmail(setting, EmailDelivery{Purpose: EmailPurposeVerification, UserID: userID, Recipient: email, Mail: rendered}); err != nil {
+		return kernel.NewAppError(503, "邮件发送失败，请稍后重试")
+	}
+	return nil
 }
 func (s *Service) contactAvailable(email, phone, ownID string) error {
 	for _, kind := range []string{"email", "sms"} {
@@ -319,9 +330,6 @@ func (s *Service) LoginVerification(req VerificationConfirm) (result *AuthSessio
 		}
 		return nil, err
 	}
-	if err := s.host.EnsureSignupBonus(user.ID); err != nil {
-		return nil, err
-	}
 	event.Method = v.Method
 	return s.createAuthSession(user, event)
 }
@@ -345,4 +353,17 @@ func (s *Service) BindVerification(actor *model.User, req VerificationConfirm) (
 	}
 	result, err := s.PublicAuthUser(user)
 	return &result, err
+}
+
+func verificationHeading(purpose string) string {
+	switch purpose {
+	case "login":
+		return "登录"
+	case "register":
+		return "注册"
+	case "bind":
+		return "绑定邮箱"
+	default:
+		return "身份验证"
+	}
 }

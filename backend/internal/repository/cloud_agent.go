@@ -1,13 +1,10 @@
 package repository
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
-	"reflect"
 	"time"
 
 	"gorm.io/gorm"
@@ -548,54 +545,6 @@ func isTerminalCloudAgentRunStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-// sameJSONDocument compares event records by JSON meaning rather than source
-// bytes. Event payloads may contain json.RawMessage (for example tool arguments),
-// so decode/re-encode can legally normalize whitespace, object key order, or
-// numeric spellings such as 0.0 and 0 while preserving the immutable event
-// contract.
-func sameJSONDocument(left, right string) bool {
-	decode := func(raw string) (any, error) {
-		decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
-		decoder.UseNumber()
-		var value any
-		if err := decoder.Decode(&value); err != nil {
-			return nil, err
-		}
-		var extra any
-		if err := decoder.Decode(&extra); err == nil {
-			return nil, fmt.Errorf("multiple JSON documents")
-		}
-		return canonicalJSONValue(value), nil
-	}
-	leftValue, leftErr := decode(left)
-	rightValue, rightErr := decode(right)
-	if leftErr != nil || rightErr != nil {
-		return left == right
-	}
-	return reflect.DeepEqual(leftValue, rightValue)
-}
-
-type canonicalJSONNumber string
-
-func canonicalJSONValue(value any) any {
-	switch typed := value.(type) {
-	case json.Number:
-		if rational, ok := new(big.Rat).SetString(typed.String()); ok {
-			return canonicalJSONNumber(rational.RatString())
-		}
-		return canonicalJSONNumber(typed.String())
-	case []any:
-		for index := range typed {
-			typed[index] = canonicalJSONValue(typed[index])
-		}
-	case map[string]any:
-		for key, nested := range typed {
-			typed[key] = canonicalJSONValue(nested)
-		}
-	}
-	return value
 }
 
 // cloudAgentMutationOrderGap 是同一条画布台账里相邻两条记录的最小时间间隔。

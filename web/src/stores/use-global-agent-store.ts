@@ -30,6 +30,7 @@ export type AgentCanvasContext = {
     selectedNodeIds: string[];
     references: CanvasResourceReference[];
     onFocusNode?: (nodeId: string) => void;
+    insertAgentFiles?: (files: File[], signal?: AbortSignal, nodeIds?: readonly string[]) => Promise<string[]>;
     /** 以下三项只为与上游字段名保持一致；fork 面板不读取，画布页也不发布，免得每次节点变化都重渲染面板。 */
     domainProjectId?: string;
     canvasNodes?: readonly CanvasNodeData[];

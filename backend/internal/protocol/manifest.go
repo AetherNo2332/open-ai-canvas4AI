@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -427,8 +426,38 @@ func validatePaymentProviderContributions(manifest Manifest) error {
 				return fmt.Errorf("payment provider contribution %q has invalid notification response status", provider.ID)
 			}
 		}
+		if err := validatePaymentProviderMethods(manifest, provider); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// ValidPaymentMethodID 限定支付方式 ID 为 1-32 位小写字母、数字、- 或 _，且以字母或数字开头；
+// 该值会原样作为渠道下单参数，宿主据此拒绝任意字符串。
+func ValidPaymentMethodID(value string) bool {
+	if len(value) == 0 || len(value) > 32 {
+		return false
+	}
+	for index, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			continue
+		}
+		if index > 0 && (char == '-' || char == '_') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func manifestHasConfigField(manifest Manifest, name string) bool {
+	for _, field := range manifest.Configuration.Fields {
+		if field.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeManifest(manifest *Manifest) error {
@@ -453,9 +482,18 @@ func normalizeManifestForProvider(manifest *Manifest, index int) error {
 	manifest.Metadata.Parameters = provider.Parameters
 	manifest.Metadata.ImageParameters = provider.ImageParameters
 	manifest.Metadata.Create = operationSummary(provider.Create)
+	manifest.Metadata.Agent = operationSummaryPtr(provider.Agent)
 	manifest.Metadata.Poll = operationSummaryPtr(provider.Poll)
 	manifest.Metadata.Cancel = operationSummaryPtr(provider.Cancel)
 	manifest.Metadata.ContentType = provider.Create.ContentType
+	manifest.Metadata.TextWire, manifest.Metadata.AgentWire = "", ""
+	if hasCapability(provider.Capabilities, CapabilityText) {
+		manifest.Metadata.TextWire = TextWireForPath(provider.Create.Path)
+		if provider.Agent != nil {
+			manifest.Metadata.AgentWire = TextWireForPath(provider.Agent.Path)
+		}
+	}
+	manifest.Metadata.Auth = provider.Auth
 	manifest.Metadata.RequiresPublicMediaURLs = provider.RequiresPublicMediaURLs
 	manifest.Metadata.DetachedPolling = provider.DetachedPolling
 	manifest.Metadata.IdempotentCreate = provider.IdempotentCreate
@@ -589,59 +627,3 @@ func reflectValueIsZero(value any) bool {
 // firstPathJSONValue keeps scalar response fields string-like while allowing
 // providers to return tool arguments as an object instead of a JSON string.
 // The platform tool contract always stores arguments as JSON text.
-func firstPathJSONValue(payload map[string]any, paths ...string) string {
-	for _, path := range paths {
-		value := pathValue(payload, path)
-		switch typed := value.(type) {
-		case string:
-			if strings.TrimSpace(typed) != "" {
-				return strings.TrimSpace(typed)
-			}
-		case nil:
-			continue
-		default:
-			encoded, err := json.Marshal(typed)
-			if err == nil && len(encoded) > 0 {
-				return string(encoded)
-			}
-		}
-	}
-	return ""
-}
-
-func setMapPath(target map[string]any, path string, value any) {
-	parts := strings.Split(strings.Trim(path, "."), ".")
-	current := target
-	for _, part := range parts[:len(parts)-1] {
-		next, ok := current[part].(map[string]any)
-		if !ok {
-			next = map[string]any{}
-			current[part] = next
-		}
-		current = next
-	}
-	if len(parts) > 0 {
-		current[parts[len(parts)-1]] = value
-	}
-}
-
-func isRelativePath(path string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(path))
-	return err == nil && parsed.Path != "" && strings.HasPrefix(parsed.Path, "/") && !strings.HasPrefix(parsed.Path, "//") && parsed.Host == "" && parsed.User == nil && parsed.Scheme == ""
-}
-
-func validManifestIdentifier(value string) bool {
-	if len(value) == 0 || len(value) > 96 {
-		return false
-	}
-	for index, char := range value {
-		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.' {
-			if index == 0 && (char == '-' || char == '_' || char == '.') {
-				return false
-			}
-			continue
-		}
-		return false
-	}
-	return true
-}

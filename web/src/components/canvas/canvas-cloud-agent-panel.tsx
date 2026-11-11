@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { App, Button, Dropdown, Input, Popover } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, MoveDiagonal2, PanelRight, PictureInPicture2, RotateCcw, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, MoveDiagonal2, PanelRight, PictureInPicture2, RotateCcw, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
 import { saveAs } from "file-saver";
 import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
@@ -16,6 +16,9 @@ import { continueAgentContextUsage, emptyAgentContextUsage, presentAgentContextU
 import { nanoid } from "nanoid";
 
 import { ModelPicker } from "@/components/model-picker";
+import { ThinkingLevelSlider } from "@/components/thinking-level-slider";
+import { usePopoverAnchorAlign } from "@/hooks/use-popover-anchor-align";
+import { THINKING_LEVEL_LABELS, resolveThinkingLevel, thinkingLevelsFor } from "@/lib/text-thinking";
 import { FluidOrb } from "@/components/ui/fluid-orb";
 import { cn } from "@/lib/utils";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -75,6 +78,8 @@ import { agentRunUndoOffer, agentRunUndoneMessageId } from "@/lib/canvas/agent-r
 import { agentPermissionModeValue, switchAgentPermission } from "@/lib/canvas/agent-permission-switch";
 import { ApiError } from "@/services/api/request";
 import { API_ERROR_REASONS } from "@/services/api/error-codes";
+import { latestAgentMediaBatch } from "@/lib/canvas/cloud-agent-media-batch";
+import { AgentMediaBatchBar } from "./canvas-cloud-agent-media-batch-bar";
 import { AgentChatComposer, AgentMessageList, AgentPlanBar, AgentQuestionBar, AgentSceneCapsules, AgentRunUndoAction, AgentWorkingMessage, AGENT_SCENE_DEFS, type AgentSceneBucket, type CloudAgentChatMessage } from "./canvas-cloud-agent-chat-ui";
 import { CanvasAgentSkillLibraryModal } from "./canvas-agent-skill-library-modal";
 import { sendAgentReplyOption } from "./canvas-agent-reply-options";
@@ -85,6 +90,8 @@ import { useAgentPanelLayout } from "./use-agent-panel-layout";
 import { useAgentPanelDock } from "./use-agent-panel-dock";
 import { settleAgentPrefill, takeAgentPrefill, useGlobalAgentStore, type AgentPrefillRequest } from "@/stores/use-global-agent-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { appendAgentNodeReferences } from "@/lib/canvas/agent-composer-attachments";
+import { useAgentComposerAttachments } from "./use-agent-composer-attachments";
 import { AgentWelcome } from "./canvas-agent-welcome";
 import { DEFAULT_CANVAS_APPEARANCE, agentAvatarClipForState, agentAvatarStateForRunStatus, agentCopy, isAgentAvatarBundleManifest, type AgentAvatarBundleManifest } from "@/lib/canvas/agent-appearance";
 import { agentAvatarBundleFileURL, live2DModelURL } from "@/services/api/appearance";
@@ -118,6 +125,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     const selectedNodeIds = useGlobalAgentStore((state) => state.canvas?.selectedNodeIds ?? EMPTY_IDS);
     const references = useGlobalAgentStore((state) => state.canvas?.references ?? EMPTY_REFERENCES);
     const onFocusNode = useGlobalAgentStore((state) => state.canvas?.onFocusNode);
+    const insertAgentFiles = useGlobalAgentStore((state) => state.canvas?.insertAgentFiles);
     const prefillRequest = useGlobalAgentStore((state) => state.prefillRequest);
     const open = useGlobalAgentStore((state) => state.open);
     const onOpen = useGlobalAgentStore((state) => state.openAgent);
@@ -336,6 +344,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     const planItems = useMemo(() => latestAgentPlanItems(messages), [messages]);
     const planTerminal = useMemo(() => latestAgentPlanTerminal(messages), [messages]);
     const planVisible = agentPlanVisible(planItems);
+    const mediaBatch = latestAgentMediaBatch(messages);
     const pendingQuestion = useMemo(() => pendingAgentQuestion(messages), [messages]);
     const [scenePresets, setScenePresets] = useState<SkillPreset[]>([]);
     const [presetApplyingId, setPresetApplyingId] = useState("");
@@ -410,6 +419,16 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
     const conversationScope = `${userScope}:${canvasId}:${activeConversationId}`;
     const currentScope = useRef(conversationScope);
     currentScope.current = conversationScope;
+    const composerAttachments = useAgentComposerAttachments({
+        scope: conversationScope,
+        userScope,
+        prompt,
+        references,
+        insertFiles: insertAgentFiles,
+        maxBytes: Math.max(1, useUserStore.getState().runtimeLimits.resourceUploadMB || 50) * 1024 * 1024,
+        onPromptChange: setPrompt,
+        onWarning: (text) => void appMessage.warning(text),
+    });
     const historyStateRef = useRef({ activeConversationId, messages, run, prompt, busy });
     historyStateRef.current = { activeConversationId, messages, run, prompt, busy };
     const running = Boolean(run?.cleanupPending) || run?.status === "running" || run?.status === "queued" || run?.status === "waiting_approval";
@@ -427,7 +446,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
             return undefined;
         }
     }, [config, selectedModel]);
-    const reasoningSupported = Boolean(selectedTextCapability?.thinking);
+    const reasoningSupported = thinkingLevelsFor(selectedTextCapability?.thinking).length > 0;
     useEffect(() => {
         if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off");
     }, [reasoningSupported, reasoningMode]);
@@ -1011,7 +1030,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         const value = (override ?? prompt).trim();
         // 没有画布时绝不发送：fork 后端以 canvasId 归属运行，离开画布后旧 canvasId 也不能再用。
         if (!canvasId) return false;
-        if (!value || busy || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return false;
+        if (!value || busy || composerAttachments.blockReason || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return false;
         if (subagentsAvailable && (!subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicy.canvasId !== canvasId || subagentPolicySaving || subagentPolicyError)) {
             setSubagentPolicyError("请先加载并确认子代理授权设置，再发送消息");
             return false;
@@ -1623,6 +1642,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                         onToggle={() => setPlanMinimized((value) => !value)}
                                     />
                                 ) : null}
+                                {mediaBatch ? <AgentMediaBatchBar batch={mediaBatch} theme={theme} onFocusNode={onCanvas ? onFocusNode : undefined} /> : null}
                                 {allSubagents.length > 0 ? (
                                     <div ref={collaboratorsRef} className="shrink-0">
                                         <AgentSubagentList items={allSubagents} theme={theme} onSelect={setSelectedSubagentId} />
@@ -1697,6 +1717,12 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                                         </>
                                     }
                                     prompt={prompt}
+                                    attachments={composerAttachments.attachments}
+                                    onAddFiles={insertAgentFiles ? composerAttachments.addFiles : undefined}
+                                    onRemoveAttachment={composerAttachments.remove}
+                                    onRetryAttachment={composerAttachments.retry}
+                                    blockReason={composerAttachments.blockReason}
+                                    addMenu={{ selectionCount: selectedNodeIds.length, onReferenceSelection: () => setPrompt((value) => appendAgentNodeReferences(value, selectedNodeIds)) }}
                                     disabled={!onCanvas || activeHistoryState?.status === "unavailable" || !historyHydrated || !pendingHydrated}
                                     sending={busy}
                                     running={running}
@@ -2209,7 +2235,7 @@ function AgentConversation({
     );
 }
 
-function ComposerControls({
+export function ComposerControls({
     config,
     selectedModel,
     permissionMode,
@@ -2225,24 +2251,16 @@ function ComposerControls({
     theme: CanvasTheme;
     onModelChange: (model: string) => void;
     onPermissionChange: (mode: AgentPermissionMode) => void;
-    // 推理模式由父组件持有状态；本组件只负责渲染选择器并回报变更。
-    // reasoningSupported 刻意不通过 props 传入：本组件在下面自行推导一次，
-    // 查不到能力时退化为"不支持推理"，避免父作用域变量缺失把面板打崩。
     reasoningMode: AgentReasoningMode;
     onReasoningModeChange: (mode: AgentReasoningMode) => void;
 }) {
     const permissionVisual = agentPermissionVisual(permissionMode);
     const PermissionIcon = permissionVisual.icon;
-    // 这个子组件拿不到父组件的 reasoningSupported（那是父作用域的局部变量），
-    // 必须自己按当前配置与选中模型推导一次；查不到能力时退化成"不支持推理"，
-    // 不能让整个面板因 ReferenceError 崩掉。
-    const reasoningSupported = useMemo(() => {
-        try {
-            return Boolean(modelCapabilityConfigFor(config, selectedModel).text?.thinking);
-        } catch {
-            return false;
-        }
-    }, [config, selectedModel]);
+    const [thinkingOpen, setThinkingOpen] = useState(false);
+    const thinkingAnchor = usePopoverAnchorAlign(thinkingOpen);
+    const thinking = modelCapabilityConfigFor(config, selectedModel).text?.thinking;
+    const levels = thinkingLevelsFor(thinking);
+    const thinkingLabel = reasoningMode === "auto" ? "默认" : reasoningMode === "deep" ? "深入" : THINKING_LEVEL_LABELS[reasoningMode];
     return (
         <div className="agent-composer-selection flex min-w-0 flex-1 flex-nowrap items-center gap-0.5">
             <ModelPicker
@@ -2258,19 +2276,25 @@ function ComposerControls({
                 showOptionPrices
                 placeholder="选择文本模型"
             />
-            {reasoningSupported ? (
-                <Dropdown trigger={["click"]} placement="topLeft" menu={{ items: reasoningMenuItems(reasoningMode, onReasoningModeChange) }}>
-                    <button
-                        type="button"
-                        aria-label="选择 Agent 推理模式"
-                        title="推理模式：只用于规划和工具选择"
-                        className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/25"
-                        style={{ color: reasoningMode === "off" ? theme.node.muted : theme.accent.primary, background: reasoningMode === "off" ? "transparent" : theme.node.fill }}
-                    >
-                        <Sparkles className="size-3.5" />
-                        {reasoningModeLabel(reasoningMode)}
+            {levels.length ? (
+                <Popover
+                    ref={thinkingAnchor}
+                    open={thinkingOpen}
+                    onOpenChange={setThinkingOpen}
+                    trigger="click"
+                    placement="top"
+                    arrow={false}
+                    content={
+                        <div className="agent-thinking-popover">
+                            <ThinkingLevelSlider levels={levels} value={reasoningMode} resolvedLevel={resolveThinkingLevel(thinking, reasoningMode)} onChange={onReasoningModeChange} />
+                        </div>
+                    }
+                >
+                    <button type="button" aria-label={`选择推理强度：${thinkingLabel}`} aria-expanded={thinkingOpen} className="agent-thinking-trigger" onPointerDown={(event) => event.stopPropagation()}>
+                        <span>{thinkingLabel}</span>
+                        <ChevronDown className="size-3" aria-hidden="true" />
                     </button>
-                </Dropdown>
+                </Popover>
             ) : null}
             <Dropdown trigger={["click"]} placement="topLeft" menu={{ items: agentPermissionMenuItems(permissionMode, onPermissionChange) }}>
                 <button
@@ -2285,21 +2309,6 @@ function ComposerControls({
             </Dropdown>
         </div>
     );
-}
-
-const reasoningLabels: Record<AgentReasoningMode, string> = { off: "直达", auto: "自动推理", deep: "深入推理" };
-
-function reasoningModeLabel(mode: AgentReasoningMode) {
-    return reasoningLabels[mode];
-}
-
-function reasoningMenuItems(mode: AgentReasoningMode, onChange: (value: AgentReasoningMode) => void) {
-    return (Object.keys(reasoningLabels) as AgentReasoningMode[]).map((value) => ({
-        key: value,
-        label: reasoningLabels[value],
-        icon: value === mode ? <Check className="size-3.5" /> : undefined,
-        onClick: () => onChange(value),
-    }));
 }
 
 function ApprovalCard({

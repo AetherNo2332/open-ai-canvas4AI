@@ -18,6 +18,8 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		service = services[0]
 	}
 	switch call.Function.Name {
+	case "canvas_preflight":
+		return cloudAgentHandleCanvasPreflight(repo, userID, state, call, services...)
 	case "director":
 		if state == nil || cloudAgentWriteCall(call) {
 			return nil, BadAuthRequest("director 写操作不能走只读通道")

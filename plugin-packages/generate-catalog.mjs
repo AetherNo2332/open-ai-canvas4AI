@@ -1,6 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { packageDirectories } from "./package-directories.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const scopes = ["admin.system-channel", "user.custom-channel", "canvas", "creation", "agent"];
@@ -33,19 +35,6 @@ const sorted = (value) => ({ $sortByOrder: value });
 const mediaWithRoles = (path, roles) => filter(sorted(ref(path)), "media", { $in: [ref("media.role"), roles] });
 const firstMediaWithRoles = (path, roles) => first(mediaWithRoles(path, roles));
 const firstMediaFieldWithRoles = (path, roles, field) => first(map(mediaWithRoles(path, roles), "media", ref(`media.${field}`)));
-
-const textParams = [
-  ["model", "string", true, "model", "上游模型 ID。"],
-  ["messages", "message[]", true, "provider message container", "包含历史消息和当前用户输入。"],
-  ["instructions", "string", false, "system/instructions", "系统指令。"],
-  ["temperature", "number", false, "temperature", "采样温度。"],
-  ["top_p", "number", false, "top_p", "核采样参数。"],
-  ["max_tokens", "integer", false, "max_tokens/max_output_tokens", "最大输出 token。"],
-  ["tools", "array", false, "tools/toolConfig", "工具定义。"],
-  ["tool_choice", "object|string", false, "tool_choice", "工具选择策略。"],
-  ["response_format", "object", false, "response_format/text", "结构化输出配置。"],
-  ["stream", "boolean", false, "stream", "流式开关；后台任务当前以最终响应归一。"]
-];
 
 const imageParams = [
   ["model", "string", true, "model", "图片模型 ID。"],
@@ -104,181 +93,23 @@ function add(spec) {
 }
 
 add({
-  id: "openai-chat-completions", providerId: "chat-completion", name: "OpenAI Chat Completions", vendor: "OpenAI", capability: "text",
-  baseUrl: "https://api.openai.com", auth: bearer, params: textParams,
-  create: jsonCreate("/chat/completions", {
-    model: ref("request.model"), messages: ref("request.messages"),
-    temperature: omit(ref("request.providerOptions.chat-completion.temperature")),
-    top_p: omit(ref("request.providerOptions.chat-completion.top_p")),
-    max_tokens: omit(coalesce(ref("request.extra.max_tokens"), ref("request.providerOptions.chat-completion.max_tokens"))),
-    tools: omit(ref("request.providerOptions.chat-completion.tools")),
-    tool_choice: omit(ref("request.providerOptions.chat-completion.tool_choice")),
-    response_format: omit(ref("request.providerOptions.chat-completion.response_format")),
-    stream: omit(ref("request.providerOptions.chat-completion.stream")),
-    stop: omit(ref("request.providerOptions.chat-completion.stop")),
-    seed: omit(ref("request.providerOptions.chat-completion.seed")),
-    frequency_penalty: omit(ref("request.providerOptions.chat-completion.frequency_penalty")),
-    presence_penalty: omit(ref("request.providerOptions.chat-completion.presence_penalty")),
-    logprobs: omit(ref("request.providerOptions.chat-completion.logprobs")),
-    top_logprobs: omit(ref("request.providerOptions.chat-completion.top_logprobs")),
-    user: omit(ref("request.providerOptions.chat-completion.user"))
-  }),
-  agent: jsonCreate("/chat/completions", { $merge: [ref("request.extra.agent.chatCompletion"), { model: ref("request.model") }] }),
-  agentResponse: { textPaths: ["choices.0.message.content", "choices.0.text"], reasoningPaths: ["choices.0.message.reasoning_content"], toolCallsPath: "choices.0.message.tool_calls", toolCallIdPaths: ["id"], toolCallNamePaths: ["function.name"], toolCallArgumentsPaths: ["function.arguments"] },
-  response: { status: "succeeded", textPaths: ["choices.0.message.content", "choices.0.text"], reasoningPaths: ["choices.0.message.reasoning_content"], usage: ref("response.usage"), errorPaths: ["error.code"], messagePaths: ["error.message"] }
-});
-
-add({
-  id: "openai-responses", providerId: "openai-response", name: "OpenAI Responses", vendor: "OpenAI", capability: "text",
-  baseUrl: "https://api.openai.com", auth: bearer, params: textParams,
-  create: jsonCreate("/responses", {
-    model: ref("request.model"),
-    input: filter(ref("request.messages"), "message", ne(ref("message.role"), "system")),
-    instructions: omit(ref("request.instructions")),
-    temperature: omit(ref("request.providerOptions.openai-response.temperature")),
-    top_p: omit(ref("request.providerOptions.openai-response.top_p")),
-    max_output_tokens: omit(coalesce(ref("request.extra.max_output_tokens"), ref("request.providerOptions.openai-response.max_output_tokens"))),
-    tools: omit(ref("request.providerOptions.openai-response.tools")), tool_choice: omit(ref("request.providerOptions.openai-response.tool_choice")),
-    text: omit(ref("request.providerOptions.openai-response.text")), reasoning: omit(ref("request.providerOptions.openai-response.reasoning")),
-    previous_response_id: omit(ref("request.providerOptions.openai-response.previous_response_id")),
-    store: omit(ref("request.providerOptions.openai-response.store")), metadata: omit(ref("request.providerOptions.openai-response.metadata")),
-    stream: omit(ref("request.providerOptions.openai-response.stream")), truncation: omit(ref("request.providerOptions.openai-response.truncation")),
-    user: omit(ref("request.providerOptions.openai-response.user"))
-  }),
-  agent: jsonCreate("/responses", { $merge: [ref("request.extra.agent.responses"), { model: ref("request.model") }] }),
-  agentResponse: { textPaths: ["output_text"], reasoningPaths: ["reasoning.summary.0.text"], toolCallsPath: "output", toolCallIdPaths: ["call_id", "id"], toolCallNamePaths: ["name"], toolCallArgumentsPaths: ["arguments"] },
-  response: { status: "succeeded", textPaths: ["output_text"], reasoningPaths: ["reasoning.summary.0.text"], usage: ref("response.usage"), errorPaths: ["error.code"], messagePaths: ["error.message"] }
-});
-
-add({
-  id: "anthropic-messages", providerId: "claude-api", name: "Anthropic Messages", vendor: "Anthropic", capability: "text",
-  baseUrl: "https://api.anthropic.com", auth: { type: "anthropic", field: "apiKey" }, params: textParams,
-  create: jsonCreate("/v1/messages", {
-    model: ref("request.model"),
-    max_tokens: coalesce(ref("request.extra.max_tokens"), ref("request.providerOptions.claude-api.max_tokens"), 4096),
-    system: omit(coalesce(ref("request.instructions"), ref("request.providerOptions.claude-api.system"))),
-    messages: filter(ref("request.messages"), "message", ne(ref("message.role"), "system")),
-    temperature: omit(ref("request.providerOptions.claude-api.temperature")), top_p: omit(ref("request.providerOptions.claude-api.top_p")),
-    top_k: omit(ref("request.providerOptions.claude-api.top_k")), stop_sequences: omit(ref("request.providerOptions.claude-api.stop_sequences")),
-    tools: omit(ref("request.providerOptions.claude-api.tools")), tool_choice: omit(ref("request.providerOptions.claude-api.tool_choice")),
-    metadata: omit(ref("request.providerOptions.claude-api.metadata")), stream: omit(ref("request.providerOptions.claude-api.stream")),
-    thinking: omit(ref("request.providerOptions.claude-api.thinking")), service_tier: omit(ref("request.providerOptions.claude-api.service_tier"))
-  }, { headers: { "anthropic-version": coalesce(ref("request.providerOptions.claude-api.anthropic-version"), "2023-06-01"), "anthropic-beta": omit(ref("request.providerOptions.claude-api.anthropic-beta")) } }),
-  agent: jsonCreate("/v1/messages", { $merge: [ref("request.extra.agent.claude"), { model: ref("request.model") }] }, { headers: { "anthropic-version": "2023-06-01" } }),
-  agentResponse: { textPaths: ["content.0.text"], reasoningPaths: ["content.0.thinking"], toolCallsPath: "content", toolCallIdPaths: ["id"], toolCallNamePaths: ["name"], toolCallArgumentsPaths: ["input"] },
-  response: {
-    status: "succeeded",
-    text: map(filter(ref("response.content"), "part", eq(ref("part.type"), "text")), "part", ref("part.text")),
-    reasoning: map(filter(ref("response.content"), "part", eq(ref("part.type"), "thinking")), "part", ref("part.thinking")),
-    usage: ref("response.usage"), errorPaths: ["error.type"], messagePaths: ["error.message"]
-  }
-});
-
-add({
-  id: "google-gemini-generate-content", providerId: "gemini-generate-content", name: "Google Gemini generateContent", vendor: "Google", capability: "text",
-  baseUrl: "https://generativelanguage.googleapis.com", auth: { type: "google-api-key", field: "apiKey" }, params: textParams,
-  create: jsonCreate("/v1beta/models/{{model}}:generateContent", {
-    contents: map(filter(ref("request.messages"), "message", ne(ref("message.role"), "system")), "message", {
-      role: conditional(eq(ref("message.role"), "assistant"), "model", "user"),
-      parts: [{ text: ref("message.content") }]
-    }),
-    systemInstruction: conditional(ref("request.instructions"), { parts: [{ text: ref("request.instructions") }] }),
-    generationConfig: omit(ref("request.providerOptions.gemini-generate-content.generationConfig")),
-    safetySettings: omit(ref("request.providerOptions.gemini-generate-content.safetySettings")),
-    tools: omit(ref("request.providerOptions.gemini-generate-content.tools")),
-    toolConfig: omit(ref("request.providerOptions.gemini-generate-content.toolConfig")),
-    cachedContent: omit(ref("request.providerOptions.gemini-generate-content.cachedContent"))
-  }),
-  agent: jsonCreate("/v1beta/models/{{model}}:generateContent", ref("request.extra.agent.gemini")),
-  agentResponse: { textPaths: ["candidates.0.content.parts.0.text"], toolCallsPath: "candidates.0.content.parts", toolCallIdPaths: ["functionCall.id"], toolCallNamePaths: ["functionCall.name"], toolCallArgumentsPaths: ["functionCall.args"], toolCallThoughtSignaturePaths: ["thoughtSignature", "thought_signature"] },
-  response: { status: "succeeded", text: map(ref("response.candidates.0.content.parts"), "part", omit(ref("part.text"))), usage: ref("response.usageMetadata"), errorPaths: ["error.code"], messagePaths: ["error.message"] }
-});
-
-add({
-  id: "cohere-chat-v2", providerId: "cohere-chat-v2", name: "Cohere Chat v2", vendor: "Cohere", capability: "text",
-  baseUrl: "https://api.cohere.com", auth: bearer, params: textParams,
-  create: jsonCreate("/v2/chat", {
-    model: ref("request.model"), messages: ref("request.messages"),
-    temperature: omit(ref("request.providerOptions.cohere-chat-v2.temperature")), max_tokens: omit(ref("request.extra.max_tokens")),
-    stop_sequences: omit(ref("request.providerOptions.cohere-chat-v2.stop_sequences")), tools: omit(ref("request.providerOptions.cohere-chat-v2.tools")),
-    tool_choice: omit(ref("request.providerOptions.cohere-chat-v2.tool_choice")), response_format: omit(ref("request.providerOptions.cohere-chat-v2.response_format")),
-    documents: omit(ref("request.providerOptions.cohere-chat-v2.documents")), citation_options: omit(ref("request.providerOptions.cohere-chat-v2.citation_options")),
-    safety_mode: omit(ref("request.providerOptions.cohere-chat-v2.safety_mode")), seed: omit(ref("request.providerOptions.cohere-chat-v2.seed")), stream: omit(ref("request.providerOptions.cohere-chat-v2.stream"))
-  }),
-  response: { status: "succeeded", textPaths: ["message.content.0.text", "text"], usage: ref("response.usage"), errorPaths: ["error.type"], messagePaths: ["message"] }
-});
-
-add({
-  id: "ollama-chat", providerId: "ollama-chat", name: "Ollama Chat", vendor: "Ollama", capability: "text",
-  baseUrl: "http://127.0.0.1:11434", auth: { type: "none", field: "apiKey" }, params: textParams,
-  create: jsonCreate("/api/chat", {
-    model: ref("request.model"), messages: ref("request.messages"), stream: false,
-    format: omit(ref("request.providerOptions.ollama-chat.format")), options: omit(ref("request.providerOptions.ollama-chat.options")),
-    keep_alive: omit(ref("request.providerOptions.ollama-chat.keep_alive")), tools: omit(ref("request.providerOptions.ollama-chat.tools")),
-    think: omit(ref("request.providerOptions.ollama-chat.think"))
-  }),
-  response: { status: "succeeded", textPaths: ["message.content", "response"], reasoningPaths: ["message.thinking", "thinking"], errorPaths: ["error"], messagePaths: ["error"] }
-});
-
-for (const [id, name, vendor, baseUrl] of [
-  ["xai-grok-chat", "xAI Grok Chat", "xAI", "https://api.x.ai"],
-  ["deepseek-chat", "DeepSeek Chat", "DeepSeek", "https://api.deepseek.com"],
-  ["mistral-chat", "Mistral Chat", "Mistral AI", "https://api.mistral.ai"],
-  ["kimi-chat", "Kimi OpenAI-Compatible", "Moonshot AI", "https://api.moonshot.cn"],
-  ["zhipu-glm-chat", "智谱 GLM Chat", "Zhipu AI", "https://open.bigmodel.cn/api/paas"],
-  ["baichuan-chat", "百川 Chat", "Baichuan", "https://api.baichuan-ai.com"],
-  ["yi-chat", "零一万物 Yi Chat", "01.AI", "https://api.lingyiwanwu.com"],
-  ["siliconflow-chat", "SiliconFlow Chat", "SiliconFlow", "https://api.siliconflow.cn"],
-  ["together-chat", "Together AI Chat", "Together AI", "https://api.together.xyz"],
-  ["groq-chat", "Groq Chat", "Groq", "https://api.groq.com/openai"],
-  ["fireworks-chat", "Fireworks Chat", "Fireworks AI", "https://api.fireworks.ai/inference"],
-  ["nvidia-nim-chat", "NVIDIA NIM Chat", "NVIDIA", "https://integrate.api.nvidia.com"],
-  ["openrouter-chat", "OpenRouter Chat", "OpenRouter", "https://openrouter.ai/api"],
-  ["atlascloud-chat", "Atlas Cloud Chat", "Atlas Cloud", "https://api.atlascloud.ai"],
-  ["cheaperinference-chat", "Cheaper Inference Chat", "Cheaper Inference", "https://api.cheaperinference.com"],
-  ["litellm-proxy-chat", "LiteLLM Proxy Chat", "LiteLLM", "http://127.0.0.1:4000"],
-  ["newapi-chat", "NewAPI Chat", "NewAPI", "http://127.0.0.1:3000"],
-  ["vllm-chat", "vLLM OpenAI-Compatible", "vLLM", "http://127.0.0.1:8000"],
-  ["localai-chat", "LocalAI Chat", "LocalAI", "http://127.0.0.1:8080"]
-]) {
-  add({
-    id, providerId: id, name, vendor, capability: "text", baseUrl, auth: bearer, params: textParams,
-    notes: "该插件实现该平台公开的 OpenAI Chat Completions 线协议 profile；平台专有字段通过 providerOptions 命名空间透传，未声明支持的 OpenAI 字段仍由模型 capability profile 校验。",
-    create: jsonCreate("/v1/chat/completions", {
-      model: ref("request.model"), messages: ref("request.messages"),
-      temperature: omit(ref(`request.providerOptions.${id}.temperature`)), top_p: omit(ref(`request.providerOptions.${id}.top_p`)),
-      max_tokens: omit(coalesce(ref("request.extra.max_tokens"), ref(`request.providerOptions.${id}.max_tokens`))),
-      tools: omit(ref(`request.providerOptions.${id}.tools`)), tool_choice: omit(ref(`request.providerOptions.${id}.tool_choice`)),
-      response_format: omit(ref(`request.providerOptions.${id}.response_format`)), stream: omit(ref(`request.providerOptions.${id}.stream`)),
-      provider: omit(ref(`request.providerOptions.${id}.provider`)), transforms: omit(ref(`request.providerOptions.${id}.transforms`)),
-      extra_body: omit(ref(`request.providerOptions.${id}.extra_body`))
-    }),
-    agent: jsonCreate("/v1/chat/completions", { $merge: [ref("request.extra.agent.chatCompletion"), { model: ref("request.model") }] }),
-    agentResponse: { textPaths: ["choices.0.message.content", "choices.0.text"], reasoningPaths: ["choices.0.message.reasoning_content"], toolCallsPath: "choices.0.message.tool_calls", toolCallIdPaths: ["id"], toolCallNamePaths: ["function.name"], toolCallArgumentsPaths: ["function.arguments"] },
-    response: { status: "succeeded", textPaths: ["choices.0.message.content", "choices.0.text"], reasoningPaths: ["choices.0.message.reasoning_content"], usage: ref("response.usage"), errorPaths: ["error.code"], messagePaths: ["error.message"] }
-  });
-}
-
-add({
   id: "openai-images", providerId: "openai-image", name: "OpenAI Images", vendor: "OpenAI", capability: "image",
-  baseUrl: "https://api.openai.com", auth: bearer, params: imageParams, requiresPublicMediaUrls: true,
-  notes: "无参考图走 JSON generations；有参考图或蒙版走 JSON edits，并按官方 images 数组传入多张 image_url。quality 的 1k/2k/4k 映射为 OpenAI low/medium/high。",
+  baseUrl: "https://api.openai.com", auth: bearer, params: imageParams,
+  notes: "无参考图走 JSON generations；有参考图或蒙版走 multipart edits（官方与 LiteLLM 等网关的通用格式），单张参考图用 image 字段、多张用 image[]，蒙版用 mask。quality 的 1k/2k/4k 映射为 OpenAI low/medium/high。",
   create: {
     method: "POST",
     path: "/v1/images/generations",
     pathTemplate: conditional(gt(len(ref("request.images")), 0), "/v1/images/edits", "/v1/images/generations"),
     contentType: "application/json",
+    contentTypeTemplate: conditional(gt(len(ref("request.images")), 0), "multipart/form-data", "application/json"),
+    files: [
+      { name: "image", source: conditional(eq(len(filter(ref("request.images"), "media", ne(ref("media.role"), "mask"))), 1), filter(sorted(ref("request.images")), "media", ne(ref("media.role"), "mask"))), filename: "image.png" },
+      { name: "image[]", source: conditional(gt(len(filter(ref("request.images"), "media", ne(ref("media.role"), "mask"))), 1), filter(sorted(ref("request.images")), "media", ne(ref("media.role"), "mask"))) },
+      { name: "mask", source: first(filter(sorted(ref("request.images")), "media", eq(ref("media.role"), "mask"))), filename: "mask.png" }
+    ],
     body: {
       model: ref("request.model"),
       prompt: ref("request.prompt"),
-      images: omit(conditional(gt(len(ref("request.images")), 0), map(
-        filter(sorted(ref("request.images")), "media", ne(ref("media.role"), "mask")),
-        "media",
-        { image_url: ref("media.value") }
-      ))),
-      mask: omit(conditional(gt(len(filter(ref("request.images"), "media", eq(ref("media.role"), "mask"))), 0), {
-        image_url: first(map(filter(sorted(ref("request.images")), "media", eq(ref("media.role"), "mask")), "media", ref("media.value")))
-      })),
       n: omit(conditional(gt(ref("request.imageCount"), 0), ref("request.imageCount"), 1)),
       size: omit(conditional({ $in: [lower(trim(ref("request.aspectRatio"))), ["", "auto"]] }, null, ref("request.aspectRatio"))),
       quality: omit({
@@ -549,6 +380,18 @@ add({
 
 const jimengSizeParts = split(lower(trim(ref("request.aspectRatio"))), "x");
 const jimengHasPixelSize = and(eq(len(jimengSizeParts), 2), gt(toFloat(at(jimengSizeParts, 0)), 0), gt(toFloat(at(jimengSizeParts, 1)), 0));
+// 火山视觉 OpenAPI 的成功码是 code=10000，其余 code 都是业务失败，不能按“非零即失败”的 errorPaths 处理。
+// data.status=done 只表示处理结束，成败仍看 code；not_found / expired 是任务失效的终态。
+const volcVisualBusinessFailed = and(ref("response.code"), ne({ $toString: ref("response.code") }, "10000"));
+const jimengTaskGone = { $in: [lower(ref("response.data.status")), ["not_found", "expired"]] };
+const jimengResponse = (kind, results) => asyncResponse(kind, {
+  taskId: coalesce(ref("response.data.task_id"), ref("response.task_id"), ref("taskId")),
+  status: { $switch: { cases: [{ when: volcVisualBusinessFailed, then: "failed" }, { when: jimengTaskGone, then: "failed" }], default: coalesce(ref("response.data.status"), "pending") } },
+  message: conditional(and({ $not: volcVisualBusinessFailed }, jimengTaskGone), "即梦任务不存在或已过期，请重新生成", coalesce(ref("response.message"), ref("response.error.message"))),
+  [kind + "s"]: results,
+  errorPaths: undefined,
+  messagePaths: ["message"]
+});
 
 add({
   id: "volcengine-jimeng-image", providerId: "volcengine-jimeng-image", name: "Volcengine Jimeng Image", vendor: "Volcengine", capability: "image",
@@ -565,7 +408,7 @@ add({
     req_json: omit(ref("request.providerOptions.volcengine-jimeng-image.req_json"))
   }, { originPath: true, query: { Action: "CVSync2AsyncSubmitTask", Version: "2022-08-31" } }),
   poll: { method: "POST", path: "/", originPath: true, contentType: "application/json", query: { Action: "CVSync2AsyncGetResult", Version: "2022-08-31" }, body: { req_key: ref("request.model"), task_id: ref("taskId"), req_json: "{\"return_url\":true}" } },
-  response: asyncResponse("image", { taskId: coalesce(ref("response.data.task_id"), ref("response.task_id"), ref("taskId")), status: coalesce(ref("response.data.status"), ref("response.status"), "pending"), images: coalesce(ref("response.data.image_urls"), ref("response.data.binary_data_base64")), errorPaths: ["code"], messagePaths: ["message"] })
+  response: jimengResponse("image", coalesce(ref("response.data.image_urls"), ref("response.data.binary_data_base64")))
 });
 
 add({
@@ -675,6 +518,12 @@ add({
   response: asyncResponse("video", { videos: coalesce(ref("response.url"), ref("response.video_url"), ref("response.output.url")), errorPaths: ["error.code"], messagePaths: ["error.message"] })
 });
 
+// NewAPI 任务查询的失败原因在 data.fail_reason（外层 message 为空），兼容直接返回的扁平结构。
+const newAPITaskMessage = coalesce(
+  ref("response.error.message"), ref("response.message"), ref("response.fail_reason"),
+  ref("response.data.fail_reason"), ref("response.data.error.message")
+);
+
 add({
   id: "newapi-media-task-v1", providerId: "newapi-channel-1", name: "NewAPI Media Task Channel 1", vendor: "NewAPI", capability: "video",
   baseUrl: "http://127.0.0.1:3000", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
@@ -694,7 +543,7 @@ add({
       prompt_extend: coalesce(ref("request.providerOptions.newapi-channel-1.prompt_extend"), false)
     }
   }),
-  poll: { method: "GET", path: "/v1/videos/{{taskId}}" }, response: asyncResponse("video")
+  poll: { method: "GET", path: "/v1/videos/{{taskId}}" }, response: asyncResponse("video", { message: newAPITaskMessage })
 });
 
 add({
@@ -710,7 +559,9 @@ add({
   poll: { method: "GET", path: "/v1/video/generations/{{taskId}}" },
   response: asyncResponse("video", {
     taskId: coalesce(ref("response.data.task_id"), ref("response.data.taskId"), ref("response.task_id"), ref("response.taskId"), ref("response.data.id"), ref("response.id"), ref("taskId")),
+    message: newAPITaskMessage,
     videos: coalesce(
+      map(ref("response.data"), "item", coalesce(ref("item.url"), ref("item.video_url"), ref("item.videoUrl"), ref("item.output_url"), ref("item.outputUrl"))),
       ref("response.data.result_url"), ref("response.data.video_url"), ref("response.data.output_url"), ref("response.data.url"), ref("response.data.metadata.url"),
       ref("response.data.data.video_url"), ref("response.data.data.output_url"), ref("response.data.data.result_url"), ref("response.data.data.url"), ref("response.data.data.metadata.url"),
       ref("response.video_url"), ref("response.videoUrl"), ref("response.result_url"), ref("response.output_url"), ref("response.url"), ref("response.metadata.url"), ref("response.output.url")
@@ -785,7 +636,14 @@ add({
     aspect_ratio: coalesce(ref("request.aspectRatio"), "16:9"), image_url: omit(firstMediaFieldWithRoles("request.images", ["first_frame", ""], "value")),
     seed: omit(ref("request.providerOptions.novita-video.seed")), negative_prompt: omit(ref("request.providerOptions.novita-video.negative_prompt"))
   }),
-  poll: { method: "GET", path: "/v3/async/task-result", query: { task_id: ref("taskId") } }, response: asyncResponse("video")
+  poll: { method: "GET", path: "/v3/async/task-result", query: { task_id: ref("taskId") } },
+  // Novita 统一任务查询把状态和失败原因放在 task.status / task.reason（TASK_STATUS_* 枚举），结果在 videos[].video_url。
+  response: asyncResponse("video", {
+    taskId: coalesce(ref("response.task.task_id"), ref("response.id"), ref("response.task_id"), ref("response.taskId"), ref("response.data.id"), ref("taskId")),
+    status: coalesce(ref("response.task.status"), ref("response.status"), ref("response.state"), ref("response.data.status"), "pending"),
+    message: coalesce(ref("response.task.reason"), ref("response.error.message"), ref("response.message"), ref("response.fail_reason")),
+    videos: coalesce(ref("response.videos"), ref("response.video_url"), ref("response.videoUrl"), ref("response.result_url"), ref("response.url"), ref("response.data.video_url"), ref("response.output.url"))
+  })
 });
 
 add({
@@ -798,7 +656,7 @@ add({
     req_json: omit(ref("request.providerOptions.volcengine-jimeng-video.req_json"))
   }, { originPath: true, query: { Action: "CVSync2AsyncSubmitTask", Version: "2022-08-31" } }),
   poll: { method: "POST", path: "/", originPath: true, contentType: "application/json", query: { Action: "CVSync2AsyncGetResult", Version: "2022-08-31" }, body: { req_key: ref("request.model"), task_id: ref("taskId") } },
-  response: asyncResponse("video", { taskId: coalesce(ref("response.data.task_id"), ref("response.task_id"), ref("taskId")), status: coalesce(ref("response.data.status"), ref("response.status"), "pending"), videos: coalesce(ref("response.data.video_urls"), ref("response.data.video_url")), errorPaths: ["code"], messagePaths: ["message"] })
+  response: jimengResponse("video", coalesce(ref("response.data.video_urls"), ref("response.data.video_url")))
 });
 
 const agnesFrameImages = mediaWithRoles("request.images", ["first_frame", "last_frame"]);
@@ -1243,12 +1101,6 @@ add({
 });
 
 for (const [id, name, vendor, capability, baseUrl, createPath, pollPath, requestShape] of [
-  ["dashscope-qwen-native", "DashScope Qwen Native", "Alibaba Cloud", "text", "https://dashscope.aliyuncs.com", "/api/v1/services/aigc/text-generation/generation", null, "input+parameters"],
-  ["minimax-text-native", "MiniMax Text Native", "MiniMax", "text", "https://api.minimax.chat", "/v1/text/chatcompletion_v2", null, "messages+tokens_to_generate"],
-  ["azure-openai", "Azure OpenAI", "Microsoft Azure", "text", "https://{resource}.openai.azure.com", "/openai/deployments/{{model}}/chat/completions", null, "OpenAI body + api-version query"],
-  ["vertex-gemini", "Vertex AI Gemini", "Google Cloud", "text", "https://{location}-aiplatform.googleapis.com", "/v1/projects/{{request.providerOptions.vertex-gemini.project}}/locations/{{request.providerOptions.vertex-gemini.location}}/publishers/google/models/{{model}}:generateContent", null, "Gemini contents/parts"],
-  ["aws-bedrock-converse", "AWS Bedrock Converse", "AWS", "text", "https://bedrock-runtime.{region}.amazonaws.com", "/model/{{model}}/converse", null, "messages+system+inferenceConfig+toolConfig"],
-  ["aws-bedrock-invoke-model", "AWS Bedrock InvokeModel", "AWS", "text", "https://bedrock-runtime.{region}.amazonaws.com", "/model/{{model}}/invoke", null, "model-specific arbitrary body"],
   ["vertex-imagen", "Vertex Imagen", "Google Cloud", "image", "https://{location}-aiplatform.googleapis.com", "/v1/projects/{{request.providerOptions.vertex-imagen.project}}/locations/{{request.providerOptions.vertex-imagen.location}}/publishers/google/models/{{model}}:predict", null, "instances+parameters"],
   ["minimax-image", "MiniMax Image", "MiniMax", "image", "https://api.minimax.io", "/v1/image_generation", null, "model-specific image body"],
   ["kling-image", "Kling Image", "Kuaishou", "image", "https://api.klingai.com", "/v1/images/generations", "/v1/images/generations/{{taskId}}", "task JSON"],
@@ -1270,36 +1122,26 @@ for (const [id, name, vendor, capability, baseUrl, createPath, pollPath, request
   ["tencent-hunyuan-image", "腾讯混元图片", "Tencent Cloud", "image", "https://hunyuan.tencentcloudapi.com", "/", "/", "TC3 Action task"],
   ["baidu-qianfan-image", "百度千帆图片", "Baidu AI Cloud", "image", "https://qianfan.baidubce.com", "/v2/images/generations", null, "model-specific image input"]
 ]) {
-  const params = capability === "text" ? textParams : capability === "image" ? imageParams : videoParams;
+  const params = capability === "image" ? imageParams : videoParams;
   const optionPath = `request.providerOptions.${id}`;
-  const standardFields = capability === "text"
-    ? { model: ref("request.model"), messages: ref("request.messages"), input: omit(ref("request.prompt")), parameters: omit(ref(`${optionPath}.parameters`)) }
-    : capability === "image"
+  const standardFields = capability === "image"
       ? { model: ref("request.model"), prompt: ref("request.prompt"), images: omit(map(ref("request.images"), "media", ref("media.value"))), parameters: omit(ref(`${optionPath}.parameters`)) }
       : { model: ref("request.model"), prompt: ref("request.prompt"), images: omit(map(ref("request.images"), "media", ref("media.value"))), videos: omit(map(ref("request.videos"), "media", ref("media.value"))), audios: omit(map(ref("request.audios"), "media", ref("media.value"))), duration: omit(ref("request.duration")), aspect_ratio: omit(ref("request.aspectRatio")), resolution: omit(ref("request.resolution")), parameters: omit(ref(`${optionPath}.parameters`)) };
   const standard = { $merge: [standardFields, coalesce(ref(`${optionPath}.body`), ref(`${optionPath}.extra_body`), {})] };
   let auth = bearer;
   let configuration;
   let operationExtra = id.startsWith("dashscope-") ? { headers: { "X-DashScope-Async": "enable" } } : {};
-  if (id.startsWith("aws-bedrock-")) {
-    auth = { type: "aws-sigv4", field: "apiKey", secretField: "secretKey", service: "bedrock" };
-    configuration = { fields: [{ name: "apiKey", type: "secret", label: "Access Key ID", required: true }, { name: "secretKey", type: "secret", label: "Secret Access Key", required: true }] };
-  } else if (id.startsWith("tencent-")) {
+  if (id.startsWith("tencent-")) {
     auth = { type: "tc3", field: "apiKey", secretField: "secretKey", service: "hunyuan" };
     configuration = { fields: [{ name: "apiKey", type: "secret", label: "SecretId", required: true }, { name: "secretKey", type: "secret", label: "SecretKey", required: true }] };
     operationExtra = { headers: { "X-TC-Action": ref(`${optionPath}.action`), "X-TC-Version": ref(`${optionPath}.version`) } };
-  } else if (id === "azure-openai") {
-    auth = { type: "header", field: "apiKey", header: "api-key" };
-    operationExtra = { query: { "api-version": coalesce(ref(`${optionPath}.api-version`), "2024-10-21") } };
   }
   add({
     id, providerId: id, name, vendor, capability, baseUrl, auth, params, configuration,
     notes: `该协议的模型级字段变化快或依赖云资源配置。插件固定线协议入口和统一字段，完整厂商对象通过 providerOptions.${id} 的 parameters/input/extra_body 传入；${requestShape}。云签名型入口在未配置对应鉴权驱动时会明确失败，不会伪装成 Bearer 成功。`,
     create: jsonCreate(createPath, standard, operationExtra),
     poll: pollPath ? { method: "GET", path: pollPath } : undefined,
-    response: capability === "text"
-      ? { status: "succeeded", textPaths: ["output.text", "output_text", "choices.0.message.content", "result"], reasoningPaths: ["reasoning_content"], usage: ref("response.usage"), errorPaths: ["error.code", "code"], messagePaths: ["error.message", "message"] }
-      : pollPath ? asyncResponse(capability) : { status: "succeeded", [capability + "s"]: coalesce(ref("response.data"), ref("response.output"), ref("response.url")), errorPaths: ["error.code", "code"], messagePaths: ["error.message", "message"] }
+    response: pollPath ? asyncResponse(capability) : { status: "succeeded", [capability + "s"]: coalesce(ref("response.data"), ref("response.output"), ref("response.url")), errorPaths: ["error.code", "code"], messagePaths: ["error.message", "message"] }
   });
 }
 
@@ -1385,15 +1227,8 @@ function collectTemplateFields(value, prefix, rows) {
 
 function operationFieldRows(operation, label) {
   if (!operation) return [];
-  const rows = [
-    [`${label}.method`, JSON.stringify(operation.method)],
-    [`${label}.path`, JSON.stringify(operation.path || "dynamic")],
-    [`${label}.contentType`, JSON.stringify(operation.contentType || "application/json")]
-  ];
-  collectTemplateFields(operation.body, `${label}.body`, rows);
-  collectTemplateFields(operation.query, `${label}.query`, rows);
-  collectTemplateFields(operation.headers, `${label}.headers`, rows);
-  collectTemplateFields(operation.files, `${label}.files`, rows);
+  const rows = [];
+  collectTemplateFields(operation, label, rows);
   return rows;
 }
 
@@ -1417,6 +1252,49 @@ function docsFor(spec) {
   return `# ${spec.name} 接口字段\n\n## 协议身份\n\n- 插件 ID：\`${spec.id}\`。\n- Provider ID：\`${spec.providerId}\`。\n- 能力：\`${spec.capability}\`。\n- 默认 Base URL：\`${spec.baseUrl}\`。\n- 鉴权驱动：\`${spec.auth?.type || "默认"}\`。\n- 创建：\`${spec.create.method} ${spec.create.path || "动态路径"}\`。\n${spec.agent ? `- Agent：\`${spec.agent.method} ${spec.agent.path || "动态路径"}\`。\n` : ""}${spec.poll ? `- 查询：\`${spec.poll.method} ${spec.poll.path}\`。\n` : "- 生命周期：同步响应。\n"}${spec.cancel ? `- 取消：\`${spec.cancel.method} ${spec.cancel.path}\`。\n` : ""}\n## 配置字段\n\n| 字段 | 类型 | 必填 | 含义 |\n| --- | --- | --- | --- |\n${configRows}\n\n## 统一字段映射\n\n| 统一字段 | 类型 | 必填 | 上游映射 | 说明 |\n| --- | --- | --- | --- | --- |\n${rows}\n\n## 上游请求模板逐字段清单\n\n下表由插件请求模板生成，覆盖 body、query、headers 和 multipart 文件声明中的每个字段。\n\n| 上游位置 | 值或转换表达式 |\n| --- | --- |\n${operationRows || "| `create` | 无请求字段 |"}\n\n## Provider 扩展键\n\n${optionRows}\n\n动态模型或工作流允许使用文档声明的完整 \`parameters/input/extra_body\` 对象；该对象是协议本身的开放 schema，不会被宿主裁剪。\n\n## 响应映射逐字段清单\n\n| 映射位置 | 上游路径或转换表达式 |\n| --- | --- |\n${mappedResponseRows || "| `response` | 无显式映射 |"}\n\n## 响应与错误\n\n插件把上游 task/status/text/media/usage 映射为统一结果。临时媒体 URL 标记为 ephemeral，由宿主立即下载持久化。HTTP 错误、业务 code 和 error object 保持失败语义，不包装成成功。\n\n## 兼容边界\n\n${spec.notes || "该包只代表上述线协议 profile；同一品牌的其他 endpoint、云区域或网关包装必须使用独立插件，不能根据模型名猜测。"}\n`;
 }
 
+// Manifests own text policies; do not keep a second
+// catalog of vendor templates that can silently revert protocol repairs.
+for (const id of await packageDirectories(root)) {
+  const manifest = JSON.parse(await readFile(join(root, id, "manifest.json"), "utf8"));
+  const providers = manifest.contributes?.providers || [];
+  if (!providers.some((provider) => provider.capabilities?.includes("text"))) continue;
+  if (manifest.id !== id) {
+    throw new Error(`text package ${id} must use its canonical directory`);
+  }
+  const provider = providers.find((provider) => provider.capabilities?.includes("text"));
+  add({
+    ...provider,
+    id,
+    providerId: provider.id,
+    name: manifest.name,
+    capability: provider.capabilities.join(", "),
+    configuration: manifest.configuration,
+    params: (provider.parameters || []).map(({ name, type, required, mapping, description }) => [name, type, required, mapping, description]),
+    sourceManifest: manifest
+  });
+}
+
+function refreshTextDocumentation(source, spec) {
+  const generated = docsFor(spec);
+  // Only inventories are generated. Keep custom sections and surrounding prose.
+  for (const heading of ["协议身份", "配置字段", "统一字段映射", "上游请求模板逐字段清单", "Provider 扩展键", "响应映射逐字段清单"]) {
+    const section = new RegExp(`(^## ${heading}\\n)([\\s\\S]*?)(?=^## |^<!-- YINGCE_MANIFEST_CONTRACT_START -->|(?![\\s\\S]))`, "m");
+    const fresh = generated.match(section);
+    if (!fresh) throw new Error(`missing generated section ${heading}`);
+    const block = heading === "协议身份" || heading === "Provider 扩展键" ? /(?:^- .*\n)+/m : /(?:^\|.*\n)+/m;
+    const inventory = fresh[2].match(block)?.[0];
+    if (!inventory) throw new Error(`missing generated inventory ${heading}`);
+    if (section.test(source)) {
+      source = source.replace(section, (_, title, body) => title + (block.test(body) ? body.replace(block, () => inventory) : `\n${inventory}\n${body}`));
+    } else {
+      const inventorySection = `\n## ${heading}\n\n${inventory}\n`;
+      const contractStart = source.indexOf("<!-- YINGCE_MANIFEST_CONTRACT_START -->");
+      source = contractStart < 0 ? source + inventorySection : source.slice(0, contractStart) + inventorySection + source.slice(contractStart);
+    }
+  }
+  return source;
+}
+
 const requestedPackageIDs = new Set(process.argv.slice(2).map((value) => value.trim()).filter(Boolean));
 const selectedSpecs = requestedPackageIDs.size > 0 ? specs.filter((spec) => requestedPackageIDs.has(spec.id)) : specs;
 if (requestedPackageIDs.size > 0 && selectedSpecs.length !== requestedPackageIDs.size) {
@@ -1427,6 +1305,12 @@ if (requestedPackageIDs.size > 0 && selectedSpecs.length !== requestedPackageIDs
 
 for (const spec of selectedSpecs) {
   const dir = join(root, spec.id);
+  if (spec.sourceManifest) {
+    const interfacePath = join(dir, "docs", "interface.md");
+    const source = (await readFile(interfacePath, "utf8")).replace(/\r\n?/g, "\n");
+    await writeFile(interfacePath, refreshTextDocumentation(source, spec));
+    continue;
+  }
   await mkdir(join(dir, "docs"), { recursive: true });
   await writeFile(join(dir, "manifest.json"), JSON.stringify(manifestFor(spec), null, 2) + "\n");
   await writeFile(join(dir, "README.md"), `# ${spec.name}\n\n该目录是独立官方协议插件源码。后端从生成的 \`${spec.id}.yingce-plugin\` 包加载，不依赖系统内置 \`host:\` 适配器。\n\n完整接口见 [docs/interface.md](docs/interface.md)。\n`);

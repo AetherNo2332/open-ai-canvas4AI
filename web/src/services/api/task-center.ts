@@ -2,6 +2,7 @@ import { generationErrorMessage } from "@/lib/generation-error";
 import { http, apiBaseURL, type BackendEnvelope } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
+import { observeGenerationTaskStatus, observeGenerationTaskStatuses } from "@/services/generation-completion-tracker";
 import { getActiveUserScope } from "@/lib/user-scope";
 
 export type { BackendEnvelope } from "@/services/api/request";
@@ -121,6 +122,8 @@ export type TaskLog = {
     level: "info" | "warn" | "error";
     stage: string;
     errorCode?: string;
+    /** 后端日志里的人读文本（已剥离 stage=/error= 等结构化字段），失败原因排查靠它。 */
+    message?: string;
     provenance: "task_state" | "provider_observation" | "background_reconcile" | "manual_refresh" | "backend";
     observedAt?: string;
     createdAt: string;
@@ -139,6 +142,7 @@ export type CreateTaskInput = {
 export function createGenerationTask(input: CreateTaskInput) {
     return http.post<GenerationTask>("/tasks", input).then((task) => {
         recordDiagnosticEvent({ level: "info", category: "task", message: "任务已创建", taskId: task.id, projectId: task.projectId });
+        observeGenerationTaskStatus(task);
         notifyCanvasTaskCreated(task);
         // 创建任务时积分已被预占，不能等任务结束后才刷新可用余额。
         window.dispatchEvent(new CustomEvent("wallet:updated"));
@@ -192,6 +196,7 @@ export async function listGenerationTasks(limit = 30, options?: { projectId?: st
         }));
     const backendTasks = await collectGenerationTaskPages(backendPageReader, baseRequest, boundedLimit, signal);
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    observeGenerationTaskStatuses(backendTasks);
     return backendTasks
         .filter((task) => !options?.projectId || task.projectId === options.projectId)
         .filter((task) => !options?.activeOnly || task.status === "queued" || task.status === "running")
@@ -216,7 +221,13 @@ async function collectGenerationTaskPages<T>(readPage: (request: GenerationTaskP
 }
 
 export function queryGenerationTask(id: string, options?: { signal?: AbortSignal }) {
-    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal });
+    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal }).then(observedTask);
+}
+
+/** 所有任务读取都汇入完成跟踪，生成完成提醒不依赖某个页面是否还在轮询。 */
+function observedTask(task: GenerationTask) {
+    observeGenerationTaskStatus(task);
+    return task;
 }
 
 type GenerationTaskSubscriptionDependencies = {
@@ -340,15 +351,24 @@ export function queryTaskTextReplay(id: string, after = 0) {
 }
 
 export function retryGenerationTask(id: string) {
-    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/retry`);
+    // 重试会在服务端预占/结算积分，与 cancel 对齐派发钱包事件，顶栏余额才不会停留在旧值。
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/retry`).then((task) => {
+        const observed = observedTask(task);
+        window.dispatchEvent(new CustomEvent("wallet:updated"));
+        return observed;
+    });
 }
 
 export function recoverGenerationTaskMedia(id: string) {
-    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover-media`);
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover-media`).then((task) => {
+        window.dispatchEvent(new CustomEvent("wallet:updated"));
+        return task;
+    });
 }
 
 export function cancelGenerationTask(id: string) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/cancel`).then((task) => {
+        observeGenerationTaskStatus(task);
         window.dispatchEvent(new CustomEvent("canvas:task-cancelled", { detail: { task } }));
         window.dispatchEvent(new CustomEvent("wallet:updated"));
         return task;
@@ -360,7 +380,7 @@ export function queryFailedVideoProviderTask(id: string) {
 }
 
 export function refreshGenerationTaskStatus(id: string, options?: { signal?: AbortSignal }) {
-    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal });
+    return http.get<GenerationTask>(`/tasks/${encodeURIComponent(id)}`, { signal: options?.signal }).then(observedTask);
 }
 
 export function deleteGenerationTask(id: string) {
@@ -373,13 +393,25 @@ export async function listTaskLogs(id: string) {
 }
 
 export function formatTaskLog(log: TaskLog) {
-    return [`stage=${log.stage}`, ...(log.errorCode ? [`error=${log.errorCode}`] : []), `provenance=${log.provenance}`, ...(log.observedAt ? [`observedAt=${log.observedAt}`] : [])].join(" ");
+    return [`stage=${log.stage}`, ...(log.errorCode ? [`error=${log.errorCode}`] : []), `provenance=${log.provenance}`, ...(log.message ? [log.message] : []), ...(log.observedAt ? [`observedAt=${log.observedAt}`] : [])].join(" ");
+}
+
+/** 剥离 key=value 结构化字段，保留人读文本；过长截断，避免日志行被 JSON 噪声淹没。 */
+function taskLogHumanMessage(raw: { message?: unknown }) {
+    if (typeof raw.message !== "string") return undefined;
+    const cleaned = raw.message
+        .replace(/(?:^|\s)[a-zA-Z_]+=(?:\S+)/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!cleaned) return undefined;
+    return cleaned.length > 300 ? `${cleaned.slice(0, 300)}…` : cleaned;
 }
 
 export function projectBackendSafeTaskLog(taskId: string, raw: { level?: unknown; message?: unknown; payload?: unknown; createdAt?: unknown }, index: number): TaskLog {
     const text = [raw.message, raw.payload].filter((value): value is string => typeof value === "string").join(" ");
     const stage = safeTaskLogStage(text) || "backend_event";
     const errorCode = safeTaskLogErrorCode(text);
+    const message = taskLogHumanMessage(raw);
     const createdAt = typeof raw.createdAt === "string" && Number.isFinite(Date.parse(raw.createdAt)) ? raw.createdAt : "1970-01-01T00:00:00.000Z";
     return {
         id: `safe:${taskId}:${index}`,
@@ -387,6 +419,7 @@ export function projectBackendSafeTaskLog(taskId: string, raw: { level?: unknown
         level: raw.level === "error" ? "error" : raw.level === "warn" ? "warn" : "info",
         stage,
         ...(errorCode ? { errorCode } : {}),
+        ...(message ? { message } : {}),
         provenance: "backend",
         createdAt,
     };

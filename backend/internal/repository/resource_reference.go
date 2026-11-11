@@ -1,9 +1,7 @@
 package repository
 
 import (
-	"encoding/json"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -151,6 +149,15 @@ func (r *Repository) ResourcesForUserIDs(userID string, resourceIDs []string) ([
 	return resources, err
 }
 
+func (r *Repository) ResourcesByIDs(resourceIDs []string) ([]model.Resource, error) {
+	if len(resourceIDs) == 0 {
+		return []model.Resource{}, nil
+	}
+	var resources []model.Resource
+	err := r.db.Where("id IN ?", resourceIDs).Find(&resources).Error
+	return resources, err
+}
+
 // ResourceStorageReferenceCount 返回未包含在 excludedResourceIDs 中、但指向同一物理对象的资源记录数。
 // 这用于兼容历史数据中多个 Resource 行复用一个对象路径的情况。
 func (r *Repository) ResourceStorageReferenceCount(resource *model.Resource, excludedResourceIDs []string) (int64, error) {
@@ -216,34 +223,8 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 		snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "Agent 待执行引用", ID: lease.OwnerID, Title: "已准备的生成输入", ResourceID: lease.ResourceID})
 	}
 
-	var toolRecords []model.Tool
-	if err := r.db.Where("owner_id = ?", userID).Find(&toolRecords).Error; err != nil {
+	if err := r.appendToolResourceReferences(&snapshot, userID, resourceIDs); err != nil {
 		return snapshot, err
-	}
-	for _, tool := range toolRecords {
-		var extra []string
-		if tool.ExtraInfoJSON != "" {
-			if err := json.Unmarshal([]byte(tool.ExtraInfoJSON), &extra); err != nil {
-				return snapshot, err
-			}
-		}
-		payload, err := json.Marshal(map[string]any{"coverUrl": tool.Cover, "url": tool.MediaURL, "referenceUrls": extra})
-		if err != nil {
-			return snapshot, err
-		}
-		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "工具", ID: strconv.FormatInt(tool.ID, 10), Title: tool.Label, PrimaryJSON: string(payload)})
-	}
-	var workbenchTools []model.WorkbenchTool
-	if err := r.db.Where("(icon_resource_id IN ? OR cover_resource_id IN ?) AND enabled = ?", resourceIDs, resourceIDs, true).Find(&workbenchTools).Error; err != nil {
-		return snapshot, err
-	}
-	for _, tool := range workbenchTools {
-		if tool.IconResourceID != "" && slices.Contains(resourceIDs, tool.IconResourceID) {
-			snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "工作台工具图标", ID: tool.ID, Title: tool.Name, ResourceID: tool.IconResourceID})
-		}
-		if tool.CoverResourceID != "" && slices.Contains(resourceIDs, tool.CoverResourceID) {
-			snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "工作台工具封面", ID: tool.ID, Title: tool.Name, ResourceID: tool.CoverResourceID})
-		}
 	}
 
 	var assets []model.Asset
@@ -342,6 +323,13 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 		}
 	}
 
+	var ecommerceProjects []model.EcommerceProject
+	if err := r.db.Where("user_id = ?", userID).Find(&ecommerceProjects).Error; err != nil {
+		return snapshot, err
+	}
+	for _, project := range ecommerceProjects {
+		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: "电商项目", ID: project.ID, Title: project.Name, PrimaryJSON: project.DraftJSON, SecondaryJSON: project.PlanJSON})
+	}
 	var styles []model.StyleProfile
 	if err := r.db.Where("user_id = ?", userID).Find(&styles).Error; err != nil {
 		return snapshot, err
@@ -472,6 +460,15 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 	}
 	for _, draft := range announcementDrafts {
 		snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "公告草稿", ID: draft.ResourceID, ResourceID: draft.ResourceID})
+	}
+
+	// 反馈附件只记录在 user_feedbacks.attachments 中，不进入素材或画布；漏掉会被孤儿清理删除，后台收件箱无法查看。
+	var feedbacks []model.UserFeedback
+	if err := r.db.Select("id", "title", "attachments").Where("user_id = ? AND attachments <> ? AND attachments <> ?", userID, "", "[]").Find(&feedbacks).Error; err != nil {
+		return snapshot, err
+	}
+	for _, feedback := range feedbacks {
+		snapshot.Documents = append(snapshot.Documents, ResourceReferenceDocument{Kind: FeedbackResourceReferenceKind, ID: feedback.ID, Title: feedback.Title, PrimaryJSON: feedback.Attachments})
 	}
 	return snapshot, nil
 }

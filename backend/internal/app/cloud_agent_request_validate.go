@@ -85,7 +85,7 @@ func validateCloudAgentRequestModelIDs(req *CloudAgentRequest) error {
 // validateCloudAgentRequestFocus checks the reasoning mode and trims and
 // de-duplicates the focus node IDs.
 func validateCloudAgentRequestFocus(req *CloudAgentRequest) error {
-	if req.ReasoningMode != "" && req.ReasoningMode != "off" && req.ReasoningMode != "auto" && req.ReasoningMode != "deep" {
+	if req.ReasoningMode != "" && !validCloudAgentReasoningMode(req.ReasoningMode) {
 		return BadAuthRequest("无效的 Agent 推理模式")
 	}
 	if len(req.FocusNodeIDs) > 8 {

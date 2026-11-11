@@ -16,6 +16,9 @@ type canonicalAgentRequest struct {
 	ToolChoice     interface{}              `json:"toolChoice"`
 	SystemPrompt   string                   `json:"systemPrompt"`
 	PromptCacheKey string                   `json:"promptCacheKey,omitempty"`
+	// PassReasoning 允许回传同协议产生的思考内容；auto 使用上游默认，不能误当成关闭。
+	// DeepSeek 等要求带工具的会话回传所有 assistant 轮次的完整 reasoning_content。
+	PassReasoning bool `json:"-"`
 }
 
 func expandCanonicalAgentRequest(source *canonicalAgentRequest, config providerConfig, declarative bool) (*agentToolRequests, error) {
@@ -83,7 +86,7 @@ func expandCanonicalAgentRequest(source *canonicalAgentRequest, config providerC
 		}
 	}
 	request := *source
-	request.Messages = messages
+	request.Messages = readableAgentMessages(messages)
 	result := &agentToolRequests{}
 	if declarative {
 		result.ChatCompletion = canonicalAgentChatBody(&request, false)
@@ -147,6 +150,9 @@ func canonicalAgentChatBody(source *canonicalAgentRequest, claude bool) map[stri
 		if claude && stringField(message, "role") == "system" {
 			converted["content"] = canonicalAgentText(message["content"])
 		}
+		if source.PassReasoning && stringField(message, "role") == "assistant" {
+			attachCanonicalAgentReasoning(converted, message, claude)
+		}
 		if stringField(message, "role") == "tool" {
 			converted["tool_call_id"] = message["tool_call_id"]
 		}
@@ -207,6 +213,7 @@ func canonicalAgentGeminiBody(source *canonicalAgentRequest) map[string]interfac
 	contents := make([]interface{}, 0, len(source.Messages))
 	var system []string
 	callNames := map[string]string{}
+	previousFunctionCall, previousToolResult := false, false
 	for _, message := range source.Messages {
 		role := "user"
 		var parts interface{}
@@ -239,24 +246,19 @@ func canonicalAgentGeminiBody(source *canonicalAgentRequest) map[string]interfac
 			}
 			parts = canonicalAgentContent(message["content"], "gemini")
 			if role == "model" {
-				converted := parts.([]interface{})
-				if message["content"] == nil || message["content"] == "" {
-					converted = nil
-				}
-				for _, call := range canonicalAgentToolCalls(message["tool_calls"]) {
-					function, _ := call["function"].(map[string]interface{})
-					id, name := stringField(call, "id"), stringField(function, "name")
-					callNames[id] = name
-					part := map[string]interface{}{"functionCall": map[string]interface{}{"id": id, "name": name, "args": canonicalAgentJSONObject(function["arguments"])}}
-					if signature := stringField(call, "thoughtSignature"); signature != "" {
-						part["thoughtSignature"] = signature
-					}
-					converted = append(converted, part)
-				}
-				parts = converted
+				parts = canonicalAgentGeminiAssistantParts(message, parts, callNames)
 			}
 		}
-		contents = append(contents, map[string]interface{}{"role": role, "parts": parts})
+		functionCall := stringField(message, "type") == "function_call"
+		toolResult := stringField(message, "role") == "tool"
+		// Keep parallel calls and their results in one ordered model/user turn.
+		if len(contents) > 0 && ((functionCall && previousFunctionCall) || (toolResult && previousToolResult)) {
+			previous := contents[len(contents)-1].(map[string]interface{})
+			previous["parts"] = append(interfaceSlice(previous["parts"]), interfaceSlice(parts)...)
+		} else {
+			contents = append(contents, map[string]interface{}{"role": role, "parts": parts})
+		}
+		previousFunctionCall, previousToolResult = functionCall, toolResult
 	}
 	body := map[string]interface{}{"contents": contents}
 	if len(system) > 0 {
@@ -447,4 +449,22 @@ func canonicalAgentText(content interface{}) string {
 		}
 	}
 	return strings.Join(texts, "\n")
+}
+
+func canonicalAgentGeminiAssistantParts(message map[string]interface{}, parts interface{}, callNames map[string]string) interface{} {
+	converted := interfaceSlice(parts)
+	if message["content"] == nil || message["content"] == "" {
+		converted = nil
+	}
+	for _, call := range canonicalAgentToolCalls(message["tool_calls"]) {
+		function, _ := call["function"].(map[string]interface{})
+		id, name := stringField(call, "id"), stringField(function, "name")
+		callNames[id] = name
+		part := map[string]interface{}{"functionCall": map[string]interface{}{"id": id, "name": name, "args": canonicalAgentJSONObject(function["arguments"])}}
+		if signature := stringField(call, "thoughtSignature"); signature != "" {
+			part["thoughtSignature"] = signature
+		}
+		converted = append(converted, part)
+	}
+	return converted
 }

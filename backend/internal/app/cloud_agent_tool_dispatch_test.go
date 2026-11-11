@@ -84,6 +84,8 @@ func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 func cloudAgentRegisteredToolNames(t *testing.T) []string {
 	t.Helper()
 	file := parseCloudAgentFile(t, "cloud_agent_tool_compile.go")
+	batch := parseCloudAgentFile(t, "cloud_agent_batch_tool_compile.go")
+	file.Decls = append(file.Decls, batch.Decls...)
 	names := map[string]bool{}
 	ast.Inspect(file, func(node ast.Node) bool {
 		if loop, ok := node.(*ast.RangeStmt); ok {
@@ -122,7 +124,7 @@ func cloudAgentRegisteredToolNames(t *testing.T) []string {
 		return true
 	})
 	if len(names) == 0 {
-		t.Fatal("没有从 cloud_agent_tool_compile.go 解析到任何 add(...) 工具注册")
+		t.Fatal("没有从工具编译器解析到任何 add(...) 工具注册")
 	}
 	return sortedKeys(names)
 }

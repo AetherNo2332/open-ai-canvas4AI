@@ -19,9 +19,9 @@ func cloudAgentToolCategory(name string) string {
 		return "agent_tools_canvas_read"
 	case "canvas_inspect_image":
 		return "agent_tools_image"
-	case "storyboard", "canvas_edit_batch_table", "canvas_apply_ops", "canvas_bind_asset", "canvas_undo", "canvas_redo", "canvas_arrange_nodes", "canvas_create_character", "director":
+	case "canvas_build_board", "storyboard", "canvas_edit_batch_table", "canvas_apply_ops", "canvas_bind_asset", "canvas_undo", "canvas_redo", "canvas_arrange_nodes", "canvas_create_character", "director":
 		return "agent_tools_canvas_edit"
-	case "model_list", "generate_media", cloudAgentWaitGenerationsTool:
+	case "model_list", "generate_media", "generate_media_batch", "media_batch_control", "canvas_preflight", cloudAgentWaitGenerationsTool:
 		return "agent_tools_generation"
 	default:
 		return ""

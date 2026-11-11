@@ -13,7 +13,7 @@ export type AgentSkillDefaultsSummary = { count: number; skills: Array<{ skillId
 export function listAgentSkillDefaults() {
     return http.get<AgentSkillDefaultsSummary>("/agent/skill-defaults");
 }
-export type AgentReasoningMode = "off" | "auto" | "deep";
+export type AgentReasoningMode = import("@/lib/text-thinking").ThinkingRequest;
 export type AgentMediaSettings = {
     logicalModelId?: string;
     channelId?: string;

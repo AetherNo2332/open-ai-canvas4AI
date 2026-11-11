@@ -26,10 +26,10 @@ export type UploadedImage = {
 const store = localforage.createInstance({ name: "yingce", storeName: "image_files" });
 const objectUrls = new Map<string, string>();
 
-export async function uploadImage(input: string | Blob, onProgress?: (uploadedBytes: number, totalBytes: number) => void, knownSize?: { width: number; height: number }): Promise<UploadedImage> {
+export async function uploadImage(input: string | Blob, onProgress?: (uploadedBytes: number, totalBytes: number) => void, knownSize?: { width: number; height: number }, options: { idempotencyKey?: string } = {}): Promise<UploadedImage> {
     // 同一个逻辑上传在直传失败后会退回 IndexedDB，并由云端数据同步再次提交。
     // 提前生成本地 key，确保两条路径向后端发送相同的幂等标识。
-    const storageKey = `image:${getActiveUserScope()}:${nanoid()}`;
+    const storageKey = options.idempotencyKey || `image:${getActiveUserScope()}:${nanoid()}`;
     if (typeof input === "string" && shouldImportRemoteImage(input)) {
         try {
             const resource = await importResourceFromUrl(input, "image", { idempotencyKey: storageKey });

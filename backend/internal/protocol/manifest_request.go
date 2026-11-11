@@ -225,28 +225,7 @@ func manifestExpressionValue(expression string, request GenerationRequest, taskI
 // platform request. It lets uploaded manifests address media items by index
 // without exposing Go structs or adding provider-specific host code.
 func manifestRequestValues(request GenerationRequest) map[string]any {
-	userContent := make([]any, 0)
-	if strings.TrimSpace(request.Prompt) != "" {
-		userContent = append(userContent, map[string]any{"type": "text", "text": request.Prompt})
-	}
-	for _, img := range request.Images {
-		val := defaultValue(img.URL, img.DataURL)
-		if val != "" {
-			userContent = append(userContent, map[string]any{"type": "image_url", "image_url": map[string]any{"url": val}})
-		}
-	}
-	for _, vid := range request.Videos {
-		val := defaultValue(vid.URL, vid.DataURL)
-		if val != "" {
-			userContent = append(userContent, map[string]any{"type": "video_url", "video_url": map[string]any{"url": val}})
-		}
-	}
-	for _, aud := range request.Audios {
-		val := defaultValue(aud.URL, aud.DataURL)
-		if val != "" {
-			userContent = append(userContent, map[string]any{"type": "audio_url", "audio_url": map[string]any{"url": val}})
-		}
-	}
+	userContent := manifestUserContent(request)
 	messages := make([]any, 0, len(request.Messages)+2)
 	// instructions 是统一的系统指令字段，但多数 OpenAI 系协议只映射 request.messages。
 	// 系统指令必须进入消息数组，否则会被静默丢弃；带独立 system 字段的协议（Claude、
@@ -298,7 +277,14 @@ func manifestRequestValues(request GenerationRequest) map[string]any {
 		providerOptionsValue = map[string]any{}
 	}
 
+	// Additive text projection; non-text tasks avoid decoding media twice.
+	textMessages, textInput := []any{}, map[string]any{}
+	if request.Capability == CapabilityText {
+		textMessages, textInput = manifestTextValues(messages, request)
+	}
 	return map[string]any{
+		"textMessages":    textMessages,
+		"textInput":       textInput,
 		"capability":      request.Capability,
 		"model":           request.Model,
 		"prompt":          request.Prompt,
@@ -539,4 +525,25 @@ func firstPathValue(payload map[string]any, paths ...string) string {
 		}
 	}
 	return ""
+}
+
+// manifestSplitDataURL 解析 data:<mime>;base64,<data> 形式的内嵌媒体，
+// 返回 MIME 类型与 base64 数据。Anthropic image 块要求 source 里分开携带二者。
+func manifestSplitDataURL(value string) (string, string, bool) {
+	if !strings.HasPrefix(value, "data:") {
+		return "", "", false
+	}
+	separator := strings.Index(value, ",")
+	if separator <= len("data:") {
+		return "", "", false
+	}
+	header := strings.TrimPrefix(value[:separator], "data:")
+	if !strings.HasSuffix(header, ";base64") {
+		return "", "", false
+	}
+	data := value[separator+1:]
+	if data == "" {
+		return "", "", false
+	}
+	return strings.TrimSuffix(header, ";base64"), data, true
 }

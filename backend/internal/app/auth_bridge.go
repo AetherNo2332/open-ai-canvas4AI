@@ -23,9 +23,11 @@ type (
 	PasswordResetRequest       = auth.PasswordResetRequest
 	EmailSettingRequest        = auth.EmailSettingRequest
 	PublicEmailSetting         = auth.PublicEmailSetting
+	EmailLogQuery              = auth.EmailLogQuery
+	EmailLogPage               = auth.EmailLogPage
 	LinuxDOSettingRequest      = auth.LinuxDOSettingRequest
 	PublicLinuxDOSetting       = auth.PublicLinuxDOSetting
-	LinuxDOCallbackResult      = auth.LinuxDOCallbackResult
+	LinuxDOCallbackResult      = auth.OAuthCallbackResult
 	LibTVSettingRequest        = auth.LibTVSettingRequest
 	PublicLibTVSetting         = auth.PublicLibTVSetting
 	LibTVImportRequest         = auth.LibTVImportRequest
@@ -217,6 +219,14 @@ func (s *Service) CompleteLinuxDOLogin(stateValue string, code string, cookieVal
 	return s.authDomain().CompleteLinuxDOLogin(stateValue, code, cookieValue, contexts...)
 }
 
+func (s *Service) BeginOIDCLogin(ctx context.Context, next string, acceptedTerms bool) (string, string, error) {
+	return s.authDomain().BeginOIDCLogin(ctx, next, acceptedTerms)
+}
+
+func (s *Service) CompleteOIDCLogin(ctx context.Context, state, code string, login LoginContext) (*auth.OAuthCallbackResult, error) {
+	return s.authDomain().CompleteOIDCLogin(ctx, state, code, login)
+}
+
 func (s *Service) AdminLibTVSetting(actor *model.User) (*PublicLibTVSetting, error) {
 	return s.authDomain().AdminLibTVSetting(actor)
 }
@@ -271,4 +281,12 @@ func hashToken(token string) string {
 
 func randomToken() string {
 	return auth.RandomToken()
+}
+
+func (s *Service) AdminEmailLogs(actor *model.User, query EmailLogQuery, page, pageSize int) (*EmailLogPage, error) {
+	return s.authDomain().AdminEmailLogs(actor, query, page, pageSize)
+}
+
+func (s *Service) SendTestEmail(actor *model.User, recipient string) error {
+	return s.authDomain().SendTestEmail(actor, recipient)
 }

@@ -3,12 +3,13 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("../src/pages/assets/asset-batch-upload-modal.tsx", import.meta.url), "utf8").replace(/\s+/g, " ");
 
-function section(startMarker: string, endMarker: string) {
+function section(startMarker: string, endMarker: string | RegExp) {
     const start = source.indexOf(startMarker);
-    const end = source.indexOf(endMarker, start + startMarker.length);
     expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    return source.slice(start, end);
+    const remaining = source.slice(start + startMarker.length);
+    const endOffset = typeof endMarker === "string" ? remaining.indexOf(endMarker) : remaining.search(endMarker);
+    expect(endOffset).toBeGreaterThanOrEqual(0);
+    return startMarker + remaining.slice(0, endOffset);
 }
 
 test("批量上传把真实上传进度传给列表，进度条不挤掉文件名", () => {
@@ -16,7 +17,7 @@ test("批量上传把真实上传进度传给列表，进度条不挤掉文件�
     expect(upload).toMatch(/uploadImage\(item\.file, \(loaded, total\) =>/);
     expect(upload).toContain("percent }");
     expect(source).not.toMatch(/<Progress[^>]*className="w-20"/);
-    expect(source).toContain('<div className="w-20 shrink-0"><Progress');
+    expect(source).toMatch(/<div className="w-20 shrink-0">\s*<Progress\b[^>]*\bpercent=\{item\.percent \|\| 10\}[^>]*\/>\s*<\/div>/);
 });
 
 test("上传成功后不再回读远端地址获取尺寸", () => {
@@ -35,7 +36,7 @@ test("部分失败时不自动关闭弹窗，关闭时再刷新列表", () => {
     const upload = section("const uploadBatch = async", "const close = ");
     expect(upload).toContain("if (!failed) await onComplete();");
     expect(upload).not.toMatch(/setUploading\(false\); await onComplete\(\);/);
-    const close = section("const close = ", "return <Modal");
+    const close = section("const close = ", /return\s*\(?\s*<Modal\b/);
     expect(close).toContain('items.some((item) => item.status === "done")');
     expect(close).toContain("if (hasUploaded) void onComplete();");
 });

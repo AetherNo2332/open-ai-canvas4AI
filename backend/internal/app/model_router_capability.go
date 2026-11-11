@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/protocol"
 )
@@ -54,6 +53,9 @@ type ModelRequestIntent struct {
 	Operation  string         `json:"operation,omitempty"`
 	Inputs     map[string]int `json:"inputs,omitempty"`
 	Options    map[string]any `json:"options,omitempty"`
+	// ReferenceVideoDurationsMs 仅用于报价：按顺序给出参考视频时长，长度须等于 inputs.video。
+	// 真实任务不读取它，按秒计费的参考视频时长始终由后端实测。
+	ReferenceVideoDurationsMs []int64 `json:"referenceVideoDurationsMs,omitempty"`
 }
 
 // ModelRequestIntentFromTaskInput 从统一任务输入推导路由意图；它只统计实际输入和显式参数，不假设任何固定图片数或视频时长。
@@ -624,49 +626,4 @@ func containsNormalized(values []string, expected string) bool {
 		}
 	}
 	return false
-}
-
-func normalizeCapabilityValue(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
-}
-
-func canonicalCapabilityOptionName(value string) string {
-	name := strings.TrimSpace(value)
-	switch name {
-	case "duration":
-		return "videoSeconds"
-	case "aspectRatio":
-		return "size"
-	case "resolution":
-		return "vquality"
-	default:
-		return name
-	}
-}
-
-func canonicalModelOptionName(capability, value string) string {
-	if capability == "image" {
-		return strings.TrimSpace(value)
-	}
-	return canonicalCapabilityOptionName(value)
-}
-
-func isCapabilityOptionFor(capability string, name string) bool {
-	switch normalizeCapability(capability) {
-	case "image":
-		return name == "size" || name == "quality" || name == "imageResolution" || name == "transparentBackground" || name == "count"
-	case "video":
-		return name == "size" || name == "videoSeconds" || name == "vquality" || name == "videoGenerateAudio" || name == "videoWatermark" || name == "fpsBand"
-	case "audio":
-		return name == "audioVoice" || name == "audioFormat" || name == "audioSpeed" || name == "audioInstructions"
-	case "text":
-		// systemPrompt 是请求内容，不是供应线路能力维度，不能参与路由匹配。
-		return false
-	default:
-		return false
-	}
-}
-
-func isProviderCapabilityOption(name string) bool {
-	return isCapabilityOptionFor("image", name) || isCapabilityOptionFor("video", name) || isCapabilityOptionFor("audio", name) || isCapabilityOptionFor("text", name)
 }

@@ -17,6 +17,10 @@ import (
 func cloudAgentCanonical(system string, history []providerTextMessage, prompt string, req CloudAgentRequest) canonicalAgentRequest {
 	messages := []map[string]any{}
 	for _, m := range history {
+		// 旧版本会把失败轮次的空回复存进历史；空 assistant 消息不带信息，且会被 Claude 等上游整单拒绝。
+		if m.Role == "assistant" && strings.TrimSpace(m.Content) == "" {
+			continue
+		}
 		message := map[string]any{"role": m.Role, "content": m.Content}
 		if m.AgentContextSource != "" {
 			message[cloudAgentContextSourceKey] = m.AgentContextSource
@@ -50,7 +54,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v21"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v23"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -267,7 +271,7 @@ func cloudAgentToolAllowed(req CloudAgentRequest, name string) bool {
 // cloudAgentWrite 表示"需要审批的写入类工具"：它会改变用户可见状态，因此按权限模式进入
 // 审批链。媒体生成继续走独立的审批与计费。
 func cloudAgentWrite(name string) bool {
-	if name == "canvas_undo" || name == "canvas_redo" || name == "canvas_bind_asset" {
+	if name == "canvas_build_board" || name == "generate_media_batch" || name == "canvas_undo" || name == "canvas_redo" || name == "canvas_bind_asset" {
 		return true
 	}
 	// director 按名字判定为写，具体调用用 cloudAgentWriteCall 按 action 放过 read。

@@ -261,7 +261,9 @@ class Smoke:
             "providerModelKey": "agent-parity-model", "displayName": "CI stub", "capability": "text",
             "protocol": "chat-completion", "billingMode": "token", "priceConfigured": True, "enabled": True,
             "inputTokenPriceMicrocredits": 0, "outputTokenPriceMicrocredits": 0,
-            "capabilityConfig": {"version": 1, "text": {"streaming": False, "thinking": False,
+            "capabilityConfig": {"version": 1, "text": {"streaming": False,
+                "thinking": {"mode": "toggle", "levels": ["off", "medium"], "default": "off",
+                    "switch": {"kind": "enable-flag"}, "intensity": {"kind": "none"}},
                 "contextWindowTokens": 128000, "maxOutputTokens": 32000,
                 "references": {"promptMaxChars": 32000}}}})
 

@@ -5,6 +5,8 @@ import { createCanvasToolCall } from "./raw-tool-calls.js";
 export interface CanvasModelResult {
   text?: string;
   reasoning?: string;
+  reasoningWire?: string;
+  reasoningBlocks?: unknown[];
   toolCalls?: Array<{ id: string; function: { name: string; arguments: string }; thoughtSignature?: string }>;
   stopReasonKind?: string;
   stopReason?: string;
@@ -81,13 +83,14 @@ export function createCanvasStreamFn(step: ModelStep, onFailure?: (error: unknow
           onTextDelta: (delta) => { sent += delta; pushDelta(delta); },
         });
         if (options?.signal?.aborted) throw new Error("Agent model request aborted");
-        if (result.reasoning) {
+        if (result.reasoning || result.reasoningBlocks?.length) {
           const contentIndex = partial.content.length;
+          const thinking = result.reasoning || "";
           partial.content.push({ type: "thinking", thinking: "" });
           stream.push({ type: "thinking_start", contentIndex, partial });
-          partial.content[contentIndex] = { type: "thinking", thinking: result.reasoning };
-          stream.push({ type: "thinking_delta", contentIndex, delta: result.reasoning, partial });
-          stream.push({ type: "thinking_end", contentIndex, content: result.reasoning, partial });
+          partial.content[contentIndex] = { type: "thinking", thinking, thinkingSignature: JSON.stringify({ wire: result.reasoningWire, blocks: result.reasoningBlocks }) };
+          stream.push({ type: "thinking_delta", contentIndex, delta: thinking, partial });
+          stream.push({ type: "thinking_end", contentIndex, content: thinking, partial });
         }
         if (result.text) {
           const remainder = result.text.startsWith(sent) ? result.text.slice(sent.length) : result.text;

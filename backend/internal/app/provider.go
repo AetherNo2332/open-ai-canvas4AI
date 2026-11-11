@@ -42,8 +42,10 @@ type canvasGenerationInput struct {
 }
 
 type canvasTextOptions struct {
-	Stream   *bool `json:"stream"`
-	Thinking bool  `json:"thinking"`
+	Stream *bool `json:"stream"`
+	// ThinkingLevel 是请求的思考档位（off/minimal/low/medium/high/max）或意图（auto/deep）；
+	// 空值等同 auto。实际档位按模型能力归一，见 resolveThinkingLevel。
+	ThinkingLevel string `json:"thinkingLevel,omitempty"`
 	// MaxOutputTokens 是本次调用的输出上限（思考 + 正文 + 工具参数）。
 	// 画布 Agent 的每一步都带上限：不设时上游按"剩余上下文"放行，思考模型可以把单步
 	// 拖到几分钟（实测 output_tokens 正好吃满可用预算、正文与工具调用皆空）；0 表示不限制。
@@ -68,43 +70,44 @@ type providerTextMessage struct {
 }
 
 type providerConfig struct {
-	ChannelID             string                 `json:"channelId"`
-	ChannelModelKey       string                 `json:"channelModelKey,omitempty"`
-	PriceTierID           string                 `json:"priceTierId,omitempty"`
-	ProviderModelKey      string                 `json:"providerModelKey,omitempty"`
-	APIFormat             string                 `json:"apiFormat"`
-	InterfaceType         string                 `json:"interfaceType"`
-	BaseURL               string                 `json:"baseUrl"`
-	APIKey                string                 `json:"apiKey"`
-	SecretKey             string                 `json:"secretKey"`
-	Headers               []OutboundHeader       `json:"headers"`
-	Model                 string                 `json:"model"`
-	Size                  string                 `json:"size"`
-	Quality               string                 `json:"quality"`
-	ImageResolution       string                 `json:"imageResolution"`
-	ImageParameters       map[string]any         `json:"imageParameters,omitempty"`
-	TransparentBackground string                 `json:"transparentBackground"`
-	Count                 string                 `json:"count"`
-	VideoSeconds          string                 `json:"videoSeconds"`
-	VQuality              string                 `json:"vquality"`
-	VideoGenerateAudio    string                 `json:"videoGenerateAudio"`
-	VideoWatermark        string                 `json:"videoWatermark"`
-	ArkPrivateAssetUpload string                 `json:"videoArkPrivateAssetUpload"`
-	AudioVoice            string                 `json:"audioVoice"`
-	AudioFormat           string                 `json:"audioFormat"`
-	AudioSpeed            string                 `json:"audioSpeed"`
-	AudioInstructions     string                 `json:"audioInstructions"`
-	AudioLanguage         string                 `json:"audioLanguage"`
-	AudioDialect          string                 `json:"audioDialect"`
-	SystemPrompt          string                 `json:"systemPrompt"`
-	CapabilityConfig      *ModelCapabilityConfig `json:"capabilityConfig"`
-	WorkflowID            string                 `json:"workflowId"`
-	WebappID              string                 `json:"webappId"`
-	WorkflowJSON          map[string]interface{} `json:"workflowJson"`
-	WorkflowFields        []WorkflowField        `json:"workflowFields"`
-	RunningHubUseWallet   bool                   `json:"runningHubUseWallet"`
-	RunningHubWalletKey   string                 `json:"runningHubWalletApiKey"`
-	RunningHubUploadKey   string                 `json:"runningHubUploadApiKey"`
+	mediaTransport        ReferenceMediaTransport // resolved from administrator settings; never deserialized from task input
+	ChannelID             string                  `json:"channelId"`
+	ChannelModelKey       string                  `json:"channelModelKey,omitempty"`
+	PriceTierID           string                  `json:"priceTierId,omitempty"`
+	ProviderModelKey      string                  `json:"providerModelKey,omitempty"`
+	APIFormat             string                  `json:"apiFormat"`
+	InterfaceType         string                  `json:"interfaceType"`
+	BaseURL               string                  `json:"baseUrl"`
+	APIKey                string                  `json:"apiKey"`
+	SecretKey             string                  `json:"secretKey"`
+	Headers               []OutboundHeader        `json:"headers"`
+	Model                 string                  `json:"model"`
+	Size                  string                  `json:"size"`
+	Quality               string                  `json:"quality"`
+	ImageResolution       string                  `json:"imageResolution"`
+	ImageParameters       map[string]any          `json:"imageParameters,omitempty"`
+	TransparentBackground string                  `json:"transparentBackground"`
+	Count                 string                  `json:"count"`
+	VideoSeconds          string                  `json:"videoSeconds"`
+	VQuality              string                  `json:"vquality"`
+	VideoGenerateAudio    string                  `json:"videoGenerateAudio"`
+	VideoWatermark        string                  `json:"videoWatermark"`
+	ArkPrivateAssetUpload string                  `json:"videoArkPrivateAssetUpload"`
+	AudioVoice            string                  `json:"audioVoice"`
+	AudioFormat           string                  `json:"audioFormat"`
+	AudioSpeed            string                  `json:"audioSpeed"`
+	AudioInstructions     string                  `json:"audioInstructions"`
+	AudioLanguage         string                  `json:"audioLanguage"`
+	AudioDialect          string                  `json:"audioDialect"`
+	SystemPrompt          string                  `json:"systemPrompt"`
+	CapabilityConfig      *ModelCapabilityConfig  `json:"capabilityConfig"`
+	WorkflowID            string                  `json:"workflowId"`
+	WebappID              string                  `json:"webappId"`
+	WorkflowJSON          map[string]interface{}  `json:"workflowJson"`
+	WorkflowFields        []WorkflowField         `json:"workflowFields"`
+	RunningHubUseWallet   bool                    `json:"runningHubUseWallet"`
+	RunningHubWalletKey   string                  `json:"runningHubWalletApiKey"`
+	RunningHubUploadKey   string                  `json:"runningHubUploadApiKey"`
 }
 
 const providerHTTPTimeout = 5 * time.Minute
@@ -200,22 +203,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		defer textPublisher.Close()
 	}
 	if isWorkflowProviderInterface(input.Config.InterfaceType) {
-		if err := s.RequireWorkflowPluginForInterface(input.Config.InterfaceType); err != nil {
-			return nil, err
-		}
-		if err := validateWorkflowProviderPromptLength(input); err != nil {
-			return nil, err
-		}
-		if err := validateWorkflowProviderConfig(input.Mode, input.Config); err != nil {
-			return nil, err
-		}
-		// 工作流参数由工作流字段定义校验，普通模型能力配置不能覆盖它们。
-		if resumedProviderRequestID(ctx) == "" {
-			if err := s.hydrateGenerationMedia(userID, &input, providerMediaHydrationPolicy{}); err != nil {
-				return nil, err
-			}
-		}
-		return s.runWorkflowProviderTask(ctx, input)
+		return s.processWorkflowGenerationTask(ctx, userID, input)
 	}
 	if input.Mode == "image" && input.Metadata != nil {
 		if err := s.applyGenerationStyleProfile(userID, taskProjectID, &input); err != nil {
@@ -234,8 +222,8 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	if err := s.validateGenerationInterface(input.Mode, input.Config.InterfaceType); err != nil {
 		return nil, err
 	}
-	if isVolcengineJiMengProtocol(input.Config.InterfaceType) && strings.TrimSpace(input.Config.SecretKey) == "" {
-		return nil, errors.New("即梦官方 API 缺少 Secret Key")
+	if adapter, ok := protocolAdapterForContext(ctx, input.Config.InterfaceType); ok && protocolAuthUsesSecretKey(adapter.Metadata().Auth) && strings.TrimSpace(input.Config.SecretKey) == "" {
+		return nil, fmt.Errorf("%s 协议缺少 Secret Key，请在渠道中配置后重试", adapter.Metadata().Name)
 	}
 	if input.Mode == "image" {
 		if err := s.validateResolvedImageCapability(&input); err != nil {
@@ -247,7 +235,13 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 			return nil, err
 		}
 	}
+	if err := s.validateArkPortraitReferences(userID, &input); err != nil {
+		return nil, err
+	}
 	if resumedProviderRequestID(ctx) == "" {
+		if err := validateReferenceTransportProtocol(ctx, input); err != nil {
+			return nil, err
+		}
 		mediaPolicy := providerMediaHydrationPolicyFor(ctx, input)
 		if err := s.hydrateGenerationMedia(userID, &input, mediaPolicy); err != nil {
 			return nil, err
@@ -265,18 +259,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 	case "image":
 		return runImageTask(ctx, input)
 	case "text":
-		if input.AgentRequests != nil {
-			input, err = resolveAgentResourcePlaceholders(input, true)
-			if err != nil {
-				return nil, err
-			}
-			return runAgentToolTask(ctx, input)
-		}
-		result, taskErr := runTextTask(ctx, input)
-		if taskErr == nil && promptTemplateOperation != "" {
-			taskErr = validatePromptTemplateResult(promptTemplateOperation, result)
-		}
-		return result, taskErr
+		return s.processTextGenerationTask(ctx, userID, input, promptTemplateOperation)
 	case "video":
 		return runVideoTask(ctx, input)
 	case "audio":
@@ -287,10 +270,12 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 }
 
 type providerMediaHydrationPolicy struct {
-	requireURL bool
-	preferURL  bool
-	imageOnly  bool
-	maxBytes   int64
+	forceBase64       bool
+	explicitTransport string
+	requireURL        bool
+	preferURL         bool
+	imageOnly         bool
+	maxBytes          int64
 }
 
 func providerMediaHydrationPolicyFor(ctx context.Context, input canvasGenerationInput) providerMediaHydrationPolicy {
@@ -363,18 +348,9 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		modelKey = requestedModel
 	}
 	if modelKey == "" {
-		channelModels, listErr := s.repo.ChannelModels(channel.ID, false)
-		if listErr != nil {
-			return providerConfig{}, listErr
-		}
-		if len(channelModels) > 0 {
-			modelKey = channelModels[0].ModelKey
-		} else {
-			models := channelModelNames(*channel)
-			if len(models) == 0 {
-				return providerConfig{}, errors.New("系统渠道未配置可用模型")
-			}
-			modelKey = models[0]
+		modelKey, err = s.defaultProviderChannelModelKey(channel)
+		if err != nil {
+			return providerConfig{}, err
 		}
 	}
 	if _, err := ValidateOutboundURL(channel.BaseURL); err != nil {
@@ -391,21 +367,17 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	if channelModel.Protocol == "" {
 		return providerConfig{}, errors.New("当前模型尚未配置请求协议")
 	}
-	providerModelKey := strings.TrimPrefix(strings.TrimSpace(config.ProviderModelKey), "models/")
-	if config.PriceTierID != "" {
-		matched := false
-		for _, tier := range channelModel.PriceTiers {
-			if tier.ID == config.PriceTierID && tier.Enabled && tier.PriceConfigured {
-				providerModelKey = firstNonEmpty(providerModelKey, tier.ProviderModelKey)
-				matched = true
-				break
-			}
+	if normalizeCapability(channelModel.Capability) == "text" {
+		// Admission strips client capabilities; restore the authoritative text
+		// contract for both queued tasks and Agent steps before resolving thinking.
+		config.CapabilityConfig, err = normalizedChannelModelCapability(channelModel, s.protocolRegistry())
+		if err != nil {
+			return providerConfig{}, InvalidModelSelection("指定的模型能力配置无效，请联系管理员")
 		}
-		if !matched {
-			return providerConfig{}, errors.New("当前模型规格价格档已更新，请重新创建任务")
-		}
-	} else if modelKey != "" && requestedModel != "" && modelKey != requestedModel {
-		return providerConfig{}, errors.New("系统渠道模型标识不一致")
+	}
+	providerModelKey, err := resolveProviderPriceTierModel(config, channelModel, modelKey, requestedModel)
+	if err != nil {
+		return providerConfig{}, err
 	}
 	config.InterfaceType = string(channelModel.Protocol)
 	config.APIFormat = channelAPIFormatForProtocol(channel.APIFormat, channelModel.Protocol)
@@ -414,6 +386,9 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	config.SecretKey = channel.SecretKey
 	config.Headers, err = ParseOutboundHeadersJSON(channel.HeadersJSON)
 	if err != nil {
+		return providerConfig{}, err
+	}
+	if err := s.applyProviderMediaTransport(&config, channel, channelModel); err != nil {
 		return providerConfig{}, err
 	}
 	config.ChannelModelKey = modelKey
@@ -537,4 +512,43 @@ func withSystemPrompt(config providerConfig, prompt string) string {
 
 func metadataString(metadata map[string]interface{}, key string) string {
 	return strings.TrimSpace(stringField(metadata, key))
+}
+
+func (s *Service) defaultProviderChannelModelKey(channel *model.ModelChannel) (string, error) {
+	modelKey := ""
+	channelModels, listErr := s.repo.ChannelModels(channel.ID, false)
+	if listErr != nil {
+		return "", listErr
+	}
+	if len(channelModels) > 0 {
+		modelKey = channelModels[0].ModelKey
+	} else {
+		models := channelModelNames(*channel)
+		if len(models) == 0 {
+			return "", errors.New("系统渠道未配置可用模型")
+		}
+		modelKey = models[0]
+	}
+	return modelKey, nil
+}
+
+func (s *Service) applyProviderMediaTransport(config *providerConfig, channel *model.ModelChannel, channelModel *model.ChannelModel) error {
+	channelTransport, err := s.channelMediaTransport(channel.ID)
+	if err != nil {
+		return err
+	}
+	modelCapability, err := DecodeModelCapabilityConfig(channelModel.CapabilityConfigJSON)
+	if err != nil {
+		return err
+	}
+	var modelTransport *ReferenceMediaTransport
+	if modelCapability != nil {
+		modelTransport = modelCapability.MediaTransport
+	}
+	modelTransport, err = normalizeReferenceMediaTransport(modelTransport)
+	if err != nil {
+		return err
+	}
+	config.mediaTransport = resolveReferenceMediaTransport(channelTransport, modelTransport)
+	return nil
 }

@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"gorm.io/gorm"
 	"maps"
 	"strings"
-
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
@@ -47,6 +47,16 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if err != nil {
 		return nil, err
 	}
+	if err := s.requireTaskGenerationFeatures(userID, req.ProjectID, taskType, req.Operation, req.workbenchKind, normalizedInput); err != nil {
+		return nil, err
+	}
+	prompt, err = s.prepareEcommerceWorkbenchTask(userID, normalizedInput, prompt)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.prepareEcommerceTaskModel(req, normalizedInput); err != nil {
+		return nil, err
+	}
 	// 视频处理（kind=processing）以源视频为主体，不要求 prompt；提示词由服务端生成，
 	// 源时长、帧率档和处理参数在这里按资源记录与后台配置重算。
 	processing, err := s.prepareVideoProcessingTask(userID, normalizedInput)
@@ -60,23 +70,8 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	if prompt == "" {
 		return nil, errors.New("prompt is required")
 	}
-	// Fail admission before queueing or charging; the worker validates again in
-	// case a tool is deleted or its visibility changes while queued.
-	toolMode, _ := normalizedInput["mode"].(string)
-	if toolMode == "" {
-		if strings.HasPrefix(taskType, "video_") || taskType == "canvas_video" {
-			toolMode = "video"
-		} else if taskType == "canvas_image" {
-			toolMode = "image"
-		}
-	}
-	if _, err := s.ResolveToolMentionTokens(userID, toolMode, prompt); err != nil {
+	if err := s.validateTaskPromptMentions(userID, taskType, prompt, normalizedInput); err != nil {
 		return nil, err
-	}
-	if inputPrompt, ok := normalizedInput["prompt"].(string); ok && inputPrompt != prompt {
-		if _, err := s.ResolveToolMentionTokens(userID, toolMode, inputPrompt); err != nil {
-			return nil, err
-		}
 	}
 
 	var routed *RoutedModel
@@ -232,6 +227,84 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 	s.recordActivity(userID, "task", 1)
 	_ = s.log(userID, task.ID, "info", "任务已进入队列", "")
 	return taskForOutput(task), nil
+}
+
+// Admission uses server-owned workbench identity and an owned ecommerce project.
+// Client metadata can request a stricter gate, but cannot grant an exemption.
+func (s *Service) requireTaskGenerationFeatures(userID, projectID, taskType, operation, workbenchKind string, input map[string]any) error {
+	metadata, _ := input["metadata"].(map[string]any)
+	ecommerce, err := s.taskEcommerceProjectOwned(userID, projectID, strings.TrimSpace(stringValue(metadata["ecommerceProjectId"])))
+	if err != nil {
+		return err
+	}
+	if stringValue(metadata["source"]) == "ecommerce-agent" && !ecommerce {
+		return BadAuthRequest("电商任务必须关联当前用户的电商项目")
+	}
+	if ecommerce {
+		if err := s.RequireFeature(FeatureEcommerce); err != nil {
+			return err
+		}
+	}
+	if workbenchKind == "" {
+		workbenchKind = workbenchKindFromTaskInput(input, taskType)
+	}
+	if !ecommerce && workbenchKind == "" {
+		return nil
+	}
+	// The provider dispatches by mode; type and persisted kind are additional
+	// evidence so a mismatched public request cannot weaken media admission.
+	if isVideoTaskType(taskType) || stringValue(input["mode"]) == "video" || workbenchKind == WorkbenchKindVideo {
+		if ecommerce {
+			if err := s.RequireFeature(FeatureEcommerceVideo); err != nil {
+				return err
+			}
+		}
+		return s.RequireFeature(FeatureVideoWorkbench)
+	}
+	if taskType == "canvas_image" || stringValue(input["mode"]) == "image" || workbenchKind == WorkbenchKindImage {
+		return s.RequireFeature(FeatureImageWorkbench)
+	}
+	return nil
+}
+
+func (s *Service) validateTaskPromptMentions(userID, taskType, prompt string, input map[string]any) error {
+	// Fail admission before queueing or charging; the worker validates again in
+	// case a tool is deleted or its visibility changes while queued.
+	mode, _ := input["mode"].(string)
+	if mode == "" {
+		if strings.HasPrefix(taskType, "video_") || taskType == "canvas_video" {
+			mode = "video"
+		} else if taskType == "canvas_image" {
+			mode = "image"
+		}
+	}
+	if _, err := s.ResolveToolMentionTokens(userID, mode, prompt); err != nil {
+		return err
+	}
+	if inputPrompt, ok := input["prompt"].(string); ok && inputPrompt != prompt {
+		if _, err := s.ResolveToolMentionTokens(userID, mode, inputPrompt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) taskEcommerceProjectOwned(userID, projectID, ecommerceID string) (bool, error) {
+	ecommerce := false
+	if ecommerceID != "" {
+		if _, err := s.repo.EcommerceProject(userID, ecommerceID); err != nil {
+			return false, NotFound("电商项目不存在")
+		}
+		ecommerce = true
+	}
+	if projectID = strings.TrimSpace(projectID); projectID != "" && projectID != ecommerceID {
+		if _, err := s.repo.EcommerceProject(userID, projectID); err == nil {
+			ecommerce = true
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, err
+		}
+	}
+	return ecommerce, nil
 }
 
 // resolveTaskModelSelection 根据请求实际携带的模型选择决定路由方式。
@@ -646,131 +719,3 @@ func (s *Service) resolveSystemChannelModelSelection(access *userGroupAccess, in
 
 // applyChannelCapabilityDefaults 只采用管理员保存的能力默认值，且仅填补客户端未表达的参数。
 // 这些值随后会写回 capabilityOptions，使能力校验、SKU 选择和 provider 执行看到同一份规格。
-func applyChannelCapabilityDefaults(config map[string]any, capability string, profile *ModelCapabilityConfig) {
-	setDefault := func(key string, value any) {
-		if existing, exists := config[key]; !exists || existing == nil || strings.TrimSpace(fmt.Sprint(existing)) == "" {
-			// providerConfig uses string-valued controls, including booleans and counts.
-			config[key] = fmt.Sprint(value)
-		}
-	}
-	switch normalizeCapability(capability) {
-	case "image":
-		if profile == nil || profile.Image == nil {
-			return
-		}
-		if profile.Image.Parameters != nil {
-			for _, parameter := range profile.Image.Parameters {
-				if parameter.IsEnabled() && parameter.Default != nil && isCapabilityOptionFor("image", parameter.Name) {
-					setDefault(parameter.Name, parameter.Default)
-				}
-			}
-			return
-		}
-		if profile.Image.Size.Parameter != "none" {
-			setDefault("size", profile.Image.Size.Default)
-		}
-		if profile.Image.Resolution.Supported {
-			setDefault("imageResolution", profile.Image.Resolution.Default)
-		}
-		if profile.Image.Quality.Supported {
-			setDefault("quality", profile.Image.Quality.Default)
-		}
-		setDefault("transparentBackground", profile.Image.TransparentBackground.Default)
-		setDefault("count", 1)
-	case "video":
-		if profile == nil || profile.Video == nil {
-			return
-		}
-		if videoDurationSupported(profile.Video) {
-			setDefault("videoSeconds", profile.Video.Duration.Default)
-		}
-		setDefault("size", profile.Video.DefaultRatio)
-		setDefault("vquality", profile.Video.DefaultResolution)
-		setDefault("videoGenerateAudio", profile.Video.GenerateAudio.Default)
-		setDefault("videoWatermark", profile.Video.Watermark.Default)
-	}
-}
-
-func capabilityOptionsFromConfig(capability string, config map[string]any, declared map[string]OptionConstraint) map[string]any {
-	options := map[string]any{}
-	if capability == "image" {
-		if parameters, ok := config["imageParameters"].(map[string]any); ok {
-			return maps.Clone(parameters)
-		}
-	}
-	for key, value := range config {
-		canonical := canonicalCapabilityOptionName(key)
-		if !isCapabilityOptionFor(capability, canonical) || value == nil || strings.TrimSpace(fmt.Sprint(value)) == "" {
-			continue
-		}
-		if declared != nil {
-			if _, ok := declared[canonical]; !ok {
-				continue
-			}
-		}
-		options[canonical] = value
-	}
-	return options
-}
-
-func taskInputUsesCustomChannel(input map[string]any) bool {
-	if taskInputUsesWorkflowProvider(input) {
-		return false
-	}
-	config, ok := input["config"].(map[string]any)
-	if !ok {
-		return false
-	}
-	channelID, _ := config["channelId"].(string)
-	baseURL, _ := config["baseUrl"].(string)
-	apiKey, _ := config["apiKey"].(string)
-	if strings.TrimSpace(channelID) != "" || systemChannelIDFromBaseURL(baseURL) != "" {
-		return false
-	}
-	return strings.TrimSpace(baseURL) != "" && strings.TrimSpace(apiKey) != ""
-}
-
-func taskInputUsesSystemChannel(input map[string]any) bool {
-	config, ok := input["config"].(map[string]any)
-	if !ok {
-		return false
-	}
-	channelID, _ := config["channelId"].(string)
-	return strings.TrimSpace(channelID) != ""
-}
-
-func taskInputUsesWorkflowProvider(input map[string]any) bool {
-	config, ok := input["config"].(map[string]any)
-	if !ok {
-		return false
-	}
-	// 系统渠道的 interfaceType 是客户端缓存，不是授权事实；必须先走系统模型 admission，
-	// 不能通过伪造工作流协议绕开渠道模型、能力和价格校验。
-	if strings.TrimSpace(stringValue(config["channelId"])) != "" {
-		return false
-	}
-	return isWorkflowProviderInterface(strings.TrimSpace(fmt.Sprint(config["interfaceType"])))
-}
-
-func compactPersistedValue(value interface{}) interface{} {
-	switch item := value.(type) {
-	case map[string]interface{}:
-		result := make(map[string]interface{}, len(item))
-		for key, child := range item {
-			if text, ok := child.(string); ok && strings.HasPrefix(text, "data:") {
-				result[key] = ""
-				continue
-			}
-			result[key] = compactPersistedValue(child)
-		}
-		return result
-	case []interface{}:
-		result := make([]interface{}, len(item))
-		for index, child := range item {
-			result[index] = compactPersistedValue(child)
-		}
-		return result
-	default:
-		return value
-	}
-}

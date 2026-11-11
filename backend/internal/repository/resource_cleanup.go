@@ -13,6 +13,29 @@ import (
 var ErrResourceCleanupSetChanged = errors.New("待清理的资源已变化，请刷新后重试")
 var ErrResourceCleanupStillReferenced = errors.New("资源仍被引用，暂不清理")
 
+func resourceCleanupDocuments(tx *gorm.DB, current []model.Resource) (map[string][]string, error) {
+	documentsByUser := map[string][]string{}
+	for _, resource := range current {
+		if _, loaded := documentsByUser[resource.UserID]; loaded {
+			continue
+		}
+		var assetDocuments []string
+		if err := tx.Model(&model.Asset{}).Where("user_id = ?", resource.UserID).Pluck("payload_json", &assetDocuments).Error; err != nil {
+			return nil, err
+		}
+		var canvasDocuments []string
+		if err := tx.Model(&model.CanvasProject{}).Where("user_id = ?", resource.UserID).Pluck("payload_json", &canvasDocuments).Error; err != nil {
+			return nil, err
+		}
+		var feedbackDocuments []string
+		if err := tx.Model(&model.UserFeedback{}).Where("user_id = ?", resource.UserID).Pluck("attachments", &feedbackDocuments).Error; err != nil {
+			return nil, err
+		}
+		documentsByUser[resource.UserID] = append(append(assetDocuments, canvasDocuments...), feedbackDocuments...)
+	}
+	return documentsByUser, nil
+}
+
 // DeleteDetachedResources removes Resource rows and enqueues physical deletion in one transaction.
 // JSON references are checked by the service before this call; direct foreign-key-like references
 // are checked again while the candidate rows are locked to avoid deleting a newly attached object.
@@ -39,20 +62,9 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 		// The service performs exact JSON parsing before entering this transaction.
 		// This conservative second check closes the common race where an Asset or
 		// canvas is attached after that snapshot but before Resource deletion.
-		documentsByUser := map[string][]string{}
-		for _, resource := range current {
-			if _, loaded := documentsByUser[resource.UserID]; loaded {
-				continue
-			}
-			var assetDocuments []string
-			if err := tx.Model(&model.Asset{}).Where("user_id = ?", resource.UserID).Pluck("payload_json", &assetDocuments).Error; err != nil {
-				return err
-			}
-			var canvasDocuments []string
-			if err := tx.Model(&model.CanvasProject{}).Where("user_id = ?", resource.UserID).Pluck("payload_json", &canvasDocuments).Error; err != nil {
-				return err
-			}
-			documentsByUser[resource.UserID] = append(assetDocuments, canvasDocuments...)
+		documentsByUser, err := resourceCleanupDocuments(tx, current)
+		if err != nil {
+			return err
 		}
 		for _, resource := range current {
 			storageKey := "resource:" + resource.ID + `"`

@@ -83,6 +83,7 @@ func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, rea
 			current.Status = "rejected"
 			current.FailureMessage = ""
 			state.Approval = nil
+			state.MediaBatch = nil
 			state.event(id, "approval_decided", map[string]any{
 				"approvalId": approvalID,
 				"decision":   decision,

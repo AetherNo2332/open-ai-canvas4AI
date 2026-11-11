@@ -71,6 +71,9 @@ func (s *Service) routeCloudAgentToolCall(run *model.CloudAgentExecution, state 
 	if allowed && call.Function.Name == "storyboard" {
 		return s.executeCloudAgentStoryboard(run, state, call)
 	}
+	if allowed && call.Function.Name == "generate_media_batch" && state.Approval == nil {
+		return s.requestCloudAgentMediaBatchApproval(run, state, call)
+	}
 	mediaTool := call.Function.Name == "generate_media"
 	if allowed && cloudAgentWriteCall(call) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
 		return s.requestCloudAgentWriteApproval(run, state, call)
@@ -86,6 +89,12 @@ func (s *Service) routeCloudAgentToolCall(run *model.CloudAgentExecution, state 
 // executeCloudAgentAdmittedToolCall 执行已过审批闸门的调用：已批准的媒体生成、导演台预览和子代理创建在检查点事务外执行，
 // 其余工具在检查点事务里执行。
 func (s *Service) executeCloudAgentAdmittedToolCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) error {
+	if allowed && call.Function.Name == "generate_media_batch" && state.Approval != nil && state.Approval.Decision == "approve" {
+		return s.startCloudAgentMediaBatch(run, state, call)
+	}
+	if allowed && call.Function.Name == "media_batch_control" {
+		return s.advanceCloudAgentMediaBatchControl(run, state, call)
+	}
 	if allowed && (call.Function.Name == "generate_media") && state.Approval != nil && state.Approval.Decision == "approve" {
 		return s.executeCloudAgentMediaCall(run, state, call)
 	}
@@ -217,7 +226,7 @@ func (s *Service) readCloudAgentToolOutsideCheckpoint(run *model.CloudAgentExecu
 	}
 	// Service-backed reads, including outbound search, run before the checkpoint
 	// transaction to avoid nested DB reads and holding a write lock during HTTP.
-	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "model_list") {
+	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "model_list" || call.Function.Name == "canvas_preflight") {
 		reads.skillResult, reads.skillErr = cloudAgentReadToolCached(s.repo, run.UserID, state, call, s)
 	}
 	// 长期记忆写的是用户自己的记忆文件（独立的 CAS 与修订事务），不是画布：在检查点事务外执行，
@@ -308,6 +317,8 @@ func runCloudAgentCanvasWriteTool(tc *cloudAgentToolCheckpoint, repo *repository
 	var result any
 	var toolErr error
 	switch {
+	case call.Function.Name == "canvas_build_board":
+		result, toolErr = applyCloudAgentBuildBoard(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 	case call.Function.Name == "canvas_apply_ops":
 		result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, state.Request.StoryboardDisabled, cloudAgentCanvasEventRecorder(run.ID, state))
 	case call.Function.Name == "canvas_bind_asset":
@@ -357,7 +368,7 @@ func (s *Service) runCloudAgentControlTool(tc *cloudAgentToolCheckpoint, current
 		// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
 		result, err := cloudAgentFinishRun(run.ID, state, call)
 		return cloudAgentToolOutcome{result: result, toolErr: err}
-	case "web_search", "model_list", "memory_update":
+	case "web_search", "model_list", "memory_update", "canvas_preflight":
 		return cloudAgentToolOutcome{result: tc.outside.skillResult, toolErr: tc.outside.skillErr}
 	}
 	result, err := cloudAgentReadToolCached(repo, run.UserID, state, call)

@@ -31,6 +31,7 @@ func commandResourceTestDB(t *testing.T) (*gorm.DB, *Repository) {
 		&model.CanvasCommandResource{}, &model.CanvasTaskResource{}, &model.CloudAgentResourceLease{},
 		&model.Tool{}, &model.WorkbenchTool{}, &model.Task{}, &model.TaskLog{}, &model.Result{},
 		&model.CreationRun{}, &model.CreationSubmission{}, &model.Project{}, &model.StyleProfile{},
+		&model.EcommerceProject{}, &model.UserFeedback{},
 		&model.ProjectAssetCandidate{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{},
 		&model.Shot{}, &model.ShotArtifact{}, &model.VoiceProfile{}, &model.Announcement{},
 		&model.AnnouncementImageDraft{}, &model.ArkPrivateAssetBinding{}, &model.ResourceDeletionJob{},
