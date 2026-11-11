@@ -41,6 +41,9 @@ func declarativeProtocolPollPolicy(mode string) videoPollPolicy {
 		MaxDownloadTries:    3,
 		TransientRetryLimit: asyncPollTransientRetries(),
 		Sleep:               sleepContext,
+		// 轮询分类已迁 polling：现有 HTTP 客户端错误必须先经 Translate 转为
+		// 稳定错误事实，503/超时才能按 TransientRetryLimit 重试。
+		Translate: translateVideoPollError,
 	}
 }
 
