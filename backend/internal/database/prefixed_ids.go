@@ -32,6 +32,24 @@ var prefixedIDDefinitions = []prefixedIDDefinition{
 	{prefix: "ROUTE", model: &model.LogicalModelRoute{}},
 }
 
+// PrefixedIDSequenceFloor reads the business-ID floor for a known sequence.
+// Migration verification uses the same definitions as allocation/reconciliation
+// without writing to the read-only SQLite source or an existing target.
+func PrefixedIDSequenceFloor(db *gorm.DB, sequenceName string) (int64, bool, error) {
+	if db == nil {
+		return 0, false, errors.New("database handle is nil")
+	}
+	if !strings.HasPrefix(sequenceName, "id:") {
+		return 0, false, nil
+	}
+	definition, known := prefixedIDDefinitionFor(strings.TrimPrefix(sequenceName, "id:"))
+	if !known || !db.Migrator().HasTable(definition.model) {
+		return 0, known, nil
+	}
+	maximum, err := maxPrefixedBusinessID(db, definition)
+	return maximum, true, err
+}
+
 // ReconcilePrefixedIDSequences advances all known readable-ID sequences to at
 // least the largest valid business ID. It never moves a sequence backwards.
 // Soft-deleted rows are included deliberately: their IDs remain reserved.

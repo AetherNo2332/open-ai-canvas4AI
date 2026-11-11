@@ -1,0 +1,16 @@
+# 依赖
+/node_modules
+
+# Fumadocs 生成物
+.source
+
+# 构建与测试
+/.next/
+/out/
+/build
+*.tsbuildinfo
+
+# 本机环境
+.env*.local
+.vercel
+next-env.d.ts

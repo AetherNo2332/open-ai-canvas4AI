@@ -13,11 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Models 是应用持久化表的唯一清单，服务启动和跨数据库迁移必须共用它。
-func Models() []any {
-	return append(append(appModels(), AgentRuntimeModels()...), &model.PlatformSubmission{}, &model.PlatformTaskEvent{}, &model.PlatformEventCounter{})
-}
-
 func appModels() []any {
 	return append(baseAppModels(), businessModels()...)
 }
@@ -187,7 +182,7 @@ func migrateSchemaV1(db *gorm.DB) error {
 	if err := migrateLogicalRoutesToChannelModels(db); err != nil {
 		return err
 	}
-	if err := db.AutoMigrate(Models()...); err != nil {
+	if err := db.AutoMigrate(baselineModels()...); err != nil {
 		return err
 	}
 	if err := backfillProjectUnitWordCounts(db); err != nil {

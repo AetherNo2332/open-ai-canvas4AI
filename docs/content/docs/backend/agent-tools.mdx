@@ -3,8 +3,6 @@ title: Agent 工具目录
 description: Agent（beta）的当前工具总数、按需披露和执行边界
 ---
 
-# Agent 工具目录
-
 管理员在「Agent（beta）」查看当前工具总数。数字由后端当前工具目录实时计算，包含原生技能读取和父子代理的工具全集；实际每轮可用范围仍按权限、任务、上下文和开关筛选。页面读取失败时显示暂不可用，不把未知状态显示为零；重新读取配置时同步更新工具数量。卡片沿用后台皮肤圆角。
 
 `GET /api/admin/settings/agent-scheduler` 返回 `{ setting, toolCount }`。该接口继续要求管理员身份，数量不是可编辑配置项；更新配置继续返回保存后的 `setting`。

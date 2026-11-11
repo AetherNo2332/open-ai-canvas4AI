@@ -56,40 +56,7 @@ func main() {
 	source = source.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
 	target = target.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
 
-	// PostgreSQL 的 DDL 参与事务；任一表复制或核对失败都会回滚整个新库结构。
-	if err := target.Transaction(func(tx *gorm.DB) error {
-		tableNames, err := publicTableNames(tx)
-		if err != nil {
-			return err
-		}
-		copyRows := len(tableNames) == 0
-		if copyRows {
-			if err := database.MigrateSchema(tx); err != nil {
-				return fmt.Errorf("创建目标表结构：%w", err)
-			}
-		} else if err := validateTargetTableNames(tableNames); err != nil {
-			return err
-		}
-
-		total := 0
-		for _, migration := range migrations() {
-			count, err := migration.run(source, tx, copyRows)
-			if err != nil {
-				return fmt.Errorf("迁移表 %s：%w", migration.name, err)
-			}
-			total += count
-			log.Printf("已迁移并核对 %s：%d 行", migration.name, count)
-		}
-		if copyRows {
-			log.Printf("全量迁移核对完成：%d 张表，%d 行", len(migrations()), total)
-		} else {
-			log.Printf("目标库已有完整迁移结果，未重复写入：%d 张表，%d 行", len(migrations()), total)
-		}
-		if err := database.ReconcilePrefixedIDSequences(tx); err != nil {
-			return fmt.Errorf("校准可读 ID 序列：%w", err)
-		}
-		return nil
-	}); err != nil {
+	if err := runMigration(source, target); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -415,7 +382,7 @@ var baseTableMigrations = []tableMigration{
 	migrateTable[model.ModelChannel]("model_channels"),
 	migrateTable[model.ChannelModel]("channel_models"),
 	migrateTable[model.ChannelModelPriceTier]("channel_model_price_tiers"),
-	migrateTable[model.IDSequence]("id_sequences"),
+	migrateIDSequences(),
 	migrateTable[model.LogicalModel]("logical_models"),
 	migrateTable[model.LogicalModelRevision]("logical_model_revisions"),
 	migrateTable[model.LogicalModelRoute]("logical_model_routes"),
@@ -456,6 +423,11 @@ var baseTableMigrations = []tableMigration{
 	migrateTable[model.SkillLibraryCategory]("skill_library_categories"),
 	migrateTable[model.SkillVersion]("skill_versions"),
 	migrateTable[model.SkillFile]("skill_files"),
+	migrateSeededTable[model.SkillCurationSetting]("skill_curation_settings"),
+	migrateSeededTable[model.SkillCurationRoot]("skill_curation_roots"),
+	migrateTable[model.SkillCurationCategory]("skill_curation_categories"),
+	migrateTable[model.SkillCurationAssignment]("skill_curation_assignments"),
+	migrateTable[model.SkillCurationRootAssignment]("skill_curation_root_assignments"),
 	migrateTable[model.UserSkillState]("user_skill_states"),
 	migrateTable[model.BuiltinSkillTombstone]("builtin_skill_tombstones"),
 	migrateTable[model.Resource]("resources"),

@@ -24,6 +24,7 @@ docs/content/docs/backend/*
 !docs/content/docs/backend/canvas-agent-appearance.mdx
 !docs/content/docs/backend/update-announcements.mdx
 !docs/content/docs/backend/http-api.mdx
+!docs/content/docs/backend/creation-platform-sdk.mdx
 !docs/content/docs/backend/code-map.mdx
 !docs/content/docs/backend/newapi-channel-2.mdx
 !docs/content/docs/backend/bailian-minimax-video.mdx
@@ -39,6 +40,24 @@ docs/content/docs/canvas/*
 docs/content/docs/overview/*
 !docs/content/docs/overview/creative-agent-design.mdx
 !docs/content/docs/overview/ecommerce-platform-rules.mdx
+# Version the docs site (Next.js + Fumadocs) without unignoring generated docs.
+!docs/package.json
+!docs/bun.lock
+!docs/.gitignore
+!docs/README.md
+!docs/next.config.mjs
+!docs/postcss.config.mjs
+!docs/tsconfig.json
+!docs/source.config.ts
+!docs/app/
+!docs/lib/
+!docs/components/
+!docs/content/docs/index.mdx
+!docs/content/docs/meta.json
+!docs/content/docs/overview/meta.json
+!docs/content/docs/canvas/meta.json
+!docs/content/docs/plugins/meta.json
+!docs/content/docs/progress/meta.json
 .env*
 !.env.example
 data/

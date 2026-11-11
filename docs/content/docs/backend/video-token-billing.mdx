@@ -3,8 +3,6 @@ title: 视频 Token 计费
 description: 所有视频模型共用火山式公式定价、预留与用量结算
 ---
 
-# 视频 Token 计费
-
 所有系统视频模型均支持 `billingMode: "token"`，不设协议白名单，包括 `newapi-channel-2`、Ark、Agent Plan 和自定义视频协议。当前统一采用火山式像素帧公式：有有效上游用量时优先采用上游数值；没有有效用量时按提交时保存的公式 Token 数结算。图片和音频仍不开放 Token 定价。
 
 ## 管理员配置
