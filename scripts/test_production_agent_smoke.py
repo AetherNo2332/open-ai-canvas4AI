@@ -71,6 +71,13 @@ class ProductionSmokeTests(unittest.TestCase):
                              ("PATCH", "/admin/channels/channel-1/models/model-1"))
             self.assertEqual(api.call_args_list[1].args[2]["modelKey"], "agent-parity-model")
             self.assertTrue(api.call_args_list[1].args[2]["enabled"])
+            thinking = api.call_args_list[1].args[2]["capabilityConfig"]["text"]["thinking"]
+            self.assertIsInstance(thinking, dict)
+            self.assertEqual(thinking["mode"], "toggle")
+            self.assertEqual(thinking["levels"], ["off", "medium"])
+            self.assertEqual(thinking["default"], "off")
+            self.assertEqual(thinking["switch"]["kind"], "enable-flag")
+            self.assertEqual(thinking["intensity"], {"kind": "none"})
 
     def test_media_versions_checks_node_metadata_history(self):
         with tempfile.TemporaryDirectory() as directory:

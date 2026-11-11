@@ -172,7 +172,7 @@ class Acceptance:
         existing = next((row for row in rows if row["modelKey"] == "agent-parity-model"), None)
         model_path = f"/admin/channels/{self.channel}/models" + ("/" + existing["id"] if existing else "")
         self.api("PATCH" if existing else "POST", model_path, {"modelKey": "agent-parity-model", "providerModelKey": "agent-parity-model", "displayName": "Canvas parity test", "capability": "text", "protocol": "chat-completion", "billingMode": "token", "priceConfigured": True, "enabled": True, "inputTokenPriceMicrocredits": 0, "outputTokenPriceMicrocredits": 0,
-            "capabilityConfig": {"version": 1, "text": {"streaming": False, "thinking": False, "contextWindowTokens": 128000, "maxOutputTokens": 32000, "references": {"promptMaxChars": 32000}}}})
+            "capabilityConfig": {"version": 1, "text": {"streaming": False, "thinking": {"mode": "toggle", "levels": ["off", "medium"], "default": "off", "switch": {"kind": "enable-flag"}, "intensity": {"kind": "none"}}, "contextWindowTokens": 128000, "maxOutputTokens": 32000, "references": {"promptMaxChars": 32000}}}})
         self.save()
 
     def inspect_3030(self):
