@@ -1,5 +1,5 @@
 # CHANGELOG
-## v1.8.3(17c835f)
+## v1.8.3(83d322c)
 
 - 新增文档站工具链：`docs/` 以 Next.js 16 + Fumadocs 构建，提供首页、文档路由、侧栏目录、全站搜索与明暗主题；`bun run dev` 本地预览，`bun run types:check` / `bun run build` 校验。
 - 新增 `Docs build` CI 任务：使用冻结的 `docs/bun.lock` 安装依赖，执行类型检查与生产构建；文档内容语法错误会在 PR 阶段暴露。
