@@ -6,6 +6,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scripts = fileURLToPath(new URL("../../.github/scripts/", import.meta.url));
+// Windows 下裸名 "bash" 可能解析到 System32 的 WSL 入口，它无法执行 Windows 路径下的仓库脚本（返回 127）。
+let bashCommand;
+function resolveBash() {
+    if (bashCommand) return bashCommand;
+    bashCommand = "bash";
+    if (process.platform !== "win32") return bashCommand;
+    const isPosixBash = (candidate) => {
+        if (!existsSync(candidate)) return false;
+        const result = spawnSync(candidate, ["-c", "uname -s"], { encoding: "utf8" });
+        return result.status === 0 && /MINGW|MSYS|CYGWIN/.test(result.stdout);
+    };
+    for (const directory of process.env.PATH.split(";")) {
+        const candidate = path.join(directory.trim().replace(/^"|"$/g, ""), "bash.exe");
+        if (isPosixBash(candidate)) return (bashCommand = candidate);
+    }
+    // Git for Windows 的默认安装位置不保证在 PATH 上，作为确定性兜底。
+    for (const candidate of ["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files\\Git\\usr\\bin\\bash.exe"]) {
+        if (isPosixBash(candidate)) return (bashCommand = candidate);
+    }
+    return bashCommand;
+}
 const temporaryDirectories = [];
 const sha = "a".repeat(40);
 const digest = "b".repeat(64);
@@ -46,7 +67,7 @@ function fixture(overrides = {}) {
         ...overrides,
     };
     return {
-        run: (script, ...args) => spawnSync("bash", [path.join(scripts, script), ...args], { env, encoding: "utf8" }),
+        run: (script, ...args) => spawnSync(resolveBash(), [path.join(scripts, script), ...args], { env, encoding: "utf8" }),
         output: () => readFileSync(output, "utf8"),
         call: () => (existsSync(env.MOCK_CALL) ? readFileSync(env.MOCK_CALL, "utf8") : ""),
     };

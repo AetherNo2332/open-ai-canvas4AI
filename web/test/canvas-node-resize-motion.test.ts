@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { runBunHarness } from "./run-bun-harness";
 
 import { createCanvasNodeResizeMotion } from "../src/lib/canvas/canvas-node-resize-motion";
 import { applyNodeConfigPatch } from "../src/lib/canvas/canvas-project-domain";
@@ -163,9 +163,8 @@ describe("画布比例切换的临时几何", () => {
     });
 });
 
-test("真实节点、连线路径、连续切换和动效偏好共享显示几何", () => {
-    const result = Bun.spawnSync([process.execPath, "test", "./test/fixtures/canvas-node-resize-motion.harness.tsx"], { cwd: resolve(import.meta.dir, ".."), timeout: 15000 });
-    const output = new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr);
+test("真实节点、连线路径、连续切换和动效偏好共享显示几何", async () => {
+    const { exitCode, output } = await runBunHarness(["test", "./test/fixtures/canvas-node-resize-motion.harness.tsx"], 15000);
     expect(output).toContain("0 fail");
-    expect(result.exitCode, output).toBe(0);
+    expect(exitCode, output).toBe(0);
 }, 20000);

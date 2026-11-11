@@ -6,9 +6,10 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 ## 架构基线与测试调度
 
 - 已实现跨版本基线单向约束、迁移证据检查、统一验证影子计划及 Web 唯一调度入口。当前尚未切换 affected 门禁；业务域迁移仍属后续任务。
+- 已修复九个 Windows Web 测试失败：WSL bash 误选（ci-image-release 127）、路径分隔符白名单（http-ownership）、Bun spawnSync 空闲超时缺陷（oven-sh/bun#33932，23 个 harness 测试改异步 spawn 包装）。本地完整入口 3479 pass / 5 skip / 0 fail。
 - [ ] 在真实 PR CI 核对 PR base、影子 artifact、后端基线比较、所有原门禁和 docs 门禁。
 - [ ] 在主干 push 核对 before；无可信基准应失败，不能回退为空基线。
-- [ ] 在 Linux CI 确认 Web 两个原隔离组与普通集合各执行一次；记录真实墙钟时间，不承诺提速比例。
+- [ ] 在 Linux CI 确认 Web 两个原隔离组与普通集合各执行一次，并确认 bash 探测与异步 harness 包装在 Linux 行为一致；记录真实墙钟时间，不承诺提速比例。
 
 ## 创作平台 SDK：SQLite → PostgreSQL 全量搬迁修复
 

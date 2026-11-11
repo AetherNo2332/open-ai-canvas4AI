@@ -53,3 +53,14 @@
 - 普通集合的 5 skip 需要真实后端，未视为通过。完整 Web 门禁仍未通过，不能作为可推送证明。
 - 独立只读评审发现并修复：工作区回改抵消已提交差异的漏选（新增 fixture RED→GREEN）；full 影子计划遗漏部分门禁（补充格式、vet、工具合同、lint、changelog、部署命令等声明）。评审未提出删除或绕过失败测试。
 - CI、支付双架构、PostgreSQL/Redis、真实 Agent smoke、浏览器 E2E 和 docs 站完整构建尚未在本批本地覆盖；本批未推送，也未宣称通过完整推送前脚本。
+
+## Web 失败收口（2026-11-12 第二批）
+
+在原 9 个失败不掩盖、不删除测试的前提下修复，全部保留原有断言与覆盖：
+
+1. `ci-image-release.test.mjs` 5 个失败：根因是 `spawnSync("bash")` 裸名解析到 System32 的 WSL bash，无法执行 Windows 路径下的仓库脚本（exit 127）。RED：把 PATH 限定为 System32 后专项复现 7 pass / 5 fail，与交接记录一致。修复：按 PATH 顺序探测 `bash.exe` 并用 `uname -s` 校验 MINGW/MSYS/CYGWIN（拒绝 WSL 入口），再以 Git for Windows 默认安装位置兜底；找不到 POSIX bash 时保留裸名让失败如实出现。GREEN：正常 PATH 与 System32-only PATH 两种环境均 12/12。
+2. `http-ownership.test.ts` 2 个失败：`relative()` 在 Windows 返回反斜杠，与正斜杠白名单比较永不匹配。RED 专项复现。修复：新增 `toPosix` 统一规范化后再比较；第三个测试的排除路径同样存在该问题，一并修正（POSIX 下 toPosix 为恒等，不改变原断言）。
+3. `canvas-bottom-controls` / `canvas-reference-migration` 全量时 `exitCode=null`（16ms 内返回、子进程无输出）：确证为 Bun 1.3.2–1.3.14 已知缺陷 oven-sh/bun#33932——`spawnSync({timeout})` 的计时器用缓存循环时钟，父进程空闲后有效超时被清零并立即杀掉子进程；本机 bun 1.3.9 实证：空闲 21 秒后 sync 调用 6ms 即被 SIGTERM。专项立即运行不触发，因此单独重跑通过。修复：新增 `web/test/run-bun-harness.ts`（异步 `Bun.spawn` + 手动计时器 + 超时标记），迁移全部 23 个同型调用点；本机实证空闲 21 秒后异步包装正常返回，避免下次全量换成其他文件闪失败。
+- 验证：`bunx tsc --noEmit` 通过；改动文件 Prettier 与 eslint 通过；`bun run test` 完整入口 EXIT=0——regressions 8 文件 0.30s、canvas-grid 1 文件 0.12s、普通 512 文件 3479 pass / 5 skip / 0 fail / 190.89s（5 skip 仍需真实后端，不计通过）。上次同集合 268.61s 与本次 190.89s 环境不同，不据此宣称提速。
+- 新增 helper `web/test/run-bun-harness.ts` 不匹配测试发现模式，普通集合仍为 512 文件。
+- 本批未运行完整推送前 runner；Linux CI、docs 构建、支付双架构等仍未覆盖。待 CI 在 Linux 确认三组与普通集合行为一致。
