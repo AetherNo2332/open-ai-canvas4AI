@@ -69,7 +69,8 @@
 ### Agent、插件、CI 和文档
 
 - 修改 `docs/` 前确认内容属于专题文档，而不是把长篇说明重新复制到根 README。目录索引见 `docs/index.md`。
-- `.github/workflows/quality.yml` 是 PR 与推送门禁（`agent`、`backend`、`payment-plugins`、`web`、`changelog`、`production-agent-smoke`）。backend 显式运行 gofmt、vet、Agent 工具合同检查与后端架构守卫（`internal/architecture`，见第 3 节「后端」），全量测试里的 `handler/openapi_contract_test.go` 要求规范中没有未注册路由、未写入规范的公共路由按 `openapi-route-baseline.txt` 精确登记（新增路由应写进规范，不往基线里加）；生产 smoke 以 deploy+build 编排和确定性模型跑真实跨进程链路。`publish-images.yml` 在 main/tag 构建 web、backend、agent 三份镜像。新增门禁或脚本时同步更新本节和第 8 节。
+- `docs/` 是独立的 Next.js + Fumadocs 站点：依赖与脚本在 `docs/package.json`（只提交 `docs/bun.lock`），集合定义在 `docs/source.config.ts`，页面在 `docs/content/docs/`。新增页面要同步同目录 `meta.json`，并在根 `.gitignore` 放行该文件（仓库只跟踪显式列出的文档）。本地用 `cd docs && bun install && bun run dev` 预览，推送前跑 `bun run types:check` 与 `bun run build`。
+- `.github/workflows/quality.yml` 是 PR 与推送门禁（`agent`、`backend`、`payment-plugins`、`web`、`docs`、`changelog`、`production-agent-smoke`）。backend 显式运行 gofmt、vet、Agent 工具合同检查与后端架构守卫（`internal/architecture`，见第 3 节「后端」），全量测试里的 `handler/openapi_contract_test.go` 要求规范中没有未注册路由、未写入规范的公共路由按 `openapi-route-baseline.txt` 精确登记（新增路由应写进规范，不往基线里加）；生产 smoke 以 deploy+build 编排和确定性模型跑真实跨进程链路。`publish-images.yml` 在 main/tag 构建 web、backend、agent 三份镜像。新增门禁或脚本时同步更新本节和第 8 节。
 
 ## 4. 前端 API 和状态合同
 

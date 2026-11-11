@@ -1,0 +1,434 @@
+---
+title: 创作平台 SDK
+description: TypeScript 接入教程：传输注入、报价、幂等提交、事件续读与费用安全
+---
+
+创作平台 SDK（`web/src/sdk/creation-platform`）把短剧、电商、画布共用的生成流程收成一套 TypeScript 合同：模型目录、报价、提交、任务快照、事件续读、取消 / 重试 / 恢复资源、额度与资源上传。合同版本为 **1**，Go 侧类型在 `backend/internal/creationplatform`，两者的合同样例共用同一份 `testdata`。
+
+它只负责“调用平台”，不负责页面状态、提示文案和业务编排：
+
+- 核心 `contract.ts`、`transport.ts`、`client.ts` 不依赖 React、Zustand、AntD、window 或配置 store。
+- 认证、Base URL 和拦截器由调用方注入的 Transport 负责；浏览器里用 `webTransport` 复用既有 `http.raw`。
+- 业务归属通过 `business` 传递，它只是归属标签，不是授权凭证；身份始终来自登录会话。
+
+> **适用边界**：只接受**逻辑模型**（`model.logicalModelId`）或**系统渠道模型**（`model.channelId + model.modelKey`）。自定义渠道不在首版合同内，继续使用 `/api/tasks` 与 `/api/ai/custom`。完整 HTTP 合同见 [HTTP API 合同](/docs/backend/http-api)。
+
+## 安装与导入
+
+SDK 位于 Web 应用源码内，不需要单独发布包：
+
+```ts
+// 浏览器内：复用登录 Cookie 与既有 http.raw
+import { createCreationPlatformClient } from "@/sdk/creation-platform";
+import { webTransport } from "@/sdk/creation-platform/http-transport";
+
+// Node、Worker 或测试：直接注入 fetch 传输
+import { createFetchTransport } from "@/sdk/creation-platform";
+```
+
+`index.ts` 只导出 `contract`、`transport`、`client`。`http-transport.ts` 是唯一依赖应用模块（`@/services/api/request`）的文件，需要显式引入，避免核心被应用状态污染。
+
+## 创建客户端
+
+```ts
+import { createCreationPlatformClient } from "@/sdk/creation-platform";
+import { webTransport } from "@/sdk/creation-platform/http-transport";
+
+const platform = createCreationPlatformClient({ transport: webTransport });
+```
+
+可选项：
+
+| 选项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `transport` | 必填 | 认证、Base URL 与拦截器由它负责 |
+| `newIdempotencyKey` | `crypto.randomUUID()` 回退到时间戳随机串 | 调用方未给幂等键时生成 |
+| `maxRetries` | `3` | 仅传输层失败（没拿到响应）时重投 |
+| `retryDelayMs` | `min(4000, 250 * 2^attempt)` | 重投退避 |
+| `pollIntervalMs` | `1500` | 等待任务时无事件轮询间隔 |
+
+只有“没拿到 HTTP 响应”才自动重投；4xx / 5xx 会还原成 `PlatformRequestError` 交给调用方判断，不会盲目重放。重投之所以安全，是因为提交与读取都按幂等键或纯读取执行。
+
+### 自定义 Transport
+
+```ts
+import { createFetchTransport } from "@/sdk/creation-platform";
+
+const platform = createCreationPlatformClient({
+    transport: createFetchTransport({
+        baseUrl: "http://127.0.0.1:8080/api",
+        // 服务端到服务端场景：由部署环境注入凭据，不要写进代码或 URL
+        headers: () => ({ Authorization: `Bearer ${process.env.PLATFORM_TOKEN}` }),
+    }),
+});
+```
+
+Transport 的职责很小：把 `path` 拼到 API 根地址，`body` 是 JSON 对象时序列化并带 `Content-Type`，`FormData` 时不手动设置（由运行时生成 boundary），拿到响应后原样返回 `{ status, body }`，业务失败也要把信封交给 SDK 解析。网络层失败直接抛错，取消时抛 `AbortError`。
+
+## 模型目录与报价
+
+`models(capability)` 返回当前用户分组可见、可直接提交的模型选择，`selection` 原样放进请求的 `model`：
+
+```ts
+const { models } = await platform.models("image");
+const option = models.find((item) => item.available);
+
+const request = {
+    contractVersion: 1,
+    capability: "image" as const,
+    operation: "text_to_image",
+    model: option!.selection,
+    prompt: "白底商品主图，一只陶瓷杯",
+    parameters: { size: "1:1", quality: "high" },
+    business: { application: "ecommerce", projectId: "batch-7", objectType: "batch_item", objectId: "item-2" },
+    idempotencyKey: "workbench:batch-7:item-2",
+};
+
+const quote = await platform.quote(request);
+```
+
+报价与提交走同一套模型解析、能力匹配和价格口径，但报价**不冻结、不建任务、不调用上游**。`quoteHash` 绑定价格签名与生成规格；提交时放进 `cost.quoteHash`，价格或规格已变化会返回 `quote_expired`，需要重新报价确认。
+
+```ts
+const { snapshot, replayed } = await platform.submit({
+    ...request,
+    cost: { maxMicrocredits: quote.amountMicrocredits, quoteHash: quote.quoteHash },
+});
+if (replayed) {
+    // 网络重投或重复提交：服务端回放原任务，不产生第二条任务和第二次冻结
+}
+```
+
+`submit` 只返回 `{ snapshot, replayed }`；执行是异步的，进度与结果继续用下面的 `waitForTask` 或事件续读。
+
+`cost.maxMicrocredits` 是**单次费用上限**：报价超过上限返回 `cost_limit_exceeded`；上限写入费用订单，冻结、结算、换线路和重试都按它校验，后台不能静默突破。不传则不做该次上限约束。
+
+## 请求字段
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `contractVersion` | 是 | 固定 `1` |
+| `capability` | 是 | `text` / `image` / `video` / `audio` |
+| `operation` | 否 | 省略时由模型能力声明的默认操作决定，例如视频默认 `text_to_video` |
+| `model` | 是 | 逻辑模型与系统渠道模型二选一，同时给出或缺一半返回 `invalid_request` |
+| `prompt` | 是 | 提示词 |
+| `parameters` | 否 | 按能力白名单接收，未知参数返回 `invalid_request` |
+| `references` | 否 | 只按本人已就绪的资源 ID 引用，否则返回 `reference_unavailable` |
+| `business` | 是 | `application` 必填，可带 `projectId`、`objectType`、`objectId`、`operationId` |
+| `cost` | 否 | `maxMicrocredits` 单次上限；`quoteHash` 绑定报价 |
+| `idempotencyKey` | 是 | 1–160 个字符；省略时客户端生成 |
+| `traceId` | 否 | 只用于排障，不参与幂等指纹 |
+
+默认操作与参数示例：
+
+| 能力 | 常用 operation | 常用 parameters |
+| --- | --- | --- |
+| 文本 | `text_generation` | `maxTokens`、`stream` |
+| 图片 | `text_to_image` / `image_to_image` | `size`、`quality`、`imageResolution` |
+| 视频 | `text_to_video` / `image_to_video` / `reference_to_video` / `audio_to_video` | `videoSeconds`、`size`、`vquality`、`videoGenerateAudio` |
+| 音频 | `text_to_speech` | `audioVoice`、`audioFormat`、`audioSpeed` |
+
+参数名与既有任务配置一致；具体可用范围以所选模型的能力声明为准。文本默认流式，增量写入既有文本回放存储，可用 `GET /api/tasks/:id/text-deltas` 续读；`parameters.stream=false` 关闭。
+
+客户端会在发请求前做与 Go 侧同口径的结构校验（合同版本、模型二选一、提示词、幂等键、归属、费用上限、参考素材），平台状态相关的校验仍在服务端：
+
+```ts
+import { validateGenerationRequest } from "@/sdk/creation-platform";
+
+const invalid = validateGenerationRequest(request);
+if (invalid) {
+    // invalid.code / invalid.message 可直接用于提示
+}
+```
+
+## 幂等与重投
+
+幂等作用域是 **用户 + `business.application` + `idempotencyKey`**：
+
+- 同键同内容（指纹不含 `traceId`）返回原任务，`replayed: true`。
+- 同键不同内容返回 409 `idempotency_conflict`，**不要换内容重试**。
+- 不同用户或不同 `application` 的同键互不影响。
+- 并发同键只有一个事务成功，其余整体回滚后按成功者回放。
+
+实践建议：
+
+1. 用业务稳定身份拼幂等键，例如 `ecommerce:batch-7:item-2`、`drama:job-42:attempt-1`、`canvas:canvas-9:client-1:op-77`。
+2. 同一逻辑操作的所有网络重投复用同一个键；用户主动“再来一次”要换新键。
+3. 只对 `retryable` 为真的错误重试；`idempotency_conflict` 应改为查询原任务或提示用户。
+
+## 等待任务与事件续读
+
+`waitForTask` 以快照 `revision` 为起点续读事件，直到任务**落定**：执行进入终态、资源不在交付中，且成功任务不再处于费用预留 / 运行中。这样不会读到 `succeeded` 但费用仍在结算的中间态。
+
+```ts
+const controller = new AbortController();
+const final = await platform.waitForTask(snapshot.taskId, {
+    signal: controller.signal,
+    onSnapshot: (current) => {
+        // 交给页面状态；current.progress / current.stage 是展示用快照
+        renderProgress(current.progress, current.stage);
+    },
+});
+
+if (final.execution === "succeeded" && final.resources === "ready") {
+    for (const resource of final.result?.resources ?? []) {
+        const access = await platform.resourceAccess(resource.resourceId, "display");
+        // access.url 会过期，不要当持久身份保存
+    }
+} else if (final.billing.status === "pending_review") {
+    // 费用待核对：不能当成 0 元或失败退款
+}
+```
+
+事件语义：
+
+- `GET /api/platform/v1/events` 按提交顺序返回 `task.submitted` / `task.state_changed` / `task.billing_changed`，事件与状态在同一事务写入，回滚事务不产生事件。
+- 交付至少一次，消费者按事件 `id` 去重；`after` 取上一页 `nextCursor`。
+- 快照 `revision` 等于该任务最新事件的游标，用于丢弃旧状态。
+- 事件保留 7 天（每个任务最新事件永久保留）；游标早于清理水位时返回 `resyncRequired=true`，SDK 会自动重读快照再从 `nextCursor` 继续。
+
+需要自己驱动进度时，可以显式续读。优先用 `waitForTask`，它已经处理了“终态但费用仍在结算”的中间态；下面的写法只适合自己维护游标：
+
+```ts
+import { isTerminalExecution } from "@/sdk/creation-platform";
+
+let cursor = String(snapshot.revision);
+for (;;) {
+    const page = await platform.events({ taskId: snapshot.taskId, after: cursor });
+    if (page.resyncRequired) {
+        const fresh = await platform.task(snapshot.taskId);
+        cursor = String(fresh.revision);
+        continue;
+    }
+    for (const event of page.events) {
+        // 至少一次交付：按 event.id 去重后再应用
+    }
+    cursor = page.nextCursor;
+    const current = await platform.task(snapshot.taskId);
+    if (isTerminalExecution(current.execution)) break;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+}
+```
+
+`AbortSignal` 只结束本地等待，**不会取消服务端任务**；要停止生成必须显式调用 `cancel`。
+
+## 任务动作
+
+取消、重试和恢复资源都要求快照 `actions` 包含该动作，否则客户端先抛 `action_not_allowed`，服务端也会再校验一次：
+
+```ts
+const current = await platform.task(taskId);
+
+if (current.actions.includes("cancel")) {
+    await platform.cancel(taskId);
+}
+if (current.actions.includes("retry")) {
+    await platform.retry(taskId); // 沿用提交时的单次费用上限
+}
+if (current.actions.includes("recover_media")) {
+    await platform.recoverMedia(taskId); // 只恢复保存，不重新生成、不新建费用订单
+}
+```
+
+边界：
+
+- 取消只在服务端允许时生效；已提交给上游的生成不会因为本地中止或结束调用而停止执行。
+- 交付失败只能恢复保存，不能重试生成。
+- 费用待核对时重试返回 `billing_pending_review`。
+
+## 额度与归属汇总
+
+```ts
+const balance = await platform.balance();
+// balance.availableMicrocredits / balance.reservedMicrocredits
+
+const aggregate = await platform.billingAggregate({ application: "ecommerce", projectId: "batch-7" });
+// aggregate.taskCount / reservedMicrocredits / chargedMicrocredits / refundedMicrocredits / pendingReviewCount
+```
+
+额度单位是**微积分**（1000000 = 1 积分）。汇总只统计当前用户经平台提交、且归属匹配的任务；`pendingReviewCount` 大于 0 时说明存在需要人工核对的费用，不能按“全部已退款”处理。
+
+## 资源上传与访问
+
+```ts
+const resource = await platform.uploadResource(file, {
+    kind: "image",
+    fileName: file.name,
+    idempotencyKey: `upload:${file.name}:${file.size}`,
+});
+
+const request = {
+    // ...
+    references: [{ resourceId: resource.resourceId, kind: "image", role: "reference" }],
+};
+```
+
+上传复用既有资源接口，返回稳定资源 ID；同一 `idempotencyKey` 重投得到同一资源。访问地址：
+
+```ts
+const access = await platform.resourceAccess(resource.resourceId, "display");
+// purpose: display | download | provider-input
+```
+
+地址会过期，不能当持久身份保存；显示失败时按 `not_found` 处理，不要缓存过期 URL 无限重试。
+
+## 错误处理
+
+所有失败都抛 `PlatformRequestError`，机器可读信息在 `error` 上：
+
+```ts
+import { PlatformRequestError } from "@/sdk/creation-platform";
+
+try {
+    await platform.submit(request);
+} catch (error) {
+    if (error instanceof PlatformRequestError) {
+        switch (error.error.code) {
+            case "insufficient_credits":
+            case "cost_limit_exceeded":
+                // 提示充值或调整单次上限
+                break;
+            case "quote_expired":
+                // 重新报价后再提交
+                break;
+            case "idempotency_conflict":
+                // 同键不同内容：查询原任务或换新键
+                break;
+            case "active_task_limit":
+                // 等已有任务结束再提交
+                break;
+            case "transport":
+                // error.error.retryable 为 true 时可按退避重试
+                break;
+            default:
+                // 展示 error.error.message
+        }
+    }
+}
+```
+
+| 错误码 | 含义 | 建议处理 |
+| --- | --- | --- |
+| `invalid_request` | 结构或参数不合法 | 修正请求，不重试 |
+| `unauthorized` / `forbidden` | 未登录或无权限 | 重新登录或检查分组 |
+| `not_found` | 任务不存在或不属于本人 | 不重试 |
+| `model_unavailable` / `model_not_supported` | 模型不可用或不支持该能力 | 重新选模型 |
+| `reference_unavailable` | 参考素材不可用或不属于本人 | 重新上传 / 选择 |
+| `insufficient_credits` | 余额不足 | 充值 |
+| `cost_limit_exceeded` | 报价超过单次上限 | 调整上限或模型 |
+| `quote_expired` | 价格或规格已变化 | 重新报价 |
+| `idempotency_conflict` | 同键不同内容 | 查询原任务或换键 |
+| `active_task_limit` | 活动任务数到上限 | 等已有任务结束 |
+| `action_not_allowed` | 当前状态不允许该动作 | 重新读快照 |
+| `billing_pending_review` | 费用待核对 | 等人工核对，不重试 |
+| `media_delivery_failed` | 资源交付失败 | 调用 `recoverMedia` |
+| `transport` | 未拿到响应 | `retryable` 为真时退避重试 |
+| `internal` / `unavailable` | 服务端错误或暂不可用 | 按 `retryable` 处理 |
+
+不要把 `message` 当错误类型判断，也不要因为 `execution=failed` 就假定费用为 0：费用状态看 `billing.status`，只有 `settled` 才有 `chargedMicrocredits`；`pending_review` 表示金额未知。
+
+## 四类能力示例
+
+### 图片（系统渠道模型）
+
+```ts
+const { models } = await platform.models("image");
+const quote = await platform.quote({
+    contractVersion: 1,
+    capability: "image",
+    operation: "text_to_image",
+    model: models[0].selection,
+    prompt: "白底商品主图，一只陶瓷杯",
+    parameters: { size: "1:1", quality: "high" },
+    business: { application: "ecommerce", projectId: "batch-7", objectId: "item-2" },
+    cost: { maxMicrocredits: 120000 },
+    idempotencyKey: "ecommerce:batch-7:item-2",
+});
+const { snapshot } = await platform.submit({
+    contractVersion: 1,
+    capability: "image",
+    operation: "text_to_image",
+    model: models[0].selection,
+    prompt: "白底商品主图，一只陶瓷杯",
+    parameters: { size: "1:1", quality: "high" },
+    business: { application: "ecommerce", projectId: "batch-7", objectId: "item-2" },
+    cost: { maxMicrocredits: quote.amountMicrocredits, quoteHash: quote.quoteHash },
+    idempotencyKey: "ecommerce:batch-7:item-2",
+});
+const done = await platform.waitForTask(snapshot.taskId);
+```
+
+### 视频（首帧参考）
+
+```ts
+const { snapshot } = await platform.submit({
+    contractVersion: 1,
+    capability: "video",
+    operation: "image_to_video",
+    model: { channelId: "CHANNEL_000001", modelKey: "seedance-pro" },
+    prompt: "镜头缓慢推进，人物回头",
+    parameters: { videoSeconds: 5, size: "9:16", vquality: "720p", videoGenerateAudio: true },
+    references: [{ resourceId: firstFrameId, kind: "image", role: "first_frame" }],
+    business: { application: "canvas", projectId: canvasId, objectType: "node", objectId: nodeId },
+    idempotencyKey: `canvas:${canvasId}:${clientId}:${operationId}`,
+});
+```
+
+### 文本（逻辑模型）
+
+```ts
+const { snapshot } = await platform.submit({
+    contractVersion: 1,
+    capability: "text",
+    operation: "text_generation",
+    model: { logicalModelId: "lm-text-default" },
+    prompt: "为第 3 集写三句剧情梗概",
+    parameters: { maxTokens: 800 },
+    business: { application: "drama", projectId: projectId, objectType: "episode", objectId: episodeId },
+    idempotencyKey: `drama:${jobId}:${attempt}`,
+});
+```
+
+### 音频（逻辑模型）
+
+```ts
+const { snapshot } = await platform.submit({
+    contractVersion: 1,
+    capability: "audio",
+    operation: "text_to_speech",
+    model: { logicalModelId: "lm-voice" },
+    prompt: "欢迎来到影策。",
+    parameters: { audioVoice: "female-warm", audioFormat: "mp3" },
+    business: { application: "canvas", objectType: "node", objectId: audioNodeId },
+    idempotencyKey: `canvas:${audioNodeId}:1`,
+});
+```
+
+## 常见问题
+
+**为什么提交成功但 `execution` 还是 `queued`？**
+提交只表示已落库并唤醒 worker，执行是异步的。用 `waitForTask` 或事件续读，不要用固定时长睡眠判断完成。
+
+**上游成功但资源没拿到，怎么办？**
+快照会是 `execution=succeeded`、`resources=delivering/failed`。调用 `recoverMedia` 恢复保存，它不重新调用生成接口、不新建费用订单；不要重新提交生成。
+
+**同一幂等键重试为什么返回旧任务？**
+这是设计行为，说明上一次请求其实已被服务端接受。用 `replayed` 区分，不要当成新提交。
+
+**取消等待为什么任务还在跑？**
+`AbortSignal` 只结束本地等待。要停止服务端任务，先读快照确认 `actions` 含 `cancel`，再调用 `platform.cancel(taskId)`。
+
+**逻辑模型和系统渠道模型能同时传吗？**
+不能。两者只能选一个，同时给出返回 `invalid_request`；自定义渠道不走该 SDK。
+
+## 验证与边界
+
+- 合同、校验与错误码有 Go / TypeScript 共用样例（`backend/internal/creationplatform/testdata`），两侧一致性由测试守护。
+- 平台端到端用例 `TestPlatformSDKFourCapabilitiesAgainstRealBackend` 用真实路由、后台 worker 与本地确定性假上游驱动 Bun 用例，覆盖文本、图片、视频、音频及参考图生成。
+- 确定性模型通过不等于供应商验收：真实付费渠道、真实对象存储、OIDC 回调和浏览器页面操作仍需在目标环境验收，见 [待测试](/docs/progress/pending-test)。
+
+## 相关文档
+
+- [HTTP API 合同](/docs/backend/http-api)：平台端点、幂等、事件与错误信封的服务端口径。
+- [后端代码地图](/docs/backend/code-map)：SDK、合同端口与组合根的位置。
+- [后端数据库](/docs/backend/backend-database)：平台任务事件与提交记录的数据结构。

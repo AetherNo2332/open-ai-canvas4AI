@@ -3,8 +3,6 @@ title: 在线更新与安全回退
 description: Host Updater、Release 检查、数据库备份迁移、健康验证与异常回退机制。
 ---
 
-# 在线更新与安全回退
-
 管理后台的“系统配置 → 系统更新”只负责管理员鉴权、展示状态和发起操作。真正的 Docker、数据库备份与服务切换由宿主机上的 `open-ai-canvas-host-updater` 执行，业务后端不挂载 Docker Socket。
 
 ```text
