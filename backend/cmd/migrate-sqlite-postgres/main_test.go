@@ -79,3 +79,20 @@ func TestSourceSchemaMustBeCurrent(t *testing.T) {
 		t.Fatalf("current source schema rejected: %v", err)
 	}
 }
+
+func TestMigrationListCoversInitializedSchema(t *testing.T) {
+	db, _ := migrationSource(t)
+	var tables []string
+	if err := db.Raw("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations'").Scan(&tables).Error; err != nil {
+		t.Fatal(err)
+	}
+	expected := make(map[string]bool)
+	for _, migration := range migrations() {
+		expected[migration.name] = true
+	}
+	for _, table := range tables {
+		if !expected[table] {
+			t.Errorf("initialized schema table missing from copy list: %s", table)
+		}
+	}
+}
