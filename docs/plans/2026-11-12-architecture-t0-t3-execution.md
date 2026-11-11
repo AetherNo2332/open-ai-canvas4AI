@@ -100,3 +100,10 @@
 - `generation.TerminalError` 承接 providerTaskTerminalError（app 别名）；`service.EcommerceAgentNotFound` 前置于 T6。
 - app：task_billing/task_terminal 原方法名转发；serviceRuntimeAdapter 显式接入文本回放/日志/产物登记/音频视频结算；worker/lifecycle 编排暂留 app。
 - 验证：13 个 stub 测试迁 taskruntime 全过；app Task/Worker/Billing 专项 11.3s 通过；generation/architecture 包测试、baseline unchanged、gofmt/vet 通过。
+
+### 推送前门禁与回归修复（f2c8dfd5d）
+
+- 完整门禁 `bun scripts/verify-before-push.mjs --base upstream4ai/main`（full）：13 项中 web 4 项、backend baseline/gofmt/test-rest/list-app/verification:tests 与 app-2 分片通过；app-1/3/4 分片各 1–2 个失败。
+- 分片失败共 6 个测试。其一为迁移回归：声明式非视频策略（图片/音频）构造 policy 漏设 Translate，503（providerHTTPError）不被 polling 稳定错误事实识别，fail-fast 提前返回（TestAsyncImagePollRetryLimitAndNotFoundStillFailFast）。修复：declarativeProtocolPollPolicy 补 translateVideoPollError（f2c8dfd5d），该测试恢复。
+- 其余 5 个（TestAsyncImagePollRetriesTransientErrorsWhenEnabled、TestVideoPollContinuesAfterConnectionResetAndEOF、SettingsEncryptionKey Publication/LinkFallback/ConcurrentFirstUse）在迁移前基线 a393d137f 逐一实证同样失败：连接中断类为 WSAECONNRESET 与 Linux syscall.ECONNRESET 值不同的平台差异；加密密钥 3 个为 Windows 文件权限语义（666 vs 600）。修复后重跑 4 个 app 分片仅剩这 5 个失败，app-2 全绿。
+- 未重跑项：web 4 项与 backend 非 app 检查在门禁中已通过且修复不涉及；按纪律不机械重跑。上述平台差异由 Linux CI 兜底，此处不宣称 CI 已通过。
