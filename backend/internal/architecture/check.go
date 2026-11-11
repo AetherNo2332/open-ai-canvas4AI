@@ -296,6 +296,7 @@ func moduleName(root string) (string, error) {
 
 func (s *scanner) fileFindings(src *source) []Finding {
 	findings := s.dependencyFindings(src)
+	findings = append(findings, s.facadeFindings(src)...)
 	lines := len(strings.Split(strings.TrimSuffix(string(src.body), "\n"), "\n"))
 	if lines > fileLineLimit {
 		findings = append(findings, Finding{ID: src.path + ":file_lines", Rule: "file_lines", Value: lines, Limit: fileLineLimit, Detail: "production Go file exceeds 600 lines"})
@@ -325,6 +326,9 @@ func (s *scanner) dependencyFindings(src *source) []Finding {
 	from := layerOf(src.path)
 	for _, spec := range src.file.Imports {
 		imported, _ := strconv.Unquote(spec.Path.Value)
+		if detail, banned := handlerPersistenceViolation(src, imported); banned {
+			findings = append(findings, Finding{ID: src.path + ":import:" + imported, Rule: "dependency", Value: 1, Detail: detail})
+		}
 		rest, ok := strings.CutPrefix(imported, s.module+"/")
 		if !ok {
 			continue

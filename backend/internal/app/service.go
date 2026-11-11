@@ -157,6 +157,14 @@ func New(repo *repository.Repository, dataDir string) *Service {
 	return newService(repo, dataDir)
 }
 
+// memoryDocuments 返回记忆文档服务；空 Service（纯登录校验测试）也只做参数校验。
+func (s *Service) memoryDocuments() *document.Service {
+	if s.memoryDoc == nil {
+		s.memoryDoc = document.New(s.repo)
+	}
+	return s.memoryDoc
+}
+
 func newService(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := platform.NewCoordinator(repo.Dialect())
 	canvasRealtime := canvas.NewRealtimeHub(coordinator.Redis())

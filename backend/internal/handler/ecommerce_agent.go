@@ -2,9 +2,10 @@ package handler
 
 import (
 	"errors"
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
+
 	"yingce/backend/internal/service"
 )
 
@@ -24,7 +25,7 @@ func ecommerceAgentFailure(c *gin.Context, err error) {
 		c.JSON(status, gin.H{"code": status, "data": nil, "msg": ae.Message, "reason": ae.Code})
 		return
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if service.EcommerceAgentNotFound(err) {
 		fail(c, http.StatusNotFound, errors.New("项目或任务不存在"))
 		return
 	}

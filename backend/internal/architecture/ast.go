@@ -144,6 +144,7 @@ func (s *scanner) containsUntypedMap(expr ast.Expr, src *source, seen map[string
 	}
 	if resolved, owner, key, ok := s.resolve(expr, src); ok {
 		if seen[key] {
+			// 该类型已在展开中检查过：类型展开是封闭的，map 若可达早已被判出，环本身不改变判定。
 			return false
 		}
 		seen[key] = true
@@ -166,6 +167,7 @@ func (s *scanner) containsAny(expr ast.Expr, src *source, seen map[string]bool) 
 	}
 	if resolved, owner, key, ok := s.resolve(expr, src); ok {
 		if seen[key] {
+			// 该类型已在展开中检查过：类型展开是封闭的，map 若可达早已被判出，环本身不改变判定。
 			return false
 		}
 		seen[key] = true

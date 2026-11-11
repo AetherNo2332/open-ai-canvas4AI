@@ -14,6 +14,18 @@
   - repository 和业务域包（`internal/` 下除 handler、service、app、model 以外的包）不得 import handler、service、app；
   - model 不得 import handler、service、app、repository、database；
   - service 和 app 是组合层，不受这条约束；`internal/` 之外的入口（cmd、payment-plugins）负责组装各层，也不受约束。
+  - handler 不得 import `gorm.io/gorm`、`gorm.io/driver/*` 或 `database/sql`；持久化错误语义在 service/app 归属（如 `service.EcommerceAgentNotFound`），handler 只映射响应。
+  - `internal/agentmemory` 根包保持纯规则：不得 import repository、database 或 agentmemory/document。
+
+## 职责与门面规则（responsibilities.go）
+
+迁移单元在 app 保留的门面文件按精确路径登记在 `facadeFiles`。登记文件只能包含：
+
+- 类型别名（`type X = owning.Sym`），不允许新定义 struct/interface；
+- 常量与变量初始化只能是基本字面量或对拥有包符号的直接引用；
+- 函数体必须是单 return 透传，不得声明 `init`。
+
+业务函数体、带计算的初始化和规则无法判断的形态（如别名环）一律报告为 `facade_declaration`，不静默当成合法。新增迁移单元时在此登记其门面文件，不做文件名猜测。
 
 ## 云端 Agent 附加规则
 
