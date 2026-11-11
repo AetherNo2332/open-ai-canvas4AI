@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"yingce/backend/internal/agentmemory/document"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
@@ -12,6 +13,7 @@ import (
 // memory_update 的执行体（上游 cloud_agent_tools_memory.go 的记忆部分，接到 fork 运行时）。
 // 记忆写入不是画布写入：不进审批链、不走画布快照；模式（auto/review/off）以记忆文件当前
 // 设置为准，用户在运行中改了模式也立即生效。只读与子代理运行不暴露这个工具。
+// 写入行为在 internal/agentmemory/document；这里只做运行态准入与事件/回执拼装。
 
 func cloudAgentMemoryChangeItems(changes []AgentMemoryDocChange) []any {
 	items := make([]any, 0, len(changes))
@@ -26,6 +28,19 @@ func cloudAgentMemoryChangeItems(changes []AgentMemoryDocChange) []any {
 		items = append(items, item)
 	}
 	return items
+}
+
+// memoryCapacityDetailPayload 把 document 的类型化容量明细拼成工具回执。
+func memoryCapacityDetailPayload(detail *document.CapacityDetail) map[string]any {
+	items := make([]map[string]any, 0, len(detail.Entries))
+	for _, entry := range detail.Entries {
+		items = append(items, map[string]any{"id": entry.ID, "section": entry.Section, "text": entry.Text})
+	}
+	return map[string]any{
+		"usage": detail.Usage, "overBy": detail.OverBy,
+		"entries":  items,
+		"guidance": detail.Guidance,
+	}
 }
 
 func (s *Service) cloudAgentHandleMemoryUpdate(_ *repository.Repository, userID, runID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {
@@ -57,10 +72,10 @@ func (s *Service) cloudAgentHandleMemoryUpdate(_ *repository.Repository, userID,
 		}
 	}
 	state.MemoryWriteCalls++
-	outcome, detail, err := s.agentMemoryAgentWrite(userID, runID, call.ID, args.Operations, args.Reason)
+	outcome, capacityDetail, err := s.memoryDocuments().AgentWrite(userID, runID, call.ID, args.Operations, args.Reason)
 	if err != nil {
-		if detail != nil {
-			return detail, err
+		if capacityDetail != nil {
+			return memoryCapacityDetailPayload(capacityDetail), err
 		}
 		return nil, err
 	}

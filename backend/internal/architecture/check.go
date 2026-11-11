@@ -332,6 +332,25 @@ func (s *scanner) dependencyFindings(src *source) []Finding {
 		if to := layerOf(rest); layerViolation(from, to) {
 			findings = append(findings, Finding{ID: src.path + ":import:" + imported, Rule: "dependency", Value: 1, Detail: "internal/" + from + " must not import internal/" + to + " (AGENTS.md section 3 call chain)"})
 		}
+		if detail, banned := s.agentMemoryRootImportViolation(src, rest); banned {
+			findings = append(findings, Finding{ID: src.path + ":import:" + imported, Rule: "dependency", Value: 1, Detail: detail})
+		}
 	}
 	return findings
+}
+
+// agentMemoryRootImportViolation keeps internal/agentmemory a pure rule package:
+// persistence stays with agentmemory/document and the service layer, and the
+// document implementation must not flow back into the root package.
+// imported 是去掉模块前缀的内部路径（如 "internal/repository"）。
+func (s *scanner) agentMemoryRootImportViolation(src *source, imported string) (string, bool) {
+	if src.pkg != s.module+"/internal/agentmemory" {
+		return "", false
+	}
+	for _, banned := range []string{"internal/repository", "internal/database", "internal/agentmemory/document"} {
+		if imported == banned {
+			return "internal/agentmemory is a pure rule package and must not import " + banned, true
+		}
+	}
+	return "", false
 }
