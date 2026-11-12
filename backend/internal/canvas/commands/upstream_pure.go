@@ -1508,37 +1508,7 @@ func (p *planner) canvasPrevisApplyPatchOperation(scene map[string]any, operatio
 	objects, cameras, lights, shots := p.creationMaps(scene["objects"]), p.creationMaps(scene["cameras"]), p.creationMaps(scene["lights"]), p.creationMaps(scene["shots"])
 	switch operation.Type {
 	case "scene_update":
-		if operation.Title != nil {
-			if err := p.canvasPrevisValidateText(*operation.Title, "场景标题", canvasPrevisTextLimit, true); err != nil {
-				return OperationSummary{}, err
-			}
-			scene["title"] = *operation.Title
-		}
-		if operation.Background != nil {
-			if err := p.canvasPrevisValidateColor(*operation.Background, "场景背景色"); err != nil {
-				return OperationSummary{}, err
-			}
-			scene["background"] = *operation.Background
-		}
-		if operation.EnvironmentIntensity != nil {
-			if err := p.canvasPrevisFiniteInRange(*operation.EnvironmentIntensity, "environmentIntensity", 0, 100); err != nil {
-				return OperationSummary{}, err
-			}
-			scene["environmentIntensity"] = *operation.EnvironmentIntensity
-		}
-		if operation.GridVisible != nil {
-			scene["gridVisible"] = *operation.GridVisible
-		}
-		if operation.ActiveShotID != nil {
-			if *operation.ActiveShotID == "" {
-				return OperationSummary{}, BadAuthRequest("activeShotId 不能为空")
-			}
-			if err := validateCanvasID(*operation.ActiveShotID, "activeShotId", 80); err != nil {
-				return OperationSummary{}, err
-			}
-			scene["activeShotId"] = *operation.ActiveShotID
-		}
-		return OperationSummary{Operation: operation.Type, NodeID: p.stringValue(scene["id"]), NodeTitle: p.stringValue(scene["title"]), Summary: "修改场景级设置"}, nil
+		return p.canvasPrevisApplySceneUpdate(scene, operation)
 	case "object_add", "object_update", "object_remove":
 		item, err := p.canvasPrevisApplyObjectPatch(&objects, operation, index)
 		if err == nil {

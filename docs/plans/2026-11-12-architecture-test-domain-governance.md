@@ -1,6 +1,6 @@
 # 架构守卫、测试分层与业务职责拆分开发计划
 
-> 状态：PR134 包含 T0–T8、审查修复及 T7 实际门禁切换；T9/T10 的实现单独保留，按用户要求在 PR134 CI 全绿后推送后续 PR。本轮以 CI 复核本地 Windows/网络阻断的验收项，见 [PR134 修复与拆分记录](./2026-11-12-pr134-review-fixes.md)。勾选表示实现步骤已执行，不表示失败或跳过的测试通过。
+> 状态：PR134 包含 T0–T8、审查修复及 T7 实际门禁切换；本后续分支追加 T9 与 T10 的 scene_update 首切片，只有 PR134 CI 全绿后才推送。见 [T9/T10 实施与验收](./2026-11-12-pr135-t9-t10.md)；勾选表示实现步骤已执行，不表示失败或跳过的测试通过。
 > 执行约定：开始实现时使用 executing-plans，按任务与验收条件推进；如采用子代理，需遵守当时的用户授权及仓库规则，各自在独立工作区工作。本文不授权部署或生产操作。
 
 **Goal：** 建立“业务职责迁移、行为测试迁移、架构约束、验证范围选择”同一交付闭环，降低局部修改的反馈成本，并维持关键业务不变量。
@@ -272,36 +272,36 @@
 
 ### T9：迁移 Worker 身份与授权（第二期，独立安全重构 PR）
 
-本 PR 不包含该迁移；单独实现已保留，等待 PR134 CI 全绿后提交后续 PR。
+本后续 PR 包含该迁移，发布条件为 PR134 最新修复提交 CI 全绿。
 
 **依赖：** T7；与 T8 可按独立路径排期。
 
 **创建：** internal/identity/worker/grants.go、workers.go、grants_test.go。
 **修改：** app/agent_worker_auth.go、_test.go、Service 接线、验证映射与安全合同说明。
 
-- [ ] 将 worker 管理、grant 签发/验证与实时租约绑定迁入子包；环境读取留组合根，配置显式注入。
-- [ ] 不改变 owner、user、run、epoch、过期与撤销校验；管理员权限与所有权必须在受控业务入口强校验。
-- [ ] 将多数测试改为相关 worker/run/lease 夹具；保留真实 claim 后的授权组合测试。
-- [ ] 迁移现有 TestAgentRunGrantBoundToLiveLeaseAndWorker、RejectsTerminalAndTakeover、ScopeFiltersBeforeClaim 的等价覆盖。
+- [x] 将 worker 管理、grant 签发/验证与实时租约绑定迁入子包；环境读取留组合根，配置显式注入。
+- [x] 不改变 owner、user、run、epoch、过期与撤销校验；管理员权限与所有权必须在受控业务入口强校验。
+- [x] 将多数测试改为相关 worker/run/lease 夹具；保留真实 claim 后的授权组合测试。
+- [x] 迁移现有 TestAgentRunGrantBoundToLiveLeaseAndWorker、RejectsTerminalAndTakeover、ScopeFiltersBeforeClaim 的等价覆盖。
 - [ ] 验证新包、安全负例、app 组合测试、后端 Agent 冒烟及相关 SSE/Worker 合同；合并前跑完整 Agent 相关回归。
-- [ ] 验收：合法签名但已撤销、终态或接管失效的 grant 仍拒绝，不依赖完整 Pi fixture 才能验证核心规则。
+- [x] 验收：合法签名但已撤销、终态或接管失效的 grant 仍拒绝，不依赖完整 Pi fixture 才能验证核心规则。
 
 ### T10：收敛预演编辑规则（第三期，先一条垂直切片）
 
-本 PR 不包含该迁移；scene_update 首切片在后续 PR 单独审查和验收。
+本后续 PR 仅包含 scene_update 首切片，其余操作仍留原实现。
 
 **依赖：** 首期稳定；单独审查两端语义差异。
 
 **创建：** internal/canvas/previs 的 types.go、validate.go、apply.go、apply_test.go。
 **修改：** app/cloud_agent_previs_mutation.go、canvas/commands/upstream_pure.go、对应规则/组合测试与验证映射。
 
-- [ ] 逐项核对两端 operation、scene 校验、ID、默认值、错误、排序与摘要差异；把预期差异写入适配说明。（首切片为 scene_update。）
-- [ ] 先建立两端相同输入结果的 parity 测试，再抽取纯规则；不直接删除仍有调用的 app 路径。
-- [ ] 共享类型化编辑结果，两端各自转换审批摘要/OperationSummary。
-- [ ] 权限、事务、CAS、事件和回执留在现有受控入口；不另建画布写路径。
-- [ ] 迁移重复规则细节测试，保留两端事务/审批恢复集成测试。
+- [x] 逐项核对两端 operation、scene 校验、ID、默认值、错误、排序与摘要差异；把预期差异写入适配说明。（首切片为 scene_update。）
+- [x] 先建立两端相同输入结果的 parity 测试，再抽取纯规则；不直接删除仍有调用的 app 路径。
+- [x] 共享类型化编辑结果，两端各自转换审批摘要/OperationSummary。
+- [x] 权限、事务、CAS、事件和回执留在现有受控入口；不另建画布写路径。
+- [x] 迁移重复规则细节测试，保留两端事务/审批恢复集成测试。
 - [ ] 验证共享规则、commands、app 预演专项及相关真实路由/E2E；按当前验证计划执行完整关联门禁。
-- [ ] 验收：规则单一来源，行为差异明确，直接写入与事务不变量未改变。
+- [x] 验收：规则单一来源，行为差异明确，直接写入与事务不变量未改变。（仅后端首切片；本 PR 真实 CI/E2E 仍需单独验收。）
 
 ## 6. PR 顺序与阶段退出
 

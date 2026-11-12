@@ -1307,37 +1307,7 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 	objects, cameras, lights, shots := creationMaps(scene["objects"]), creationMaps(scene["cameras"]), creationMaps(scene["lights"]), creationMaps(scene["shots"])
 	switch operation.Type {
 	case "scene_update":
-		if operation.Title != nil {
-			if err := cloudAgentPrevisValidateText(*operation.Title, "场景标题", cloudAgentPrevisTextLimit, true); err != nil {
-				return cloudAgentApprovalPreviewItem{}, err
-			}
-			scene["title"] = *operation.Title
-		}
-		if operation.Background != nil {
-			if err := cloudAgentPrevisValidateColor(*operation.Background, "场景背景色"); err != nil {
-				return cloudAgentApprovalPreviewItem{}, err
-			}
-			scene["background"] = *operation.Background
-		}
-		if operation.EnvironmentIntensity != nil {
-			if err := cloudAgentPrevisFiniteInRange(*operation.EnvironmentIntensity, "environmentIntensity", 0, 100); err != nil {
-				return cloudAgentApprovalPreviewItem{}, err
-			}
-			scene["environmentIntensity"] = *operation.EnvironmentIntensity
-		}
-		if operation.GridVisible != nil {
-			scene["gridVisible"] = *operation.GridVisible
-		}
-		if operation.ActiveShotID != nil {
-			if *operation.ActiveShotID == "" {
-				return cloudAgentApprovalPreviewItem{}, BadAuthRequest("activeShotId 不能为空")
-			}
-			if err := validateCloudAgentID(*operation.ActiveShotID, "activeShotId", 80); err != nil {
-				return cloudAgentApprovalPreviewItem{}, err
-			}
-			scene["activeShotId"] = *operation.ActiveShotID
-		}
-		return cloudAgentApprovalPreviewItem{Operation: operation.Type, NodeID: stringValue(scene["id"]), NodeTitle: stringValue(scene["title"]), Summary: "修改场景级设置"}, nil
+		return cloudAgentPrevisApplySceneUpdate(scene, operation)
 	case "object_add", "object_update", "object_remove":
 		item, err := cloudAgentPrevisApplyObjectPatch(&objects, operation, index)
 		if err == nil {

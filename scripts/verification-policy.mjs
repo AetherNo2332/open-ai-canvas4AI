@@ -3,6 +3,19 @@ export const policy = {
   module: "yingce/backend",
   packages: [
     {
+      directory: "backend/internal/canvas/previs",
+      importPath: "yingce/backend/internal/canvas/previs",
+      group: "previs",
+      pattern: "^(TestPrevis|TestCloudAgentPrevis|TestCanvasPrevis)",
+    },
+    {
+      directory: "backend/internal/identity/worker",
+      importPath: "yingce/backend/internal/identity/worker",
+      group: "worker",
+      pattern:
+        "^(TestAgentGrantAdapter|TestAgentWorkerScope|TestAgentRunGrant|TestPiAgent)",
+    },
+    {
       directory: "backend/internal/agentmemory/document",
       importPath: "yingce/backend/internal/agentmemory/document",
       group: "memory",

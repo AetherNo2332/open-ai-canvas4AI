@@ -5,6 +5,8 @@ description: 从产品功能快速定位主要代码入口
 
 ## 架构守卫与验证调度
 
+- Worker 授权：`internal/identity/worker` 负责签名、实时租约校验和 Worker 管理；环境配置与管理员鉴权留 `app/agent_worker_auth.go`。
+- 预演场景设置：`internal/canvas/previs` 负责 scene_update 纯规则；`app/cloud_agent_previs_scene_update.go`、`canvas/commands/previs_scene_update.go` 各自适配错误、摘要与 ID 校验差异。
 - 验证执行：`scripts/verification-execution.mjs` 按统一计划执行与核对精确结果集合；`verification-ci.mjs` 生成 CI 分区，`go-test-shard.mjs` 保留四 app 分片。
 
 - 跨版本基线：`backend/internal/architecture/baseline_changes.go`；入口 `backend/cmd/check-architecture-baseline`，结合旧 Git 基线、迁移映射和两版源码扫描。
