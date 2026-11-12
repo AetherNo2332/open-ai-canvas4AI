@@ -27,3 +27,9 @@ T9 的 Worker 授权迁包、T10 的 scene_update 规则迁移及六项基线下
 - 支付 arm64 的基镜像解析被 Docker Hub 认证连接错误阻断。
 
 不将上述失败、未运行或旧提交的绿灯当作本次成功。只有 PR134 最新修复提交的 CI 全绿，才开始推送后续 T9/T10。
+
+## 首轮 CI 反馈
+
+修复提交 `287d016d0` 的 [Quality checks](https://github.com/AetherNo2332/open-ai-canvas4AI/actions/runs/43226570884) 已实际运行：Web 格式/类型/lint/单测及 Chrome E2E 均通过，E2E 为 76/76；真实生产编排 smoke 为 21 项检查、4 条真实运行、整体 passed；支付双架构、Agent、docs、四个 app 分片、后端 rest 测试/vet/工具合同/基线均通过。
+
+整轮仍失败：静态检查在 `InAgentScope` 报 QF1002，要求将按 dir 比较的无标签 switch 改为 `switch dir`；精确结果汇总因此按预期拒绝通过。已作等价写法修正，本地架构测试、vet 和基线复验通过；最新修复的完整 CI 仍需重新确认，不以首轮其他分区绿灯替代。

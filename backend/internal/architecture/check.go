@@ -100,10 +100,10 @@ func InAgentScope(rel string) bool {
 		ok, _ := path.Match(pattern, base)
 		return ok
 	}
-	switch {
-	case dir == "internal/app":
+	switch dir {
+	case "internal/app":
 		return base == "cloud_agent.go" || match("cloud_agent_*.go") || match("agent_*.go")
-	case dir == "internal/handler":
+	case "internal/handler":
 		return match("agent*.go") || base == "internal_agent.go"
 	}
 	for _, domain := range []string{"internal/agentcontext", "internal/agentmemory", "internal/identity/worker"} {
