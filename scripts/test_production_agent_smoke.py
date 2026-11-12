@@ -17,6 +17,57 @@ spec.loader.exec_module(smoke)
 
 
 class ProductionSmokeTests(unittest.TestCase):
+    def test_build_proxy_rejects_embedded_credentials_before_process_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            harness.env["CANVAS_SMOKE_BUILD_PROXY"] = "http://fixture:private-value@host.docker.internal:7897"
+            with patch.object(smoke.subprocess, "run") as run:
+                with self.assertRaisesRegex(AssertionError, "credentials") as raised:
+                    harness.compose("build")
+                run.assert_not_called()
+            self.assertNotIn("private-value", str(raised.exception))
+
+    def test_timeout_preserves_redacted_diagnostic_without_raw_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            secret = "fixture-private-build-value"
+            harness.secrets.add(secret)
+            error = smoke.subprocess.TimeoutExpired(["docker", secret], 1, output=("failed " + secret).encode())
+            with patch.object(smoke.subprocess, "run", side_effect=error):
+                with self.assertRaisesRegex(AssertionError, "timed out") as raised:
+                    harness.compose("build", timeout=1)
+            self.assertNotIn(secret, str(raised.exception))
+            self.assertTrue(raised.exception.__suppress_context__)
+            log = (Path(directory) / "production-smoke-build.log").read_text(encoding="utf-8")
+            self.assertNotIn(secret, log)
+            self.assertIn("[redacted]", log)
+
+    def test_explicit_build_proxy_is_build_only_and_redacted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            proxy = "http://host.docker.internal:7897"
+            harness.env["CANVAS_SMOKE_BUILD_PROXY"] = proxy
+            with patch.object(smoke.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+                harness.compose("build", "backend")
+                self.assertIn("HTTPS_PROXY=" + proxy, run.call_args.args[0])
+                harness.compose("ps")
+                self.assertNotIn("--build-arg", run.call_args.args[0])
+            self.assertNotIn(proxy, harness.redact(proxy))
+
+    def test_failed_compose_saves_bounded_redacted_build_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            secret = "fixture-build-secret"
+            harness.secrets.add(secret)
+            failure = SimpleNamespace(returncode=1, stdout="", stderr="x" * 70000 + secret)
+            with patch.object(smoke.subprocess, "run", return_value=failure):
+                with self.assertRaises(AssertionError):
+                    harness.compose("build")
+            log = (Path(directory) / "production-smoke-build.log").read_text(encoding="utf-8")
+            self.assertNotIn(secret, log)
+            self.assertIn("[redacted]", log)
+            self.assertLessEqual(len(log), 65536)
+
     def test_empty_control_body_still_posts(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = smoke.Smoke(directory, Path(directory) / "report.json")
@@ -46,6 +97,36 @@ class ProductionSmokeTests(unittest.TestCase):
                     {"ready": True}]) as api, patch.object(smoke.time, "sleep"):
                 self.assertTrue(smoke.wait(harness.health_ready, seconds=1))
             self.assertEqual(api.call_count, 3)
+
+    def test_backend_readiness_requires_running_and_healthy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            for health, expected in (("starting", False), ("unhealthy", False), ("healthy", True)):
+                with self.subTest(health=health), patch.object(harness, "compose", return_value=SimpleNamespace(
+                        stdout=json.dumps({"State": "running", "Health": health}))):
+                    self.assertEqual(harness.backend_ready(), expected)
+            with patch.object(harness, "compose", return_value=SimpleNamespace(
+                    stdout=json.dumps({"State": "exited", "Health": ""}))):
+                with self.assertRaisesRegex(AssertionError, "backend exited"):
+                    harness.backend_ready()
+
+    def test_cold_start_waits_for_backend_before_starting_web_within_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            events = []
+            def compose(*args, **kwargs):
+                events.append((args, kwargs))
+                return SimpleNamespace(stdout="")
+            def wait(predicate, seconds=150):
+                events.append((predicate.__name__, seconds))
+                return True
+            with patch.object(harness, "compose", side_effect=compose), patch.object(
+                    smoke, "wait", side_effect=wait), patch.object(smoke.time, "monotonic", side_effect=[0, 20, 30]):
+                harness.start_application()
+            self.assertEqual(events[0][0], ("up", "-d", "migrate", "backend", "model-stub"))
+            self.assertEqual(events[1], ("backend_ready", 150))
+            self.assertEqual(events[2], (("up", "-d", "web"), {"timeout": 270}))
+            self.assertEqual(events[3], ("health_ready", 150))
 
     def test_health_wait_does_not_hide_http_or_payload_errors(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -26,7 +26,7 @@ function reverseClosure(seeds, packages) {
 }
 
 export function buildVerificationPlan({
-  mode = "full",
+  mode = "affected",
   base,
   head,
   changes,
@@ -49,7 +49,21 @@ export function buildVerificationPlan({
     reasons.push({ id, path: why });
   };
   const backend = (why) => {
-    add("backend:full", "backend", "go", ["test", "./..."], why);
+    add(
+      "backend:full",
+      "backend",
+      "node",
+      ["../scripts/go-test-shard.mjs", "rest"],
+      why,
+    );
+    for (let shard = 1; shard <= 4; shard++)
+      add(
+        `backend:app-shard-${shard}`,
+        "backend",
+        "node",
+        ["../scripts/go-test-shard.mjs", String(shard)],
+        why,
+      );
     add("backend:gofmt", "backend", "gofmt", ["-l", "."], why);
     add("backend:vet", "backend", "go", ["vet", "./..."], why);
     add(
@@ -115,6 +129,7 @@ export function buildVerificationPlan({
       [
         "--test",
         "scripts/verification-plan.test.mjs",
+        "scripts/verification-execution.test.mjs",
         "web/scripts/run-tests.test.mjs",
       ],
       why,
@@ -163,37 +178,47 @@ export function buildVerificationPlan({
       "agent:smoke",
       ".",
       "python3",
-      ["scripts/verify-production-agent-smoke.py"],
+      [
+        "scripts/verify-production-agent-smoke.py",
+        "--output",
+        ".local/cache/verify/agent-smoke/report.json",
+      ],
       why,
       ["deployment:commands"],
     );
     add("web:e2e", "web", "bun", ["run", "test:previs:e2e"], why);
   };
   notCovered.push(
-    "Advisory plan only: no checks executed by planner; execution results and required PostgreSQL/Redis, Docker, browser and tool availability must be verified by runners",
+    "A plan is not an execution result; required PostgreSQL/Redis, Docker, browser and tool availability are checked by execution and CI summaries",
   );
   if (mode === "fast")
     notCovered.push(
       "fast: development feedback only; full delivery checks not covered",
     );
+  if (mode === "full") global("explicit full regression");
   for (const file of paths) {
+    if (
+      file.startsWith("agent/") ||
+      file === "web/bun.lock" ||
+      file === "web/package.json"
+    ) {
+      global(file);
+      continue;
+    }
     if (policy.globalPrefixes.some((p) => file.startsWith(p))) {
       global(file);
       continue;
     }
     if (file.startsWith("backend/")) {
-      if (
-        mode === "full" ||
-        policy.backendShared.some((p) => file.startsWith(p))
-      ) {
-        backend(file);
+      if (policy.backendShared.some((p) => file.startsWith(p))) {
+        global(file);
         continue;
       }
       const owner = policy.packages.find((p) =>
         file.startsWith(p.directory + "/"),
       );
-      if (!owner || !goPackages) {
-        backend(file);
+      if (!owner || !goPackages || /\/(types|errors|service)\.go$/.test(file)) {
+        global(file);
         if (!owner) unclassifiedPaths.push(file);
         continue;
       }
@@ -228,6 +253,21 @@ export function buildVerificationPlan({
         "backend",
         "go",
         ["test", "-count=1", "./internal/architecture"],
+        file,
+      );
+      add("backend:gofmt", "backend", "gofmt", ["-l", "."], file);
+      add("backend:vet", "backend", "go", ["vet", "./..."], file);
+      add(
+        "backend:agent-lint",
+        "backend",
+        "golangci-lint",
+        [
+          "run",
+          "--config=.golangci.yml",
+          "./internal/agentcontext/...",
+          "./internal/agentmemory/...",
+          "./internal/architecture/...",
+        ],
         file,
       );
       add(
@@ -278,6 +318,16 @@ export function buildVerificationPlan({
         id === "backend:architecture"
       )
         checks.delete(id);
+  if (checks.has("web:e2e")) checks.get("web:e2e").dependencies = ["web:test"];
+  if (checks.has("docs:check"))
+    checks.get("docs:check").dependencies = ["docs:types"];
+  if (checks.has("backend:gofmt"))
+    checks.get("backend:gofmt").expectEmptyOutput = true;
+  if (checks.has("web:format"))
+    checks.get("web:format").env = {
+      BASE_SHA: base,
+      GITHUB_SHA: head || "HEAD",
+    };
   return {
     schemaVersion: 1,
     mode,
@@ -381,7 +431,12 @@ export function readGoPackages(root) {
   }
 }
 
-export function collectPlan({ root, base, head, mode = "full" }) {
+export function collectPlan({ root, base, head, mode = "affected" }) {
+  const resolvedHead = git(root, [
+    "rev-parse",
+    "--verify",
+    (head || "HEAD") + "^{commit}",
+  ]).trim();
   const changes = collectChanges(root, base, head);
   const needsGraph = changes.some((c) =>
     [c.path, c.oldPath].some((p) => p?.startsWith("backend/")),
@@ -389,14 +444,14 @@ export function collectPlan({ root, base, head, mode = "full" }) {
   return buildVerificationPlan({
     mode,
     base,
-    head,
+    head: resolvedHead,
     changes,
     goPackages: needsGraph ? readGoPackages(root) : [],
   });
 }
 
 export function parseOptions(argv) {
-  const result = { mode: "full" };
+  const result = { mode: "affected" };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--json") continue;

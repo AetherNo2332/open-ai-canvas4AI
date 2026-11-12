@@ -2,6 +2,66 @@ package architecture
 
 import "testing"
 
+func TestFacadeRejectsChannelReceiveInitializer(t *testing.T) {
+	root := testBackend(t, map[string]string{"internal/service/receive.go": `package service
+import "yingce/backend/internal/app"
+var value = <-app.Events
+const signed = -1
+`})
+	findings, err := Check(root, Baseline{Version: 1})
+	if err != nil || len(findings) != 1 || !hasRule(findings, "facade_declaration") {
+		t.Fatalf("channel receive must not be accepted as a direct re-export: %+v, %v", findings, err)
+	}
+}
+
+func TestGenericMapSubstitutesAny(t *testing.T) {
+	root := testBackend(t, map[string]string{"internal/agentmemory/document/generic.go": `package document
+ type Box[T any] struct { Values map[string]T }
+ func Send(value Box[any]) {}
+ `})
+	findings, err := Check(root, Baseline{Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasID(findings, "internal/agentmemory/document/generic.go:signature:Send") {
+		t.Fatalf("generic map escaped: %+v", findings)
+	}
+}
+
+func TestNestedSameGenericPreservesMapGuard(t *testing.T) {
+	root := testBackend(t, map[string]string{"internal/agentmemory/document/nested.go": `package document
+ type Envelope[T any] struct { Value T }
+ func Send(value Envelope[Envelope[map[string]any]]) {}
+ `})
+	findings, err := Check(root, Baseline{Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasID(findings, "internal/agentmemory/document/nested.go:signature:Send") {
+		t.Fatalf("nested generic escaped: %+v", findings)
+	}
+}
+
+func TestServiceRejectsBusinessBodiesAndInitializers(t *testing.T) {
+	root := testBackend(t, map[string]string{"internal/service/renamed.go": `package service
+ import "yingce/backend/internal/app"
+ type Alias = app.Service
+ var direct = app.New
+ var effect = app.New(nil)
+ func Hidden() bool { return true }
+ func init() {}
+ `})
+	findings, err := Check(root, Baseline{Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"effect", "Hidden", "init"} {
+		if !hasID(findings, "internal/service/renamed.go:facade:"+name) {
+			t.Fatalf("missing %s: %+v", name, findings)
+		}
+	}
+}
+
 // 门面文件只允许类型别名、直接引用初始化与单 return 透传；业务函数体、init、
 // 带计算的初始化和新类型定义都会被阻断。
 func TestFacadeFilesRejectBusinessDeclarations(t *testing.T) {
@@ -33,6 +93,14 @@ func (s *Service) Get(userID string) (View, error) {
 func (s *Service) Pass(userID string) (View, error) {
 	return s.memoryDocuments().Document(userID)
 }
+
+func (s *Service) Hidden(userID string) (View, error) {
+ return func() (View, error) { if userID == "" { return View{}, nil }; return s.memoryDocuments().Document(userID) }()
+}
+
+func (s *Service) Computed(userID string) (View, error) {
+ return s.memoryDocuments().Document(strings.TrimSpace(userID))
+}
 `,
 	}
 	findings, err := Check(testBackend(t, facade), Baseline{Version: 1})
@@ -44,6 +112,8 @@ func (s *Service) Pass(userID string) (View, error) {
 		"internal/app/cloud_agent_memory_document_api.go:facade:computed",
 		"internal/app/cloud_agent_memory_document_api.go:facade:init",
 		"internal/app/cloud_agent_memory_document_api.go:facade:Service.Get",
+		"internal/app/cloud_agent_memory_document_api.go:facade:Service.Hidden",
+		"internal/app/cloud_agent_memory_document_api.go:facade:Service.Computed",
 	} {
 		if !hasID(findings, want) {
 			t.Fatalf("facade violation %q not reported: %+v", want, findings)

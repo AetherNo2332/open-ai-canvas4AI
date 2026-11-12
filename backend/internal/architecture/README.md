@@ -10,11 +10,12 @@
   - ID 为 `<文件>:func:<外层函数或包级变量>.func<序号>`，序号按源码顺序从 1 开始，与行号无关。
   - 这样把逻辑挪进闭包就绕不过上限。
 - **依赖方向**（`layerViolation`），调用链为 `handler -> service -> app -> 业务域包 -> repository/model -> database`：
+  - `package_roles.go` 明确登记 internal 顶层包角色，未知包报告 `package_classification`，必须先补分类且不能用基线豁免；子包继承顶层角色。该分类不额外禁止域包之间的调用。
   - handler 不得 import app、repository、database，应该经 service 调用；
   - repository 和业务域包（`internal/` 下除 handler、service、app、model 以外的包）不得 import handler、service、app；
   - model 不得 import handler、service、app、repository、database；
   - service 和 app 是组合层，不受这条约束；`internal/` 之外的入口（cmd、payment-plugins）负责组装各层，也不受约束。
-  - handler 不得 import `gorm.io/gorm`、`gorm.io/driver/*` 或 `database/sql`；持久化错误语义在 service/app 归属（如 `service.EcommerceAgentNotFound`），handler 只映射响应。
+  - handler 不得 import `gorm.io/gorm`、`gorm.io/driver/*` 或 `database/sql`；持久化错误在 app 或业务域转换为业务错误，service 仅再导出（如 `service.EcommerceAgentNotFound`），handler 只映射响应。
   - `internal/agentmemory` 根包保持纯规则：不得 import repository、database 或 agentmemory/document。
 
 ## 职责与门面规则（responsibilities.go）
@@ -23,7 +24,9 @@
 
 - 类型别名（`type X = owning.Sym`），不允许新定义 struct/interface；
 - 常量与变量初始化只能是基本字面量或对拥有包符号的直接引用；
-- 函数体必须是单 return 透传，不得声明 `init`。
+- 函数体必须是单 return 直接调用拥有包符号，参数只允许原有标识符，不得通过闭包或计算参数隐藏业务；不得声明 `init`。
+
+`internal/service` 全包适用更严格的声明规则：只允许别名、常量和直接再导出变量，不允许函数声明及计算初始化。
 
 业务函数体、带计算的初始化和规则无法判断的形态（如别名环）一律报告为 `facade_declaration`，不静默当成合法。新增迁移单元时在此登记其门面文件，不做文件名猜测。
 
@@ -33,9 +36,9 @@
 
 - `internal/app` 下的 `cloud_agent.go`、`cloud_agent_*.go`、`agent_*.go`；
 - `internal/handler` 下的 `agent*.go`、`internal_agent.go`；
-- `internal/agentcontext/**`、`internal/agentmemory/**`。
+- `internal/agentcontext/**`、`internal/agentmemory/**`、`internal/identity/worker/**`。
 
-别名会在扫描范围内跨文件追踪。`json.RawMessage` 和 `map[string]json.RawMessage` 可以作为协议边界。
+别名会在扫描范围内跨文件追踪，泛型类型参数按实例代入；同一泛型嵌套仍逐层检查，合法递归类型不会无限展开。`json.RawMessage` 和 `map[string]json.RawMessage` 可以作为协议边界。
 
 ## 基线
 
@@ -68,4 +71,4 @@ go test -count=1 ./internal/architecture
 - 文件、函数、闭包和包级函数字面量的规模与复杂度；
 - 基线增长、改善后未下调、通配和重复条目。
 
-CI 的 Backend tests（rest）分片在全量测试前单独运行本包。
+完整计划由 Backend tests（rest）分区覆盖本包；已映射的局部变更单独选择本包，并执行跨版本基线比较。

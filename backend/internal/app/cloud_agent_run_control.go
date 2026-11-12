@@ -15,6 +15,18 @@ import (
 
 func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, reason string, mediaSettings ...*CloudAgentMediaSettings) error {
 	defer s.wakeAgentTools()
+	// Checkpoints can advance revision while an approval is pending. Re-read
+	// every permission and decision before retrying a failed CAS transaction.
+	for attempt := 0; attempt < cloudAgentInterjectionAttempts; attempt++ {
+		err := s.decideCloudAgentApproval(userID, id, approvalID, decision, reason, mediaSettings...)
+		if !errors.Is(err, repository.ErrCreationConflict) {
+			return err
+		}
+	}
+	return creationConflict("审批状态正在更新，请重试")
+}
+
+func (s *Service) decideCloudAgentApproval(userID, id, approvalID, decision, reason string, mediaSettings ...*CloudAgentMediaSettings) error {
 	// Resource leases are a protection mechanism only. Expiry cleanup is safe to
 	// run on the control-plane path and never changes the approval decision.
 	if err := s.repo.ReleaseExpiredCloudAgentResourceLeases(time.Now().UTC()); err != nil {

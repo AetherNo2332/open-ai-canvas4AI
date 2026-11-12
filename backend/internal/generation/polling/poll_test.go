@@ -20,6 +20,30 @@ func fastPolicy() Policy {
 	return policy
 }
 
+func TestAuthenticationIsNeverTaskNotReady(t *testing.T) {
+	for _, code := range []int{401, 403} {
+		retry, missing := Retryable(context.Background(), &HTTPStatusError{StatusCode: code, Body: `{"message":"task_not_found"}`})
+		if retry || missing {
+			t.Fatalf("HTTP %d retried", code)
+		}
+	}
+}
+
+func TestNotReadyKeepsInnerCodePrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{`{"error":{"code":401,"message":"denied"},"code":"task_not_found"}`, false},
+		{`{"error":{"code":"success"},"code":"task_not_found"}`, true},
+	} {
+		retry, _ := Retryable(context.Background(), &HTTPStatusError{StatusCode: 400, Body: tc.body})
+		if retry != tc.want {
+			t.Fatalf("%s: retry=%v", tc.body, retry)
+		}
+	}
+}
+
 func TestRunRecoversFromTransientHTTPError(t *testing.T) {
 	attempts := 0
 	result, err := Run(context.Background(), "provider-task-1", fastPolicy(), func(context.Context) (Outcome, error) {

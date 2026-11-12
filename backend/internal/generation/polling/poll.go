@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -228,7 +229,7 @@ func Retryable(ctx context.Context, err error) (retry bool, notFound bool) {
 	}
 	var httpErr *HTTPStatusError
 	if errors.As(err, &httpErr) {
-		if taskNotReady(httpErr.Body) {
+		if (httpErr.StatusCode == 400 || httpErr.StatusCode == 404) && taskNotReady(httpErr.Body) {
 			return true, true
 		}
 		if httpErr.StatusCode == http.StatusNotFound {
@@ -295,14 +296,52 @@ func protocolErrorValues(payload map[string]any) []string {
 		}
 	}
 	candidates = append(candidates, payload)
+	code, message := "", ""
 	for _, candidate := range candidates {
-		for _, key := range []string{"code", "message", "msg", "fail_reason"} {
-			if raw, ok := candidate[key].(string); ok {
-				values = append(values, raw)
+		if code == "" {
+			code = protocolErrorCode(candidate["code"])
+		}
+		if message == "" {
+			for _, key := range []string{"message", "msg", "fail_reason"} {
+				if raw, ok := candidate[key].(string); ok {
+					message = strings.TrimSpace(raw)
+					if message != "" {
+						break
+					}
+				}
 			}
 		}
 	}
+	values = append(values, code, message)
 	return values
+}
+
+func protocolErrorCode(value any) string {
+	code := ""
+	switch current := value.(type) {
+	case string:
+		code = current
+	case fmt.Stringer:
+		code = current.String()
+	case float64:
+		if current != 0 {
+			code = fmt.Sprintf("%g", current)
+		}
+	case int:
+		if current != 0 {
+			code = fmt.Sprintf("%d", current)
+		}
+	case int64:
+		if current != 0 {
+			code = fmt.Sprintf("%d", current)
+		}
+	}
+	code = strings.TrimSpace(code)
+	switch strings.ToLower(code) {
+	case "0", "success", "succeeded", "ok":
+		return ""
+	}
+	return code
 }
 
 // IsTransientTransport 识别读写阶段的连接中断。Go 对读写阶段的 ECONNRESET 等错误

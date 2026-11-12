@@ -18,6 +18,10 @@ var facadeFiles = map[string]string{
 // 规则无法判断的形态一律报告，不静默当成合法。
 func (s *scanner) facadeFindings(src *source) []Finding {
 	reason, ok := facadeFiles[src.path]
+	service := layerOf(src.path) == "service"
+	if service {
+		reason, ok = "service only re-exports owning app symbols", true
+	}
 	if !ok {
 		return nil
 	}
@@ -25,6 +29,10 @@ func (s *scanner) facadeFindings(src *source) []Finding {
 	for _, decl := range src.file.Decls {
 		switch typed := decl.(type) {
 		case *ast.FuncDecl:
+			if service {
+				findings = append(findings, facadeFinding(src.path, functionName(typed), reason))
+				continue
+			}
 			if typed.Recv == nil && typed.Name.Name == "init" {
 				findings = append(findings, facadeFinding(src.path, "init", reason+": facade files must not declare init"))
 				continue
@@ -33,7 +41,7 @@ func (s *scanner) facadeFindings(src *source) []Finding {
 				findings = append(findings, facadeFinding(src.path, functionName(typed), reason+": facade functions must be a single pass-through return"))
 				continue
 			}
-			if _, ok := typed.Body.List[0].(*ast.ReturnStmt); !ok {
+			if !passThroughReturn(typed.Body.List[0]) {
 				findings = append(findings, facadeFinding(src.path, functionName(typed), reason+": facade functions must be a single pass-through return"))
 			}
 		case *ast.GenDecl:
@@ -46,6 +54,39 @@ func (s *scanner) facadeFindings(src *source) []Finding {
 		}
 	}
 	return findings
+}
+
+func passThroughReturn(stmt ast.Stmt) bool {
+	ret, ok := stmt.(*ast.ReturnStmt)
+	if !ok || len(ret.Results) != 1 {
+		return false
+	}
+	call, ok := ret.Results[0].(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	target, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	switch recv := target.X.(type) {
+	case *ast.Ident:
+	case *ast.CallExpr:
+		if len(recv.Args) != 0 {
+			return false
+		}
+		if _, ok := recv.Fun.(*ast.SelectorExpr); !ok {
+			return false
+		}
+	default:
+		return false
+	}
+	for _, arg := range call.Args {
+		if _, ok := arg.(*ast.Ident); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func facadeSpecFindings(src *source, tok token.Token, spec ast.Spec, reason string) []Finding {
@@ -83,7 +124,8 @@ func isDirectReference(expr ast.Expr) bool {
 	case *ast.BasicLit:
 		return true
 	case *ast.UnaryExpr:
-		return isDirectReference(typed.X)
+		_, literal := typed.X.(*ast.BasicLit)
+		return literal && (typed.Op == token.ADD || typed.Op == token.SUB)
 	case *ast.SelectorExpr:
 		_, ok := typed.X.(*ast.Ident)
 		return ok

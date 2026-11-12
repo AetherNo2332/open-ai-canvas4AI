@@ -404,10 +404,5 @@ type (
 	WorkflowField                          = app.WorkflowField
 )
 
-func CloudAgentCapabilitySetInfo() CloudAgentCapabilitySet {
-	return app.CloudAgentCapabilitySetInfo()
-}
-
-func CloudAgentSupportedToolNames() []string {
-	return app.CloudAgentSupportedToolNames()
-}
+var CloudAgentCapabilitySetInfo = app.CloudAgentCapabilitySetInfo
+var CloudAgentSupportedToolNames = app.CloudAgentSupportedToolNames

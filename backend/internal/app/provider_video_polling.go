@@ -48,6 +48,10 @@ func defaultVideoPollPolicy() videoPollPolicy {
 // translateVideoPollError 把现有 HTTP/解码/熔断/槽位错误转换为 polling 认识的
 // 稳定错误事实；未知错误原样返回，由 polling 按传输层与标准库错误分类。
 func translateVideoPollError(err error) error {
+	var recovery *mediaRecoveryError
+	if errors.As(err, &recovery) {
+		return &polling.UnretryableSignal{Cause: err}
+	}
 	var httpErr providerHTTPError
 	if errors.As(err, &httpErr) {
 		return &polling.HTTPStatusError{StatusCode: httpErr.StatusCode, Status: httpErr.Status, Body: httpErr.Body, RetryAfter: httpErr.RetryAfter, Cause: err}
@@ -62,11 +66,6 @@ func translateVideoPollError(err error) error {
 	}
 	if code, _ := ChannelSlotFailureDetails(err); code != "" {
 		return &polling.RetryableSignal{Cause: err}
-	}
-	var recovery *mediaRecoveryError
-	if errors.As(err, &recovery) {
-		// 媒体恢复已接管的结果错误不由轮询重试；包装后传输层启发式不再穿透。
-		return &polling.UnretryableSignal{Cause: err}
 	}
 	return err
 }

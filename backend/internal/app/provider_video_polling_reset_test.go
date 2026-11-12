@@ -99,10 +99,11 @@ func TestVideoPollClassifiesTransportInterruptions(t *testing.T) {
 		}
 	}
 	for name, err := range map[string]error{
-		"plain text":     errors.New("upstream: connection reset by peer"),
-		"bare eof":       io.EOF,
-		"http 400":       providerHTTPError{StatusCode: http.StatusBadRequest, Body: "connection reset by peer"},
-		"media recovery": &mediaRecoveryError{stage: "download", retryable: true, cause: transport(syscall.ECONNRESET)},
+		"plain text":          errors.New("upstream: connection reset by peer"),
+		"bare eof":            io.EOF,
+		"http 400":            providerHTTPError{StatusCode: http.StatusBadRequest, Body: "connection reset by peer"},
+		"media recovery":      &mediaRecoveryError{stage: "download", retryable: true, cause: transport(syscall.ECONNRESET)},
+		"media recovery HTTP": &mediaRecoveryError{stage: "download", retryable: true, cause: providerHTTPError{StatusCode: 503}},
 	} {
 		if retry, _ := polling.Retryable(context.Background(), translateVideoPollError(err)); retry {
 			t.Errorf("%s: retry=true, want permanent", name)

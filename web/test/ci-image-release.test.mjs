@@ -14,7 +14,7 @@ function resolveBash() {
     if (process.platform !== "win32") return bashCommand;
     const isPosixBash = (candidate) => {
         if (!existsSync(candidate)) return false;
-        const result = spawnSync(candidate, ["-c", "uname -s"], { encoding: "utf8" });
+        const result = spawnSync(candidate, ["-c", "uname -s && command -v mktemp && command -v grep && command -v cat && command -v rm"], { encoding: "utf8", env: { ...process.env, PATH: "/usr/bin:/bin" } });
         return result.status === 0 && /MINGW|MSYS|CYGWIN/.test(result.stdout);
     };
     for (const directory of process.env.PATH.split(";")) {
@@ -50,7 +50,7 @@ function fixture(overrides = {}) {
     writeFileSync(output, "");
     const env = {
         ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
+        PATH: process.platform === "win32" ? `${bin.replaceAll("\\", "/").replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`)}:/usr/bin:/bin` : `${bin}:${process.env.PATH}`,
         GITHUB_OUTPUT: output,
         GITHUB_SHA: sha,
         GITHUB_REF: "refs/heads/main",
@@ -66,6 +66,9 @@ function fixture(overrides = {}) {
         MOCK_CALL: path.join(root, "docker-call"),
         ...overrides,
     };
+    // Windows environment names are case insensitive; a retained Path key can
+    // override the fixture's PATH when Node/Bun constructs the child block.
+    for (const key of Object.keys(env)) if (key !== "PATH" && key.toLowerCase() === "path") delete env[key];
     return {
         run: (script, ...args) => spawnSync(resolveBash(), [path.join(scripts, script), ...args], { env, encoding: "utf8" }),
         output: () => readFileSync(output, "utf8"),
@@ -76,7 +79,8 @@ function fixture(overrides = {}) {
 describe("commit image reuse", () => {
     test("reuses the exact existing digest", () => {
         const repo = fixture();
-        expect(repo.run("resolve-image.sh", "ghcr.io/fixture/image:sha-test").status).toBe(0);
+        const result = repo.run("resolve-image.sh", "ghcr.io/fixture/image:sha-test");
+        expect(result.status, result.stderr).toBe(0);
         expect(repo.output()).toBe(`found=true\ndigest=sha256:${digest}\n`);
     });
     test("only a missing manifest permits a rebuild", () => {

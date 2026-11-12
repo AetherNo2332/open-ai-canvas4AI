@@ -1,4 +1,4 @@
-// Declarative ownership only. Selection remains advisory until T7.
+// Declarative ownership and audited integration groups shared by local and CI.
 export const policy = {
   module: "yingce/backend",
   packages: [
@@ -13,7 +13,8 @@ export const policy = {
       directory: "backend/internal/generation/polling",
       importPath: "yingce/backend/internal/generation/polling",
       group: "polling",
-      pattern: "^(TestVideoPoll|TestVideoDownload)",
+      pattern:
+        "^(TestVideoPoll|TestVideoDownload|TestAsyncImagePoll|TestDeclarative)",
     },
   ],
   appFiles: {}, // Add only audited exact file -> integration group mappings.
@@ -21,6 +22,7 @@ export const policy = {
     ".github/",
     "scripts/verification-",
     "scripts/verify-before-push",
+    "scripts/go-test-shard",
     "Dockerfile",
     "docker-compose",
     "nginx.conf",
@@ -32,6 +34,9 @@ export const policy = {
     "backend/internal/database/",
     "backend/internal/model/",
     "backend/internal/app/task_",
+    // Worker grants are a control-plane security boundary; keep cross-process
+    // acceptance until a narrower, independently audited scope is available.
+    "backend/internal/identity/worker/",
   ],
   contractDocs: [
     "docs/content/docs/backend/",

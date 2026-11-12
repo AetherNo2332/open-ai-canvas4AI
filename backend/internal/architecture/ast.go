@@ -139,6 +139,14 @@ func (s *scanner) containsUntypedMap(expr ast.Expr, src *source, seen map[string
 	if expr == nil {
 		return false
 	}
+	if inst, body, owner, key, ok := s.instantiate(expr, src); ok {
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		defer delete(seen, key)
+		return inst.containsUntypedMap(body, owner, seen)
+	}
 	if m, ok := expr.(*ast.MapType); ok && s.containsAny(m.Value, src, map[string]bool{}) {
 		return true
 	}
@@ -148,6 +156,7 @@ func (s *scanner) containsUntypedMap(expr ast.Expr, src *source, seen map[string
 			return false
 		}
 		seen[key] = true
+		defer delete(seen, key)
 		return s.containsUntypedMap(resolved, owner, seen)
 	}
 	for _, child := range expressionChildren(expr) {
@@ -159,6 +168,14 @@ func (s *scanner) containsUntypedMap(expr ast.Expr, src *source, seen map[string
 }
 
 func (s *scanner) containsAny(expr ast.Expr, src *source, seen map[string]bool) bool {
+	if inst, body, owner, key, ok := s.instantiate(expr, src); ok {
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		defer delete(seen, key)
+		return inst.containsAny(body, owner, seen)
+	}
 	if ident, ok := expr.(*ast.Ident); ok && ident.Name == "any" {
 		return true
 	}
@@ -171,6 +188,7 @@ func (s *scanner) containsAny(expr ast.Expr, src *source, seen map[string]bool) 
 			return false
 		}
 		seen[key] = true
+		defer delete(seen, key)
 		return s.containsAny(resolved, owner, seen)
 	}
 	for _, child := range expressionChildren(expr) {
@@ -192,6 +210,9 @@ func (s *scanner) resolve(expr ast.Expr, src *source) (ast.Expr, *source, string
 		}
 	}
 	decl, ok := s.types[key]
+	if ok && decl.bound {
+		key += ":" + boundTypeKey(decl.expr, decl.src)
+	}
 	return decl.expr, decl.src, key, ok
 }
 

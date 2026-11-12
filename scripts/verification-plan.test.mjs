@@ -27,6 +27,42 @@ const plan = (paths, extra = {}) =>
     ...extra,
   });
 const ids = (p) => p.selectedChecks.map((c) => c.id);
+test("browser E2E preserves the existing post-unit-test process boundary", () => {
+  const p = plan(["web/src/components/previs.tsx"]);
+  assert.ok(
+    p.selectedChecks
+      .find((c) => c.id === "web:e2e")
+      .dependencies.includes("web:test"),
+  );
+});
+test("docs type generation completes before Next build writes its output", () => {
+  const p = plan(["docs/content/docs/overview/intro.mdx"]);
+  assert.deepEqual(
+    p.selectedChecks.find((c) => c.id === "docs:check").dependencies,
+    ["docs:types"],
+  );
+});
+test("Agent contracts, runtime and lockfiles retain cross-process coverage", () => {
+  for (const file of [
+    "agent/src/server.ts",
+    "agent/harness/tools.json",
+    "agent/package-lock.json",
+    "agent/Dockerfile",
+    "web/bun.lock",
+    "web/package.json",
+    "backend/internal/identity/worker/grants.go",
+    "backend/internal/identity/worker/workers.go",
+  ]) {
+    const selected = ids(plan([file]));
+    for (const id of ["backend:tool-contract", "agent:smoke", "web:e2e"])
+      assert.ok(selected.includes(id), file + " missing " + id);
+  }
+});
+test("mapped Go internals retain formatting, vet and static checks", () => {
+  const selected = ids(plan(["backend/internal/generation/polling/poll.go"]));
+  for (const id of ["backend:gofmt", "backend:vet", "backend:agent-lint"])
+    assert.ok(selected.includes(id), id);
+});
 test("ordinary docs only, contract docs broaden", () => {
   assert.deepEqual(ids(plan(["docs/content/docs/overview/intro.mdx"])), [
     "docs:check",
@@ -146,4 +182,19 @@ test("committed and worktree changes cannot cancel each other out", () => {
   assert.ok(
     collectChanges(root, base).some((c) => c.path === "file space.txt"),
   );
+});
+test("clean local and explicit CI SHA plans have identical commands and env", () => {
+  const { root, git, base } = fixture();
+  writeFileSync(path.join(root, "file space.txt"), "updated");
+  git("add", ".");
+  git("commit", "-m", "change");
+  const local = collectPlan({ root, base, mode: "affected" }),
+    ci = collectPlan({
+      root,
+      base,
+      head: git("rev-parse", "HEAD"),
+      mode: "affected",
+    });
+  assert.deepEqual(local.selectedChecks, ci.selectedChecks);
+  assert.deepEqual(local.reasons, ci.reasons);
 });

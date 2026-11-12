@@ -57,7 +57,8 @@
 - `backend/internal/service/`：稳定导入面。只再导出 `internal/app` 的类型、常量和包级函数（`aliases_*.go`）。handler/cmd 继续 import 本包。
 - `backend/internal/app/`：HTTP 组合根和尚未拆出的业务实现。校验、权限、跨域编排从这里进入。画布生成调度仍主要在 `provider.go`；文本 / 图片 / 视频遗留 / 音频 / HTTP / 声明式协议分别在 `provider_text.go`、`provider_image.go`、`provider_video.go`、`provider_audio.go`、`provider_http_client.go`、`provider_protocol.go`。技能库在 `internal/skills`，提示词与风格在 `internal/prompts`，登录注册在 `internal/auth`，画布分享在 `internal/canvas`，资源引用解析在 `internal/assets`，运行时策略/限流/worker 在 `internal/platform`，错误码与通用工具在 `internal/kernel`，出站 SSRF 在 `internal/outbound`，Agent 上下文检查点契约在 `internal/agentcontext`。域包不得 import `internal/service` 或 `internal/app`。
 - 云端 Agent（fork 维护）：运行、调度、工具与 Pi 桥接在 `internal/app/cloud_agent_*.go`、`agent_*.go`；Agent 写画布经 `internal/canvas/commands`（命令、版本、回执）与 `internal/canvas/tasks`（生成任务绑定与回写），媒体版本在 `internal/canvas/mediaversions`，引用字段在 `internal/canvas/references`；Worker 身份在 `internal/identity`，观测事件在 `internal/observability`。这些表统一在 schema v75（`internal/database/migrations_agent.go`），上游迁移号不得挪用 v75 及之后。上游的画布写入（整份保存、operations、历史恢复、删除）在同一事务里由 `repository/canvas_command_projection.go` 投影为 Agent 命令事件与实体版本；除 Agent 命令服务自身（它直接维护版本与事件）外，新增画布写路径必须走 `UpsertCanvasProject` / `DeleteCanvasProject`，不能绕开投影直接改 `canvas_projects`。
-- 后端架构守卫：`backend/internal/architecture` 用 AST 检查后端全部生产 Go 代码（不含测试、`testdata` 与 `third_party`）：单文件不超过 600 行、函数（含闭包）不超过 120 行、圈复杂度不超过 20；依赖方向按上面的调用链检查（handler 不直连 app/repository/database，repository、model 与业务域包不得回头 import handler/service/app，model 不依赖 repository/database），依赖违规不能登记例外。云端 Agent 文件（`app` 的 `cloud_agent*.go`、`agent_*.go`，`handler` 的 `agent*.go`、`internal_agent.go`，以及 `agentcontext`、`agentmemory`）另外要求导出 API 不暴露非类型化 map。职责规则：handler 不得 import `gorm.io/gorm`、`gorm.io/driver/*` 或 `database/sql`（持久化错误语义在 service/app 归属，`service.EcommerceAgentNotFound` 是识别入口）；`internal/agentmemory` 根包保持纯规则，不得 import repository/database/document；迁移门面文件（`architecture/responsibilities.go` 精确登记）只允许类型别名、直接引用初始化与单 return 透传，规则无法判断的形态按违规报告。存量登记在 `baseline.json`（精确 ID、冻结值、原因），只能下调或删除；改善后不下调、新增或增长都会让测试失败。新代码按上限写，不往基线里加条目。
+- 后端架构守卫：`backend/internal/architecture` 用 AST 检查后端全部生产 Go 代码（不含测试、`testdata` 与 `third_party`）：单文件不超过 600 行、函数（含闭包）不超过 120 行、圈复杂度不超过 20；依赖方向按上面的调用链检查（handler 不直连 app/repository/database，repository、model 与业务域包不得回头 import handler/service/app，model 不依赖 repository/database），依赖违规不能登记例外。云端 Agent 文件（`app` 的 `cloud_agent*.go`、`agent_*.go`，`handler` 的 `agent*.go`、`internal_agent.go`，以及 `agentcontext`、`agentmemory`、`identity/worker`）另外要求导出 API 不暴露非类型化 map，泛型嵌套按实际参数检查。职责规则：handler 不得 import `gorm.io/gorm`、`gorm.io/driver/*` 或 `database/sql`（持久化错误在 app 或业务域转换，`service.EcommerceAgentNotFound` 仅是再导出入口）；`internal/service` 全包只允许别名、常量和直接再导出变量，拒绝函数及计算初始化；`internal/agentmemory` 根包保持纯规则，不得 import repository/database/document；迁移门面文件（`architecture/responsibilities.go` 精确登记）只允许类型别名、直接引用初始化与单 return 直接调用透传，规则无法判断的形态按违规报告。存量登记在 `baseline.json`（精确 ID、冻结值、原因），只能下调或删除；改善后不下调、新增或增长都会让测试失败。新代码按上限写，不往基线里加条目。
+- 架构包角色在 `backend/internal/architecture/package_roles.go` 明确登记；新增 internal 顶层包须先分类，未知包不能登记基线豁免。子包继承顶层角色，分类不额外禁止现有域间调用。
 - `backend/internal/repository/`：GORM 查询和持久化；不承载业务策略。
 - `backend/internal/model/`：结构、枚举和简单模型方法；不调用外部服务。
 - `backend/internal/provider/`：模型供应商能力和协议实现。
@@ -155,19 +156,19 @@
 
 ### 推送前验证（必须）
 
-验证计划现阶段仅影子运行：`bun scripts/verify-before-push.mjs --base <ref> --mode full|affected|fast --plan-only` 只输出 JSON，不启动检查。默认 `full`；非 plan-only 时仍执行原有完整相关门禁，`--mode` 不授权跳过任务。计划和 affected 对照保存在 `.local/cache/verify/`。CI 始终上传影子计划，原有各门禁保持执行。后端额外运行 `go run ./cmd/check-architecture-baseline --base <SHA>`，与工作区扫描共同阻断新增/扩大的基线；迁移声明必须经审查且以两版源码核实。
+验证计划由本地和 CI 共用并实际执行：`bun scripts/verify-before-push.mjs --base <ref> --mode full|affected|fast --plan-only` 只输出 JSON，不启动检查。默认 `affected`，`--all` / `--mode full` 运行完整回归；`fast` 仅开发反馈。未知代码、共享核心、workflow 和选择器变化扩大检查。CI 的 PR 使用 affected，push、手动与被调用工作流使用 full；缺失/全零事件基准仅在可取得可信第一父提交时执行 full，否则失败。执行结果与计划保存在 `.local/cache/verify/`，CI 汇总精确核对计划任务与成功结果集合，缺失、跳过、重复或失败均拒绝；选中完整后端时强制依赖服务用例实际通过。后端跨版本基线仍与源码扫描共同阻断新增/扩额，迁移声明须审查。
 
 Web 完整测试的唯一调度入口是 `bun run test`（`web/scripts/run-tests.mjs`）。原 pretest 的八文件组与 canvas-grid 独立进程保持，普通集合排除这九个文件；不再设置 pretest。专项仍可直接 `bun test <文件>`。
 
 推送到 `main` 或任何会触发 CI 的分支前，必须在本地通过 CI「Quality checks」中与改动相关的检查；未通过不得推送，也不要推送后再看 CI 修。
 
 1. `git fetch` 后把本地提交 rebase 到最新的远端分支，再验证要推送的那组提交；工作区应干净（未提交改动会混进验证结果）。
-2. 在仓库根目录运行 `bun scripts/verify-before-push.mjs`。脚本按相对 `origin/main` 的改动挑选检查并行运行：
-   - Web：改动文件格式（`check-changed-formatting.mjs`，与 CI 同口径）、`typecheck`、`lint`、`bun run test`（含 `pretest`）；改动路径含 `previs` 时加跑预演台 Chrome E2E。
-   - 后端：`gofmt -l`、非 `internal/app` 包测试、`internal/app` 按 CI 方式分 4 片并行；装有 `golangci-lint` 时对 Agent 域包和架构守卫加跑静态检查；后端架构守卫本身随非 `internal/app` 包测试运行。
-   - 每项输出写入 `.local/cache/verify/`，失败时打印末尾。`--jobs <n>` 控制并行数（默认 CPU 核数），`--all` 跑全部（含 E2E），`--only web|backend` 只用于迭代，推送前最后一次用默认范围。
+2. 在仓库根目录运行 `bun scripts/verify-before-push.mjs`，默认基准 `origin/main`，其他目标显式传 `--base`。脚本执行统一计划：
+   - Web：改动文件格式、typecheck、lint、唯一调度入口 `bun run test`；预演、共享依赖或 full 计划选中 Chrome E2E。
+   - 后端：格式、vet、适用静态检查和架构基线；完整范围保留 rest 与四 app 分片，已审核的新包局部变化选中反向闭包及 app 专项。选中的工具缺失或命令失败均不能记作通过。
+   - Agent、docs、支付双架构、部署命令及真实 Agent smoke 按共享计划选取；full 包含全部。每项输出与结果写入 `.local/cache/verify/`，失败时打印末尾。`--jobs <n>` 默认 4；`--only web|backend` / `--skip-e2e` 仅用于迭代，不能作为完整交付证明。
 3. 新增或修改的 `web/` 文件按 Prettier 格式化（`cd web && ./node_modules/.bin/prettier --write <文件>`）。只格式化本次改动的文件，不要对整个目录运行 `bun run format`。
-4. 交付说明里列出脚本的总结行，以及「本地未覆盖」的项（支付插件双架构、缺少 PostgreSQL/Redis 时跳过的用例）；这些由 CI 兜底，推送后要确认 CI 结果。
+4. 交付说明列出脚本总结、实际结果及本地未覆盖项。被计划选中的任务失败、缺失或依赖用例 skip 时不得推送；未选中的任务应说明范围原因，不宣称它们已通过。推送后确认真实 CI 结果。
 
 迭代修改期间不必每次跑全量：只跑受影响的专项测试，最后推送前跑一次脚本。多个 Agent 同时工作时，各自在独立工作区或互不重叠的路径上验证，不要在同一工作区同时运行两份脚本。
 

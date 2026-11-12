@@ -42,20 +42,20 @@ func TestMoveScansBothGitRevisions(t *testing.T) {
 	git("config", "user.email", "fixture@example.invalid")
 	git("config", "user.name", "Fixture")
 	write("backend/go.mod", "module yingce/backend\n\ngo 1.25.0\n")
-	code := "package domain\n" + strings.Repeat("// existing debt\n", 600)
-	write("backend/internal/domain/old.go", code)
+	code := "package canvas\n" + strings.Repeat("// existing debt\n", 600)
+	write("backend/internal/canvas/old.go", code)
 	baseline := func(file string) string {
-		return `{"version":1,"allowances":[{"id":"internal/domain/` + file + `.go:file_lines","max":601,"reason":"existing"}]}`
+		return `{"version":1,"allowances":[{"id":"internal/canvas/` + file + `.go:file_lines","max":601,"reason":"existing"}]}`
 	}
 	write("backend/internal/architecture/baseline.json", baseline("old"))
 	git("add", ".")
 	git("commit", "-m", "base")
 	base := git("rev-parse", "HEAD")
-	if err := os.Rename(filepath.Join(root, "backend/internal/domain/old.go"), filepath.Join(root, "backend/internal/domain/new.go")); err != nil {
+	if err := os.Rename(filepath.Join(root, "backend/internal/canvas/old.go"), filepath.Join(root, "backend/internal/canvas/new.go")); err != nil {
 		t.Fatal(err)
 	}
 	write("backend/internal/architecture/baseline.json", baseline("new"))
-	write("backend/internal/architecture/baseline-moves.json", `[{"from":"internal/domain/old.go:file_lines","to":"internal/domain/new.go:file_lines","reason":"extract"}]`)
+	write("backend/internal/architecture/baseline-moves.json", `[{"from":"internal/canvas/old.go:file_lines","to":"internal/canvas/new.go:file_lines","reason":"extract"}]`)
 	before, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestMoveScansBothGitRevisions(t *testing.T) {
 	if err = run(base); err != nil {
 		t.Fatal(err)
 	}
-	write("backend/internal/domain/old.go", code)
+	write("backend/internal/canvas/old.go", code)
 	if run(base) == nil {
 		t.Fatal("move accepted while old debt remains")
 	}

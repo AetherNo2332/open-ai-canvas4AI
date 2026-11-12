@@ -56,8 +56,10 @@ type source struct {
 }
 
 type typeDecl struct {
-	expr ast.Expr
-	src  *source
+	bound  bool
+	expr   ast.Expr
+	src    *source
+	params *ast.FieldList
 }
 
 type scanner struct {
@@ -104,7 +106,7 @@ func InAgentScope(rel string) bool {
 	case dir == "internal/handler":
 		return match("agent*.go") || base == "internal_agent.go"
 	}
-	for _, domain := range []string{"internal/agentcontext", "internal/agentmemory"} {
+	for _, domain := range []string{"internal/agentcontext", "internal/agentmemory", "internal/identity/worker"} {
 		if dir == domain || strings.HasPrefix(dir, domain+"/") {
 			return true
 		}
@@ -130,8 +132,12 @@ func layerOf(rel string) string {
 // into handler/service/app, and model depends on no layer above it. Entry
 // points outside internal/ (cmd, payment plugins) wire layers freely.
 func layerViolation(from, to string) bool {
-	upper := to == "handler" || to == "service" || to == "app"
-	switch from {
+	upper := packageRoles[to] == "handler" || packageRoles[to] == "service" || packageRoles[to] == "app"
+	role := packageRoles[from]
+	if from != "" && role == "" {
+		role = "domain" // Unknown packages are reported separately and retain conservative import checks.
+	}
+	switch role {
 	case "", "service", "app":
 		return false
 	case "handler":
@@ -182,7 +188,7 @@ func Check(backendRoot string, baseline Baseline) ([]Finding, error) {
 			findings = append(findings, metric)
 			continue
 		}
-		if metric.Rule == "dependency" {
+		if metric.Rule == "dependency" || metric.Rule == "package_classification" {
 			findings = append(findings, metric)
 			continue
 		}
@@ -206,7 +212,7 @@ func Scan(backendRoot string) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := []Finding{}
+	out := s.packageClassificationFindings()
 	for _, src := range s.files {
 		out = append(out, s.fileFindings(src)...)
 	}
@@ -273,7 +279,7 @@ func loadSources(root string) (*scanner, error) {
 			}
 			for _, spec := range gen.Specs {
 				if typed, ok := spec.(*ast.TypeSpec); ok {
-					s.types[src.pkg+"."+typed.Name.Name] = typeDecl{expr: typed.Type, src: src}
+					s.types[src.pkg+"."+typed.Name.Name] = typeDecl{expr: typed.Type, src: src, params: typed.TypeParams}
 				}
 			}
 		}

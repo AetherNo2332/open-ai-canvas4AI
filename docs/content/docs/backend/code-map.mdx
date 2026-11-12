@@ -5,8 +5,10 @@ description: 从产品功能快速定位主要代码入口
 
 ## 架构守卫与验证调度
 
+- 验证执行：`scripts/verification-execution.mjs` 按统一计划执行与核对精确结果集合；`verification-ci.mjs` 生成 CI 分区，`go-test-shard.mjs` 保留四 app 分片。
+
 - 跨版本基线：`backend/internal/architecture/baseline_changes.go`；入口 `backend/cmd/check-architecture-baseline`，结合旧 Git 基线、迁移映射和两版源码扫描。
-- 验证计划：`scripts/verification-plan.mjs`（纯计划与 Git/Go 图收集），归属声明 `scripts/verification-policy.mjs`；本地 runner 和 CI 仅生成影子对照，保留完整相关门禁。
+- 验证计划：`scripts/verification-plan.mjs`（纯计划与 Git/Go 图收集），归属声明 `scripts/verification-policy.mjs`；本地 runner 和 PR CI 按同一计划执行 affected，主干 push、未知路径及共享核心变动保留 full。真实 CI 切换验收见待测试清单。
 - Web 测试：`web/scripts/run-tests.mjs` 发现真实测试并分配唯一组；原隔离组保留进程边界，普通集合不再重复运行。
 
 ## 电商 Agent 与后台知识库

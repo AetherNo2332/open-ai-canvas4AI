@@ -13,6 +13,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -122,11 +123,32 @@ class Smoke:
         print("PASS:", name, flush=True)
 
     def compose(self, *args, timeout=180, success=True):
-        result = subprocess.run([*self.command, *args], cwd=ROOT, env=self.env, capture_output=True,
-                                text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        proxy = self.env.get("CANVAS_SMOKE_BUILD_PROXY", "")
+        if args[0] == "build" and proxy:
+            parsed = urllib.parse.urlsplit(proxy)
+            if parsed.username is not None or parsed.password is not None:
+                raise AssertionError("Smoke build proxy credentials are not supported")
+            self.secrets.add(proxy)
+            args = ("build", "--build-arg", "HTTP_PROXY=" + proxy, "--build-arg", "HTTPS_PROXY=" + proxy, *args[1:])
+        try:
+            result = subprocess.run([*self.command, *args], cwd=ROOT, env=self.env, capture_output=True,
+                                    text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            self.compose_diagnostic(args[0], error.output, error.stderr)
+            raise AssertionError(f"Compose {args[0]} stage timed out after {timeout}s") from None
         if success and result.returncode:
-            raise AssertionError(f"Compose {args[0]} stage exited {result.returncode}; see service logs")
+            self.compose_diagnostic(args[0], result.stdout, result.stderr)
+            stage = re.sub(r"[^a-zA-Z0-9_-]", "_", args[0])
+            raise AssertionError(f"Compose {args[0]} stage exited {result.returncode}; see production-smoke-{stage}.log")
         return result
+
+    def compose_diagnostic(self, stage, stdout, stderr):
+        def decode(value):
+            return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
+        diagnostic = self.redact(decode(stdout) + "\n" + decode(stderr))[-65536:]
+        stage = re.sub(r"[^a-zA-Z0-9_-]", "_", stage)
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        (self.output.parent / f"production-smoke-{stage}.log").write_text(diagnostic, encoding="utf-8")
 
     def cleanup(self):
         if not (self.isolated and self.resources_created):
@@ -171,6 +193,26 @@ class Smoke:
         if "code" in payload and payload["code"] != 0:
             raise AssertionError(self.redact(f"{method} {path}: {payload.get('reason')}"))
         return payload.get("data", payload)
+
+    def backend_ready(self):
+        output = self.compose("ps", "--all", "--format", "json", "backend").stdout.strip()
+        if not output:
+            return False
+        row = json.loads(output)
+        if isinstance(row, list):
+            row = row[0] if row else {}
+        if row.get("State") in {"exited", "dead"}:
+            raise AssertionError("smoke backend exited before readiness")
+        return row.get("State") == "running" and row.get("Health") == "healthy"
+
+    def start_application(self):
+        deadline = time.monotonic() + 300
+        self.compose("up", "-d", "migrate", "backend", "model-stub", timeout=300)
+        # A slow cold seed can recover from unhealthy; keep the real health
+        # gate and the existing startup budget before asking Compose for web.
+        wait(self.backend_ready, seconds=min(150, max(0, deadline - time.monotonic())))
+        self.compose("up", "-d", "web", timeout=max(0, deadline - time.monotonic()))
+        wait(self.health_ready)
 
     def health_ready(self):
         try:
@@ -370,8 +412,7 @@ class Smoke:
         self.resources_created = True
         self.compose("up", "-d", "--wait", "postgres", "redis")
         self.verify_migration_gate()
-        self.compose("up", "-d", "migrate", "backend", "web", "model-stub", timeout=300)
-        wait(self.health_ready)
+        self.start_application()
         account = {"username": "smoke_" + uuid.uuid4().hex[:10], "password": secrets.token_urlsafe(24)}
         self.secrets.add(account["password"])
         self.api("POST", "/auth/register", {**account, "acceptedTerms": True})
