@@ -1,4 +1,10 @@
 # CHANGELOG
+## v1.8.3(f68ba5f)
+
+- Worker 身份：授权签名、Worker 管理和实时租约验证迁入独立身份域，保持用户、运行、owner、epoch、过期与撤销校验；环境配置和管理员权限继续由 app 控制。
+- 预演场景设置：app 与 commands 共用 scene_update 纯规则，保留两端 ID 校验、错误及审批摘要差异；权限、事务、CAS、事件和回执留在原受控入口。
+- 架构与验证：原 grant 测试迁为最小 Worker/Run/Session 夹具，保留真实 claim 接线和两端预演 parity；六项既有基线下调，不新增或提高额度。不涉及数据库结构与公开 HTTP JSON 合同变化，本 PR 仍须通过自己的 CI。
+
 ## v1.8.3(d92db22)
 
 - 验证门禁：本地与 PR CI 共用影响范围计划并精确核对结果；共享核心、未知文件与主干推送保留 full，保留后端四组 app 分片、rest 和 Web 原隔离进程。
