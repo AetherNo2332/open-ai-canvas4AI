@@ -4,6 +4,9 @@
 
 ## 部署与更新入口
 
+- [文档站独立交付](content/docs/backend/docs-deployment.mdx)：镜像自动构建、自部署选择更新、官方部署开关与独立回退。
+- [文档站开发计划](plans/2026-11-13-docs-independent-delivery.md)：实现步骤、接口合同与待验收边界。
+
 用户要求部署服务器时，默认使用官方 Release 镜像、`docker-compose.deploy.yml` 和 Host Updater。本地 SQLite 构建与自定义 Compose 不属于后台在线更新管理范围。
 
 - [Docker 部署](content/docs/overview/docker.mdx)：默认服务器方案、Compose 选择与已有部署核对。

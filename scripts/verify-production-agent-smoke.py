@@ -17,7 +17,7 @@ import urllib.parse
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = {"postgres", "redis", "migrate", "backend", "agent", "web", "model-stub"}
+SERVICES = {"postgres", "redis", "migrate", "backend", "agent", "web", "docs", "model-stub"}
 TERMINAL = {"completed", "failed", "cancelled", "rejected"}
 
 
@@ -90,6 +90,7 @@ class Smoke:
     image: ${CANVAS_BACKEND_IMAGE}
 ''', encoding="utf-8")
         self.env["CANVAS_MODEL_STUB_IMAGE"] = self.project + "-model-stub:ci"
+        self.env["CANVAS_DOCS_IMAGE"] = self.project + "-docs:ci"
         self.secrets.update((self.env["CANVAS_AGENT_INTERNAL_TOKEN"], self.env["CANVAS_AGENT_WORKER_TOKEN"]))
         self.command = ["docker", "compose", "--project-directory", str(ROOT), "-p", self.project,
                         "-f", str(ROOT / "docker-compose.deploy.yml"), "-f", str(ROOT / "docker-compose.build.yml"),

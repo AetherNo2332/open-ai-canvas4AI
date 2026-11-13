@@ -91,7 +91,8 @@ func (m *Manager) DocsSnapshot() DocsStatus {
 	defer m.mu.Unlock()
 	status := cloneDocsStatus(m.docs)
 	values, err := readEnvFile(m.envPath())
-	status.Supported = err == nil && m.validDocsDigest(values["CANVAS_DOCS_IMAGE"]) == nil
+	exists, contractErr := docsContract(m.composePath())
+	status.Supported = exists && contractErr == nil && err == nil && m.validDocsDigest(values["CANVAS_DOCS_IMAGE"]) == nil
 	if status.Supported && (status.Current == nil || status.Current.Digest != values["CANVAS_DOCS_IMAGE"]) {
 		status.Current = &DocsBuild{Digest: values["CANVAS_DOCS_IMAGE"]}
 	}

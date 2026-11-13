@@ -56,6 +56,7 @@ docs/content/docs/overview/*
 !docs/app/
 !docs/lib/
 !docs/components/
+!docs/public/
 !docs/content/docs/index.mdx
 !docs/content/docs/meta.json
 !docs/content/docs/overview/meta.json

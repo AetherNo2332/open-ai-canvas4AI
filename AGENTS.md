@@ -20,6 +20,8 @@
 
 ## 2. 开始工作前
 
+文档站独立交付：`docs/Dockerfile` 构建镜像，`docs-images.yml` 按公开文档输入自动发布，`docs-deploy.yml` 在显式配置后部署官方实例。生产经 web 网关访问同域 `/docs`，管理员使用 `scripts/update-docs.sh` 通过 Host Updater 单独更新/回退，不能为文档失败重启业务或恢复数据库；具体合同见 `docs/content/docs/backend/docs-deployment.mdx`。
+
 ### Agent 本地开发
 
 云端 Agent 是独立进程：`agent/` 的 Node Pi Worker 只通过后端 `/internal-agent` 领取 `engine=pi` 的运行，模型调用、工具执行、审批、计费与画布写入都回到 Go 后端校验。后端只在 `CANVAS_AGENT_INTERNAL_TOKEN`（至少 32 字符）存在时挂载 `/internal-agent`，并用 `CANVAS_AGENT_WORKER_ID` / `CANVAS_AGENT_WORKER_TOKEN` 首次引导 Worker 身份；缺 token 时新运行一直停在 queued。

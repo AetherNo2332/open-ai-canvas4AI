@@ -94,7 +94,7 @@ eval "$status"
         env = {key: value for key, value in os.environ.items() if not key.startswith("CANVAS_")}
         env.update(POSTGRES_PASSWORD="test-password", DATABASE_URL="postgresql://test:test@postgres/test",
                    CANVAS_BACKEND_IMAGE="example.invalid/backend:test", CANVAS_WEB_IMAGE="example.invalid/web:test",
-                   CANVAS_AGENT_IMAGE="example.invalid/agent:test", CANVAS_AGENT_INTERNAL_TOKEN=token,
+                   CANVAS_AGENT_IMAGE="example.invalid/agent:test", CANVAS_DOCS_IMAGE="example.invalid/docs:test", CANVAS_AGENT_INTERNAL_TOKEN=token,
                    CANVAS_AGENT_WORKER_ID="compose-worker", CANVAS_AGENT_WORKER_TOKEN=TOKEN)
         if user_quota is not None:
             env["CANVAS_AGENT_MAX_SESSIONS_PER_USER"] = str(user_quota)
@@ -217,7 +217,7 @@ eval "$status"
             commands = '''
 docker() {
     case "$*" in
-        *" build migrate backend web agent") command docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" config --format json > config.json ;;
+        *" build migrate backend web agent docs") command docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" config --format json > config.json ;;
         *" up -d "*) return 0 ;;
         *) return 1 ;;
     esac

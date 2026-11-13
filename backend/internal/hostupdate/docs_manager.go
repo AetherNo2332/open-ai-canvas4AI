@@ -40,6 +40,13 @@ func (m *Manager) CheckDocs(ctx context.Context) (DocsStatus, error) {
 func (m *Manager) discoverDocs(ctx context.Context) (*DocsBuild, *DocsBuild, error) {
 	ctx, cancel := context.WithTimeout(ctx, m.config.StepTimeout)
 	defer cancel()
+	exists, contractErr := docsContract(m.composePath())
+	if contractErr != nil {
+		return nil, nil, contractErr
+	}
+	if !exists {
+		return nil, nil, errors.New("当前编排没有受管 docs 服务")
+	}
 	values, err := readEnvFile(m.envPath())
 	if err != nil {
 		return nil, nil, err
@@ -93,6 +100,13 @@ func (m *Manager) startDocsLocked(request DocsUpdateRequest, rollback bool) (Doc
 	}
 	if err := m.validDocsDigest(request.TargetDigest); err != nil {
 		return cloneDocsStatus(m.docs), err
+	}
+	exists, contractErr := docsContract(m.composePath())
+	if contractErr != nil {
+		return cloneDocsStatus(m.docs), contractErr
+	}
+	if !exists {
+		return cloneDocsStatus(m.docs), errors.New("当前编排没有受管 docs 服务")
 	}
 	values, err := readEnvFile(m.envPath())
 	if err != nil {

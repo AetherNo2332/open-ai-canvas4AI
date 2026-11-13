@@ -33,6 +33,10 @@ func (r *docsRunner) Run(_ context.Context, _ string, args, _ []string, out, _ i
 		io.WriteString(out, "backend\nweb\nagent\ndocs\n")
 	}
 	if strings.Contains(call, "image inspect") {
+		if strings.Contains(call, ".RepoDigests") {
+			json.NewEncoder(out).Encode([]string{"ghcr.io/aetherno2332/open-ai-canvas-docs@sha256:" + strings.Repeat("b", 64)})
+			return nil
+		}
 		commit := strings.Repeat("b", 40)
 		if strings.Contains(call, "sha256:"+strings.Repeat("a", 64)) {
 			commit = strings.Repeat("a", 40)
@@ -49,7 +53,7 @@ func docsFixture(t *testing.T) (*Manager, *docsRunner, string, string) {
 	old := "ghcr.io/aetherno2332/open-ai-canvas-docs@sha256:" + strings.Repeat("a", 64)
 	target := "ghcr.io/aetherno2332/open-ai-canvas-docs@sha256:" + strings.Repeat("b", 64)
 	os.WriteFile(filepath.Join(dir, ".env"), []byte("CANVAS_IMAGE_TAG=1.8.3\nKEEP=untouched\nCANVAS_DOCS_IMAGE="+old+"\n"), 0600)
-	os.WriteFile(filepath.Join(dir, "docker-compose.deploy.yml"), []byte("services:\n  docs:\n    image: test\n"), 0600)
+	os.WriteFile(filepath.Join(dir, "docker-compose.deploy.yml"), []byte("services:\n  docs:\n    image: test\n    labels:\n      tv.yingce.docs.contract: '1'\n"), 0600)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/api/health") {
 			values, _ := readEnvFile(filepath.Join(dir, ".env"))
@@ -226,6 +230,21 @@ func TestDocsApplicationKeepsIndependentDigest(t *testing.T) {
 	os.WriteFile(path, []byte("services:\n  docs:\n    labels:\n      tv.yingce.docs.contract: '2'\n"), 0600)
 	if _, err = m.applicationDocs(path, "v9.0.0"); err == nil {
 		t.Fatal("accepted incompatible contract")
+	}
+}
+
+func TestDocsCheckResolvesPinnedCandidateAndCurrentIdentity(t *testing.T) {
+	m, _, old, target := docsFixture(t)
+	status, err := m.CheckDocs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Current == nil || status.Current.Digest != old || status.Candidate == nil || status.Candidate.Digest != target || status.Operation.Phase != PhaseReady {
+		t.Fatalf("%+v", status)
+	}
+	values, _ := readEnvFile(m.envPath())
+	if values["CANVAS_DOCS_IMAGE"] != old {
+		t.Fatal("check changed deployment")
 	}
 }
 

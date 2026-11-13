@@ -81,6 +81,8 @@ export const frFR: Messages = {
         expandSidebar: "Développer la barre latérale",
         expandSidebarMenu: "Développer le menu latéral",
         breadcrumb: "Emplacement actuel",
+        documentation: "Docs",
+        openDocumentation: "Ouvrir la documentation (nouvel onglet)",
         credits: "Crédits",
         openWallet: "Ouvrir le centre de crédits, {{balance}} crédits disponibles",
         toggleTheme: "Changer de thème",

@@ -3,6 +3,10 @@ title: 本地开发
 description: 在宿主机启动影策前后端开发服务
 ---
 
+## 文档站
+
+文档站单独运行 `cd docs && bun install --frozen-lockfile && bun run dev`，访问 `http://127.0.0.1:3001/docs`。Vite 将 `/docs` 代理到该服务，可用 `VITE_DOCS_PROXY_TARGET` 指定联调目标；dev/local Compose 已包含 docs。默认不自动启动开发服务器。
+
 ## 云端 Agent Worker
 
 云端 Agent 是独立的 Node Pi Worker（`agent/`），只经后端 `/internal-agent` 领取运行；模型调用、工具执行、审批、计费与画布写入都回到 Go 后端校验。后端只在 `CANVAS_AGENT_INTERNAL_TOKEN`（至少 32 字符）存在时挂载 `/internal-agent`，Worker 另用 `CANVAS_AGENT_WORKER_ID` / `CANVAS_AGENT_WORKER_TOKEN` 认证，变量含义见 `.env.example`。

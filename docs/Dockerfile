@@ -1,7 +1,8 @@
 ARG BUN_IMAGE=oven/bun:1.3.9-alpine
-FROM --platform=$BUILDPLATFORM ${BUN_IMAGE} AS bun
-FROM --platform=$BUILDPLATFORM node:22.19.0-alpine AS build
+FROM ${BUN_IMAGE} AS bun
+FROM node:22.19.0-alpine AS toolchain
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+FROM toolchain AS build
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile

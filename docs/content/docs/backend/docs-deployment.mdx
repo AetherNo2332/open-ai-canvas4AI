@@ -1,0 +1,60 @@
+---
+title: 文档站部署与独立更新
+description: docs 镜像、公开内容自动构建、独立更新与回退，以及官方和自部署的边界。
+---
+
+文档站使用仓库内公开 MDX，通过独立 Next.js 镜像在同域 `/docs` 提供服务。正文、导航或配图修订后由 CI 自动构建 docs，无须发布产品版本、重建业务镜像或重启业务服务。
+
+## 生产部署
+
+标准安装通过 Release 的 `docs-image.json` 选择初始镜像，将完整仓库 digest 写入 `CANVAS_DOCS_IMAGE`。生产 Compose 的 docs 不公开端口，不挂数据库或业务凭据；只有 web 对外提供访问。
+
+业务应用版本与文档 buildId 分别管理。既有兼容文档在应用升级时保留，不因 Release 自带较旧快照而降级。文档说明中的最低适用产品版本决定功能是否适用，文档提交时间不能代表当前业务版本。
+
+首次引入独立文档服务需要两步发布：过渡版本 A 保持三镜像编排并升级 Host Updater；完整版本 B 再引入 docs 服务和顶栏入口。既有受管部署先 A 后 B，新安装可以直接 B。A/B 是发布阶段名称，实际版本号由 Release 说明确定；本功能落地不表示这些版本已发布。
+
+## 自部署实例的日常更新
+
+标准镜像安装会在安装目录放置 `update-docs.sh`。脚本依赖 Bash、curl、jq，并通过本机 Unix socket 访问 Host Updater；不会把更新器令牌放进进程参数或日志。使用自定义安装目录时设置 `INSTALL_DIR`。
+
+```bash
+cd /opt/open-ai-canvas
+sudo bash update-docs.sh status
+sudo bash update-docs.sh check
+```
+
+先读取 status 的 `current.digest`，再读取 check 的 `candidate.digest`，把两个完整引用代入：
+
+```bash
+sudo bash update-docs.sh update '<candidate.digest>' '<current.digest>'
+```
+
+更新只执行 docs 的 `up --no-deps`。脚本等待成功或失败；目标变化、并发业务升级、未知部署合同会被拒绝。镜像拉取/身份检查失败不修改现行配置，切换后正文、搜索或健康验证失败只恢复 docs。单容器替换期间文档可能短时不可用，业务 API 不应受影响。
+
+回退使用 status 中的 previous 版本，不重新解析通道：
+
+```bash
+sudo bash update-docs.sh rollback '<current.digest>' '说明回退原因'
+```
+
+状态与事务分别保存在更新器 StateDir 的 `docs-state.json`、`docs-operation.json`，与应用回退备份分离。更新器重启会恢复未完成文档事务；若恢复自身失败则标记 `manual_intervention`，应核对实际容器、env 和事务记录后由管理员处理，不能继续盲目更新或改应用版本字段。
+
+## 官方自动部署
+
+`Docs images` 工作流对 main 的公开文档输入变化构建并发布 amd64/arm64 镜像。内部计划和报告不参与公开构建；PR 不推生产通道。
+
+- `docs-sha-<完整 SHA>`：不可变构建标识。
+- `docs-main`：发现最新版的指针，部署前解析为 digest。
+- `docs-image.json`：产品 Release 固定的初装快照。
+
+官方部署默认关闭。启用需要专用 `docs-deployment` self-hosted runner、`official-docs` environment、仓库变量 `DOCS_AUTO_DEPLOY=true` 和该环境的 `DOCS_INSTALL_DIR`。runner 必须在受信任部署主机上访问既有本机更新器，不能执行 fork PR 或其他不可信构建。普通镜像构建 runner 不接触生产令牌或 Docker socket。
+
+配置完整时，发布后只更新官方 docs；未配置时只发布镜像。此开关不会自动修改用户的自部署实例。真正启用前必须复盘 runner 权限、备份与恢复路径。
+
+## 路由与诊断
+
+正文、搜索、构建资源和健康分别位于 `/docs/...`、`/docs/api/search`、`/docs/_next/...`、`/docs/api/health`，不占用业务 `/api`。健康返回固化的 buildId、commit、builtAt 和 deploymentContract。
+
+健康 200 只证明健康路由可用；发布验收还需检查正文、中文搜索、搜索点击和资源。docs 不可用时网关仍须启动；docs 重建换 IP 后无需重启 web。
+
+源码安装通过 `docker-compose.deploy.yml` 叠加 `docker-compose.build.yml` 构建 docs。本地源码镜像不属于 GHCR digest 管理，不使用独立镜像更新命令冒充受管部署。

@@ -7,6 +7,7 @@ const config = {
   reactStrictMode: true,
   basePath: '/docs',
   output: 'standalone',
+  deploymentId: process.env.DOCS_BUILD_ID || 'development',
   env: {
     DOCS_BUILD_ID: process.env.DOCS_BUILD_ID || 'development',
     DOCS_BUILD_COMMIT: process.env.DOCS_BUILD_COMMIT || 'unknown',

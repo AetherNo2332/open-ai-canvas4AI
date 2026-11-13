@@ -1,7 +1,7 @@
 name: Deploy official docs
 on:
   workflow_run:
-    workflows: ['Docs images']
+    workflows: ["Docs images"]
     types: [completed]
   workflow_dispatch:
 permissions:
@@ -10,8 +10,13 @@ concurrency:
   group: official-docs-deployment
   cancel-in-progress: false
 jobs:
+  unconfigured:
+    if: vars.DOCS_AUTO_DEPLOY != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Official docs deployment is not configured; no server was modified.'
   deploy:
-    if: vars.DOCS_AUTO_DEPLOY == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push'))
+    if: vars.DOCS_AUTO_DEPLOY == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push'))
     runs-on: [self-hosted, docs-deployment]
     environment: official-docs
     steps:
@@ -29,7 +34,7 @@ jobs:
           target=$(jq -er '.candidate.digest' <<<"$candidate")
           commit=$(jq -er '.candidate.commit' <<<"$candidate")
           expected='${{ github.event.workflow_run.head_sha || github.sha }}'
-          if [[ "$commit" != "$expected" ]]; then
+          if [[ "${{ github.event_name }}" == workflow_run && "$commit" != "$expected" ]]; then
             echo "This build is not the current docs channel; deployment skipped."
             exit 0
           fi

@@ -3,23 +3,23 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs/app/**'
-      - 'docs/components/**'
-      - 'docs/lib/**'
-      - 'docs/content/docs/**'
-      - 'docs/public/**'
-      - 'docs/package.json'
-      - 'docs/bun.lock'
-      - 'docs/*.mjs'
-      - 'docs/*.ts'
-      - 'docs/*.json'
-      - 'docs/Dockerfile'
-      - 'docs/.dockerignore'
-      - 'scripts/docs-*'
-      - 'scripts/*docs*'
-      - '.github/workflows/docs-images.yml'
+      - "docs/app/**"
+      - "docs/components/**"
+      - "docs/lib/**"
+      - "docs/content/docs/**"
+      - "docs/public/**"
+      - "docs/package.json"
+      - "docs/bun.lock"
+      - "docs/*.mjs"
+      - "docs/*.ts"
+      - "docs/*.json"
+      - "docs/Dockerfile"
+      - "docs/.dockerignore"
+      - "scripts/docs-*"
+      - "scripts/*docs*"
+      - ".github/workflows/docs-*.yml"
   pull_request:
-    paths: ['docs/**', 'scripts/*docs*', '.github/workflows/docs-images.yml']
+    paths: ["docs/**", "scripts/*docs*", ".github/workflows/docs-images.yml"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -42,7 +42,7 @@ jobs:
       - name: Metadata and deployment contracts
         run: |
           node --test scripts/docs-release-metadata.test.mjs
-          python3 -B -m unittest scripts.test_docs_deployment scripts.test_update_docs
+          python3 -B -m unittest scripts.test_docs_deployment scripts.test_update_docs scripts.test_docs_release_snapshot
       - name: Resolve build identity
         id: identity
         env:
@@ -97,7 +97,8 @@ jobs:
           node scripts/docs-release-metadata.mjs "$IMAGE@$DIGEST" labels.json "${GITHUB_REPOSITORY_OWNER,,}" snapshot.json
           test "$(jq -r .commit snapshot.json)" = "$GITHUB_SHA"
           git fetch origin main
-          if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- docs ':!docs/plans/**' ':!docs/design/**' ':!docs/index.md' scripts/docs-release-metadata.mjs .github/workflows/docs-images.yml; then
+          git diff --name-only -z "$GITHUB_SHA" FETCH_HEAD > changed-paths.bin
+          if node scripts/docs-release-metadata.mjs --can-promote changed-paths.bin; then
             docker buildx imagetools create --tag "$IMAGE:docs-main" "$IMAGE@$DIGEST"
           else
             echo "Newer documentation exists; immutable image published without channel promotion."
