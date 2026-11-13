@@ -5,9 +5,10 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 ## 架构基线与测试调度
 
-- PR134 审查修复和 T7 验证计划执行已接入；T9 Worker 授权迁包、T10 scene_update 切片保留到后续 PR，不包含在本分支。
+- 本后续分支追加 T9 Worker 授权迁包和 T10 scene_update 首切片；PR134 的审查修复和 T7 执行门禁作为基准保留。仅在 PR134 CI 全绿后推送本分支。
+- [ ] 在本 PR CI 复核新的 Worker 授权域、两端预演适配、真实 Agent/SSE 和预演 E2E；基准 PR 全绿不能替代本 PR 验收。
 - [ ] 在真实 PR CI 核对 affected 分区、未选中理由、结果 artifact 和汇总精确匹配；workflow 自身变动应广覆盖。
-- [ ] 通过 PR134 CI 核对审批 CAS 修复与真实 Agent/SSE 链路；全绿后才推送 T9/T10 的后续 PR。
+- [x] PR134 基准提交 c9ea6cb69 已通过 13/13 CI，含审批、Agent/SSE 及预演 E2E；满足推送本后续 PR 的前置条件，本 PR 自身验收仍待 CI。
 
 - 已实现跨版本基线单向约束、迁移证据检查、统一验证计划及 Web 唯一调度入口；本地和 PR CI 已接入 affected 执行，真实新工作流尚未运行。主干、共享核心及未知路径保留 full。
 - 已修复九个 Windows Web 测试失败：WSL bash 误选（ci-image-release 127）、路径分隔符白名单（http-ownership）、Bun spawnSync 空闲超时缺陷（oven-sh/bun#33932，23 个 harness 测试改异步 spawn 包装）。本地完整入口 3479 pass / 5 skip / 0 fail。
