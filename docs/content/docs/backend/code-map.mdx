@@ -3,6 +3,14 @@ title: 代码功能地图
 description: 从产品功能快速定位主要代码入口
 ---
 
+## 架构守卫与验证调度
+
+- 验证执行：`scripts/verification-execution.mjs` 按统一计划执行与核对精确结果集合；`verification-ci.mjs` 生成 CI 分区，`go-test-shard.mjs` 保留四 app 分片。
+
+- 跨版本基线：`backend/internal/architecture/baseline_changes.go`；入口 `backend/cmd/check-architecture-baseline`，结合旧 Git 基线、迁移映射和两版源码扫描。
+- 验证计划：`scripts/verification-plan.mjs`（纯计划与 Git/Go 图收集），归属声明 `scripts/verification-policy.mjs`；本地 runner 和 PR CI 按同一计划执行 affected，主干 push、未知路径及共享核心变动保留 full。真实 CI 切换验收见待测试清单。
+- Web 测试：`web/scripts/run-tests.mjs` 发现真实测试并分配唯一组；原隔离组保留进程边界，普通集合不再重复运行。
+
 ## 电商 Agent 与后台知识库
 
 - 页面：`web/src/pages/ecommerce/`；后台：`web/src/pages/admin/ecommerce-agent-config-page.tsx`（上线检查、阶段模型 `ecommerce-stage-models.tsx` 与目录换算 `ecommerce-model-catalog.ts`）；`ecommerce-management-page.tsx`（知识与技能标签页：`ecommerce-knowledge-page.tsx`、`ecommerce-skills-page.tsx`、`ecommerce-categories-page.tsx`，内容头 `ecommerce-library-panel.tsx`）；`knowledge-domain-coverage.ts`。
@@ -57,6 +65,7 @@ description: 从产品功能快速定位主要代码入口
 - 文本任务：`app/text_wire.go`（读取声明的线格式、`stream_options` 被拒后重试、目录 `textWire`），调用方是 `provider_text.go` 的 `executeProtocolCreateRequest` 和 `provider_text_agent.go` 的 `runDeclarativeAgentTask`。
 - 系统代理：`app/system_proxy_protocol.go`（声明路径白名单、按 `auth` 写出站鉴权）→ `handler/auth.go` 的 `proxySystemRequestPath`、`handler/security.go` 的 `authorizeSystemProxy`。
 - Secret Key 与续查：`app/provider_protocol_auth.go` 的 `protocolAuthUsesSecretKey`；`app/task_worker.go` 的 `videoProviderSupportsTaskResume`。
+- 上游异步轮询：`backend/internal/generation/polling`（等待循环、错误分类计数、下载重试与 Retry-After 的归属）；`app/provider_video_polling.go` 保留默认策略构造、`providerHTTPError` 等现有错误到 polling 稳定事实的转换（`translateVideoPollError`）与日志通知；`app/provider_protocol_async.go`、`provider_video.go`、`workflow_provider_outputs.go` 等调用点经 `runVideoPollLoop`/`runVideoDownload` 使用。
 - 前端：`web/src/services/api/text-wire.ts`（文本请求路径）、`web/src/hooks/use-user-protocol-catalog.ts`（设置页 Secret Key 校验）。
 
 ## 可美 KM Seedream
@@ -260,7 +269,8 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 视口节点选择与输入关系解析 | `web/src/lib/canvas/canvas-node-visibility.ts`、`canvas-resource-references.ts` |
 | 本地持久化状态 | `web/src/stores/canvas/use-canvas-store.ts` |
 | 云端 Agent 运行与事件 API | `web/src/services/api/agent.ts`、`web/src/components/canvas/canvas-cloud-agent-panel.tsx` |
-| Agent 长期记忆 | 后端：`backend/internal/app/cloud_agent_memory_document*.go`（条目校验、快照、修订、撤销、采纳）、`cloud_agent_tools_memory.go`（`memory_update` 执行与 `memory_updated` 事件）、`backend/internal/agentmemory`（条目文本规则与旧经验映射，迁移 v82 共用）、`backend/internal/database/migrations_lessons_memory.go`（v82）、`handler/agent_memory_document.go`（经 `agent_settings.go` 注册）；前端：`web/src/services/api/agent-memory.ts`、设置面板 `web/src/pages/settings/agent-memory-pane.tsx`、聊天记忆卡 `web/src/components/canvas/canvas-cloud-agent-memory-cards.tsx`、事件归并 `web/src/lib/canvas/cloud-agent-events.ts` |
+| Agent 长期记忆 | 后端：`backend/internal/agentmemory/document`（文档行为归属：条目编辑规则、修订、撤销、审批、Agent 写入与类型化 `WriteOutcome`）、`backend/internal/app/cloud_agent_memory_document.go`（run 快照冻结/注入与兼容类型别名）、`cloud_agent_tools_memory.go`（`memory_update` 运行态准入与 `memory_updated` 事件拼装）、`cloud_agent_memory_document_api.go`（对外 API 门面：类型别名与单 return 透传）、`cloud_agent_memory_admin.go`（管理员跨用户聚合）、`backend/internal/agentmemory`（条目文本规则与旧经验映射，迁移 v82 共用，纯规则包不依赖持久化）、`backend/internal/database/migrations_lessons_memory.go`（v82）、`handler/agent_memory_document.go`（经 `agent_settings.go` 注册）；前端：`web/src/services/api/agent-memory.ts`、设置面板 `web/src/pages/settings/agent-memory-pane.tsx`、聊天记忆卡 `web/src/components/canvas/canvas-cloud-agent-memory-cards.tsx`、事件归并 `web/src/lib/canvas/cloud-agent-events.ts` |
+| 任务计费与终态 | 后端：`backend/internal/taskruntime`（计费状态迁移与核对策略、终态业务策略、任务执行诊断、上游地址脱敏的归属）、`backend/internal/generation/terminal_error.go`（上游明确终态的稳定错误事实 `TerminalError`）、`backend/internal/app/task_billing.go`、`task_terminal.go`（原方法名转发与 `serviceRuntimeAdapter` 显式接线，文本回放/日志/产物登记/音频视频结算由 Service 提供）、`task_diagnostic.go`（诊断转发，writeback 展示留 app）、`task_worker.go`、`task_lifecycle.go`（任务编排暂留 app，不再自行决定终态计费策略）；轮询归属见「插件声明驱动的宿主行为」节 |
 | Agent 画布上下文、操作与历史 | `web/src/lib/canvas/canvas-context-discovery.ts`、`canvas-operation-contract.ts`、`web/src/pages/canvas/use-canvas-operation-history.ts` |
 | 官方提示词目录与客户端起始稿 | `backend/internal/prompts/`、`web/src/lib/prompts/` |
 

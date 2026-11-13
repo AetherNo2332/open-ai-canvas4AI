@@ -13,6 +13,8 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+
+	"yingce/backend/internal/generation/polling"
 )
 
 // resetConnection 读完请求后以 SO_LINGER=0 关闭连接，客户端读取响应时得到 ECONNRESET。
@@ -92,17 +94,18 @@ func TestVideoPollClassifiesTransportInterruptions(t *testing.T) {
 		"pipe":    transport(syscall.EPIPE),
 		"eof":     &url.Error{Op: "Get", URL: "https://provider.example/v1/videos/1", Err: io.EOF},
 	} {
-		if retry, notFound := retryableVideoPollError(context.Background(), err); !retry || notFound {
+		if retry, notFound := polling.Retryable(context.Background(), translateVideoPollError(err)); !retry || notFound {
 			t.Errorf("%s: retry=%v notFound=%v, want transient", name, retry, notFound)
 		}
 	}
 	for name, err := range map[string]error{
-		"plain text":     errors.New("upstream: connection reset by peer"),
-		"bare eof":       io.EOF,
-		"http 400":       providerHTTPError{StatusCode: http.StatusBadRequest, Body: "connection reset by peer"},
-		"media recovery": &mediaRecoveryError{stage: "download", retryable: true, cause: transport(syscall.ECONNRESET)},
+		"plain text":          errors.New("upstream: connection reset by peer"),
+		"bare eof":            io.EOF,
+		"http 400":            providerHTTPError{StatusCode: http.StatusBadRequest, Body: "connection reset by peer"},
+		"media recovery":      &mediaRecoveryError{stage: "download", retryable: true, cause: transport(syscall.ECONNRESET)},
+		"media recovery HTTP": &mediaRecoveryError{stage: "download", retryable: true, cause: providerHTTPError{StatusCode: 503}},
 	} {
-		if retry, _ := retryableVideoPollError(context.Background(), err); retry {
+		if retry, _ := polling.Retryable(context.Background(), translateVideoPollError(err)); retry {
 			t.Errorf("%s: retry=true, want permanent", name)
 		}
 	}

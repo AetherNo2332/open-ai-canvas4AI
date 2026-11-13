@@ -75,6 +75,28 @@ import (
 	}
 }
 
+// agentmemory 根包保持纯规则：repository/database 由 document 或服务层使用，
+// document 的实现细节也不回流根包，避免纯规则包长出持久化依赖。
+func TestRejectsAgentMemoryRootImportsOfRepositoryAndDocument(t *testing.T) {
+	root := testBackend(t, map[string]string{
+		"internal/agentmemory/bad.go": `package agentmemory
+import (
+ _ "yingce/backend/internal/repository"
+ _ "yingce/backend/internal/database"
+ _ "yingce/backend/internal/agentmemory/document"
+)
+`,
+		"internal/agentmemory/document/ok.go": "package document\nimport _ \"yingce/backend/internal/repository\"\n",
+	})
+	findings, err := Check(root, Baseline{Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 3 || !hasRule(findings, "dependency") {
+		t.Fatalf("agentmemory root imports not caught exactly: %+v", findings)
+	}
+}
+
 func TestHandlerAndAppMayImportServiceAndApp(t *testing.T) {
 	root := testBackend(t, map[string]string{
 		"internal/handler/agent.go":     "package handler\nimport _ \"yingce/backend/internal/service\"\n",

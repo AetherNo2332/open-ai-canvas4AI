@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"yingce/backend/internal/agentmemory/document"
 	"yingce/backend/internal/auth"
 	"yingce/backend/internal/canvas"
 	"yingce/backend/internal/canvas/commands"
@@ -120,6 +121,7 @@ type Service struct {
 	// dramaTails 跟踪调度循环之外的尾帧抽取；dramaBackgroundRunner 为空时用后台 worker，测试替换为同步执行。
 	dramaTails            dramaTailWorker
 	dramaBackgroundRunner func(fn func()) bool
+	memoryDoc             *document.Service
 }
 
 const taskWorkerConcurrency = 3
@@ -155,6 +157,14 @@ func New(repo *repository.Repository, dataDir string) *Service {
 	return newService(repo, dataDir)
 }
 
+// memoryDocuments 返回记忆文档服务；空 Service（纯登录校验测试）也只做参数校验。
+func (s *Service) memoryDocuments() *document.Service {
+	if s.memoryDoc == nil {
+		s.memoryDoc = document.New(s.repo)
+	}
+	return s.memoryDoc
+}
+
 func newService(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := platform.NewCoordinator(repo.Dialect())
 	canvasRealtime := canvas.NewRealtimeHub(coordinator.Redis())
@@ -168,7 +178,7 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 			paymentRegistry = dynamic
 		}
 	}
-	service := &Service{repo: repo, dataDir: dataDir, activeStorageTests: make(map[string]bool), activeCancels: make(map[string]context.CancelFunc), agentConflictStreak: make(map[string]int), taskDispatcherWake: make(chan struct{}, 1), coordinator: coordinator, runtimeErr: err, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, paymentRegistry: paymentRegistry, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time), geminiCacheLocks: make(map[string]*geminiCacheKeyLock), observability: observability.NewAggregator(4096), observabilityExporter: observability.NewConfiguredExporter()}
+	service := &Service{repo: repo, dataDir: dataDir, memoryDoc: document.New(repo), activeStorageTests: make(map[string]bool), activeCancels: make(map[string]context.CancelFunc), agentConflictStreak: make(map[string]int), taskDispatcherWake: make(chan struct{}, 1), coordinator: coordinator, runtimeErr: err, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, paymentRegistry: paymentRegistry, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time), geminiCacheLocks: make(map[string]*geminiCacheKeyLock), observability: observability.NewAggregator(4096), observabilityExporter: observability.NewConfiguredExporter()}
 	service.agentToolWake = make(chan struct{}, 1)
 	service.agentMessageWake = make(chan struct{}, 1)
 	service.repo.SetStructuredWriteQuota(service.structuredWriteQuota)

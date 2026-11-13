@@ -1,61 +1,36 @@
+// 上游异步任务轮询的 app 适配层：循环、错误分类计数与下载重试已迁
+// internal/generation/polling；这里保留默认策略构造、现有 HTTP 错误到
+// polling 稳定事实的转换、日志通知，以及调用点使用的类型别名。
+
 package app
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
 	"strings"
-	"syscall"
 	"time"
+
+	"yingce/backend/internal/generation/polling"
 )
 
-const defaultVideoPollInterval = 30 * time.Second
+const defaultVideoPollInterval = polling.DefaultInterval
 
-type videoPollPolicy struct {
-	InitialDelay          time.Duration
-	Interval              time.Duration
-	MaxNotFoundMisses     int
-	MaxMalformedResponses int
-	MaxDownloadTries      int
-	RetryTransient        bool
-	// TransientRetryLimit 只在 RetryTransient=false（fail-fast 策略）时生效：允许连续多少次
-	// 暂时性轮询错误（连接中断、5xx、429 等）后继续查询原任务。0 表示保持 fail-fast。
-	TransientRetryLimit int
-	Sleep               func(context.Context, time.Duration) error
-	Notify              func(context.Context, string, videoPollEvent, error)
-}
-
-type videoPollEvent string
+// 轮询的行为与类型归 polling 所有；别名保持既有调用点与测试不变。
+type (
+	videoPollPolicy    = polling.Policy
+	videoPollEvent     = polling.Event
+	videoPollOutcome   = polling.Outcome
+	videoDownloadError = polling.DownloadError
+)
 
 const (
-	videoPollEventRetrying  videoPollEvent = "retrying"
-	videoPollEventRecovered videoPollEvent = "recovered"
+	videoPollEventRetrying  = polling.Retrying
+	videoPollEventRecovered = polling.Recovered
 )
 
-type videoPollOutcome struct {
-	Done   bool
-	Result map[string]interface{}
-}
-
-type videoDownloadError struct {
-	TaskID string
-	Cause  error
-}
-
-func (e videoDownloadError) Error() string {
-	if strings.TrimSpace(e.TaskID) == "" {
-		return fmt.Sprintf("视频结果下载失败：%v", e.Cause)
-	}
-	return fmt.Sprintf("视频结果下载失败（任务 %s）：%v", e.TaskID, e.Cause)
-}
-
-func (e videoDownloadError) Unwrap() error { return e.Cause }
-
+// defaultVideoPollPolicy 是视频/协议轮询的默认策略：日志通知走任务事件，
+// HTTP 客户端错误经 translateVideoPollError 适配为 polling 的稳定事实。
 func defaultVideoPollPolicy() videoPollPolicy {
 	return videoPollPolicy{
 		InitialDelay:          defaultVideoPollInterval,
@@ -66,202 +41,54 @@ func defaultVideoPollPolicy() videoPollPolicy {
 		RetryTransient:        true,
 		Sleep:                 sleepContext,
 		Notify:                notifyTaskVideoPollEvent,
+		Translate:             translateVideoPollError,
 	}
 }
 
-func runVideoPollLoop(ctx context.Context, taskID string, policy videoPollPolicy, query func(context.Context) (videoPollOutcome, error)) (map[string]interface{}, error) {
-	policy = normalizeVideoPollPolicy(policy)
-	deadline := providerPollingDeadline(ctx)
-	pollContext, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
-	ctx = pollContext
-	nextDelay := policy.InitialDelay
-	notFoundMisses := 0
-	malformedResponses := 0
-	retrying := false
-	transientFailures := 0
-	for time.Now().Before(deadline) {
-		if nextDelay > 0 {
-			if err := policy.Sleep(ctx, nextDelay); err != nil {
-				return nil, err
-			}
-		}
-		outcome, err := query(ctx)
-		if err != nil {
-			if !policy.RetryTransient {
-				retry, notFound := retryableVideoPollError(ctx, err)
-				if !retry || notFound || isTransientResponseDecodeError(err) || transientFailures >= policy.TransientRetryLimit {
-					return nil, err
-				}
-				transientFailures++
-				nextDelay = max(min(policy.Interval<<(transientFailures-1), 4*policy.Interval), providerRetryAfter(err))
-				continue
-			}
-			retry, notFound := retryableVideoPollError(ctx, err)
-			if !retry {
-				return nil, err
-			}
-			malformed := isTransientResponseDecodeError(err)
-			if malformed {
-				malformedResponses++
-				notFoundMisses = 0
-				if malformedResponses >= policy.MaxMalformedResponses {
-					return nil, err
-				}
-			} else if notFound {
-				malformedResponses = 0
-				notFoundMisses++
-				if notFoundMisses >= policy.MaxNotFoundMisses {
-					return nil, err
-				}
-			} else {
-				malformedResponses = 0
-				notFoundMisses = 0
-			}
-			if !retrying {
-				retrying = true
-				policy.Notify(ctx, taskID, videoPollEventRetrying, err)
-			}
-			nextDelay = max(policy.Interval, providerRetryAfter(err))
-			continue
-		}
-		notFoundMisses = 0
-		malformedResponses = 0
-		transientFailures = 0
-		nextDelay = policy.Interval
-		if retrying {
-			retrying = false
-			policy.Notify(ctx, taskID, videoPollEventRecovered, nil)
-		}
-		if outcome.Done {
-			return outcome.Result, nil
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return nil, context.DeadlineExceeded
-}
-
-func normalizeVideoPollPolicy(policy videoPollPolicy) videoPollPolicy {
-	if policy.Interval <= 0 {
-		policy.Interval = defaultVideoPollInterval
-	}
-	if policy.MaxNotFoundMisses <= 0 {
-		policy.MaxNotFoundMisses = 3
-	}
-	if policy.MaxMalformedResponses <= 0 {
-		policy.MaxMalformedResponses = 3
-	}
-	if policy.MaxDownloadTries <= 0 {
-		policy.MaxDownloadTries = 3
-	}
-	if policy.Sleep == nil {
-		policy.Sleep = sleepContext
-	}
-	if policy.Notify == nil {
-		policy.Notify = func(context.Context, string, videoPollEvent, error) {}
-	}
-	return policy
-}
-
-func runVideoDownload(ctx context.Context, taskID string, policy videoPollPolicy, download func(context.Context) ([]byte, string, error)) ([]byte, string, error) {
-	policy = normalizeVideoPollPolicy(policy)
-	var lastErr error
-	for attempt := 1; attempt <= policy.MaxDownloadTries; attempt++ {
-		data, mimeType, err := download(ctx)
-		if err == nil {
-			return data, mimeType, nil
-		}
-		lastErr = err
-		retry, _ := retryableVideoPollError(ctx, err)
-		if !retry || attempt == policy.MaxDownloadTries {
-			return nil, "", videoDownloadError{TaskID: taskID, Cause: err}
-		}
-		delay := max(policy.Interval, providerRetryAfter(err))
-		if err := policy.Sleep(ctx, delay); err != nil {
-			return nil, "", err
-		}
-	}
-	return nil, "", videoDownloadError{TaskID: taskID, Cause: lastErr}
-}
-
-func retryableVideoPollError(ctx context.Context, err error) (retry bool, notFound bool) {
-	if err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) {
-		return false, false
-	}
-	var downloadError videoDownloadError
-	if errors.As(err, &downloadError) {
-		return false, false
-	}
-	var recoveryError *mediaRecoveryError
-	if errors.As(err, &recoveryError) {
-		return false, false
-	}
-	if code, _ := ChannelSlotFailureDetails(err); code != "" {
-		return true, false
-	}
-	var circuitOpen providerCircuitOpenError
-	if errors.As(err, &circuitOpen) {
-		return true, false
-	}
-	if isTransientResponseDecodeError(err) {
-		return true, false
-	}
-	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) {
-		return true, false
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true, false
+// translateVideoPollError 把现有 HTTP/解码/熔断/槽位错误转换为 polling 认识的
+// 稳定错误事实；未知错误原样返回，由 polling 按传输层与标准库错误分类。
+func translateVideoPollError(err error) error {
+	var recovery *mediaRecoveryError
+	if errors.As(err, &recovery) {
+		return &polling.UnretryableSignal{Cause: err}
 	}
 	var httpErr providerHTTPError
 	if errors.As(err, &httpErr) {
-		if isProviderTaskNotReadyError(httpErr) {
-			return true, true
-		}
-		if httpErr.StatusCode == http.StatusNotFound {
-			return true, true
-		}
-		switch httpErr.StatusCode {
-		case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
-			return true, false
-		default:
-			return httpErr.StatusCode >= http.StatusInternalServerError, false
-		}
+		return &polling.HTTPStatusError{StatusCode: httpErr.StatusCode, Status: httpErr.Status, Body: httpErr.Body, RetryAfter: httpErr.RetryAfter, Cause: err}
 	}
-	if isTransientTransportError(err) {
-		return true, false
+	var decode providerResponseDecodeError
+	if errors.As(err, &decode) {
+		return &polling.ResponseDecodeError{Cause: err}
 	}
-	var networkError net.Error
-	if errors.As(err, &networkError) {
-		return networkError.Timeout() || networkError.Temporary(), false
+	var circuit providerCircuitOpenError
+	if errors.As(err, &circuit) {
+		return &polling.RetryableSignal{Cause: err}
 	}
-	return false, false
+	if code, _ := ChannelSlotFailureDetails(err); code != "" {
+		return &polling.RetryableSignal{Cause: err}
+	}
+	return err
 }
 
-// isTransientTransportError 识别读写阶段的连接中断。Go 对读写阶段的 ECONNRESET 等错误
-// 返回 Temporary()=false，只看 net.Error 会把已提交任务的一次网络抖动当成永久失败。
+// runVideoPollLoop 转发轮询循环；deadline 缺省时由 polling 以 DefaultTimeout 兜底。
+func runVideoPollLoop(ctx context.Context, taskID string, policy videoPollPolicy, query func(context.Context) (videoPollOutcome, error)) (map[string]interface{}, error) {
+	return polling.Run(ctx, taskID, policy, query)
+}
+
+var runVideoDownload = polling.Download
+
+// providerRetryAfter 读取现有 HTTP 错误上的 Retry-After；等待间隔由 polling 统一取用。
+func providerRetryAfter(err error) time.Duration {
+	var httpErr providerHTTPError
+	if errors.As(err, &httpErr) && httpErr.RetryAfter > 0 {
+		return httpErr.RetryAfter
+	}
+	return 0
+}
+
+// isTransientTransportError 转发 polling 的连接中断识别，供协议异步轮询使用。
 func isTransientTransportError(err error) bool {
-	var urlError *url.Error
-	var opError *net.OpError
-	if !errors.As(err, &urlError) && !errors.As(err, &opError) {
-		return false
-	}
-	for _, target := range []error{io.EOF, syscall.ECONNRESET, syscall.ECONNABORTED, syscall.EPIPE} {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	return false
-}
-
-func isTransientResponseDecodeError(err error) bool {
-	var decodeError providerResponseDecodeError
-	if errors.As(err, &decodeError) {
-		return true
-	}
-	var syntaxError *json.SyntaxError
-	return errors.As(err, &syntaxError)
+	return polling.IsTransientTransport(err)
 }
 
 func notifyTaskVideoPollEvent(ctx context.Context, _ string, event videoPollEvent, eventErr error) {
@@ -282,8 +109,10 @@ func notifyTaskVideoPollEvent(ctx context.Context, _ string, event videoPollEven
 	_ = metadata.Service.log(metadata.UserID, metadata.TaskID, level, message, payload)
 }
 
+// isProviderTaskNotReadyError 供 HTTP 客户端层判断响应是否代表任务尚未就绪；
+// 协议 body 的判定事实已同步到 polling.taskNotReady，这里的实现保持原语义。
 func isProviderTaskNotReadyError(httpErr providerHTTPError) bool {
-	if httpErr.StatusCode != http.StatusBadRequest && httpErr.StatusCode != http.StatusNotFound {
+	if httpErr.StatusCode != 400 && httpErr.StatusCode != 404 {
 		return false
 	}
 	var payload map[string]any
@@ -298,12 +127,4 @@ func isProviderTaskNotReadyError(httpErr providerHTTPError) bool {
 		}
 	}
 	return false
-}
-
-func providerRetryAfter(err error) time.Duration {
-	var httpErr providerHTTPError
-	if errors.As(err, &httpErr) && httpErr.RetryAfter > 0 {
-		return httpErr.RetryAfter
-	}
-	return 0
 }

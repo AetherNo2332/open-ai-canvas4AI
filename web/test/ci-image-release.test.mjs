@@ -6,6 +6,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scripts = fileURLToPath(new URL("../../.github/scripts/", import.meta.url));
+// Windows 下裸名 "bash" 可能解析到 System32 的 WSL 入口，它无法执行 Windows 路径下的仓库脚本（返回 127）。
+let bashCommand;
+function resolveBash() {
+    if (bashCommand) return bashCommand;
+    bashCommand = "bash";
+    if (process.platform !== "win32") return bashCommand;
+    const isPosixBash = (candidate) => {
+        if (!existsSync(candidate)) return false;
+        const result = spawnSync(candidate, ["-c", "uname -s && command -v mktemp && command -v grep && command -v cat && command -v rm"], { encoding: "utf8", env: { ...process.env, PATH: "/usr/bin:/bin" } });
+        return result.status === 0 && /MINGW|MSYS|CYGWIN/.test(result.stdout);
+    };
+    for (const directory of process.env.PATH.split(";")) {
+        const candidate = path.join(directory.trim().replace(/^"|"$/g, ""), "bash.exe");
+        if (isPosixBash(candidate)) return (bashCommand = candidate);
+    }
+    // Git for Windows 的默认安装位置不保证在 PATH 上，作为确定性兜底。
+    for (const candidate of ["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files\\Git\\usr\\bin\\bash.exe"]) {
+        if (isPosixBash(candidate)) return (bashCommand = candidate);
+    }
+    return bashCommand;
+}
 const temporaryDirectories = [];
 const sha = "a".repeat(40);
 const digest = "b".repeat(64);
@@ -29,7 +50,7 @@ function fixture(overrides = {}) {
     writeFileSync(output, "");
     const env = {
         ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
+        PATH: process.platform === "win32" ? `${bin.replaceAll("\\", "/").replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`)}:/usr/bin:/bin` : `${bin}:${process.env.PATH}`,
         GITHUB_OUTPUT: output,
         GITHUB_SHA: sha,
         GITHUB_REF: "refs/heads/main",
@@ -45,8 +66,11 @@ function fixture(overrides = {}) {
         MOCK_CALL: path.join(root, "docker-call"),
         ...overrides,
     };
+    // Windows environment names are case insensitive; a retained Path key can
+    // override the fixture's PATH when Node/Bun constructs the child block.
+    for (const key of Object.keys(env)) if (key !== "PATH" && key.toLowerCase() === "path") delete env[key];
     return {
-        run: (script, ...args) => spawnSync("bash", [path.join(scripts, script), ...args], { env, encoding: "utf8" }),
+        run: (script, ...args) => spawnSync(resolveBash(), [path.join(scripts, script), ...args], { env, encoding: "utf8" }),
         output: () => readFileSync(output, "utf8"),
         call: () => (existsSync(env.MOCK_CALL) ? readFileSync(env.MOCK_CALL, "utf8") : ""),
     };
@@ -55,7 +79,8 @@ function fixture(overrides = {}) {
 describe("commit image reuse", () => {
     test("reuses the exact existing digest", () => {
         const repo = fixture();
-        expect(repo.run("resolve-image.sh", "ghcr.io/fixture/image:sha-test").status).toBe(0);
+        const result = repo.run("resolve-image.sh", "ghcr.io/fixture/image:sha-test");
+        expect(result.status, result.stderr).toBe(0);
         expect(repo.output()).toBe(`found=true\ndigest=sha256:${digest}\n`);
     });
     test("only a missing manifest permits a rebuild", () => {

@@ -3,6 +3,30 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 架构基线与测试调度
+
+- PR134 审查修复和 T7 验证计划执行已接入；T9 Worker 授权迁包、T10 scene_update 切片保留到后续 PR，不包含在本分支。
+- [ ] 在真实 PR CI 核对 affected 分区、未选中理由、结果 artifact 和汇总精确匹配；workflow 自身变动应广覆盖。
+- [ ] 通过 PR134 CI 核对审批 CAS 修复与真实 Agent/SSE 链路；全绿后才推送 T9/T10 的后续 PR。
+
+- 已实现跨版本基线单向约束、迁移证据检查、统一验证计划及 Web 唯一调度入口；本地和 PR CI 已接入 affected 执行，真实新工作流尚未运行。主干、共享核心及未知路径保留 full。
+- 已修复九个 Windows Web 测试失败：WSL bash 误选（ci-image-release 127）、路径分隔符白名单（http-ownership）、Bun spawnSync 空闲超时缺陷（oven-sh/bun#33932，23 个 harness 测试改异步 spawn 包装）。本地完整入口 3479 pass / 5 skip / 0 fail。
+- 长期记忆文档已迁入 `internal/agentmemory/document`（条目编辑、修订、审批、撤销、Agent 写入与类型化 `WriteOutcome`）；app 保留 run 快照冻结/注入、工具事件适配、管理员跨用户聚合与类型别名。原记忆专项测试已迁至新包，app 组合测试与 handler 合同保持不变。
+- 上游异步轮询已迁入 `internal/generation/polling`（`Run`/`Download` 与 `HTTPStatusError` 等稳定错误事实）；app 保留默认策略构造、现有错误转换（`translateVideoPollError`）、任务日志通知与类型别名。原 `TestVideoPoll*`/`TestVideoDownload*` 已迁至 polling 包。
+- 任务计费与终态已迁入 `internal/taskruntime`（计费核对策略、终态收尾、任务诊断与退款原因脱敏）；上游明确终态错误归 `generation.TerminalError`；app 保留编排适配层与共享 stub 组合测试。本地 Task/Worker/Billing 专项通过。
+- 职责守卫已启用：迁移门面文件按精确路径登记（`architecture/responsibilities.go`），handler 禁止直接 import ORM/SQL（电商 404 语义经 `service.EcommerceAgentNotFound` 归属）；影子计划已对本批真实 diff 回放核对（新包局部改动只选包测试与反向闭包专项，app 接线改动扩大到 full）。
+- 本机 Windows 上 `TestVideoPollContinuesAfterConnectionResetAndEOF` 失败为迁移前已存在的平台差异：连接中断以 `WSAECONNRESET`(10054) 报出，`polling.IsTransientTransport` 按 Linux `syscall.ECONNRESET` 匹配（已在迁移前提交 a393d137f 实证同样失败）；Linux CI 行为不受影响。
+- [ ] 在真实 PR CI 核对 PR base、影子 artifact、后端基线比较、所有原门禁和 docs 门禁。
+- [ ] 在主干 push 核对 before；无可信基准应失败，不能回退为空基线。
+- [ ] 在 Linux CI 确认 Web 两个原隔离组与普通集合各执行一次，并确认 bash 探测与异步 harness 包装在 Linux 行为一致；记录真实墙钟时间，不承诺提速比例。
+- [ ] 在真实环境回归记忆文件设置/编辑/修订/撤销/采纳路由与 `memory_update` 工具行为，确认与迁包前一致（本地专项已通过，未做浏览器端手工回归）。
+- [ ] 决定是否让传输层中断识别同时匹配 Windows 的 `WSAECONNRESET`（需要平台条件文件）；当前保持 Linux/CI 行为不变。
+- T7 runner 已按 `selectedChecks` 执行（app 分片与格式化 env 并入计划声明）；汇总拒绝缺失、重复、失败和跳过结果，Windows npm 及残留子进程管道有真实执行负例。
+- 拆分前快照的 Linux 后端全量 6487 pass / 27 skip / 0 fail，13 项指定依赖用例通过；该快照含 T9/T10，不能替代拆分后本分支验收。Web 普通集合 3479 pass / 5 skip / 0 fail，原隔离组通过；Worker 201 pass / 1 skip / 0 fail。拆分后以本地专项和本 PR CI 重新核对。
+- [ ] 跨进程 Compose smoke：冷启动等待已由真实恢复健康验证；14 项检查与首条真实运行/持久化回执通过，批准接口 HTTP500 使该轮整套失败。审批 CAS 回归与有界重读修复已通过专项及独立复审；最后重跑在模块下载 TLS 超时处失败，未复验新审批修复、SSE 与媒体版本。隔离脚本 41/41 通过不能替代完整验收。
+- [ ] 预演 Chrome E2E：首次 70 pass / 1 fail，录制没有产生视频数据；需独立复验并保留结果。本批未修改前端生产代码及 E2E 断言。
+- [ ] 在同环境对照 affected 与 full 的实际选中数量和墙钟时间；当前策略文件改动会选择 full，不宣称本批已提速。
+
 ## 创作平台 SDK：SQLite → PostgreSQL 全量搬迁修复
 
 - 已实现：新目标初始化时替换可读 ID 序列占位行，保留源序列数据；补全五张技能策展表及默认行复制；已有目标只核对，最终成功摘要在提交完成后输出。不新增 schema 版本。

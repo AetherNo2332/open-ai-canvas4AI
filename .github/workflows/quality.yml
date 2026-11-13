@@ -1,313 +1,157 @@
 name: Quality checks
-
 on:
   pull_request:
   workflow_call:
-  # 允许手动触发：GitHub 偶发漏发 pull_request 事件时（实测出现过一次），
-  # 可以直接对某个分支派一次完整检查，而不必推一个空提交。
   workflow_dispatch:
   push:
-    branches:
-      - main
-      # canary 是前瞻开发分支：推送同样跑完整质量检查（镜像发布仍仅限 main/tag）。
-      - canary
-      # dev 是日常集成分支：这里没有它时，直接推到 dev 的改动完全不会被 CI 覆盖。
-      - dev
-
+    branches: [main, canary, dev]
 permissions:
   contents: read
-
-# 同一个 PR 连续推送时取消旧的检查，只保留最新提交；被发布流程调用（workflow_call）时
-# 每次运行使用独立分组，绝不互相取消，避免中间提交的镜像发布被跳过。
 concurrency:
   group: quality-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  agent:
-    name: Agent checks
+  verification-plan:
+    name: Verification plan
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: agent
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.19.0
-          cache: npm
-          cache-dependency-path: agent/package-lock.json
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-      - name: Build and test
-        run: npm test
-
-  # internal/app 约 1350 个用例在同一进程里串行执行（单包约 5 分钟），是后端检查的关键路径。
-  # 这里把它按用例名轮转分成 4 片，其余包作为第 5 片，5 个 Runner 并行；汇总由 Backend checks 完成。
-  backend-tests:
-    name: Backend tests (${{ matrix.shard }})
-    runs-on: ubuntu-latest
-    # go test 自身有 20 分钟超时；这里兜底防止依赖服务卡死时占用 Runner 数小时。
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [app-1, app-2, app-3, app-4, rest]
-    defaults:
-      run:
-        working-directory: backend
-    # CI强制9条依赖验收：4条画布PostgreSQL、1条Agent配额PostgreSQL、
-    # 2条自起临时Redis（租约、缓存白名单）及2条真实TCP Redis跨实例协作恢复。
-    services:
-      redis:
-        image: redis:7.4-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: canvas_test
-          POSTGRES_DB: canvas_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-    env:
-      CANVAS_TEST_REDIS_ADDR: 127.0.0.1:6379
-      CANVAS_TEST_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_test?sslmode=disable
-      TEST_AGENT_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_event_integration?sslmode=disable
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
-          cache: true
-      - name: Prepare isolated Agent admission database
-        run: docker exec "${{ job.services.postgres.id }}" psql -U postgres -d postgres -c 'CREATE DATABASE canvas_event_integration'
-      - name: Install redis-server for integration tests
-        # 用例自己拉起临时 redis-server（unix socket），所以需要的是可执行文件而不是 redis 服务。
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq redis-server
-          sudo systemctl stop redis-server || true
-      - name: Check formatting
-        if: matrix.shard == 'rest'
-        shell: bash
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            printf '%s\n' "$unformatted"
-            echo "::error::Go files require gofmt. Run gofmt -w on the files listed above."
-            exit 1
-          fi
-      - name: Vet Go packages
-        run: go vet ./...
-      - name: Check Agent tool contracts before full suite
-        run: go test ./internal/app -run '^(TestCloudAgent(PatchSchema|ToolsFollowCanvasCapabilityRegistry|FunctionSchemasAreWellFormed|ToolArgumentValidation)|TestAgentToolSchemaArtifactMatchesRuntime)' -count=1 -timeout=1m
-      # 只扫描源码，不编译业务包；失败时日志直接列出超标或基线未下调的条目。rest 分片的全量测试也会再跑一次。
-      - name: Check backend architecture
-        if: matrix.shard == 'rest'
-        run: go test ./internal/architecture -count=1 -timeout=1m
-      - name: Run Go tests
-        shell: bash
-        env:
-          SHARD: ${{ matrix.shard }}
-          APP_SHARDS: "4"
-        run: |
-          set -euo pipefail
-          # 此前每个用例构造 Service 时都会完整解压 85MB 官方插件包（约 4 秒/次，累计 7 分钟以上），
-          # 现已改为只读清单 + 进程内缓存；若 internal/app 耗时再次明显上涨，先查 newPluginRuntime。
-          out="$RUNNER_TEMP/go-tests.jsonl"
-          if [ "$SHARD" = rest ]; then
-            packages=$(go list ./... | grep -vx 'yingce/backend/internal/app')
-            # shellcheck disable=SC2086 # 包路径不含空格，按空白展开为多个参数。
-            go test -json -timeout=20m $packages | tee "$out"
-            exit 0
-          fi
-          # 顶层用例按名字排序后轮转分片；子用例跟随顶层用例，不会被拆开或漏跑。
-          names=$(go test -list '.' ./internal/app | grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' | sort | awk -v n="$APP_SHARDS" -v i="${SHARD#app-}" '(NR - 1) % n == i - 1')
-          [ -n "$names" ] || { echo "::error::shard $SHARD has no tests"; exit 1; }
-          echo "shard $SHARD: $(printf '%s\n' "$names" | wc -l) top-level tests"
-          pattern="^($(printf '%s\n' "$names" | paste -sd'|' -))\$"
-          go test -json -timeout=20m -run "$pattern" ./internal/app | tee "$out"
-      - name: Upload Go test timings
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: go-test-timings-${{ matrix.shard }}
-          path: ${{ runner.temp }}/go-tests.jsonl
-          if-no-files-found: ignore
-
-  # 汇总分片结果，保留原有的 Backend checks 检查名，仓库必需检查不用改。
-  backend:
-    name: Backend checks
-    needs: backend-tests
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: .github/scripts
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: go-test-timings-*
-          path: ${{ runner.temp }}/shards
-      - name: Merge Go test timings
-        shell: bash
-        run: |
-          set -euo pipefail
-          count=$(find "$RUNNER_TEMP/shards" -name go-tests.jsonl | wc -l)
-          echo "merged $count shard timing files"
-          find "$RUNNER_TEMP/shards" -name go-tests.jsonl -exec cat {} + > "$RUNNER_TEMP/go-tests.jsonl"
-      - name: Require every shard to pass
-        env:
-          RESULT: ${{ needs.backend-tests.result }}
-        run: |
-          [ "$RESULT" = success ] || { echo "::error::Backend test shards finished with: $RESULT"; exit 1; }
-      - name: Ensure dependency-backed tests were not skipped
-        shell: bash
-        run: |
-          python3 .github/scripts/test_check_dependency_tests.py
-          python3 .github/scripts/check-dependency-tests.py "$RUNNER_TEMP/go-tests.jsonl"
-      - name: Upload Go test timings
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: go-test-timings
-          path: ${{ runner.temp }}/go-tests.jsonl
-          if-no-files-found: ignore
-  payment-plugins:
-    name: Payment plugin artifacts
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify canonical payment packages
-        env:
-          PAYMENT_PLUGIN_SMOKE_TEST: "1"
-        run: sh plugin-packages/verify-payment-packages.sh --all linux amd64
-      # 发布时 backend/Dockerfile 会在两种架构的原生 Runner 上执行 smoke。
-      # PR 仍独立验证双架构，不能因没有发布任务而遗漏 ARM64 验收。
-      - uses: docker/setup-qemu-action@v3
-        if: github.event_name == 'pull_request'
-      - uses: docker/setup-buildx-action@v3
-        if: github.event_name == 'pull_request'
-      - name: Build and execute payment packages for every image platform
-        if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          target: payment-package-smoke
-          file: backend/Dockerfile
-          cache-from: type=gha,scope=payment-smoke
-          cache-to: type=gha,mode=max,scope=payment-smoke
-
-  web:
-    name: Web checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: web
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      fullBackend: ${{ steps.plan.outputs.fullBackend }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: 1.3.9
-      - name: Reject leftover package manager lockfiles
-        working-directory: ${{ github.workspace }}
-        run: |
-          leftover=0
-          for file in web/pnpm-lock.yaml web/package-lock.json web/yarn.lock; do
-            if [ -f "$file" ]; then
-              echo "forbidden lockfile: $file"
-              leftover=1
-            fi
-          done
-          if [ "$leftover" -ne 0 ]; then
-            echo "web installs from bun.lock only"
-            exit 1
-          fi
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      - name: Check formatting
+          node-version: 22.19.0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - name: Test shared planner and executor
+        run: node --test scripts/verification-plan.test.mjs scripts/verification-execution.test.mjs web/scripts/run-tests.test.mjs
+      - name: Build explicit plan
+        id: plan
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: bun scripts/check-changed-formatting.mjs
-      - name: Typecheck
-        run: bun run typecheck
-      - name: Lint retired Ant Design APIs
-        run: bun run lint
-      - name: Run tests
-        run: bun run test
-      # ubuntu-latest 预装 google-chrome；脚本的解析顺序已覆盖该路径，
-      # 因此不引入第三方 setup action，也不需要任何 secret。
-      - name: Previs P0 Chrome E2E
-        run: |
-          google-chrome --version || chromium --version
-          bun run test:previs:e2e
-  docs:
-    name: Docs build
+        run: node scripts/verification-ci.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verification-plan
+          path: verification-plan.json
+          if-no-files-found: error
+  checks:
+    name: ${{ matrix.label }}
+    needs: verification-plan
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: docs
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.verification-plan.outputs.matrix) }}
+    services:
+      redis:
+        image: ${{ matrix.active && matrix.backend && 'redis:7.4-alpine' || '' }}
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 12
+      postgres:
+        image: ${{ matrix.active && matrix.backend && 'postgres:16-alpine' || '' }}
+        env:
+          POSTGRES_PASSWORD: canvas_test
+          POSTGRES_DB: canvas_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      CANVAS_TEST_REDIS_ADDR: 127.0.0.1:6379
+      CANVAS_TEST_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_test?sslmode=disable
+      TEST_AGENT_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_event_integration?sslmode=disable
+      PAYMENT_PLUGIN_SMOKE_TEST: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: verification-plan
+      - uses: actions/setup-go@v5
+        if: matrix.active && matrix.backend
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Prepare isolated PostgreSQL and Redis tests
+        if: matrix.active && matrix.backend
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -d postgres -c 'CREATE DATABASE canvas_event_integration'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq redis-server
+          sudo systemctl stop redis-server || true
+      - name: Install pinned backend lint tool
+        if: matrix.active && matrix.partition == 'backend-rest'
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
       - uses: oven-sh/setup-bun@v2
+        if: matrix.active && (matrix.partition == 'web' || matrix.partition == 'docs')
         with:
           bun-version: 1.3.9
-      - name: Install dependencies
+      - name: Install Web dependencies
+        if: matrix.active && matrix.partition == 'web'
+        working-directory: web
+        run: |
+          for file in pnpm-lock.yaml package-lock.json yarn.lock; do
+            test ! -f "$file" || { echo "Forbidden Web lockfile: $file"; exit 1; }
+          done
+          bun install --frozen-lockfile
+      - name: Install docs dependencies
+        if: matrix.active && matrix.partition == 'docs'
+        working-directory: docs
         run: bun install --frozen-lockfile
-      - name: Typecheck
-        run: bun run types:check
-      - name: Build
-        run: bun run build
-  changelog:
-    name: Changelog entry
+      - name: Install Agent dependencies
+        if: matrix.active && matrix.partition == 'agent'
+        working-directory: agent
+        run: npm ci --ignore-scripts
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.active && matrix.partition == 'payment'
+      - uses: docker/setup-buildx-action@v3
+        if: matrix.active && matrix.partition == 'payment'
+      - name: Execute only declared checks (unselected partitions report their reason)
+        run: node scripts/verification-execution.mjs --plan verification-plan.json --partition "${{ matrix.partition }}" --jobs 2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-results-${{ matrix.partition }}
+          path: |
+            .local/cache/verify/result-*.json
+            .local/cache/verify/*.log
+            .local/cache/verify/*.jsonl
+            .local/cache/verify/agent-smoke/
+          if-no-files-found: error
+  backend:
+    name: Backend checks
+    needs: [verification-plan, checks]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
-      # publish-images.yml 打 tag 时要求 CHANGELOG.md 顶部有 `## <VERSION>`；PR 阶段先校验，避免发布时才失败。
-      - name: Check CHANGELOG covers VERSION
-        run: node scripts/changelog.mjs --check
-  production-agent-smoke:
-    name: Production Agent Compose smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v4
-      # These checks exercise deployment commands with mocks. The following step
-      # is the real cross-process acceptance against deploy + build Compose.
-      - name: Check deployment commands and smoke isolation
-        run: python3 -B -m unittest scripts/test_production_deployment.py scripts/test_agent_parity_container_commands.py scripts/test_production_agent_smoke.py scripts/test_install_agent_worker_id.py
-      - name: Run real production Agent smoke
-        timeout-minutes: 30
-        run: python3 scripts/verify-production-agent-smoke.py --output "$RUNNER_TEMP/production-agent-smoke/report.json"
-      - name: Upload bounded smoke evidence
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: production-agent-smoke
-          path: ${{ runner.temp }}/production-agent-smoke/
-          if-no-files-found: ignore
-          retention-days: 7
+          name: verification-plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: verification-results-*
+          path: verification-results
+      - name: Require exact successful plan result set
+        run: node scripts/verification-execution.mjs --plan verification-plan.json --summarize --results verification-results
+      - name: Require dependency-backed tests to run and pass
+        if: needs.verification-plan.outputs.fullBackend == 'true'
+        run: |
+          find verification-results -name '*.jsonl' -exec cat {} + > "$RUNNER_TEMP/go-tests.jsonl"
+          python3 .github/scripts/test_check_dependency_tests.py
+          python3 .github/scripts/check-dependency-tests.py "$RUNNER_TEMP/go-tests.jsonl"
+      - name: Explain dependency scope
+        if: needs.verification-plan.outputs.fullBackend != 'true'
+        run: echo "Full backend dependency suites were not selected by this plan; this is not a test pass."

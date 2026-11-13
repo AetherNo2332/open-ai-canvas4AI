@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { canvasConnectionTilt, latchCanvasConnectionApproach } from "../src/lib/canvas/canvas-connection-tilt";
+import { runBunHarness } from "./run-bun-harness";
 
 const node = { position: { x: 100, y: 200 }, width: 400, height: 200 };
 test("connection approach determines tilt direction and glare position", () => {
@@ -17,9 +17,9 @@ test("snap padding is clamped, absent or invalid approach stays flat", () => {
     expect(canvasConnectionTilt({ ...node, width: 0 }, { x: 0, y: 0 })).toBeUndefined();
 });
 
-test("connection pointer tracking updates the shell without React renders and cleans up", () => {
-    const result = Bun.spawnSync([process.execPath, "test", "./test/fixtures/canvas-connection-tilt.harness.tsx"], { cwd: resolve(import.meta.dir, ".."), timeout: 15000 });
-    expect(result.exitCode, new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr)).toBe(0);
+test("connection pointer tracking updates the shell without React renders and cleans up", async () => {
+    const { exitCode, output } = await runBunHarness(["test", "./test/fixtures/canvas-connection-tilt.harness.tsx"], 15000);
+    expect(exitCode, output).toBe(0);
 });
 test("world-space approach is independent of viewport scaling", () => {
     const point = { x: 150, y: 250 };

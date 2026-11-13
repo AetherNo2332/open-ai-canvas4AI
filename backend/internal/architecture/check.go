@@ -56,8 +56,10 @@ type source struct {
 }
 
 type typeDecl struct {
-	expr ast.Expr
-	src  *source
+	bound  bool
+	expr   ast.Expr
+	src    *source
+	params *ast.FieldList
 }
 
 type scanner struct {
@@ -98,13 +100,13 @@ func InAgentScope(rel string) bool {
 		ok, _ := path.Match(pattern, base)
 		return ok
 	}
-	switch {
-	case dir == "internal/app":
+	switch dir {
+	case "internal/app":
 		return base == "cloud_agent.go" || match("cloud_agent_*.go") || match("agent_*.go")
-	case dir == "internal/handler":
+	case "internal/handler":
 		return match("agent*.go") || base == "internal_agent.go"
 	}
-	for _, domain := range []string{"internal/agentcontext", "internal/agentmemory"} {
+	for _, domain := range []string{"internal/agentcontext", "internal/agentmemory", "internal/identity/worker"} {
 		if dir == domain || strings.HasPrefix(dir, domain+"/") {
 			return true
 		}
@@ -130,8 +132,12 @@ func layerOf(rel string) string {
 // into handler/service/app, and model depends on no layer above it. Entry
 // points outside internal/ (cmd, payment plugins) wire layers freely.
 func layerViolation(from, to string) bool {
-	upper := to == "handler" || to == "service" || to == "app"
-	switch from {
+	upper := packageRoles[to] == "handler" || packageRoles[to] == "service" || packageRoles[to] == "app"
+	role := packageRoles[from]
+	if from != "" && role == "" {
+		role = "domain" // Unknown packages are reported separately and retain conservative import checks.
+	}
+	switch role {
 	case "", "service", "app":
 		return false
 	case "handler":
@@ -162,7 +168,9 @@ func DecodeBaseline(body []byte) (Baseline, error) {
 }
 
 // Check never writes or expands the baseline. Reductions must lower/remove an
-// existing allowance; additions and increased values fail the check.
+// existing allowance; additions and increased values fail the check. To prevent
+// changing code and allowance together, also run CompareBaselines against the
+// explicit trusted Git base (cmd/check-architecture-baseline).
 func Check(backendRoot string, baseline Baseline) ([]Finding, error) {
 	metrics, err := Scan(backendRoot)
 	if err != nil {
@@ -180,7 +188,7 @@ func Check(backendRoot string, baseline Baseline) ([]Finding, error) {
 			findings = append(findings, metric)
 			continue
 		}
-		if metric.Rule == "dependency" {
+		if metric.Rule == "dependency" || metric.Rule == "package_classification" {
 			findings = append(findings, metric)
 			continue
 		}
@@ -204,7 +212,7 @@ func Scan(backendRoot string) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := []Finding{}
+	out := s.packageClassificationFindings()
 	for _, src := range s.files {
 		out = append(out, s.fileFindings(src)...)
 	}
@@ -271,7 +279,7 @@ func loadSources(root string) (*scanner, error) {
 			}
 			for _, spec := range gen.Specs {
 				if typed, ok := spec.(*ast.TypeSpec); ok {
-					s.types[src.pkg+"."+typed.Name.Name] = typeDecl{expr: typed.Type, src: src}
+					s.types[src.pkg+"."+typed.Name.Name] = typeDecl{expr: typed.Type, src: src, params: typed.TypeParams}
 				}
 			}
 		}
@@ -294,6 +302,7 @@ func moduleName(root string) (string, error) {
 
 func (s *scanner) fileFindings(src *source) []Finding {
 	findings := s.dependencyFindings(src)
+	findings = append(findings, s.facadeFindings(src)...)
 	lines := len(strings.Split(strings.TrimSuffix(string(src.body), "\n"), "\n"))
 	if lines > fileLineLimit {
 		findings = append(findings, Finding{ID: src.path + ":file_lines", Rule: "file_lines", Value: lines, Limit: fileLineLimit, Detail: "production Go file exceeds 600 lines"})
@@ -323,6 +332,9 @@ func (s *scanner) dependencyFindings(src *source) []Finding {
 	from := layerOf(src.path)
 	for _, spec := range src.file.Imports {
 		imported, _ := strconv.Unquote(spec.Path.Value)
+		if detail, banned := handlerPersistenceViolation(src, imported); banned {
+			findings = append(findings, Finding{ID: src.path + ":import:" + imported, Rule: "dependency", Value: 1, Detail: detail})
+		}
 		rest, ok := strings.CutPrefix(imported, s.module+"/")
 		if !ok {
 			continue
@@ -330,6 +342,25 @@ func (s *scanner) dependencyFindings(src *source) []Finding {
 		if to := layerOf(rest); layerViolation(from, to) {
 			findings = append(findings, Finding{ID: src.path + ":import:" + imported, Rule: "dependency", Value: 1, Detail: "internal/" + from + " must not import internal/" + to + " (AGENTS.md section 3 call chain)"})
 		}
+		if detail, banned := s.agentMemoryRootImportViolation(src, rest); banned {
+			findings = append(findings, Finding{ID: src.path + ":import:" + imported, Rule: "dependency", Value: 1, Detail: detail})
+		}
 	}
 	return findings
+}
+
+// agentMemoryRootImportViolation keeps internal/agentmemory a pure rule package:
+// persistence stays with agentmemory/document and the service layer, and the
+// document implementation must not flow back into the root package.
+// imported 是去掉模块前缀的内部路径（如 "internal/repository"）。
+func (s *scanner) agentMemoryRootImportViolation(src *source, imported string) (string, bool) {
+	if src.pkg != s.module+"/internal/agentmemory" {
+		return "", false
+	}
+	for _, banned := range []string{"internal/repository", "internal/database", "internal/agentmemory/document"} {
+		if imported == banned {
+			return "internal/agentmemory is a pure rule package and must not import " + banned, true
+		}
+	}
+	return "", false
 }

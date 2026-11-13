@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { runBunHarness } from "./run-bun-harness";
 
-test("Agent panel preserves conversation and queue drafts while dismissing owned portals", () => {
-    const result = Bun.spawnSync([process.execPath, "test", "./test/fixtures/cloud-agent-panel-visibility.harness.tsx"], { cwd: resolve(import.meta.dir, ".."), timeout: 45_000 });
-    const output = new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr);
-    expect(result.exitCode, output).toBe(0);
+test("Agent panel preserves conversation and queue drafts while dismissing owned portals", async () => {
+    const { exitCode, output } = await runBunHarness(["test", "./test/fixtures/cloud-agent-panel-visibility.harness.tsx"], 45_000);
+    expect(exitCode, output).toBe(0);
     expect(output).toContain("0 fail");
 }, 50_000);

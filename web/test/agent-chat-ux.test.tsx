@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { runBunHarness } from "./run-bun-harness";
 import { isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentChatMessage, AgentReasoningFeed, rewriteAgentNodeLinks, type CloudAgentChatMessage } from "@/components/canvas/canvas-cloud-agent-chat-ui";
@@ -166,9 +166,8 @@ test("motion contract: reduced motion turns every chat animation off", async () 
     expect(reduced).toMatch(/transition:\s*none/u);
 });
 
-test("click, prefill and memo render-count behavior in a DOM", () => {
-    const result = Bun.spawnSync([process.execPath, "test", "./test/fixtures/agent-chat-ux.harness.tsx"], { cwd: resolve(import.meta.dir, ".."), timeout: 30_000 });
-    const output = new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr);
-    expect(result.exitCode, output).toBe(0);
+test("click, prefill and memo render-count behavior in a DOM", async () => {
+    const { exitCode, output } = await runBunHarness(["test", "./test/fixtures/agent-chat-ux.harness.tsx"], 30_000);
+    expect(exitCode, output).toBe(0);
     expect(output).toContain("0 fail");
 }, 35_000);

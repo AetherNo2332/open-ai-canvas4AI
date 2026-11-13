@@ -1,10 +1,11 @@
-package app
+package taskruntime
 
 import (
 	"errors"
 	"strings"
 	"testing"
 
+	"yingce/backend/internal/generation"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/protocol"
 )
@@ -56,7 +57,7 @@ func (r *taskBillingRepositoryStub) TaskHasSuccessfulBillableCall(string) (bool,
 
 func TestTaskBillingCoordinatorEmptyOrderIsNoOp(t *testing.T) {
 	repo := &taskBillingRepositoryStub{}
-	billing := newTaskBillingCoordinator(repo)
+	billing := NewBillingCoordinator(repo)
 
 	if err := billing.MarkBillingRunning(""); err != nil {
 		t.Fatalf("MarkBillingRunning() error = %v", err)
@@ -101,13 +102,13 @@ func TestTaskBillingCoordinatorRetryEligibility(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			billing := newTaskBillingCoordinator(&taskBillingRepositoryStub{order: tt.order, orderErr: tt.orderErr})
+			billing := NewBillingCoordinator(&taskBillingRepositoryStub{order: tt.order, orderErr: tt.orderErr})
 			err := billing.CheckRetryEligibility(tt.orderID)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("CheckRetryEligibility() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if errors.Is(err, errTaskBillingReview) != tt.wantReview {
-				t.Fatalf("CheckRetryEligibility() review = %v, wantReview %v, err = %v", errors.Is(err, errTaskBillingReview), tt.wantReview, err)
+			if errors.Is(err, ErrBillingReview) != tt.wantReview {
+				t.Fatalf("CheckRetryEligibility() review = %v, wantReview %v, err = %v", errors.Is(err, ErrBillingReview), tt.wantReview, err)
 			}
 		})
 	}
@@ -115,7 +116,7 @@ func TestTaskBillingCoordinatorRetryEligibility(t *testing.T) {
 
 func TestTaskBillingCoordinatorTruncatesFailureText(t *testing.T) {
 	repo := &taskBillingRepositoryStub{}
-	billing := newTaskBillingCoordinator(repo)
+	billing := NewBillingCoordinator(repo)
 	reason := strings.Repeat("中", 1001)
 
 	if err := billing.RefundBilling("order-1", reason); err != nil {
@@ -134,7 +135,7 @@ func TestTaskBillingCoordinatorTruncatesFailureText(t *testing.T) {
 
 func TestTaskBillingCoordinatorHidesUpstreamAddressInReason(t *testing.T) {
 	repo := &taskBillingRepositoryStub{}
-	billing := newTaskBillingCoordinator(repo)
+	billing := NewBillingCoordinator(repo)
 	reason := `Post "https://www.kccai.ai/v1/images/generations": http2: server sent GOAWAY and closed the connection`
 
 	if err := billing.RefundBilling("order-1", reason); err != nil {
@@ -147,7 +148,7 @@ func TestTaskBillingCoordinatorHidesUpstreamAddressInReason(t *testing.T) {
 		if strings.Contains(got, "kccai.ai") {
 			t.Fatalf("%s reason leaked upstream host: %q", name, got)
 		}
-		if !strings.Contains(got, upstreamAddressLinkPlaceholder) {
+		if !strings.Contains(got, LinkPlaceholder) {
 			t.Fatalf("%s reason should mark the hidden link: %q", name, got)
 		}
 	}
@@ -166,13 +167,13 @@ func TestTaskBillingCoordinatorFailureReviewPolicy(t *testing.T) {
 		{name: "successful billable call", stub: taskBillingRepositoryStub{order: &model.BillingOrder{Status: model.BillingStatusRunning}, hasSuccessfulCall: true}, err: errors.New("provider rejected"), want: true},
 		{name: "normal failed call", stub: taskBillingRepositoryStub{order: &model.BillingOrder{Status: model.BillingStatusRunning}}, err: errors.New("provider rejected"), want: false},
 		{name: "billable call lookup error", stub: taskBillingRepositoryStub{order: &model.BillingOrder{Status: model.BillingStatusRunning}, callErr: errors.New("database unavailable")}, err: errors.New("provider rejected"), want: true},
-		{name: "explicit upstream failure mentioning timeout", stub: taskBillingRepositoryStub{order: &model.BillingOrder{Status: model.BillingStatusRunning}}, err: providerTaskTerminalError{TaskID: "provider-1", Status: protocol.StatusFailed, Message: "upstream generation timeout"}, want: false},
-		{name: "explicit upstream failure with successful billable call", stub: taskBillingRepositoryStub{order: &model.BillingOrder{Status: model.BillingStatusRunning}, hasSuccessfulCall: true}, err: providerTaskTerminalError{TaskID: "provider-1", Status: protocol.StatusFailed, Message: "upstream generation timeout"}, want: true},
+		{name: "explicit upstream failure mentioning timeout", stub: taskBillingRepositoryStub{order: &model.BillingOrder{Status: model.BillingStatusRunning}}, err: generation.TerminalError{TaskID: "provider-1", Status: protocol.StatusFailed, Message: "upstream generation timeout"}, want: false},
+		{name: "explicit upstream failure with successful billable call", stub: taskBillingRepositoryStub{order: &model.BillingOrder{Status: model.BillingStatusRunning}, hasSuccessfulCall: true}, err: generation.TerminalError{TaskID: "provider-1", Status: protocol.StatusFailed, Message: "upstream generation timeout"}, want: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			billing := newTaskBillingCoordinator(&tt.stub)
+			billing := NewBillingCoordinator(&tt.stub)
 			if got := billing.BillingFailureRequiresReview("order-1", "task-1", tt.err); got != tt.want {
 				t.Fatalf("BillingFailureRequiresReview() = %v, want %v", got, tt.want)
 			}
