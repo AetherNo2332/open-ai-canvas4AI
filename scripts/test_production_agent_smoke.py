@@ -17,6 +17,24 @@ spec.loader.exec_module(smoke)
 
 
 class ProductionSmokeTests(unittest.TestCase):
+    def test_container_scope_matches_started_services_and_rejects_leaks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            def row(service, project=None):
+                return {"Config": {"Labels": {"com.docker.compose.service": service,
+                    "com.docker.compose.project": project or harness.project}}}
+            rows = [row(service) for service in
+                    ("postgres", "redis", "migrate", "backend", "agent", "web", "model-stub")]
+            harness.verify_container_scope(rows)
+            for name, invalid in (
+                    ("missing service", rows[:-1]),
+                    ("duplicate service", rows + [rows[0]]),
+                    ("unexpected docs", rows + [row("docs")]),
+                    ("wrong service", rows[:-1] + [row("docs")]),
+                    ("foreign project", rows[:-1] + [row("model-stub", "foreign-project")])):
+                with self.subTest(name=name), self.assertRaisesRegex(AssertionError, "started containers"):
+                    harness.verify_container_scope(invalid)
+
     def test_build_proxy_rejects_embedded_credentials_before_process_start(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = smoke.Smoke(directory, Path(directory) / "report.json")
@@ -271,7 +289,7 @@ class ProductionSmokeTests(unittest.TestCase):
             harness = smoke.Smoke(directory, Path(directory) / "report.json")
             invalid = json.dumps({"services": {"backend": {}}})
             with patch.object(harness, "compose", return_value=SimpleNamespace(stdout=invalid)) as compose:
-                with self.assertRaisesRegex(AssertionError, "seven services"):
+                with self.assertRaisesRegex(AssertionError, "expected services"):
                     harness.execute()
                 harness.cleanup()
             self.assertEqual([call.args[0] for call in compose.call_args_list], ["config"])
