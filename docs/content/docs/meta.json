@@ -1,4 +1,4 @@
 {
   "title": "影策文档",
-  "pages": ["index", "overview", "backend", "canvas", "plugins", "progress"]
+  "pages": ["index", "user-guide", "admin-guide", "overview", "backend", "canvas", "plugins", "progress"]
 }
