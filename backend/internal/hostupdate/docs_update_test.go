@@ -239,6 +239,9 @@ func TestDocsCheckResolvesPinnedCandidateAndCurrentIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !status.Supported {
+		t.Fatal("managed documentation reported unsupported after a successful check")
+	}
 	if status.Current == nil || status.Current.Digest != old || status.Candidate == nil || status.Candidate.Digest != target || status.Operation.Phase != PhaseReady {
 		t.Fatalf("%+v", status)
 	}

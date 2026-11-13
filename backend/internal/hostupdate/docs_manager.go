@@ -29,6 +29,7 @@ func (m *Manager) CheckDocs(ctx context.Context) (DocsStatus, error) {
 	} else {
 		m.docs.Candidate = candidate
 		m.docs.Current = current
+		m.docs.Supported = true
 		m.docs.Operation.Phase = PhaseReady
 	}
 	if saveErr := m.saveDocsLocked(); saveErr != nil {
