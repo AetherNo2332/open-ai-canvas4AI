@@ -1,0 +1,104 @@
+name: Docs images
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/app/**'
+      - 'docs/components/**'
+      - 'docs/lib/**'
+      - 'docs/content/docs/**'
+      - 'docs/public/**'
+      - 'docs/package.json'
+      - 'docs/bun.lock'
+      - 'docs/*.mjs'
+      - 'docs/*.ts'
+      - 'docs/*.json'
+      - 'docs/Dockerfile'
+      - 'docs/.dockerignore'
+      - 'scripts/docs-*'
+      - 'scripts/*docs*'
+      - '.github/workflows/docs-images.yml'
+  pull_request:
+    paths: ['docs/**', 'scripts/*docs*', '.github/workflows/docs-images.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: docs-images-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - name: Metadata and deployment contracts
+        run: |
+          node --test scripts/docs-release-metadata.test.mjs
+          python3 -B -m unittest scripts.test_docs_deployment scripts.test_update_docs
+      - name: Resolve build identity
+        id: identity
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "image=ghcr.io/${OWNER,,}/open-ai-canvas-docs" >> "$GITHUB_OUTPUT"
+          echo "time=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Real amd64 image smoke before publication
+        run: |
+          docker build -t canvas-docs-smoke:ci \
+            --build-arg DOCS_BUILD_ID=docs-$GITHUB_SHA \
+            --build-arg DOCS_BUILD_COMMIT=$GITHUB_SHA \
+            --build-arg DOCS_BUILD_TIME='${{ steps.identity.outputs.time }}' docs
+          python3 scripts/verify-docs-deployment-smoke.py --image canvas-docs-smoke:ci
+      - name: Check immutable image
+        id: existing
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: bash .github/scripts/resolve-image.sh '${{ steps.identity.outputs.image }}:docs-sha-${{ github.sha }}'
+      - uses: docker/build-push-action@v6
+        id: build
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.existing.outputs.found != 'true'
+        with:
+          context: docs
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.identity.outputs.image }}:docs-sha-${{ github.sha }}
+          build-args: |
+            DOCS_BUILD_ID=docs-${{ github.sha }}
+            DOCS_BUILD_COMMIT=${{ github.sha }}
+            DOCS_BUILD_TIME=${{ steps.identity.outputs.time }}
+          cache-from: type=gha,scope=docs-images
+          cache-to: type=gha,scope=docs-images,mode=max
+      - name: Validate both platforms and promote current content
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ steps.identity.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest || steps.existing.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw > manifest.json
+          jq -e '([.manifests[].platform | .os + "/" + .architecture] | contains(["linux/amd64","linux/arm64"]))' manifest.json
+          docker pull "$IMAGE@$DIGEST"
+          docker image inspect "$IMAGE@$DIGEST" --format '{{json .Config.Labels}}' > labels.json
+          node scripts/docs-release-metadata.mjs "$IMAGE@$DIGEST" labels.json "${GITHUB_REPOSITORY_OWNER,,}" snapshot.json
+          test "$(jq -r .commit snapshot.json)" = "$GITHUB_SHA"
+          git fetch origin main
+          if git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- docs ':!docs/plans/**' ':!docs/design/**' ':!docs/index.md' scripts/docs-release-metadata.mjs .github/workflows/docs-images.yml; then
+            docker buildx imagetools create --tag "$IMAGE:docs-main" "$IMAGE@$DIGEST"
+          else
+            echo "Newer documentation exists; immutable image published without channel promotion."
+          fi

@@ -21,6 +21,13 @@ import (
 
 const maxReleaseResponseBytes = 4 << 20
 
+func (m *Manager) restartSelf() {
+	time.Sleep(time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_ = m.runner.Run(ctx, "systemctl", []string{"restart", m.config.ServiceName}, nil, io.Discard, io.Discard)
+}
+
 type Config struct {
 	Repository   string
 	InstallDir   string
@@ -65,6 +72,7 @@ type Manager struct {
 	runner     commandRunner
 	httpClient *http.Client
 	state      persistedState
+	docs       DocsStatus
 }
 
 func NewManager(config Config) (*Manager, error) {
@@ -108,6 +116,12 @@ func NewManager(config Config) (*Manager, error) {
 	if err := manager.loadState(); err != nil {
 		return nil, err
 	}
+	if err := manager.loadDocsState(); err != nil {
+		return nil, err
+	}
+	if manager.docs.Operation.Phase.Active() || manager.docs.Operation.Phase == PhaseChecking {
+		go manager.recoverDocs()
+	}
 	if manager.state.Operation.Phase.Active() {
 		manager.state.Operation.Phase = PhaseManualIntervention
 		manager.state.Operation.Error = "更新器进程在操作期间退出，请检查容器与数据库状态后手动处理"
@@ -125,7 +139,7 @@ func (m *Manager) Snapshot() Status {
 
 func (m *Manager) Check(ctx context.Context) (Status, error) {
 	m.mu.Lock()
-	if m.state.Operation.Phase.Active() {
+	if m.state.Operation.Phase.Active() || m.docsBusyLocked() {
 		status := m.snapshotLocked()
 		m.mu.Unlock()
 		return status, errors.New("更新操作正在进行，暂时不能检查新版本")
@@ -173,7 +187,7 @@ func (m *Manager) StartUpdate(targetVersion string) (Status, error) {
 	targetVersion = strings.TrimSpace(targetVersion)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.state.Operation.Phase.Active() {
+	if m.state.Operation.Phase.Active() || m.docsBusyLocked() {
 		return m.snapshotLocked(), errors.New("已有更新操作正在进行")
 	}
 	if m.state.LatestRelease == nil || m.state.LatestRelease.Version != targetVersion {
@@ -203,7 +217,7 @@ func (m *Manager) StartUpdate(targetVersion string) (Status, error) {
 func (m *Manager) StartRollback(reason string) (Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.state.Operation.Phase.Active() {
+	if m.state.Operation.Phase.Active() || m.docsBusyLocked() {
 		return m.snapshotLocked(), errors.New("已有更新操作正在进行")
 	}
 	if m.state.RollbackVersion == "" || m.state.LastBackup == nil {
@@ -227,120 +241,6 @@ func (m *Manager) StartRollback(reason string) (Status, error) {
 	backup := *m.state.LastBackup
 	go m.runRollback(target, backup, false)
 	return m.snapshotLocked(), nil
-}
-
-func (m *Manager) runUpdate(fromVersion, targetVersion string) {
-	nextCompose, err := m.prepareTargetCompose(targetVersion)
-	if err != nil {
-		m.failWithoutRollback(PhaseFailed, err)
-		return
-	}
-	defer os.Remove(nextCompose)
-	if err := m.preflight(nextCompose, targetVersion); err != nil {
-		m.failWithoutRollback(PhaseFailed, err)
-		return
-	}
-	updaterBinary, err := m.prepareUpdaterBinary(targetVersion)
-	if err != nil {
-		m.failWithoutRollback(PhaseFailed, err)
-		return
-	}
-	if updaterBinary != "" {
-		defer os.Remove(updaterBinary)
-	}
-
-	m.setPhase(PhasePulling, "拉取目标版本镜像")
-	targetImages := immutableImageRefs(m.config.Repository, targetVersion)
-	if err := m.composeWithImages(nextCompose, targetVersion, targetImages, m.config.StepTimeout, nil, "pull", "backend", "web", "agent"); err != nil {
-		m.failWithoutRollback(PhaseFailed, err)
-		return
-	}
-	targetImages, err = m.verifyImages(targetVersion)
-	if err != nil {
-		m.failWithoutRollback(PhaseFailed, err)
-		return
-	}
-
-	m.setPhase(PhaseDraining, "停止 Web、Agent 与 Backend，等待后台任务优雅退出")
-	if err := m.stopApplicationServices(fromVersion, m.config.StepTimeout); err != nil {
-		m.failBeforeMigration(err, fromVersion)
-		return
-	}
-
-	// 最终备份必须包含旧服务退出前的全部写入；镜像下载不占用停服窗口。
-	m.setPhase(PhaseBackingUp, "创建停服后的 PostgreSQL 与数据目录 ZIP 备份")
-	backup, err := m.createBackup(fromVersion)
-	if err != nil {
-		m.failBeforeMigration(err, fromVersion)
-		return
-	}
-	if err := replaceFile(m.composePath(), m.previousComposePath(), 0o600); err != nil {
-		m.failBeforeMigration(fmt.Errorf("保存旧 Compose 配置：%w", err), fromVersion)
-		return
-	}
-	if err := replaceFile(m.envPath(), m.previousEnvPath(), 0o600); err != nil {
-		m.failBeforeMigration(fmt.Errorf("保存旧部署环境：%w", err), fromVersion)
-		return
-	}
-	m.mu.Lock()
-	m.state.LastBackup = &backup
-	m.state.RollbackVersion = fromVersion
-	_ = m.saveStateLocked()
-	m.mu.Unlock()
-
-	m.setPhase(PhaseMigrating, "执行目标版本数据库迁移")
-	if err := m.composeWithImages(nextCompose, targetVersion, targetImages, m.config.StepTimeout, nil, "run", "--rm", "migrate"); err != nil {
-		m.failWithRollback(err, fromVersion, backup)
-		return
-	}
-
-	m.setPhase(PhaseSwitching, "切换 Compose 配置与镜像版本")
-	if err := setDeploymentImages(m.envPath(), targetVersion, targetImages); err != nil {
-		m.failWithRollback(err, fromVersion, backup)
-		return
-	}
-	if err := replaceFile(nextCompose, m.composePath(), 0o600); err != nil {
-		_ = setEnvValue(m.envPath(), "CANVAS_IMAGE_TAG", strings.TrimPrefix(fromVersion, "v"))
-		m.failWithRollback(err, fromVersion, backup)
-		return
-	}
-	if err := m.composeWithImages(m.composePath(), targetVersion, targetImages, m.config.StepTimeout, nil, "up", "-d", "--remove-orphans", "--wait", "--wait-timeout", "600"); err != nil {
-		m.failWithRollback(err, fromVersion, backup)
-		return
-	}
-
-	m.setPhase(PhaseVerifying, "验证健康状态、运行版本和稳定窗口")
-	if err := m.verifyHealthy(targetVersion); err != nil {
-		m.failWithRollback(err, fromVersion, backup)
-		return
-	}
-	if updaterBinary != "" {
-		if err := replaceFile(updaterBinary, m.config.BinaryPath, 0o755); err != nil {
-			m.mu.Lock()
-			now := time.Now().UTC()
-			m.state.Operation.Phase = PhaseManualIntervention
-			m.state.Operation.FinishedAt = &now
-			m.state.Operation.Error = "应用已更新，但 Host Updater 自更新失败：" + safeOperationError(err)
-			m.appendLogLocked(PhaseManualIntervention, "应用版本已切换，更新器二进制需要人工更新")
-			_ = m.saveStateLocked()
-			m.mu.Unlock()
-			return
-		}
-	}
-	m.mu.Lock()
-	now := time.Now().UTC()
-	m.state.Operation.Phase = PhaseSucceeded
-	m.state.Operation.FinishedAt = &now
-	m.state.Operation.Error = ""
-	m.appendLogLocked(PhaseSucceeded, fmt.Sprintf("已成功更新到 %s", targetVersion))
-	if updaterBinary != "" {
-		m.appendLogLocked(PhaseSucceeded, "Host Updater 二进制已同步到目标 Release")
-	}
-	_ = m.saveStateLocked()
-	m.mu.Unlock()
-	if updaterBinary != "" && m.config.ServiceName != "" {
-		go m.restartSelf()
-	}
 }
 
 func (m *Manager) failWithoutRollback(phase Phase, err error) {
@@ -397,13 +297,18 @@ func (m *Manager) runRollback(targetVersion string, backup Backup, automatic boo
 		failures = append(failures, err)
 	}
 	started := true
-	if err := m.compose(m.composePath(), targetVersion, m.config.StepTimeout, nil, "up", "-d", "--remove-orphans", "--wait", "--wait-timeout", "600"); err != nil {
+	if err := m.startBusiness(m.composePath(), targetVersion, deploymentImages{}); err != nil {
 		started = false
 		failures = append(failures, err)
 	}
 	if started {
 		if err := m.verifyHealthy(targetVersion); err != nil {
 			failures = append(failures, err)
+		}
+	}
+	if started && len(failures) == 0 {
+		if err := m.syncApplicationDocs(); err != nil {
+			failures = append(failures, fmt.Errorf("业务已恢复，文档恢复失败：%w", err))
 		}
 	}
 	rollbackErr := errors.Join(failures...)

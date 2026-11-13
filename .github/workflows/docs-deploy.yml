@@ -1,0 +1,40 @@
+name: Deploy official docs
+on:
+  workflow_run:
+    workflows: ['Docs images']
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: official-docs-deployment
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: vars.DOCS_AUTO_DEPLOY == 'true' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push'))
+    runs-on: [self-hosted, docs-deployment]
+    environment: official-docs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Update only docs using the local authenticated control plane
+        env:
+          INSTALL_DIR: ${{ vars.DOCS_INSTALL_DIR }}
+        run: |
+          set -euo pipefail
+          test -n "$INSTALL_DIR"
+          candidate=$(bash scripts/update-docs.sh check)
+          target=$(jq -er '.candidate.digest' <<<"$candidate")
+          commit=$(jq -er '.candidate.commit' <<<"$candidate")
+          expected='${{ github.event.workflow_run.head_sha || github.sha }}'
+          if [[ "$commit" != "$expected" ]]; then
+            echo "This build is not the current docs channel; deployment skipped."
+            exit 0
+          fi
+          status=$(bash scripts/update-docs.sh status)
+          current=$(jq -er '.current.digest' <<<"$status")
+          if [[ "$current" != "$target" ]]; then
+            bash scripts/update-docs.sh update "$target" "$current"
+          fi

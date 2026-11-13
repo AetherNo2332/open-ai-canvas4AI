@@ -1,7 +1,5 @@
 import type { Metadata } from 'next';
-import { RootProvider } from 'fumadocs-ui/provider/next';
-
-import { uiTranslations } from '@/lib/i18n';
+import { Providers } from '@/components/providers';
 
 import './global.css';
 
@@ -17,9 +15,7 @@ export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body className="flex min-h-screen flex-col">
-        <RootProvider i18n={{ locale: 'cn', translations: uiTranslations }}>
-          {children}
-        </RootProvider>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
