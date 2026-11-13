@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 REPOSITORY="${REPOSITORY:-AetherNo2332/open-ai-canvas4AI}"
 REPOSITORY_OWNER="${REPOSITORY%%/*}"
-REPOSITORY_REF="${REPOSITORY_REF:-main}"
+REPOSITORY_REF="${REPOSITORY_REF:-}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/open-ai-canvas}"
 CANVAS_HTTP_PORT="${CANVAS_HTTP_PORT:-3000}"
 REQUESTED_IMAGE_TAG="${CANVAS_IMAGE_TAG:-}"
@@ -14,8 +14,8 @@ CANVAS_BACKEND_IMAGE=""
 CANVAS_WEB_IMAGE=""
 CANVAS_AGENT_IMAGE=""
 COMPOSE_FILE="docker-compose.deploy.yml"
-COMPOSE_URL="${COMPOSE_URL:-https://raw.githubusercontent.com/${REPOSITORY}/${REPOSITORY_REF}/${COMPOSE_FILE}}"
-UPDATER_INSTALL_URL="${UPDATER_INSTALL_URL:-https://raw.githubusercontent.com/${REPOSITORY}/${REPOSITORY_REF}/scripts/install-host-updater.sh}"
+COMPOSE_URL="${COMPOSE_URL:-}"
+UPDATER_INSTALL_URL="${UPDATER_INSTALL_URL:-}"
 
 step() {
     printf '\n==> %s\n' "$1"
@@ -40,7 +40,7 @@ require_root() {
 }
 
 install_packages() {
-    local packages=(ca-certificates curl openssl)
+    local packages=(ca-certificates curl openssl jq)
 
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update
@@ -208,6 +208,9 @@ set_env_value() {
 }
 
 download_compose() {
+    REPOSITORY_REF="${REPOSITORY_REF:-v${CANVAS_IMAGE_TAG}}"
+    COMPOSE_URL="${COMPOSE_URL:-https://raw.githubusercontent.com/${REPOSITORY}/${REPOSITORY_REF}/${COMPOSE_FILE}}"
+    UPDATER_INSTALL_URL="${UPDATER_INSTALL_URL:-https://raw.githubusercontent.com/${REPOSITORY}/${REPOSITORY_REF}/scripts/install-host-updater.sh}"
     step "下载 GHCR 镜像部署配置"
     local temporary_file
     temporary_file="$(mktemp "${INSTALL_DIR}/.docker-compose.deploy.XXXXXX")"
@@ -222,6 +225,10 @@ install_host_updater() {
     curl -fsSL "$UPDATER_INSTALL_URL" -o "$installer"
     INSTALL_DIR="$INSTALL_DIR" REPOSITORY="$REPOSITORY" bash "$installer"
     rm -f "$installer"
+    if grep -Eq '^  docs:' "$COMPOSE_FILE"; then
+        curl -fsSL "https://raw.githubusercontent.com/${REPOSITORY}/${REPOSITORY_REF}/scripts/update-docs.sh" -o "${INSTALL_DIR}/update-docs.sh"
+        chmod 0700 "${INSTALL_DIR}/update-docs.sh"
+    fi
 
     step "重建 backend 以启用在线更新"
     docker compose --env-file .env -f "$COMPOSE_FILE" up -d --no-deps --force-recreate --wait --wait-timeout 600 backend
@@ -249,6 +256,20 @@ start_services() {
     docker compose --env-file .env -f "$COMPOSE_FILE" up -d --remove-orphans --wait --wait-timeout 600
 }
 
+prepare_docs_image() {
+    grep -Eq '^  docs:' "$COMPOSE_FILE" || return 0
+    local selected snapshot image
+    selected="$(sed -n 's/^CANVAS_DOCS_IMAGE=//p' .env | tail -n 1)"
+    if [[ -n "$selected" ]]; then
+        [[ "$selected" == "${IMAGE_REPOSITORY}-docs@"* && "${selected##*@}" =~ ^sha256:[a-f0-9]{64}$ ]] || fail "现有文档镜像必须固定为本仓库 digest"
+        return 0
+    fi
+    snapshot="$(curl -fsSL "https://github.com/${REPOSITORY}/releases/download/v${CANVAS_IMAGE_TAG}/docs-image.json")"
+    image="$(jq -er 'select(.schemaVersion == 1 and .deploymentContract == 1 and .buildId == ("docs-" + .commit)) | .digest' <<<"$snapshot")" || fail "Release 缺少有效文档快照"
+    [[ "$image" == "${IMAGE_REPOSITORY}-docs@"* && "${image##*@}" =~ ^sha256:[a-f0-9]{64}$ ]] || fail "文档快照仓库或 digest 无效"
+    set_env_value .env CANVAS_DOCS_IMAGE "$image"
+}
+
 print_result() {
     local local_ip
     local_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -256,6 +277,7 @@ print_result() {
 
     printf '\n部署完成。\n'
     printf '访问地址：http://%s:%s\n' "$local_ip" "$CANVAS_HTTP_PORT"
+    printf '文档地址：http://%s:%s/docs\n' "$local_ip" "$CANVAS_HTTP_PORT"
     printf '安装目录：%s\n' "$INSTALL_DIR"
     printf '查看状态：cd %q && docker compose --env-file .env -f %s ps\n' "$INSTALL_DIR" "$COMPOSE_FILE"
     printf '\n首次打开后注册的第一个账号会自动成为管理员。公网长期使用前请配置 HTTPS。\n'
@@ -269,6 +291,7 @@ main() {
     login_ghcr
     prepare_environment
     download_compose
+    prepare_docs_image
     pull_and_pin_images
     install_host_updater
     start_services

@@ -81,6 +81,8 @@ export const jaJP: Messages = {
         expandSidebar: "サイドバーを展開",
         expandSidebarMenu: "サイドメニューを展開",
         breadcrumb: "現在の場所",
+        documentation: "ドキュメント",
+        openDocumentation: "ドキュメントを開く（新しいタブ）",
         credits: "クレジット",
         openWallet: "クレジットセンターを開く（利用可能 {{balance}}）",
         toggleTheme: "テーマを切り替え",

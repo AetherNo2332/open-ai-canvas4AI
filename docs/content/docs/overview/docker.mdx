@@ -1,0 +1,15 @@
+---
+title: Docker 部署
+description: 标准镜像部署、源码编排及独立文档站的入口。
+---
+
+生产默认采用官方 Release 镜像、`scripts/install-server-image.sh`、`docker-compose.deploy.yml` 与 Host Updater。将 `CANVAS_IMAGE_TAG` 和 `REPOSITORY_REF` 固定到同一已发布 Release；安装前确认三份业务镜像、docs 快照、更新器二进制和校验清单均可用。
+
+编排包含 PostgreSQL、Redis、一次性 migrate、backend、agent、web 和 docs。仅 web 的 `CANVAS_HTTP_PORT` 对外开放，文档通过同域 `/docs` 访问。生产变量保存镜像 digest，不使用 latest。
+
+源码构建使用 deploy 叠加 build 编排；热更新开发使用 dev，本地完整构建使用 local。源码镜像不受 GHCR 在线更新管理。已有 SQLite 或自定义编排必须先核对真实数据挂载、备份和迁移，不覆盖旧 Compose 或数据卷。
+
+- [生产部署与服务配置](/docs/backend/production-deployment)
+- [应用在线更新与回退](/docs/backend/system-update)
+- [文档站独立构建、更新与回退](/docs/backend/docs-deployment)
+- [本地开发](/docs/backend/local-development)

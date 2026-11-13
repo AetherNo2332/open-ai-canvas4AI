@@ -22,6 +22,10 @@ export default defineConfig({
     },
     server: {
         proxy: {
+            "/docs": {
+                target: process.env.VITE_DOCS_PROXY_TARGET?.trim() || "http://127.0.0.1:3001",
+                changeOrigin: true,
+            },
             "/api": {
                 target: apiProxyTarget,
                 changeOrigin: true,

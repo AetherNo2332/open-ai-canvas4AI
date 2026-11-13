@@ -17,7 +17,9 @@ import urllib.parse
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = {"postgres", "redis", "migrate", "backend", "agent", "web", "model-stub"}
+SERVICES = {"postgres", "redis", "migrate", "backend", "agent", "web", "docs", "model-stub"}
+# Docs has its own gateway smoke and is not started by the Agent scenario.
+RUNNING_SERVICES = SERVICES - {"docs"}
 TERMINAL = {"completed", "failed", "cancelled", "rejected"}
 
 
@@ -90,6 +92,7 @@ class Smoke:
     image: ${CANVAS_BACKEND_IMAGE}
 ''', encoding="utf-8")
         self.env["CANVAS_MODEL_STUB_IMAGE"] = self.project + "-model-stub:ci"
+        self.env["CANVAS_DOCS_IMAGE"] = self.project + "-docs:ci"
         self.secrets.update((self.env["CANVAS_AGENT_INTERNAL_TOKEN"], self.env["CANVAS_AGENT_WORKER_TOKEN"]))
         self.command = ["docker", "compose", "--project-directory", str(ROOT), "-p", self.project,
                         "-f", str(ROOT / "docker-compose.deploy.yml"), "-f", str(ROOT / "docker-compose.build.yml"),
@@ -149,6 +152,11 @@ class Smoke:
         stage = re.sub(r"[^a-zA-Z0-9_-]", "_", stage)
         self.output.parent.mkdir(parents=True, exist_ok=True)
         (self.output.parent / f"production-smoke-{stage}.log").write_text(diagnostic, encoding="utf-8")
+
+    def verify_container_scope(self, rows):
+        self.check("started containers match the Agent scenario and project", len(rows) == len(RUNNING_SERVICES) and
+                   {r["Config"]["Labels"].get("com.docker.compose.service") for r in rows} == RUNNING_SERVICES and
+                   all(r["Config"]["Labels"].get("com.docker.compose.project") == self.project for r in rows))
 
     def cleanup(self):
         if not (self.isolated and self.resources_created):
@@ -389,7 +397,7 @@ class Smoke:
 
     def execute(self):
         config = json.loads(self.compose("config", "--format", "json").stdout)
-        self.check("production deploy/build plus stub resolves seven services", set(config["services"]) == SERVICES,
+        self.check("production deploy/build plus stub resolves expected services", set(config["services"]) == SERVICES,
                    services=sorted(config["services"]))
         ports = config["services"]["web"].get("ports", [])
         self.check("web binds only allocated loopback port", len(ports) == 1 and
@@ -434,9 +442,7 @@ class Smoke:
         wait(lambda: self.api("GET", "/agent/capabilities")["availability"]["readyWorkers"] > 0)
         ids = self.compose("ps", "--all", "-q").stdout.split()
         rows = json.loads(subprocess.check_output(["docker", "inspect", *ids], text=True, timeout=30))
-        self.check("seven containers carry only this project label", len(rows) == 7 and
-                   {r["Config"]["Labels"]["com.docker.compose.service"] for r in rows} == SERVICES and
-                   all(r["Config"]["Labels"].get("com.docker.compose.project") == self.project for r in rows))
+        self.verify_container_scope(rows)
         wrong = self.compose("exec", "-T", "agent", "node", "-e",
             "fetch('http://backend:8080/internal-agent/events?after=0',{headers:{Authorization:'Bearer wrong-ci-token'}}).then(r=>{console.log(r.status);process.exit(r.status===401?0:1)})",
             success=False)

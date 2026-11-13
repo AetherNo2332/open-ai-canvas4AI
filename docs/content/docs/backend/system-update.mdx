@@ -28,6 +28,8 @@ description: Host Updater、Release 检查、数据库备份迁移、健康验�
 
 ## 自动回退
 
+文档使用独立 buildId/digest。应用升级保留兼容的现行 docs，并在回退时恢复升级开始时的文档引用；文档单独更新不执行业务停服或数据库恢复。文档故障独立处理；首次文档接入失败标记人工处理，不能把已验证的业务版本回退。详见[文档站独立更新](/docs/backend/docs-deployment)。
+
 停服后的迁移、启动或健康验证失败会触发自动回退：
 
 1. 停止目标 web/backend；

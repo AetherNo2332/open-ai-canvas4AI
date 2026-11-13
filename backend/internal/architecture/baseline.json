@@ -393,8 +393,6 @@
     {"id":"internal/handler/user_data.go:file_lines","max":788,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
     {"id":"internal/handler/user_data.go:func:RegisterUserDataRoutes:lines","max":665,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/handler/workbench.go:func:RegisterWorkbenchRoutes:lines","max":151,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
-    {"id":"internal/hostupdate/manager.go:func:Manager.runUpdate:complexity","max":21,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/hostupdate/manager_ops.go:file_lines","max":774,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
     {"id":"internal/hostupdate/version.go:func:compareParsedVersions:complexity","max":27,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/observability/aggregator.go:func:Aggregator.Snapshot:complexity","max":39,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/platform/runtime_policy.go:func:validateRuntimePolicy:complexity","max":67,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},

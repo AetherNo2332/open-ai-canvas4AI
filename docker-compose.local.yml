@@ -110,6 +110,14 @@ services:
           ignore:
             - node_modules/
 
+  docs:
+    image: open-ai-canvas-docs:local
+    build:
+      context: ./docs
+    labels:
+      tv.yingce.docs.contract: "1"
+    restart: unless-stopped
+
 volumes:
   backend-data:
   web-data:

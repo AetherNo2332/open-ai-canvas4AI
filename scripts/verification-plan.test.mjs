@@ -66,6 +66,8 @@ test("mapped Go internals retain formatting, vet and static checks", () => {
 test("ordinary docs only, contract docs broaden", () => {
   assert.deepEqual(ids(plan(["docs/content/docs/overview/intro.mdx"])), [
     "docs:check",
+    "docs:deployment",
+    "docs:metadata",
     "docs:types",
   ]);
   assert.ok(

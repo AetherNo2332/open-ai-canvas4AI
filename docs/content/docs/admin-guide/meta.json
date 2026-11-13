@@ -1,0 +1,4 @@
+{
+  "title": "管理员指南",
+  "pages": ["index", "getting-started", "models-channels", "users-billing", "creation-extensions", "ecommerce", "system-settings", "operations", "deployment"]
+}

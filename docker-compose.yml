@@ -83,5 +83,13 @@ services:
     # 独立进程：只通过 /internal-agent 与 backend 通信，不共享容器、不直接持有数据库。
     # 无对外端口；存活状态由主 Node 进程与 Docker restart policy 管理。
 
+  docs:
+    image: open-ai-canvas-docs:local
+    build:
+      context: ./docs
+    labels:
+      tv.yingce.docs.contract: "1"
+    restart: unless-stopped
+
 volumes:
   backend-data:
