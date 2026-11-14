@@ -4,6 +4,7 @@
   "pages": [
     "local-development",
     "production-deployment",
+    "docs-deployment",
     "canvas-agent-appearance",
     "agent-tools",
     "agent-tool-reads",

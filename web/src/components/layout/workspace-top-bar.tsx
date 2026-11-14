@@ -1,4 +1,4 @@
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { BookOpen, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import { useTranslation } from "react-i18next";
 import { currentLocale } from "@/i18n";
@@ -44,6 +44,10 @@ export function WorkspaceTopBar({ sidebarOpen, onToggleSidebar }: { sidebarOpen:
             </nav>
             <WorkspaceTopBarExtensionSlot />
             <div className="app-workspace-topbar-actions">
+                <a href="/docs" target="_blank" rel="noopener noreferrer" className="app-workspace-topbar-feedback-pill" aria-label={t("shell.openDocumentation")} title={t("shell.openDocumentation")}>
+                    <BookOpen aria-hidden="true" />
+                    <span>{t("shell.documentation")}</span>
+                </a>
                 <LanguageMenu />
                 {user ? <TopbarFeedbackButton /> : null}
                 {creditsEnabled ? (

@@ -5,6 +5,8 @@ description: 生产 Compose、Agent 内部连接与安装更新入口
 
 ## 编排与连接
 
+标准部署增加内部 docs 服务，通过 web 的同域 `/docs` 访问；初装从同一 Release 的 `docs-image.json` 固定镜像。后续文档更新独立于业务版本，不重启业务服务，重复安装保留已选择的文档 digest。首次接入先按 Release 说明升级更新器过渡版本。详见[文档部署与回退](/docs/backend/docs-deployment)。
+
 `docker-compose.deploy.yml` 包含 PostgreSQL、Redis、一次性 migrate、backend、agent 和 web；`docker-compose.server.yml` 提供服务器源码构建。两者均默认启动 Agent，无需 `pi` profile。只有根 `docker-compose.yml` 的 Agent 使用 `pi` profile。
 
 backend 使用至少32字符的 `CANVAS_AGENT_INTERNAL_TOKEN` 作为运行授权签名材料，不下发给 Agent。Worker 使用独立的 `CANVAS_AGENT_WORKER_ID` 和至少32字符的 `CANVAS_AGENT_WORKER_TOKEN`；backend 在启动时将该身份的凭据摘要与可选 `CANVAS_AGENT_WORKER_USER_ID` 作用域插入注册表，Agent 仅持有 Worker 凭据。空作用域明确表示可服务全部用户，填写用户 ID 则只允许领取该用户的运行。

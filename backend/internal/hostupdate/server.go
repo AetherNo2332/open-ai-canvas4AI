@@ -26,6 +26,7 @@ func NewServer(manager *Manager, token string) (*Server, error) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	s.registerDocs(mux)
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.manager.Snapshot()) })
 	mux.HandleFunc("POST /v1/check", func(w http.ResponseWriter, r *http.Request) {
 		status, err := s.manager.Check(r.Context())

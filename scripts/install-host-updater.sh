@@ -28,6 +28,11 @@ require_root() {
     web_image="$(sed -n 's/^CANVAS_WEB_IMAGE=//p' "${INSTALL_DIR}/.env" | tail -n 1)"
     [[ "$backend_image" =~ ^ghcr\.io/[^[:space:]]+@sha256:[a-f0-9]{64}$ ]] || fail "CANVAS_BACKEND_IMAGE 必须固定为 GHCR digest"
     [[ "$web_image" =~ ^ghcr\.io/[^[:space:]]+@sha256:[a-f0-9]{64}$ ]] || fail "CANVAS_WEB_IMAGE 必须固定为 GHCR digest"
+    if grep -Eq '^  docs:' "${INSTALL_DIR}/docker-compose.deploy.yml"; then
+        local docs_image
+        docs_image="$(sed -n 's/^CANVAS_DOCS_IMAGE=//p' "${INSTALL_DIR}/.env" | tail -n 1)"
+        [[ "$docs_image" =~ ^ghcr\.io/[^[:space:]]+/open-ai-canvas-docs@sha256:[a-f0-9]{64}$ ]] || fail "CANVAS_DOCS_IMAGE 必须固定为文档仓库 digest"
+    fi
 }
 
 read_image_tag() {

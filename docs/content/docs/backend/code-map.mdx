@@ -3,6 +3,11 @@ title: 代码功能地图
 description: 从产品功能快速定位主要代码入口
 ---
 
+## 文档交付
+
+- 文档交付：`docs/Dockerfile`、`docs/components/providers.tsx`、`docs/app/api/health/route.ts`；工作流 `docs-images.yml` / `docs-deploy.yml`。
+- 文档独立更新：`internal/hostupdate/docs_*.go`、`application_update.go` 与 `deployment_images.go`；本机入口 `scripts/update-docs.sh`，真实镜像验收 `scripts/verify-docs-deployment-smoke.py`。
+
 ## 架构守卫与验证调度
 
 - Worker 授权：`internal/identity/worker` 负责签名、实时租约校验和 Worker 管理；环境配置与管理员鉴权留 `app/agent_worker_auth.go`。

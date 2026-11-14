@@ -81,6 +81,8 @@ export const deDE: Messages = {
         expandSidebar: "Seitenleiste ausklappen",
         expandSidebarMenu: "Seitenmenü ausklappen",
         breadcrumb: "Aktueller Ort",
+        documentation: "Doku",
+        openDocumentation: "Dokumentation öffnen (neuer Tab)",
         credits: "Guthaben",
         openWallet: "Guthabencenter öffnen, {{balance}} Credits verfügbar",
         toggleTheme: "Design wechseln",

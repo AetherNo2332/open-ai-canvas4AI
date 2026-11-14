@@ -115,6 +115,27 @@ export function buildVerificationPlan({
   const docs = (why) => {
     add("docs:check", "docs", "bun", ["run", "build"], why);
     add("docs:types", "docs", "bun", ["run", "types:check"], why);
+    add(
+      "docs:metadata",
+      ".",
+      "node",
+      ["--test", "scripts/docs-release-metadata.test.mjs"],
+      why,
+    );
+    add(
+      "docs:deployment",
+      ".",
+      "python3",
+      [
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.test_docs_deployment",
+        "scripts.test_update_docs",
+        "scripts.test_docs_release_snapshot",
+      ],
+      why,
+    );
   };
   const global = (why) => {
     backend(why);
@@ -146,6 +167,9 @@ export function buildVerificationPlan({
         "scripts.test_agent_parity_container_commands",
         "scripts.test_production_agent_smoke",
         "scripts.test_install_agent_worker_id",
+        "scripts.test_docs_deployment",
+        "scripts.test_update_docs",
+        "scripts.test_docs_release_snapshot",
       ],
       why,
     );
@@ -290,6 +314,12 @@ export function buildVerificationPlan({
       continue;
     }
     if (file.startsWith("docs/")) {
+      if (
+        file.startsWith("docs/plans/") ||
+        file.startsWith("docs/design/") ||
+        file === "docs/index.md"
+      )
+        continue;
       docs(file);
       if (policy.contractDocs.some((p) => file.startsWith(p))) backend(file);
       continue;

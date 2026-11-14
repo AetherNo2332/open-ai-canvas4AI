@@ -117,6 +117,12 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  docs:
+    image: ${CANVAS_DOCS_IMAGE:?请配置 Release 文档快照或已选择的 docs digest}
+    labels:
+      tv.yingce.docs.contract: "1"
+    restart: unless-stopped
+
 volumes:
   backend-data:
   postgres-data:

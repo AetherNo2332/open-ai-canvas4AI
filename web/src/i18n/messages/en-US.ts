@@ -80,6 +80,8 @@ export const enUS: Messages = {
         expandSidebar: "Expand sidebar",
         expandSidebarMenu: "Expand sidebar menu",
         breadcrumb: "Current location",
+        documentation: "Docs",
+        openDocumentation: "Open documentation (new tab)",
         credits: "Credits",
         openWallet: "Open credits center, {{balance}} credits available",
         toggleTheme: "Toggle theme",

@@ -82,6 +82,8 @@ export const zhCN = {
         expandSidebar: "展开侧栏",
         expandSidebarMenu: "展开侧栏菜单",
         breadcrumb: "当前位置",
+        documentation: "文档",
+        openDocumentation: "打开文档站（新标签页）",
         credits: "积分",
         openWallet: "打开积分中心，可用 {{balance}} 积分",
         toggleTheme: "切换主题",

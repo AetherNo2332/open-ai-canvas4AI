@@ -81,6 +81,8 @@ export const koKR: Messages = {
         expandSidebar: "사이드바 펼치기",
         expandSidebarMenu: "사이드 메뉴 펼치기",
         breadcrumb: "현재 위치",
+        documentation: "문서",
+        openDocumentation: "문서 열기 (새 탭)",
         credits: "크레딧",
         openWallet: "크레딧 센터 열기, 사용 가능 {{balance}} 크레딧",
         toggleTheme: "테마 전환",

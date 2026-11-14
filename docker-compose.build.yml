@@ -1,4 +1,13 @@
 services:
+  docs:
+    image: ${CANVAS_DOCS_IMAGE:-open-ai-canvas-docs:server}
+    build:
+      context: ./docs
+      dockerfile: Dockerfile
+      args:
+        DOCS_BUILD_ID: ${DOCS_BUILD_ID:-development}
+        DOCS_BUILD_COMMIT: ${DOCS_BUILD_COMMIT:-unknown}
+        DOCS_BUILD_TIME: ${DOCS_BUILD_TIME:-unknown}
   migrate:
     image: open-ai-canvas-backend:server
     build:

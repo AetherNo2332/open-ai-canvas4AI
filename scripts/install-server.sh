@@ -143,6 +143,7 @@ CANVAS_IMAGE_TAG=source
 CANVAS_BACKEND_IMAGE=open-ai-canvas-backend:server
 CANVAS_WEB_IMAGE=open-ai-canvas-web:server
 CANVAS_AGENT_IMAGE=open-ai-canvas-agent:server
+CANVAS_DOCS_IMAGE=open-ai-canvas-docs:server
 CANVAS_REGISTRATION_ENABLED=false
 CANVAS_ALLOW_PRIVATE_UPSTREAMS=false
 CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=
@@ -155,10 +156,11 @@ start_services() {
     local CANVAS_BACKEND_IMAGE=open-ai-canvas-backend:server
     local CANVAS_WEB_IMAGE=open-ai-canvas-web:server
     local CANVAS_AGENT_IMAGE=open-ai-canvas-agent:server
-    export CANVAS_BACKEND_IMAGE CANVAS_WEB_IMAGE CANVAS_AGENT_IMAGE
+    local CANVAS_DOCS_IMAGE=open-ai-canvas-docs:server
+    export CANVAS_BACKEND_IMAGE CANVAS_WEB_IMAGE CANVAS_AGENT_IMAGE CANVAS_DOCS_IMAGE
     step "从源码构建网页、后端与 Agent 镜像"
     # 标准一键部署已下载完整仓库，直接本地构建可避免公开项目被 GHCR 包可见性阻断。
-    docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" build migrate backend web agent
+    docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" build migrate backend web agent docs
 
     step "启动 PostgreSQL、Redis、后端、Agent 和网页服务"
     docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" up -d --remove-orphans --wait --wait-timeout 600
@@ -172,7 +174,7 @@ print_result() {
     printf '\n部署完成。\n'
     printf '访问地址：http://%s:%s\n' "$local_ip" "$CANVAS_HTTP_PORT"
     printf '安装目录：%s\n' "$INSTALL_DIR"
-    printf '查看状态：cd %q && CANVAS_BACKEND_IMAGE=open-ai-canvas-backend:server CANVAS_WEB_IMAGE=open-ai-canvas-web:server CANVAS_AGENT_IMAGE=open-ai-canvas-agent:server docker compose --env-file .env -f %s -f %s ps\n' "$INSTALL_DIR" "$COMPOSE_FILE" "$BUILD_COMPOSE_FILE"
+    printf '查看状态：cd %q && CANVAS_BACKEND_IMAGE=open-ai-canvas-backend:server CANVAS_WEB_IMAGE=open-ai-canvas-web:server CANVAS_AGENT_IMAGE=open-ai-canvas-agent:server CANVAS_DOCS_IMAGE=open-ai-canvas-docs:server docker compose --env-file .env -f %s -f %s ps\n' "$INSTALL_DIR" "$COMPOSE_FILE" "$BUILD_COMPOSE_FILE"
     printf '\n首次打开后注册的第一个账号会自动成为管理员。公网长期使用前请配置 HTTPS。\n'
 }
 

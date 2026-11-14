@@ -305,6 +305,8 @@ cd backend && go test ./...
 cd docs && bun run types:check
 ```
 
+文档站通过同域 `/docs` 提供访问，内容修订独立构建 docs 镜像，可单独更新与回退；使用方法见[文档站部署](docs/content/docs/backend/docs-deployment.mdx)。
+
 ## 许可证
 
 本项目采用 [MIT](LICENSE) 协议。项目特定代码的版权归 Open AI Canvas 贡献者所有；第三方组件按各自附带的许可证和版权声明使用。

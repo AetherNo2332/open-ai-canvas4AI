@@ -7,6 +7,8 @@ docs/*
 !docs/index.md
 !docs/adr/
 !docs/plans/
+!docs/Dockerfile
+!docs/.dockerignore
 # Keep the new plugin design spec versioned without unignoring generated docs.
 !docs/content/
 docs/content/*
@@ -25,6 +27,7 @@ docs/content/docs/backend/*
 !docs/content/docs/backend/update-announcements.mdx
 !docs/content/docs/backend/http-api.mdx
 !docs/content/docs/backend/creation-platform-sdk.mdx
+!docs/content/docs/backend/docs-deployment.mdx
 !docs/content/docs/backend/code-map.mdx
 !docs/content/docs/backend/newapi-channel-2.mdx
 !docs/content/docs/backend/bailian-minimax-video.mdx
@@ -40,6 +43,7 @@ docs/content/docs/canvas/*
 docs/content/docs/overview/*
 !docs/content/docs/overview/creative-agent-design.mdx
 !docs/content/docs/overview/ecommerce-platform-rules.mdx
+!docs/content/docs/overview/docker.mdx
 # Version the docs site (Next.js + Fumadocs) without unignoring generated docs.
 !docs/package.json
 !docs/bun.lock
@@ -52,8 +56,38 @@ docs/content/docs/overview/*
 !docs/app/
 !docs/lib/
 !docs/components/
+!docs/public/
 !docs/content/docs/index.mdx
 !docs/content/docs/meta.json
+!docs/content/docs/user-guide/
+docs/content/docs/user-guide/*
+!docs/content/docs/user-guide/meta.json
+!docs/content/docs/user-guide/index.mdx
+!docs/content/docs/user-guide/getting-started.mdx
+!docs/content/docs/user-guide/creation.mdx
+!docs/content/docs/user-guide/canvas.mdx
+!docs/content/docs/user-guide/media-tools.mdx
+!docs/content/docs/user-guide/agent.mdx
+!docs/content/docs/user-guide/previs-editor.mdx
+!docs/content/docs/user-guide/short-drama.mdx
+!docs/content/docs/user-guide/ecommerce.mdx
+!docs/content/docs/user-guide/assets-tasks.mdx
+!docs/content/docs/user-guide/skills-plugins.mdx
+!docs/content/docs/user-guide/settings.mdx
+!docs/content/docs/user-guide/wallet.mdx
+!docs/content/docs/user-guide/troubleshooting.mdx
+!docs/content/docs/admin-guide/
+docs/content/docs/admin-guide/*
+!docs/content/docs/admin-guide/meta.json
+!docs/content/docs/admin-guide/index.mdx
+!docs/content/docs/admin-guide/getting-started.mdx
+!docs/content/docs/admin-guide/models-channels.mdx
+!docs/content/docs/admin-guide/users-billing.mdx
+!docs/content/docs/admin-guide/creation-extensions.mdx
+!docs/content/docs/admin-guide/ecommerce.mdx
+!docs/content/docs/admin-guide/system-settings.mdx
+!docs/content/docs/admin-guide/operations.mdx
+!docs/content/docs/admin-guide/deployment.mdx
 !docs/content/docs/overview/meta.json
 !docs/content/docs/canvas/meta.json
 !docs/content/docs/plugins/meta.json
