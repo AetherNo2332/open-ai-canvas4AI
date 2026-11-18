@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,14 @@ func TestInternalAgentRequiresVersionedPiWireIdentity(t *testing.T) {
 
 	if got := request(`{"owner":"worker"}`, nil); got.Code != http.StatusUpgradeRequired || !strings.Contains(got.Body.String(), "agent_protocol_mismatch") {
 		t.Fatalf("missing protocol identity status=%d body=%s", got.Code, got.Body.String())
+	}
+	for _, protocol := range []string{"canvas-pi-wire/v4", "canvas-pi-wire/v5"} {
+		if got := request(`{"owner":"wire-test-worker:old"}`, map[string]string{
+			"X-Agent-Protocol-Version": protocol,
+			"X-Pi-SDK-Version":         internalAgentPiSDKVersion, "X-Pi-Session-Format": internalAgentSessionFormat,
+		}); got.Code != http.StatusUpgradeRequired {
+			t.Fatalf("incompatible worker protocol %s was admitted: %d", protocol, got.Code)
+		}
 	}
 	if got := request(`{"owner":"worker"}`, map[string]string{
 		"X-Agent-Protocol-Version": internalAgentWireVersion,
@@ -145,6 +154,56 @@ func TestInternalAgentEventsHideForeignRunAndTaskIDs(t *testing.T) {
 	if !strings.Contains(payloads[0], "own-run") || !strings.Contains(payloads[0], "own-task") ||
 		strings.Contains(strings.Join(payloads, " "), "foreign-run") || strings.Contains(strings.Join(payloads, " "), "foreign-task") {
 		t.Fatalf("scoped SSE leaked or omitted identifiers: %v", payloads)
+	}
+}
+
+func TestInternalAgentRenewDistinguishesEndedLeaseFromInvalidGrant(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("CANVAS_AGENT_INTERNAL_TOKEN", strings.Repeat("s", 48))
+	t.Setenv("CANVAS_AGENT_WORKER_ID", "renew-worker")
+	t.Setenv("CANVAS_AGENT_WORKER_TOKEN", strings.Repeat("w", 48))
+	t.Setenv("CANVAS_AGENT_WORKER_USER_ID", "")
+	_, svc, db := workspaceHTTPFixture(t)
+	router := gin.New()
+	RegisterInternalAgentRoutes(router, svc)
+	const owner = "renew-worker:slot"
+	const epoch = int64(1)
+	expires := time.Now().UTC().Add(time.Minute)
+	run := model.CloudAgentExecution{ID: "leased-run", UserID: "lease-user", ConversationID: "leased-session", Status: "running", LeaseOwner: owner, LeaseExpiresAt: &expires}
+	session := model.CloudAgentPiSession{ID: "pi-session", UserID: run.UserID, ConversationID: run.ConversationID, ActiveRunID: run.ID, LeaseOwner: owner, LeaseEpoch: epoch, LeaseExpiresAt: &expires}
+	for _, row := range []any{&run, &session} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	grant, err := svc.IssueAgentRunGrant("renew-worker", owner, run.UserID, run.ID, epoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&run).Update("status", "completed").Error; err != nil {
+		t.Fatal(err)
+	}
+	renew := func(token string, userID string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/internal-agent/runs/"+run.ID+"/renew", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Agent-Identity", "renew-worker")
+		req.Header.Set("X-Agent-User-ID", userID)
+		req.Header.Set("X-Agent-Worker-ID", owner)
+		req.Header.Set("X-Agent-Session-Epoch", strconv.FormatInt(epoch, 10))
+		req.Header.Set("X-Agent-Protocol-Version", internalAgentWireVersion)
+		req.Header.Set("X-Pi-SDK-Version", internalAgentPiSDKVersion)
+		req.Header.Set("X-Pi-Session-Format", internalAgentSessionFormat)
+		router.ServeHTTP(recorder, req)
+		return recorder
+	}
+	if got := renew(grant, run.UserID); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "agent_lease_lost") {
+		t.Errorf("ended lease status=%d, body=%s", got.Code, got.Body.String())
+	}
+	for _, response := range []*httptest.ResponseRecorder{renew(grant+".invalid", run.UserID), renew(grant, "other-user")} {
+		if response.Code != http.StatusUnauthorized || response.Body.Len() != 0 {
+			t.Errorf("invalid grant status=%d, body=%s", response.Code, response.Body.String())
+		}
 	}
 }
 

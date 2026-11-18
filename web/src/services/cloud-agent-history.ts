@@ -11,7 +11,7 @@ export type CloudAgentHistoryClient = {
 };
 const defaultClient: CloudAgentHistoryClient = { listConversations: listAgentConversations, listRuns: listAgentConversationRuns, getRun: getAgentRun };
 const terminal = new Set<AgentRun["status"]>(["completed", "failed", "cancelled", "rejected"]);
-type HistoryOptions = { signal?: AbortSignal; scope?: string; client?: CloudAgentHistoryClient };
+type HistoryOptions = { signal?: AbortSignal; scope?: string; canvasId?: string; client?: CloudAgentHistoryClient };
 
 function checkRequest(options: HistoryOptions, scope: string) {
     options.signal?.throwIfAborted();
@@ -114,7 +114,7 @@ async function restoreRun(run: AgentRun, client: CloudAgentHistoryClient, option
     if (seq > 0 && seq === run.eventCount && !run.eventsTruncated) return { run: { ...run, events }, missingPrefix };
     do {
         checkRequest(options, scope);
-        const { run: next } = await client.getRun(run.id, options.signal, { sinceSeq: seq, fromStart: seq === 0, eventLimit: 500 });
+        const { run: next } = await client.getRun(run.id, options.signal, { sinceSeq: seq, fromStart: seq === 0, eventLimit: 500, canvasId: options.canvasId });
         checkRequest(options, scope);
         if (next.id !== run.id || next.conversationId !== run.conversationId) throw new Error("Agent 轮次归属不一致，已停止恢复");
         const page = [...new Map((next.events || []).filter((event) => event.runId === run.id && Number.isSafeInteger(event.seq) && event.seq > seq).map((event) => [event.seq, event])).values()].sort((a, b) => a.seq - b.seq);
@@ -143,7 +143,7 @@ export async function loadCloudAgentConversation(conversationId: string, options
     let after: string | undefined;
     do {
         checkRequest(options, scope);
-        const page = await client.listRuns(conversationId, { after, limit: 100, signal: options.signal });
+        const page = await client.listRuns(conversationId, { after, limit: 100, signal: options.signal, canvasId: options.canvasId });
         checkRequest(options, scope);
         assertConversation(conversationId, page.items);
         runs.push(...page.items);
@@ -236,7 +236,7 @@ function unchanged(summary: AgentConversationSummary, cached: CloudAgentConversa
     return cached?.historyState?.status !== "unavailable" && run?.id === summary.latestRunId && (run.revision || 0) === summary.revision && run.status === summary.status && Boolean(run.cleanupPending) === Boolean(summary.cleanupPending);
 }
 
-export async function refreshCloudAgentConversations(options: HistoryOptions & { canvasId?: string; existing?: CloudAgentConversation[]; observedConversationIds?: string[] } = {}): Promise<CloudAgentConversation[]> {
+export async function refreshCloudAgentConversations(options: HistoryOptions & { existing?: CloudAgentConversation[]; observedConversationIds?: string[] } = {}): Promise<CloudAgentConversation[]> {
     const scope = options.scope || getActiveUserScope();
     const client = options.client || defaultClient;
     const summaries: AgentConversationSummary[] = [];

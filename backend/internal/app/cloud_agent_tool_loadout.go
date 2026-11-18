@@ -33,7 +33,7 @@ func cloudAgentNextAdvertisedToolNames(state *cloudAgentRuntime) []string {
 		if added[name] || !eligible[name] {
 			continue
 		}
-		if name == "read" && state.SkillRuntimeMode == cloudAgentSkillRuntimeNative || cloudAgentToolAllowed(state.Request, name) {
+		if cloudAgentRunAllowsTool(state, name) {
 			names = append(names, name)
 			added[name] = true
 		}

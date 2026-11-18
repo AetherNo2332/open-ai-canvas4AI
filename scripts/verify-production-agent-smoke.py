@@ -431,7 +431,7 @@ class Smoke:
                    availability["queueReason"] == "worker_offline", stage="worker_not_ready",
                    queueReason=availability["queueReason"])
         probe = self.compose("run", "--rm", "--no-deps", "agent", "node", "-e",
-            "fetch('http://backend:8080/internal-agent/capacity',{method:'POST',headers:{Authorization:'Bearer '+process.env.CANVAS_AGENT_WORKER_TOKEN,'X-Agent-Identity':process.env.CANVAS_AGENT_WORKER_ID,'X-Agent-Protocol-Version':'canvas-pi-wire/v4','X-Pi-SDK-Version':'0.87.1','X-Pi-Session-Format':'3','Content-Type':'application/json'},body:JSON.stringify({owner:process.env.CANVAS_AGENT_WORKER_ID+':ci-probe',active:0,capacity:1,readiness:'degraded',readinessReason:'CI startup gate'})}).then(r=>{console.log(r.status);process.exit(r.status===200?0:1)})",
+            "fetch('http://backend:8080/internal-agent/capacity',{method:'POST',headers:{Authorization:'Bearer '+process.env.CANVAS_AGENT_WORKER_TOKEN,'X-Agent-Identity':process.env.CANVAS_AGENT_WORKER_ID,'X-Agent-Protocol-Version':'canvas-pi-wire/v6','X-Pi-SDK-Version':'0.87.1','X-Pi-Session-Format':'3','Content-Type':'application/json'},body:JSON.stringify({owner:process.env.CANVAS_AGENT_WORKER_ID+':ci-probe',active:0,capacity:1,readiness:'degraded',readinessReason:'CI startup gate'})}).then(r=>{console.log(r.status);process.exit(r.status===200?0:1)})",
             timeout=60, success=False)
         self.check("unready worker report is accepted", probe.returncode == 0 and probe.stdout.strip() == "200")
         availability = self.api("GET", "/agent/capabilities")["availability"]

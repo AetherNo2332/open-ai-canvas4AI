@@ -1018,69 +1018,6 @@ func (state *cloudAgentRuntime) cloudAgentImageInspectionCount(nodeID string) in
 	return state.ImageInspectCounts[nodeID]
 }
 
-// cloudAgentImageReferences 仅为实际发给模型的图片建立资源白名单。
-// 原始图片必须保留；模型容量不足时在创建任务前明确拒绝，绝不换成文字。
-func (s *Service) cloudAgentImageReferences(userID string, req CloudAgentRequest, canonical *canonicalAgentRequest) ([]providerMedia, error) {
-	count := 0
-	for _, message := range canonical.Messages {
-		parts, _ := message["content"].([]any)
-		for _, value := range parts {
-			part, _ := value.(map[string]any)
-			if stringField(part, "type") == "image_url" {
-				count++
-			}
-		}
-	}
-	if count == 0 {
-		return nil, nil
-	}
-	limits, err := s.cloudAgentVisionReferences(req)
-	if err != nil {
-		return nil, err
-	}
-	if count > limits.MaxImages {
-		return nil, BadAuthRequest(fmt.Sprintf("上下文包含 %d 张图片，当前模型最多支持 %d 张；原始图片不会被裁剪或移出，请选择支持更多图片的模型", count, limits.MaxImages))
-	}
-	refs := make([]providerMedia, 0, min(count, limits.MaxImages))
-	seen := map[string]bool{}
-	canonical.Messages = append([]map[string]any(nil), canonical.Messages...)
-	for i, message := range canonical.Messages {
-		parts, ok := message["content"].([]any)
-		if !ok {
-			continue
-		}
-		kept := make([]any, 0, len(parts))
-		for _, value := range parts {
-			part, _ := value.(map[string]any)
-			if stringField(part, "type") != "image_url" {
-				kept = append(kept, value)
-				continue
-			}
-			image, _ := part["image_url"].(map[string]any)
-			key := stringField(image, "url")
-			if !strings.HasPrefix(key, "resource:") {
-				return nil, BadAuthRequest("看图记录不是账号资源引用，请重新发起本轮对话")
-			}
-			if !seen[key] {
-				resource, readErr := s.repo.ResourceForUser(userID, strings.TrimPrefix(key, "resource:"))
-				if readErr != nil || resource.Status != "ready" || !strings.HasPrefix(strings.ToLower(resource.MimeType), "image/") {
-					return nil, BadAuthRequest("看图资源不可用、尚未就绪或不属于当前用户")
-				}
-				if err := validateCloudAgentImageResourceSize(resource.Size, limits.MaxImageBytes); err != nil {
-					return nil, err
-				}
-				refs = append(refs, providerMedia{StorageKey: key, MimeType: resource.MimeType, Bytes: resource.Size, Width: resource.Width, Height: resource.Height})
-				seen[key] = true
-			}
-			kept = append(kept, value)
-		}
-		copy := cloneStringAnyMap(message)
-		copy["content"] = kept
-		canonical.Messages[i] = copy
-	}
-	return refs, nil
-}
-
 // cloudAgentDescribeImageBatch records the images admitted to this tool batch.
 func cloudAgentDescribeImageBatch(state *cloudAgentRuntime, receipt map[string]any) {
 	if state == nil || receipt == nil {

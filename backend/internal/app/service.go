@@ -33,6 +33,7 @@ import (
 )
 
 type Service struct {
+	agentDefinitions         *agentDefinitionRegistry
 	repo                     *repository.Repository
 	dataDir                  string
 	cancelMu                 sync.Mutex

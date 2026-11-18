@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { App, Button, Dropdown } from "antd";
 import { ArrowLeft, Brush, CheckCheck, Clapperboard, FileDown, FileUp, Film, Inbox, Package, Pause, Pencil, Play, ScrollText, Settings2, UsersRound } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router";
+import { dramaChoiceKey } from "@/lib/drama/model-choice";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
@@ -669,6 +670,7 @@ export default function DramaStudioPage() {
                                 ) : tab === "script" ? (
                                     <ScriptView
                                         projectId={projectId}
+                                        textModel={dramaChoiceKey(production.settings.models.scriptText) ? production.settings.models.scriptText! : production.settings.models.text}
                                         detail={detail}
                                         storyboard={production.settings.storyboard}
                                         currentId={currentShot?.id || ""}

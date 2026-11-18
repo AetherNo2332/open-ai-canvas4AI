@@ -57,48 +57,35 @@ func (s *Grants) Issue(workerID, owner, userID, runID string, epoch int64) (stri
 }
 
 func (s *Grants) Validate(token, userID, runID, owner string, epoch int64) bool {
+	_, leased := s.Check(token, userID, runID, owner, epoch)
+	return leased
+}
+
+func (s *Grants) Check(token, userID, runID, owner string, epoch int64) (string, bool) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 || parts[0] != "run" || len(s.key) < 32 {
-		return false
+		return "", false
 	}
 	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return false
+		return "", false
 	}
 	mac := hmac.New(sha256.New, s.key)
 	mac.Write([]byte(parts[1]))
 	if !hmac.Equal(signature, mac.Sum(nil)) {
-		return false
+		return "", false
 	}
 	body, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil || len(body) > 2048 {
-		return false
+		return "", false
 	}
 	var grant Grant
 	if json.Unmarshal(body, &grant) != nil || grant.Expires <= s.now().UTC().Unix() || grant.Expires > s.now().UTC().Add(5*time.Minute).Unix() || grant.UserID != userID || grant.RunID != runID || grant.Owner != owner || grant.Epoch != epoch {
-		return false
+		return "", false
 	}
 	worker, err := s.repo.AgentWorker(grant.WorkerID)
 	if err != nil || worker.RevokedAt != nil || (worker.UserID != "" && worker.UserID != userID) || !OwnsOwner(grant.WorkerID, grant.Owner) {
-		return false
+		return "", false
 	}
-	return s.repo.AgentRunAuthorization(userID, runID, owner, epoch)
-}
-
-// GrantWorker only decodes the identity after the same request has passed
-// Validate. It is not an authentication API.
-func GrantWorker(token string) (string, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return "", errors.New("invalid run authorization")
-	}
-	body, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", err
-	}
-	var grant Grant
-	if err = json.Unmarshal(body, &grant); err != nil {
-		return "", err
-	}
-	return grant.WorkerID, nil
+	return grant.WorkerID, s.repo.AgentRunAuthorization(userID, runID, owner, epoch)
 }

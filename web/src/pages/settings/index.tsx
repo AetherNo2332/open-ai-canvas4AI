@@ -15,6 +15,7 @@ import { ModelDefaultGrid } from "./model-default-grid";
 import { PromptPreferencesPane } from "./prompt-preferences-pane";
 import DiagnosticsPanel from "./diagnostics-panel";
 import AgentMemoryPane from "./agent-memory-pane";
+import { AgentSharedPreferencesPane } from "./agent-shared-preferences-pane";
 import { RunningHubSettingsPane } from "./runninghub-settings-pane";
 import { RUNNINGHUB_PLUGIN_ID } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
@@ -162,6 +163,7 @@ export default function SettingsPage() {
         preferences: (
             <SettingsPane>
                 <PreferencesPane />
+                <AgentSharedPreferencesPane />
             </SettingsPane>
         ),
         prompts: (

@@ -72,7 +72,7 @@ func (s *Service) cloudAgentHandleMemoryUpdate(_ *repository.Repository, userID,
 		}
 	}
 	state.MemoryWriteCalls++
-	outcome, capacityDetail, err := s.memoryDocuments().AgentWrite(userID, runID, call.ID, args.Operations, args.Reason)
+	outcome, capacityDetail, err := s.writeCloudAgentMemory(userID, runID, state, call.ID, args.Operations, args.Reason)
 	if err != nil {
 		if capacityDetail != nil {
 			return memoryCapacityDetailPayload(capacityDetail), err
@@ -90,6 +90,9 @@ func (s *Service) cloudAgentHandleMemoryUpdate(_ *repository.Repository, userID,
 	switch outcome.Status {
 	case agentMemoryOutcomeApplied:
 		result["text"] = "已写入长期记忆，下一轮对话起出现在记忆快照里；本轮快照不会刷新，以本结果为准。用户可以在聊天里撤销。"
+		if state.Context != nil {
+			result["text"] = "已写入当前业务对象的长期记忆，下次启用该业务记忆的运行可读取；本轮快照不会刷新。"
+		}
 	case agentMemoryOutcomePending:
 		result["text"] = "已提交给用户确认，确认前不会生效；不要对用户说已经记住。"
 	default:
@@ -106,4 +109,20 @@ func (s *Service) cloudAgentHandleMemoryUpdate(_ *repository.Repository, userID,
 	}
 	state.event(runID, "memory_updated", event)
 	return result, nil
+}
+
+func (s *Service) writeCloudAgentMemory(userID, runID string, state *cloudAgentRuntime, callID string, ops []document.Operation, reason string) (document.WriteOutcome, *document.CapacityDetail, error) {
+	if state.Context == nil {
+		return s.memoryDocuments().AgentWrite(userID, runID, callID, ops, reason)
+	}
+	if err := agentRequireIsolatedContext(state.Context, userID, agentBusinessScope(state.Request)); err != nil {
+		return document.WriteOutcome{}, nil, err
+	}
+	if state.Context.Memory.Source != "scope" {
+		return document.WriteOutcome{}, nil, BadAuthRequest("本轮未启用业务记忆")
+	}
+	if _, err := s.agentBusinessOwner(userID, state.Request); err != nil {
+		return document.WriteOutcome{}, nil, err
+	}
+	return s.agentWriteScopeMemory(state.Context.Scope, runID, callID, ops, reason)
 }

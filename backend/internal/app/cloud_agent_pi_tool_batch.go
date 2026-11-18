@@ -45,7 +45,7 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	}
 	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
 		for _, call := range batch.Calls {
-			if call.Function.Name == "read" {
+			if call.Function.Name == "read" && !agentBusinessRead(call) {
 				return kernel.Forbidden("native Skill read does not use a canvas tool batch")
 			}
 		}
@@ -130,7 +130,7 @@ func (s *Service) piAdmitToolBatchEnvelope(userID string, state *cloudAgentRunti
 	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
 		canvasCalls := make([]cloudAgentCall, 0, len(expected))
 		for _, call := range expected {
-			if call.Function.Name != "read" {
+			if call.Function.Name != "read" || agentBusinessRead(call) {
 				canvasCalls = append(canvasCalls, call)
 			}
 		}

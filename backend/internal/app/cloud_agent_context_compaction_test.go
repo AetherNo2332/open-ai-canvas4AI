@@ -438,9 +438,19 @@ func TestCloudAgentCompactionContinuationIncludesFinalReplyWithoutReplayingPromp
 		t.Fatal(err)
 	}
 	state.Canonical.Messages = projected.Messages
+	contextSnapshot, err := s.LoadAgentContextSnapshot(AgentContextScope{UserID: run.UserID, Business: agentBusinessScope(state.Request)}, AgentContextPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Context = &contextSnapshot
+	binding := model.AgentConversationBinding{ScopeType: "canvas", ScopeID: run.CanvasID, AgentDefinitionID: "canvas.default", AgentContextVersion: contextSnapshot.Version}
+	if err := db.Model(persistedSession).Updates(binding).Error; err != nil {
+		t.Fatal(err)
+	}
 	state.event(run.ID, "assistant_message", map[string]any{"messageId": "final", "text": "镜头已按冷色调调整", "final": true})
 	run = saveCloudAgentCompactionState(t, s, run, &state, func(current *model.CloudAgentExecution) {
 		current.Status = "completed"
+		current.AgentConversationBinding = binding
 	})
 	req := agentTestRequest()
 	req.Prompt, req.IdempotencyKey = "继续下一镜", "compaction-continuation-final"
@@ -474,6 +484,17 @@ func TestCloudAgentCompactionContinuationIncludesFinalReplyWithoutReplayingPromp
 	session, entries, err := s.repo.CloudAgentPiSession("user", execution.ConversationID)
 	if err != nil || session.ConversationID != run.ConversationID || len(entries) != 10 {
 		t.Fatalf("continuation did not reuse its persisted Pi tree: session=%+v entries=%d err=%v", session, len(entries), err)
+	}
+	fresh := agentTestRequest()
+	fresh.Prompt, fresh.IdempotencyKey = "独立新会话", "compaction-new-conversation"
+	newRun, err := s.CreateCloudAgentRun("user", fresh, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, newState := decodeCloudAgentCompactionState(t, s, newRun.ID)
+	if newRun.ConversationID == child.ConversationID || len(newState.TextHistory) != 0 ||
+		strings.Contains(mustJSON(newState.Canonical.Messages), "保持冷色调") {
+		t.Fatal("new conversation inherited the compacted conversation context")
 	}
 }
 

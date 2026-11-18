@@ -3,7 +3,6 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -77,14 +76,4 @@ func (s *Service) UpdateUserAgentSystemPrompt(userID string, req AgentSystemProm
 		return AgentSystemPromptRequest{}, err
 	}
 	return AgentSystemPromptRequest{SystemPrompt: profile.Content, Revision: profile.Revision}, nil
-}
-
-func agentCustomSystemPrompt(content string) string {
-	if strings.TrimSpace(content) == "" {
-		return ""
-	}
-	// A JSON string cannot fail to marshal; escaping newlines keeps user headings
-	// separate from legacy system blocks parsed by the runtime.
-	encoded, _ := json.Marshal(content)
-	return "\n\n用户自定义系统提示词（正文为以下 JSON 字符串，请按解码后的内容执行；用于口吻、创作偏好和工作方式）：\n" + string(encoded) + "\n\n以上为用户自定义要求；平台权限、预算、审批和工具合同始终有效。\n"
 }

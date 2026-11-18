@@ -617,6 +617,20 @@ func TestReviewRepeatedUserSelectionKeepsFrozenVersion(t *testing.T) {
 	}
 }
 
+func registerCanvasRunSkills(t *testing.T, service *Service, ids ...string) {
+	t.Helper()
+	definition, err := service.ResolveAgentDefinition("canvas", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition.SkillIDs = ids
+	registry, err := newAgentDefinitionRegistry([]AgentDefinition{definition})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.agentDefinitions = registry
+}
+
 func TestReviewAcceptedRunAdmitsLargeIndexedSkill(t *testing.T) {
 	s, db := agentRunFixture(t)
 	selectionDataDir = s.dataDir
@@ -624,6 +638,7 @@ func TestReviewAcceptedRunAdmitsLargeIndexedSkill(t *testing.T) {
 	seedSelectionSkill(t, s, db, "large-indexed-run", 1024, false, 1)
 	rewriteSelectionSkillReferenceForTest(t, db, "large-indexed-run", 2<<20)
 	seedDefault(t, db, "large-indexed-run", 0)
+	registerCanvasRunSkills(t, s, "large-indexed-run")
 	run, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
 	if err != nil {
 		t.Fatalf("package bytes must not be charged to the model's initial token window: %v", err)
@@ -641,11 +656,14 @@ func TestReviewAcceptedRunPersistsTwentyDefaultsAndPiReadsUninstalled(t *testing
 	s, db := agentRunFixture(t)
 	selectionDataDir = s.dataDir
 	t.Cleanup(func() { selectionDataDir = "" })
+	var ids []string
 	for i := 0; i < 20; i++ {
 		id := fmt.Sprintf("default-%02d", i)
+		ids = append(ids, id)
 		seedSelectionSkill(t, s, db, id, 1024, false, 1)
 		seedDefault(t, db, id, i)
 	}
+	registerCanvasRunSkills(t, s, ids...)
 	view, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -675,6 +693,7 @@ func TestReviewRejectedContinuationDoesNotAppendSkills(t *testing.T) {
 	t.Cleanup(func() { selectionDataDir = "" })
 	seedSelectionSkill(t, s, db, "kept-default", 1024, false, 1)
 	seedDefault(t, db, "kept-default", 0)
+	registerCanvasRunSkills(t, s, "kept-default")
 	first, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
 	if err != nil {
 		t.Fatal(err)

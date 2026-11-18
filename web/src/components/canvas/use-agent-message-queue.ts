@@ -61,7 +61,7 @@ export function useAgentMessageQueue(userScope: string, canvasId: string, conver
             const scope = current.current;
             const request = ++queueRequest.current;
             try {
-                const value = await getAgentMessageQueue(conversationId, signal);
+                const value = await getAgentMessageQueue(conversationId, canvasId, signal);
                 if (current.current === scope && request === queueRequest.current && !signal?.aborted && getActiveUserScope() === userScope) {
                     setQueueState({ key, value });
                     setQueueError("");
@@ -70,7 +70,7 @@ export function useAgentMessageQueue(userScope: string, canvasId: string, conver
                 if (current.current === scope && !signal?.aborted) setQueueError("待发消息加载失败，请重试");
             }
         },
-        [conversationId, key, userScope],
+        [canvasId, conversationId, key, userScope],
     );
 
     useEffect(() => {
@@ -173,9 +173,9 @@ export function useAgentMessageQueue(userScope: string, canvasId: string, conver
         retry: async () => {
             await Promise.allSettled([refresh(), reloadSettings()]);
         },
-        edit: (item: AgentQueuedMessage, prompt: string) => perform(() => updateAgentQueuedMessage(conversationId!, item.id, { revision: item.revision, prompt })),
-        promote: (item: AgentQueuedMessage) => perform(() => updateAgentQueuedMessage(conversationId!, item.id, { revision: item.revision, action: "interject" })),
-        remove: (item: AgentQueuedMessage) => perform(() => cancelAgentQueuedMessage(conversationId!, item.id, item.revision)),
-        resume: () => (queue ? perform(() => updateAgentMessageQueue(conversationId!, { revision: queue.revision, action: "resume" })) : Promise.resolve(false)),
+        edit: (item: AgentQueuedMessage, prompt: string) => perform(() => updateAgentQueuedMessage(conversationId!, item.id, { revision: item.revision, prompt }, canvasId)),
+        promote: (item: AgentQueuedMessage) => perform(() => updateAgentQueuedMessage(conversationId!, item.id, { revision: item.revision, action: "interject" }, canvasId)),
+        remove: (item: AgentQueuedMessage) => perform(() => cancelAgentQueuedMessage(conversationId!, item.id, item.revision, canvasId)),
+        resume: () => (queue ? perform(() => updateAgentMessageQueue(conversationId!, { revision: queue.revision, action: "resume" }, canvasId)) : Promise.resolve(false)),
     };
 }

@@ -1842,12 +1842,15 @@ paths:
   /agent/conversations:
     get:
       tags: [agent]
-      summary: 读取当前用户在画布中参与的 Agent 对话
-      description: 只读目录，不创建运行或调用模型。按最新轮 createdAt、id 倒序；即使对话后来换绑画布，latestRunId、status、revision、cleanupPending 仍来自该对话全局最新一轮。仅返回当前登录用户的记录，画布必须属于当前用户。
+      summary: 按业务对象和 Agent 配置列出当前用户的会话
+      description: 提供 scopeType 和 scopeId，或使用旧版 canvasId 参数。省略 agentDefinitionId 时采用服务端默认配置。目录按最新轮 createdAt、id 倒序。
       parameters:
+        - $ref: "#/components/parameters/AgentScopeType"
+        - $ref: "#/components/parameters/AgentScopeID"
+        - $ref: "#/components/parameters/AgentDefinitionID"
         - in: query
           name: canvasId
-          required: true
+          description: 兼容画布客户端。与显式范围并用时必须一致。
           schema: { type: string, maxLength: 80 }
         - in: query
           name: limit
@@ -1858,12 +1861,16 @@ paths:
           schema: { type: string, maxLength: 512 }
       responses:
         "200":
-          description: 信封 data 为 items（id、canvasId、title、latestRunId、status、revision、cleanupPending、archived、createdAt、updatedAt）和可选 nextCursor；archived 为 true 时移除本地历史入口，不加载正文；没有记录时 items 为空数组
+          description: 信封 data 为 items（id、canvasId、scope、agentDefinitionId、resumable、title、latestRunId、status、revision、cleanupPending、archived、createdAt、updatedAt）和可选 nextCursor。resumable 为 false 的存量会话仅供查看。
         "400":
           description: 画布 ID、limit 或分页游标无效
         "404":
           description: 画布不存在或不属于当前用户
   /agent/conversations/{id}:
+    parameters:
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
     delete:
       tags: [agent]
       summary: 从历史列表移除当前用户的 Agent 对话
@@ -1879,10 +1886,14 @@ paths:
         "404":
           description: 对话不存在或不属于当前用户
   /agent/conversations/{id}/runs:
+    parameters:
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
     get:
       tags: [agent]
       summary: 按时间顺序恢复当前用户的完整 Agent 对话轮次
-      description: 仅返回当前用户、同一 conversationId 的不可变轮次，包含跨页面换绑画布后的轮次。按 createdAt、id 升序分页；每轮默认带尾部事件窗口，完整事件使用运行详情 fromStart 和 sinceSeq 分页读取。读取不恢复执行或重复调用工具。
+      description: 返回同一会话的不可变轮次，按 createdAt、id 升序分页。业务入口同时核验业务范围与配置身份。账户历史按当前用户校验，存量只读历史可保留。
       parameters:
         - in: path
           name: id
@@ -1922,6 +1933,9 @@ paths:
   /agent/runs/{id}:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
     get:
       tags: [agent]
       summary: 读取当前用户的 Agent 轮次
@@ -1951,6 +1965,9 @@ paths:
   /agent/runs/{id}/messages:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
     post:
       tags: [agent]
       summary: 从服务端父轮历史创建新轮次
@@ -1968,6 +1985,9 @@ paths:
   /agent/runs/{id}/interjections:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
     post:
       tags: [agent]
       summary: 向正在运行的 Agent 轮次插入一句话
@@ -1995,6 +2015,9 @@ paths:
   /agent/runs/{id}/cancel:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
     post:
       tags: [agent]
       summary: 取消当前用户的 Agent 轮次
@@ -2046,6 +2069,9 @@ paths:
   /agent/runs/{id}/approvals/{approvalId}/decision:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
       - name: approvalId
         in: path
         required: true
@@ -2093,6 +2119,9 @@ paths:
   /agent/runs/{id}/events:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
     get:
       tags: [agent]
       summary: Agent 运行事件回放与持续订阅
@@ -3356,6 +3385,9 @@ paths:
           $ref: "#/components/responses/PlatformError"
   /agent/conversations/{id}/queue/{messageId}:
     parameters:
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
       - { in: path, name: id, required: true, schema: { type: string, maxLength: 80 } }
       - { in: path, name: messageId, required: true, schema: { type: string, maxLength: 80 } }
     patch:
@@ -3393,6 +3425,9 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
   /agent/conversations/{id}/queue:
     parameters:
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
       - { in: path, name: id, required: true, schema: { type: string, maxLength: 80 } }
     get:
       tags: [agent]
@@ -3423,6 +3458,9 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
   /agent/conversations/{id}/messages:
     parameters:
+      - $ref: "#/components/parameters/AgentScopeType"
+      - $ref: "#/components/parameters/AgentScopeID"
+      - $ref: "#/components/parameters/AgentDefinitionID"
       - { in: path, name: id, required: true, schema: { type: string, maxLength: 80 } }
     post:
       tags: [agent]
@@ -3490,7 +3528,7 @@ paths:
                 systemPrompt:
                   type: string
                   maxLength: 12000
-                  description: 直接注入后续新建运行的系统上下文，不改变平台权限和审批规则
+                  description: 保存历史账户设置。新隔离运行不自动注入这段正文
                 revision:
                   type: integer
                   minimum: 0
@@ -3500,6 +3538,35 @@ paths:
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
         "409": {$ref: "#/components/responses/Error"}
+  /agent/settings/shared-preferences:
+    get:
+      tags: [agent]
+      summary: 读取当前账户的结构化输出偏好与 revision
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [agent]
+      summary: 按 revision 替换账户共享输出偏好，省略偏好字段时清空该字段
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                language: {type: string, maxLength: 12, description: "语言标签，例如 zh-CN。空值跟随本轮输入"}
+                tone: {type: string, enum: ["", neutral, professional, casual]}
+                verbosity: {type: string, enum: ["", concise, balanced, detailed]}
+                format: {type: string, enum: ["", auto, prose, bullets]}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "409": {description: "agent_preferences_conflict，重新读取当前 revision 后再保存"}
   /agent/runs/{id}/subagents:
     get:
       tags: [agent]
@@ -5681,6 +5748,21 @@ components:
       required: true
       schema:
         type: string
+    AgentScopeType:
+      in: query
+      name: scopeType
+      description: 注册的业务类型。业务调用与 scopeId 一起传入。
+      schema: { type: string, maxLength: 40 }
+    AgentScopeID:
+      in: query
+      name: scopeId
+      description: 当前用户有权访问的业务对象 ID。
+      schema: { type: string, maxLength: 80 }
+    AgentDefinitionID:
+      in: query
+      name: agentDefinitionId
+      description: 会话绑定的 Agent 配置身份。省略时解析本业务默认配置。
+      schema: { type: string, maxLength: 80 }
   securitySchemes:
     sessionCookie:
       type: apiKey
@@ -6243,6 +6325,20 @@ components:
       additionalProperties: false
       required: [canvasId, prompt, permissionMode, contextScope, budget, idempotencyKey]
       properties:
+        scope:
+          type: object
+          additionalProperties: false
+          required: [type, id]
+          properties:
+            type: {type: string, enum: [canvas, drama]}
+            id: {type: string, maxLength: 80}
+        agentDefinitionId:
+          type: string
+          maxLength: 80
+          description: 当前业务已注册的配置身份。省略时使用服务端默认配置
+        dramaEpisodeId:
+          type: string
+          maxLength: 36
         canvasId:
           type: string
           maxLength: 80
@@ -6275,7 +6371,7 @@ components:
           maxItems: 16
           items:
             type: string
-          description: 用户为对话固定或在本条消息里点名的技能；其余已安装且 agentMode=auto 的技能由 Agent 按技能目录自动发现
+          description: Agent 配置允许时，选择当前账户已安装和启用的技能
         contextScope:
           type: array
           maxItems: 1

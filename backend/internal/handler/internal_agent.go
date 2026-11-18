@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/service"
 )
 
 const (
-	internalAgentWireVersion      = "canvas-pi-wire/v4"
+	internalAgentWireVersion      = "canvas-pi-wire/v6"
 	internalAgentPiSDKVersion     = "0.87.1"
 	internalAgentSessionFormat    = "3"
 	internalAgentProtocolMismatch = "Pi Agent worker protocol version mismatch"
@@ -49,11 +50,17 @@ func internalAgentAuth(svc *service.Service) gin.HandlerFunc {
 		provided := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
 		if c.Param("id") != "" || strings.HasPrefix(c.Request.URL.Path, "/internal-agent/runs/") {
 			epoch, err := strconv.ParseInt(c.GetHeader("X-Agent-Session-Epoch"), 10, 64)
-			workerID, workerErr := svc.AgentRunGrantWorker(provided)
-			if err != nil || workerErr != nil || workerID != c.GetHeader("X-Agent-Identity") || !svc.ValidateAgentRunGrant(provided, c.GetHeader("X-Agent-User-ID"), c.Param("id"), c.GetHeader("X-Agent-Worker-ID"), epoch) {
+			workerID, leased := svc.CheckAgentRunGrant(provided, c.GetHeader("X-Agent-User-ID"), c.Param("id"), c.GetHeader("X-Agent-Worker-ID"), epoch)
+			if err != nil || workerID == "" || workerID != c.GetHeader("X-Agent-Identity") {
 				c.AbortWithStatus(http.StatusUnauthorized)
 				return
 			}
+			if !leased {
+				c.Abort()
+				failService(c, kernel.AgentLeaseLost("Pi Agent 运行租约已失效"))
+				return
+			}
+			c.Set("agentWorkerID", workerID)
 		} else {
 			workerID := c.GetHeader("X-Agent-Identity")
 			worker, err := svc.AuthenticateAgentWorker(workerID, provided)
@@ -251,14 +258,8 @@ func registerInternalAgentRunRoutes(group *gin.RouterGroup, svc *service.Service
 			failService(c, err)
 			return
 		}
-		provided := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-		workerID, err := svc.AgentRunGrantWorker(provided)
-		if err != nil {
-			c.AbortWithStatus(http.StatusUnauthorized)
-			return
-		}
 		epoch, _ := strconv.ParseInt(c.GetHeader("X-Agent-Session-Epoch"), 10, 64)
-		token, err := svc.IssueAgentRunGrant(workerID, c.GetHeader("X-Agent-Worker-ID"), c.GetHeader("X-Agent-User-ID"), c.Param("id"), epoch)
+		token, err := svc.IssueAgentRunGrant(c.GetString("agentWorkerID"), c.GetHeader("X-Agent-Worker-ID"), c.GetHeader("X-Agent-User-ID"), c.Param("id"), epoch)
 		if err != nil {
 			failService(c, err)
 			return

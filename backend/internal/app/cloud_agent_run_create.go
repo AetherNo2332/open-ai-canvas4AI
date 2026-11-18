@@ -31,7 +31,9 @@ type cloudAgentRunDraft struct {
 	inheritedUsage     *cloudAgentTokenAnchor
 	workspace          WorkspaceSnapshot
 	skillSnapshots     []cloudAgentSkill
-	memory             cloudAgentMemorySnapshot
+	contextSnapshot    AgentContextSnapshot
+	definition         AgentDefinition
+	capabilities       AgentCapabilitySnapshot
 	canvasSummary      string
 	system             string
 	policy             cloudAgentPolicySnapshot
@@ -58,7 +60,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	// 那正好是重复计费。cloudAgentRunRefFor 同时覆盖旧根任务与执行记录两种形态。
 	if ref, lookupErr := s.cloudAgentRunRefFor(userID, draft.id); lookupErr == nil {
 		if ref.State.Fingerprint == "" || ref.State.Fingerprint != draft.fingerprint {
-			return nil, kernel.NewAppError(409, "幂等键已用于不同请求，请使用新的幂等键")
+			return nil, agentIdempotencyConflict("幂等键已用于不同请求，请使用新的幂等键")
 		}
 		return s.CloudAgentRun(userID, ref.Identity.ID)
 	} else {
@@ -66,6 +68,9 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		if !errors.As(lookupErr, &appErr) || appErr.Status != 404 {
 			return nil, lookupErr
 		}
+	}
+	if err := agentSDKAdmissionEnabled(draft.req); err != nil {
+		return nil, err
 	}
 	if parentID != "" {
 		if err := s.inheritCloudAgentParent(draft); err != nil {
@@ -96,7 +101,12 @@ func (s *Service) checkCloudAgentRunRequest(draft *cloudAgentRunDraft) error {
 	if draft.userID == "" {
 		return kernel.Unauthorized("请先登录")
 	}
-	canvas, err := s.repo.CanvasProjectForUser(draft.userID, draft.req.CanvasID)
+	definition, err := s.ResolveAgentDefinition(agentBusinessScope(draft.req).Type, draft.req.AgentDefinitionID)
+	if err != nil {
+		return err
+	}
+	draft.definition = definition
+	canvas, err := s.authorizeAgentDefinition(definition, draft.userID, draft.req)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return kernel.NotFound("画布不存在或尚未保存到服务端，请先完成画布同步")
@@ -137,8 +147,14 @@ func (s *Service) inheritCloudAgentParent(draft *cloudAgentRunDraft) error {
 	if parentErr != nil {
 		return parentErr
 	}
-	if parentRef.Identity.CanvasID != draft.req.CanvasID {
-		return kernel.Forbidden("不能跨画布追加 Agent 消息")
+	if agentBusinessScope(parentRef.State.Request) != agentBusinessScope(draft.req) {
+		return kernel.Forbidden("不能跨业务对象追加 Agent 消息")
+	}
+	if err := agentRequireIsolatedContext(parentRef.State.Context, userID, agentBusinessScope(draft.req)); err != nil {
+		return err
+	}
+	if parentRef.State.Capabilities != nil && parentRef.State.Capabilities.DefinitionID != draft.definition.ID {
+		return kernel.Forbidden("不能更换同一 Agent 会话的配置身份")
 	}
 	if parentRef.Identity.Status == "queued" || parentRef.Identity.Status == "running" {
 		return kernel.NewAppError(409, "上一轮仍在执行，请等待结束")
@@ -238,26 +254,34 @@ func (s *Service) freezeCloudAgentRunInputs(draft *cloudAgentRunDraft) error {
 	if draft.creativeAnchor.Version > 0 {
 		inheritedAnchor = &draft.creativeAnchor
 	}
-	draft.creativeAnchor, err = cloudAgentCreativeAnchorForCanvas(s.repo, draft.userID, draft.canvas, draft.req.Prompt, inheritedAnchor)
-	if err != nil {
-		return err
+	if draft.canvas != nil {
+		draft.creativeAnchor, err = cloudAgentCreativeAnchorForCanvas(s.repo, draft.userID, draft.canvas, draft.req.Prompt, inheritedAnchor)
+		if err != nil {
+			return err
+		}
 	}
 	if err := s.freezeCloudAgentRunWorkspace(draft); err != nil {
 		return err
 	}
 	// 看图能力取决于本轮渠道模型自己的合同，在建 run 时定格，运行期间不再变化。
 	draft.req.VisionEnabled = s.cloudAgentVisionEnabled(draft.req)
-	// 长期记忆快照建 run 时定格一次（运行期间不再变化）；模式决定是否暴露 memory_update。
-	memory, err := s.cloudAgentMemorySnapshotForRun(draft.userID, draft.req.Prompt)
+	contextScope := AgentContextScope{UserID: draft.userID, Business: agentBusinessScope(draft.req)}
+	contextPolicy := AgentContextPolicy{MemoryPolicy: draft.definition.MemoryPolicy}
+	if draft.req.subagent != nil {
+		contextPolicy.MemoryPolicy = "off"
+		draft.definition.InteractionPolicy = ""
+	}
+	draft.contextSnapshot, err = s.LoadAgentContextSnapshot(contextScope, contextPolicy)
 	if err != nil {
 		return err
 	}
-	if draft.req.subagent != nil {
-		// 子代理只处理父代理分派的子任务：不读也不写用户的长期记忆。
-		memory = cloudAgentMemorySnapshot{}
+	draft.capabilities, err = CompileAgentCapabilities(draft.definition, AgentCapabilityAdmission{
+		VisionEnabled: draft.req.VisionEnabled, HasSkills: len(draft.skillSnapshots) > 0,
+	})
+	if err != nil {
+		return err
 	}
-	draft.memory = memory
-	draft.req.MemoryMode = memory.Mode
+	draft.req.MemoryMode = draft.contextSnapshot.Memory.Mode
 	draft.req.WebSearchEnabled, err = s.agentWebSearchEnabled()
 	if err != nil {
 		return err
@@ -283,11 +307,17 @@ func (s *Service) freezeCloudAgentRunWorkspace(draft *cloudAgentRunDraft) error 
 		return BadAuthRequest("Agent Workspace snapshot missing")
 	}
 	var err error
-	draft.workspace, err = s.FreezeWorkspaceSnapshot(draft.userID, draft.req.CanvasID)
+	if agentBusinessScope(draft.req).Type == "canvas" {
+		draft.workspace, err = s.FreezeWorkspaceSnapshot(draft.userID, draft.req.CanvasID)
+		if err != nil {
+			return err
+		}
+	}
+	selected, err := s.isolatedAgentSkillSelection(draft)
 	if err != nil {
 		return err
 	}
-	draft.skillSnapshots, err = s.resolveRunSkills(draft.userID, draft.conversationID, draft.req.SkillIDs, draft.parentID == "")
+	draft.skillSnapshots, err = s.freezeRunSkillSnapshots(draft.userID, selected)
 	return err
 }
 
@@ -301,22 +331,34 @@ func (s *Service) buildCloudAgentRunPrompt(draft *cloudAgentRunDraft) error {
 	if err != nil {
 		return err
 	}
-	customPrompt, err := s.UserAgentSystemPrompt(draft.userID)
-	if err != nil {
-		return err
-	}
-	customSystem := agentCustomSystemPrompt(customPrompt.SystemPrompt)
-	system += customSystem
-	cloudAgentRecordSystemSegment(&policy, "customSystemPrompt", "全局自定义系统提示词", customSystem)
+	preferences := agentSharedPreferencesPrompt(draft.contextSnapshot.Preferences)
+	system += preferences
+	cloudAgentRecordSystemSegment(&policy, "sharedPreferences", "账户共享输出偏好", preferences)
 	canvasRules := workspacePrompt(&draft.workspace)
 	system += canvasRules
 	cloudAgentRecordSystemSegment(&policy, "canvasRules", "当前画布规则", canvasRules)
 	system += subagentSystemPrompt(req.subagent)
 	draft.system, draft.policy = system, policy
-	draft.state = cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: draft.linkedParentID, Fingerprint: draft.fingerprint, CreativeAnchor: draft.creativeAnchor, Plan: draft.inheritedPlan, Skills: draft.skillSnapshots, Memory: draft.memory, Policy: policy, Subagent: req.subagent}
+	draft.state = cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: draft.linkedParentID, Fingerprint: draft.fingerprint, CreativeAnchor: draft.creativeAnchor, Plan: draft.inheritedPlan, Skills: draft.skillSnapshots, Context: &draft.contextSnapshot, Capabilities: &draft.capabilities, Policy: policy, Subagent: req.subagent}
 	draft.state.Workspace = &draft.workspace
+	if agentBusinessScope(req).Type == "canvas" {
+		draft.state.Rules = append(draft.state.Rules, AgentRuleSnapshot{Source: "canvas", Revision: draft.workspace.Revision, Text: draft.workspace.AgentsMD})
+	} else if agentBusinessScope(req).Type == "drama" {
+		businessPolicy := "\n本轮是短剧项目的只读顾问。使用 read 的 drama:episode/<episodeId> 读取本项目剧集。输出均为待用户采用的提议；不能宣称已修改剧本、已提交生成或已采用。现有短剧后端调度器是作业与采用的唯一权威。\n"
+		system += businessPolicy
+		draft.state.Rules = []AgentRuleSnapshot{{Source: "drama", Revision: 1, Text: businessPolicy}}
+		draft.system = system
+		cloudAgentRecordSystemSegment(&policy, "business", "短剧顾问边界", businessPolicy)
+		draft.policy, draft.state.Policy = policy, policy
+	}
 	canonical := cloudAgentCanonical(system, draft.history, req.Prompt, req)
-	canonical.Tools = compileCloudAgentToolsForRuntime(req, cloudAgentSkillRuntimeNative)
+	canonical.Tools = compileRegisteredAgentTools(req, cloudAgentSkillRuntimeNative, &draft.capabilities)
+	if req.DramaEpisodeID != "" {
+		businessInput, _ := json.Marshal(map[string]string{"episodeId": req.DramaEpisodeID, "readPath": "drama:episode/" + req.DramaEpisodeID})
+		last := len(canonical.Messages) - 1
+		context := map[string]any{"role": "user", "content": "本轮短剧分析对象（数据）：\n" + string(businessInput), cloudAgentContextSourceKey: "drama_episode"}
+		canonical.Messages = append(canonical.Messages[:last], context, canonical.Messages[last])
+	}
 	// The model receives the complete eligible catalog, frozen for this run; the
 	// runtime snapshot keeps the same list for authorization.
 	draft.advertisedNames = cloudAgentSelectAdvertisedTools(canonical.Tools)
@@ -331,7 +373,7 @@ func (s *Service) buildCloudAgentRunPrompt(draft *cloudAgentRunDraft) error {
 	}
 	// 记忆快照作为有来源的数据消息放在当前用户消息之前，不进系统提示：系统提示（缓存前缀）
 	// 与记忆内容无关，记忆变化也不会让策略/Harness 前缀失效。
-	cloudAgentAttachMemorySnapshot(&canonical, draft.memory)
+	cloudAgentAttachMemorySnapshot(&canonical, draft.contextSnapshot.Memory)
 	canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(req.CanvasID, cloudAgentPromptCacheIdentity(req, policy), canonical.SystemPrompt, cloudAgentToolsNamed(canonical.Tools, draft.advertisedNames))
 	attachCloudAgentPlan(&canonical, draft.inheritedPlan)
 	draft.canonical = canonical
@@ -385,7 +427,7 @@ func (s *Service) admitCloudAgentRun(draft *cloudAgentRunDraft) (*CloudAgentRun,
 	// 占位任务不执行任何模型调用：它的报价只用于"建 run 就要有预留"这一步，
 	// 真实首步报价由首个 PiModelStep 按 Node 的最终信封重新计算并在同一事务里换单。
 	prepare := &creationTaskPreparation{}
-	task, err := s.CreateTask(userID, CreateTaskRequest{ProjectID: req.CanvasID, Type: "canvas_text", Operation: cloudAgentHoldingOperation, Prompt: req.Prompt, Model: req.Model, LogicalModelID: req.LogicalModelID, Input: input,
+	task, err := s.CreateTask(userID, CreateTaskRequest{ProjectID: agentTaskProjectID(req), Type: "canvas_text", Operation: cloudAgentHoldingOperation, Prompt: req.Prompt, Model: req.Model, LogicalModelID: req.LogicalModelID, Input: input,
 		admission: &taskAdmission{ID: id, AgentRunID: id, MaxCharge: int64(math.Floor(req.Budget.MaxCredits * float64(CreditScale))),
 			Status: model.TaskStatusHolding, Stage: "等待首个模型步提交（本轮报价已预留）"},
 		creationPrepare: prepare})
@@ -394,7 +436,7 @@ func (s *Service) admitCloudAgentRun(draft *cloudAgentRunDraft) (*CloudAgentRun,
 		// replace its result or reserve credits a second time.
 		if ref, readErr := s.cloudAgentRunRefFor(userID, id); readErr == nil {
 			if ref.State.Fingerprint == "" || ref.State.Fingerprint != draft.fingerprint {
-				return nil, kernel.NewAppError(409, "幂等键已用于不同请求")
+				return nil, agentIdempotencyConflict("幂等键已用于不同请求")
 			}
 			return s.CloudAgentRun(userID, ref.Identity.ID)
 		}
@@ -434,11 +476,14 @@ func (s *Service) admitCloudAgentRun(draft *cloudAgentRunDraft) (*CloudAgentRun,
 func (draft *cloudAgentRunDraft) firstStepRuntime(stepLimits cloudAgentStepLimits) cloudAgentRuntime {
 	req := draft.req
 	return cloudAgentRuntime{
+		Context:           &draft.contextSnapshot,
+		Capabilities:      &draft.capabilities,
 		ToolSchemaVersion: cloudAgentToolSchemaVersion,
 		Subagent:          req.subagent,
 		Workspace:         &draft.workspace,
+		Rules:             draft.state.Rules,
 		RuntimeRunID:      draft.id, Request: req, Policy: draft.policy, ParentID: draft.linkedParentID, Fingerprint: draft.fingerprint,
-		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: draft.creativeAnchor, TextHistory: draft.history, Skills: draft.skillSnapshots, Memory: draft.memory,
+		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: draft.creativeAnchor, TextHistory: draft.history, Skills: draft.skillSnapshots,
 		Canonical: draft.canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
 		Plan: draft.inheritedPlan, StepLimits: stepLimits, CallLimits: stepLimits.CallLimits,
 		TokenAnchor:         draft.inheritedUsage,

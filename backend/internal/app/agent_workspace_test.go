@@ -116,6 +116,7 @@ func TestAgentWorkspaceRunInheritsDocumentAndNativeSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedDefault(t, db, "project-run", 0)
+	registerCanvasRunSkills(t, s, "project-run")
 	run, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
 	if err != nil {
 		t.Fatal(err)

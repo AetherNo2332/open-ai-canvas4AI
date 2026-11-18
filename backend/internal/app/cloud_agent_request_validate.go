@@ -12,6 +12,7 @@ func validateCloudAgentRequest(req *CloudAgentRequest) error {
 	}
 	// Checks run in this fixed order; the first failing one is reported.
 	for _, check := range []func(*CloudAgentRequest) error{
+		validateAgentBusinessScope,
 		validateCloudAgentRequestBasics,
 		validateCloudAgentRequestModelIDs,
 		validateCloudAgentRequestFocus,
@@ -30,8 +31,11 @@ func validateCloudAgentRequest(req *CloudAgentRequest) error {
 func validateCloudAgentRequestBasics(req *CloudAgentRequest) error {
 	// IDs and protocol selectors are identifiers, not free-form text. Keep their
 	// validation in one place so byte/rune and Unicode handling cannot drift.
-	if err := validateCloudAgentID(req.CanvasID, "画布 ID", 80); err != nil {
+	if err := validateCloudAgentID(agentTaskProjectID(*req), "业务对象 ID", 80); err != nil {
 		return err
+	}
+	if req.AgentDefinitionID != "" && validateCloudAgentID(req.AgentDefinitionID, "Agent 配置 ID", 80) != nil {
+		return BadAuthRequest("Agent 配置 ID 无效")
 	}
 	req.CanvasID = strings.TrimSpace(req.CanvasID)
 	if err := validateCloudAgentPrompt(req.Prompt, 16000); err != nil {

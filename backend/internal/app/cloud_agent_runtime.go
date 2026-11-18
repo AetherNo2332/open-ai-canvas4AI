@@ -100,10 +100,13 @@ type cloudAgentApproval struct {
 	QuoteHash string                    `json:"quoteHash,omitempty"`
 }
 type cloudAgentRuntime struct {
-	MediaBatch        *cloudAgentMediaBatch `json:"mediaBatch,omitempty"`
-	ToolSchemaVersion string                `json:"toolSchemaVersion,omitempty"`
-	ActiveSubagents   int                   `json:"activeSubagents,omitempty"`
-	Subagent          *SubagentRuntime      `json:"subagent,omitempty"`
+	Capabilities      *AgentCapabilitySnapshot `json:"capabilities,omitempty"`
+	Context           *AgentContextSnapshot    `json:"context,omitempty"`
+	Rules             []AgentRuleSnapshot      `json:"rules,omitempty"`
+	MediaBatch        *cloudAgentMediaBatch    `json:"mediaBatch,omitempty"`
+	ToolSchemaVersion string                   `json:"toolSchemaVersion,omitempty"`
+	ActiveSubagents   int                      `json:"activeSubagents,omitempty"`
+	Subagent          *SubagentRuntime         `json:"subagent,omitempty"`
 	// SubagentBudgetCarves 记录父运行给仍在运行的子代理切分的积分份额，
 	// 计算父剩余预算时扣减；子代理终态后释放（键为 linkId，单位积分）。
 	SubagentBudgetCarves map[string]float64 `json:"subagentBudgetCarves,omitempty"`
@@ -343,12 +346,12 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	advertisedNames := cloudAgentToolNames(canonical.Tools)
 	// Rebuild the complete eligible catalog for server-side authorization. The
 	// root task contains only the parent schemas sent to the model.
-	canonical.Tools = compileCloudAgentToolsForRuntime(initial.Request, firstNonEmpty(initial.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy))
+	canonical.Tools = compileRegisteredAgentTools(initial.Request, firstNonEmpty(initial.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy), initial.Capabilities)
 	stepLimits, err := s.cloudAgentStepLimits()
 	if err != nil {
 		return err
 	}
-	state := cloudAgentRuntime{Request: initial.Request, SkillRuntimeMode: initial.SkillRuntimeMode, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
+	state := cloudAgentRuntime{Context: initial.Context, Capabilities: initial.Capabilities, Request: initial.Request, SkillRuntimeMode: initial.SkillRuntimeMode, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
 	state.CallLimits = stepLimits.CallLimits
 	s.RecordObservability(observability.Event{TaskID: task.ID, RunID: task.ID, TraceID: task.ID, Kind: observability.KindTask, Status: observability.StatusRunning, StartedAt: time.Now().UTC(), Model: stringValue(input.Config["model"]), PromptVersion: state.Fingerprint})
 	for _, name := range advertisedNames {

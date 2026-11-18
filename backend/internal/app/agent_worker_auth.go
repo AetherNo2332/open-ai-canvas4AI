@@ -26,7 +26,9 @@ func (s *Service) IssueAgentRunGrant(workerID, owner, userID, runID string, epoc
 func (s *Service) ValidateAgentRunGrant(token, userID, runID, owner string, epoch int64) bool {
 	return s.workerGrants().Validate(token, userID, runID, owner, epoch)
 }
-func (s *Service) AgentRunGrantWorker(token string) (string, error) { return worker.GrantWorker(token) }
+func (s *Service) CheckAgentRunGrant(token, userID, runID, owner string, epoch int64) (string, bool) {
+	return s.workerGrants().Check(token, userID, runID, owner, epoch)
+}
 func (s *Service) AdminProvisionAgentWorker(actor *model.User, id, userID string) (string, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return "", err

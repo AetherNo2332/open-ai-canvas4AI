@@ -5,12 +5,15 @@ import "yingce/backend/internal/app"
 // 云端 Agent 子系统（fork 维护）的稳定导入面：handler 与 cmd 只经由本包引用 app。
 
 type (
+	AgentConversationSelector      = app.AgentConversationSelector
+	AgentBusinessScope             = app.AgentBusinessScope
 	AgentSchedulerUpdate           = app.AgentSchedulerUpdate
 	AgentSkillDefaultItem          = app.AgentSkillDefaultItem
 	AgentSubagentPolicyRequest     = app.AgentSubagentPolicyRequest
 	AgentSubagentPolicyView        = app.AgentSubagentPolicyView
 	AgentSubagentView              = app.AgentSubagentView
 	AgentSystemPromptRequest       = app.AgentSystemPromptRequest
+	AgentSharedPreferences         = app.AgentSharedPreferences
 	AgentWebSearchSettingRequest   = app.AgentWebSearchSettingRequest
 	AgentWorkspaceView             = app.AgentWorkspaceView
 	CharacterListPage              = app.CharacterListPage

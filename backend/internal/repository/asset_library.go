@@ -18,6 +18,7 @@ type UserAssetPageFilter struct {
 	Uncategorized bool
 	Status        string
 	Query         string
+	AllowedIDs    []string
 }
 
 type UserAssetFacetRow struct {
@@ -57,6 +58,9 @@ func (r *Repository) UserAssetFacets(userID string, status string) ([]UserAssetF
 }
 
 func userAssetFilteredQuery(query *gorm.DB, filter UserAssetPageFilter, includeSearch bool) *gorm.DB {
+	if filter.AllowedIDs != nil {
+		query = query.Where("id IN ?", filter.AllowedIDs)
+	}
 	if value := strings.TrimSpace(filter.Kind); value != "" {
 		query = query.Where("kind = ?", value)
 	}

@@ -7,6 +7,7 @@ import (
 	"yingce/backend/internal/canvas/commands"
 	"yingce/backend/internal/identity"
 	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
 
@@ -34,7 +35,7 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 	case "canvas_list_node_types":
 		return cloudAgentReadNodeTypes(call)
 	case "canvas_list_assets":
-		return cloudAgentListAssets(repo, userID, call)
+		return cloudAgentListScopedAssets(repo, userID, state, call)
 	case "canvas_read_content", "canvas_search_nodes":
 		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":
@@ -231,11 +232,28 @@ func cloudAgentReadTask(repo *repository.Repository, userID string, state *cloud
 	if err != nil {
 		return nil, err
 	}
-	if task.ProjectID != state.Request.CanvasID {
-		return nil, BadAuthRequest("不能读取其他画布的任务")
+	scope := agentBusinessScope(state.Request)
+	if task.ProjectID != scope.ID || (state.Context != nil && !cloudAgentTaskHasScope(repo, userID, scope, task)) {
+		return nil, BadAuthRequest("不能读取其他业务对象的任务")
 	}
 	result := cloudAgentTaskDiagnostic(repo, task)
 	result["status"] = task.Status
 	result["text"] = truncateRunes(taskResultText(task.ResultJSON), 4000)
 	return result, nil
+}
+
+func cloudAgentTaskHasScope(repo *repository.Repository, userID string, scope AgentBusinessScope, task *model.Task) bool {
+	if task.AgentRunID != "" {
+		run, err := repo.CloudAgent(userID, task.AgentRunID)
+		if err != nil {
+			return false
+		}
+		state, err := cloudAgentDecode(run)
+		return err == nil && agentBusinessScope(state.Request) == scope
+	}
+	if scope.Type != "canvas" {
+		return false
+	}
+	binding, err := repo.CanvasTaskBinding(task.ID)
+	return err == nil && binding.OwnerID == userID && binding.CanvasID == scope.ID
 }

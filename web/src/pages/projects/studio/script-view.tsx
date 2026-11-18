@@ -12,6 +12,8 @@ import { SourceEditModal } from "./episode-source";
 import { JobDetailModal } from "./job-detail";
 import { ShotEditor } from "./segment-dialog";
 import type { EpisodeEmpty } from "./storyboard";
+import { DramaAgentAnalysis } from "./agent-analysis";
+import type { DramaModelChoice } from "@/services/api/drama";
 
 function storyboardSummary(value: DramaStoryboardSettings) {
     const rules = normalizeStoryboard(value);
@@ -44,6 +46,7 @@ function locateQuote(text: string, quote: string) {
 
 export function ScriptView({
     projectId,
+    textModel,
     detail,
     storyboard,
     currentId,
@@ -57,6 +60,7 @@ export function ScriptView({
     empty,
 }: {
     projectId: string;
+    textModel: DramaModelChoice;
     detail: DramaEpisodeDetail;
     storyboard: DramaStoryboardSettings;
     currentId: string;
@@ -134,6 +138,7 @@ export function ScriptView({
                         </div>
                     </div>
                     <p className="drama-scriptv-synopsis">{episode.synopsis || "改编完成后显示本集梗概。"}</p>
+                    <DramaAgentAnalysis key={`${projectId}:${episode.id}`} projectId={projectId} episodeId={episode.id} model={textModel} />
                     <div className="drama-scriptv-beats">
                         <div>
                             <span>开场钩子</span>

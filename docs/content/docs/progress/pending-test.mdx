@@ -5565,6 +5565,15 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 - 环境阻塞：文档站 `bun run types:check` 在 MDX 扫描前失败，当前忽略的 `docs/node_modules/fdir/dist/index.mjs` 调用了 `Dirent.isPrevisy()`（Node Dirent 无此方法）；为避免改依赖，本轮未继续修补 node_modules。
 - [ ] 真实模型/收费生成与多次运行pass^k、provider缓存命中率、PostgreSQL 58迁移、浏览器记忆提案与历史撤销尚未人工验收。
 
+## Agent 会话与上下文隔离（2026-11-18）
+
+- 已实现：结构化共享输出偏好、revision 冲突校验与每轮快照；会话和历史绑定用户、业务 scope 与 Agent 配置；注册式读适配器；业务记忆默认关闭且按对象隔离。端到端合同与各分片自动化证据见本地 [Agent 会话交付规划](/docs/plans/2026-11-18-agent-sdk-tools-session-delivery.md) 和[验收台账](/docs/plans/2026-11-18-agent-sdk-tools-session-acceptance.md)。
+- 已实现：Agent 对话起步文案不再把画布节点盘点和自动技能安装作为首页；轻量等待状态取实际运行阶段。短剧分析在本集作用域中展示对话、Markdown 回复、历史、问题与预算，不跨项目继承内容。
+- 已通过：前端专项测试、类型检查、ESLint 与生产构建；独立文档站类型检查及包含 61 页的生产构建。
+- 已通过隔离本地浏览器及确定性模型/Worker验收：画布图像分析、共享偏好保存与刷新、短剧提问/回答、跨项目隐藏历史、会话恢复归档和取消流程。该验收不使用真实供应商模型或付费生成，不代表生产部署。
+- [ ] 用户确认画布与短剧亮暗主题、窄屏阅读密度、消息层级和编排流程。
+- [ ] 对真实供应商模型、多业务账户及部署配置进行独立授权验收；本轮未操作生产、未提交代码。
+
 ## Agent 在线状态与增量推送
 
 - 已实现：Agent 画布写入提交后经实时通道推送带 revision 与 actor 的 `canvas_changed`；浏览器以 `applyAgentCanvasChange` 按 revision 增量合并，实时在线时 Agent 事件不再触发整份刷新，断线时退回整份刷新。

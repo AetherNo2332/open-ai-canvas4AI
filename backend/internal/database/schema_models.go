@@ -4,8 +4,9 @@ import "yingce/backend/internal/model"
 
 // Models 是当前应用持久化表的唯一清单，跨数据库迁移必须完整覆盖。
 func Models() []any {
-	return append(baselineModels(), &model.SkillCurationSetting{}, &model.SkillCurationCategory{},
+	models := append(baselineModels(), &model.SkillCurationSetting{}, &model.SkillCurationCategory{},
 		&model.SkillCurationAssignment{}, &model.SkillCurationRoot{}, &model.SkillCurationRootAssignment{})
+	return append(models, &model.UserAgentSharedPreferences{}, &model.AgentScopeMemory{}, &model.AgentScopeMemoryWrite{})
 }
 
 // baselineModels preserves v1 initialization; curation tables are created by

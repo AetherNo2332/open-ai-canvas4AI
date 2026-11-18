@@ -14,6 +14,7 @@ import (
 // RegisterAgentMemoryRoutes 注册用户级 Agent 设置：全局自定义系统提示词与长期记忆文件。
 func RegisterAgentMemoryRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerAgentMemoryDocumentRoutes(r, svc)
+	registerAgentSharedPreferences(r, svc)
 	r.GET("/agent/settings", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -51,6 +52,53 @@ func RegisterAgentMemoryRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		ok(c, view)
+	})
+}
+
+func registerAgentSharedPreferences(r *gin.RouterGroup, svc *service.Service) {
+	const path = "/agent/settings/shared-preferences"
+	r.GET(path, func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		prefs, err := svc.AgentSharedPreferences(user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, prefs)
+	})
+	r.PUT(path, func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var input struct {
+			Revision  *int64 `json:"revision"`
+			Language  string `json:"language"`
+			Tone      string `json:"tone"`
+			Verbosity string `json:"verbosity"`
+			Format    string `json:"format"`
+		}
+		if err := decodeAgentJSON(c, &input, 1024); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if input.Revision == nil {
+			fail(c, http.StatusBadRequest, errors.New("缺少 revision"))
+			return
+		}
+		prefs, err := svc.UpdateAgentSharedPreferences(user.ID, service.AgentSharedPreferences{
+			Revision: *input.Revision, Language: input.Language, Tone: input.Tone, Verbosity: input.Verbosity, Format: input.Format,
+		})
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, prefs)
 	})
 }
 

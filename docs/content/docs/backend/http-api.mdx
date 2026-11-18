@@ -566,6 +566,10 @@ operations 的结构化配额在提交事务内实时统计账号的素材/画�
 
 ## 云端 Agent
 
+账户设置中的 Agent 共享输出偏好由 `GET /agent/settings/shared-preferences` 读取，`PUT` 以同一接口保存。提交读取到的 `revision`，并提交希望保留的字段。`language` 接受 `zh-CN` 一类语言标签，`tone` 支持 `neutral`、`professional` 和 `casual`，`verbosity` 支持 `concise`、`balanced` 和 `detailed`，`format` 支持 `auto`、`prose` 和 `bullets`。省略字段可清空该项。HTTP 409 `agent_preferences_conflict` 表示设置已变化，请重新读取后再保存。
+
+画布和短剧在新建 Run 时冻结输出偏好及 revision，后续重试和 Worker 接管继续使用该快照。新会话使用当前业务规则，业务长期记忆默认关闭。启用业务记忆时按用户、业务类型和对象 ID 隔离。同一对象的会话可共享该记忆文件，各自保有独立历史。旧账户记忆与自由文本系统提示词保留在设置中。旧会话历史仍可读取，续聊收到 `agent_context_new_conversation_required` 时请创建新会话。
+
 云端目录支持跨设备发现当前账号画布的会话：`GET /api/agent/conversations?canvasId=...&before=...&limit=...` 返回items和可选nextCursor，`GET /api/agent/conversations/:id/runs?after=...&limit=...` 分页读取轮次。游标是不透明值，直接使用响应值续读；动态子代理不作为独立父会话重复列出。接续已过期父轮会在计费前拒绝，重复已确认请求仍先回放回执。
 
 从头恢复事件可用运行详情的 `fromStart=true`、`sinceSeq`、`eventLimit`，运行中继续沿SSE游标增量消费。前端保留本地草稿和未知POST身份，目录刷新不能回退刚提交的新轮次；缺失旧事件的历史明确标记不完整，不伪造完整聊天。这里同步的是已有会话与展示事件，Agent记忆、长期偏好和压缩算法继续独立设计。
@@ -715,7 +719,13 @@ Worker 内部读取为 `GET /internal-agent/runs/:id/skills/:nativeName/file?pat
 
 入队与实际建轮分别校验存储和执行准入。后台 RuntimePolicy.task 的 `agentMaxQueuedMessagesPerConversation`、`agentMaxQueuedMessagesPerUser` 默认20、100，范围1–9999；即时插话与唯一问题回答不会因普通待发条数受阻，仍校验其他配额。暂停和错误只返回可操作提示，不暴露存储连接细节。停止会话先暂停队列并作废在准备中的派发，再取消同一锁边界决定的最新运行。
 
-完整字段与错误信封见 `/api/openapi.yaml`。会话目录中的 `archived=true` 是缓存移除标记，客户端不再加载其正文。升级需配套更新 backend 与 web，数据库迁移至67；不修改记忆算法。
+### 业务会话与共享偏好
+
+目录 `GET /api/agent/conversations` 使用 `scopeType`、`scopeId` 和可选的 `agentDefinitionId` 检索。旧画布目录支持 `canvasId`。业务入口向历史、消息、审批、取消、归档、运行详情和 SSE 传递同样的范围。目标不属于该身份时返回 404。`resumable=false` 表示仅供查看的旧会话，`archived=true` 表示从活动历史入口移除。
+
+`GET` / `PUT /api/agent/settings/shared-preferences` 管理登录用户的 `language`、`tone`、`verbosity`、`format` 和 `revision`。更新 revision 陈旧时返回 409 `agent_preferences_conflict`。旧上下文续聊返回 409 `agent_context_new_conversation_required`。
+
+完整字段与错误信封见 `/api/openapi.yaml`。注册合同、迁移和升级顺序见 [Agent SDK 业务接入](./agent-sdk.mdx)。
 
 ## Pi worker 错误与有限恢复
 
@@ -727,7 +737,7 @@ worker 仅在传输边界分类暂时故障。恢复前读取 Go 的权威快照
 
 ## Canary Agent 调度协议
 
-运行视图增加 `runtimePhase` 与 `waitReason`，区分模型、工具、审批和容量等待。内部协议为 `canvas-pi-wire/v2`，Pi SDK 保持 0.87.1；旧协议返回 426。`GET /internal-agent/events` 为内部 Token 鉴权 SSE，支持递增全局游标续传；`POST /internal-agent/capacity` 保存实例容量，运行 `/phase`、`/control`、`/release` 分别提交阶段、读取轻量控制和按 epoch 释放租约。工具 `/advance` 先保存幂等操作，再返回 pending 与 operationId。公开请求确认仍在持久化成功后返回，幂等键和公开运行 SSE 游标保持原合同。详见 [多会话事件调度](./agent-event-scheduler)。
+运行视图增加 `runtimePhase` 与 `waitReason`，区分模型、工具、审批和容量等待。当前内部协议为 `canvas-pi-wire/v6`，Pi SDK 为 `0.87.1`，不匹配的协议返回 426。`GET /internal-agent/events` 为内部 Token 鉴权 SSE，支持递增全局游标续传。`POST /internal-agent/capacity` 保存实例容量，运行 `/phase`、`/control`、`/release` 分别提交阶段、读取轻量控制和按 epoch 释放租约。工具 `/advance` 保存幂等操作后返回 pending 与 operationId。公开请求确认在持久化成功后返回，继续使用已有的幂等键及 SSE 游标。
 
 路径前缀是 `/api`。前后端一起发布，不按 `/api/v1`、`/api/v2` 做路径版本。不兼容变更随版本一起改接口和调用方。
 

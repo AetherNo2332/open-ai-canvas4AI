@@ -27,6 +27,12 @@ func (s *Service) PiSkillFile(userID, runID, owner string, request PiSkillFileRe
 	if state.SkillRuntimeMode != cloudAgentSkillRuntimeNative {
 		return nil, kernel.Forbidden("该运行使用旧版 Skill 工具")
 	}
+	if state.Capabilities != nil && !state.Capabilities.SkillRead {
+		return nil, kernel.Forbidden("本轮未启用 Skill 读取")
+	}
+	if err := s.authorizeRegisteredAgentRun(run, &state); err != nil {
+		return nil, err
+	}
 	path, err := normalizeNativeSkillReadPath(request.Path)
 	if err != nil {
 		return nil, err

@@ -16,19 +16,24 @@ type CloudAgentHistoryCursor struct {
 const cloudAgentConversationIdentity = "COALESCE(NULLIF(conversation_id, ''), id)"
 
 // Only control columns are needed for directory polling; never hydrate journals.
-const cloudAgentHistoryColumns = "id, user_id, conversation_id, parent_id, title, canvas_id, status, revision, cleanup_pending, created_at, updated_at"
+const cloudAgentHistoryColumns = "id, user_id, conversation_id, parent_id, title, canvas_id, status, revision, cleanup_pending, created_at, updated_at, scope_type, scope_id, agent_definition_id, agent_context_version"
 
-func (r *Repository) CloudAgentConversations(userID, canvasID string, before *CloudAgentHistoryCursor, limit int) ([]model.CloudAgentExecution, error) {
+func (r *Repository) CloudAgentConversations(userID, canvasID string, before *CloudAgentHistoryCursor, limit int, scope ...model.AgentConversationBinding) ([]model.CloudAgentExecution, error) {
 	rows := []model.CloudAgentExecution{}
 	query := r.db.Table("cloud_agent_executions e").Select(`e.id, e.user_id, e.conversation_id, e.parent_id, e.title, e.canvas_id, e.status, e.revision, e.cleanup_pending, e.created_at, e.updated_at,
+		e.scope_type, e.scope_id, e.agent_definition_id, e.agent_context_version,
 		EXISTS (SELECT 1 FROM cloud_agent_executions a WHERE a.user_id = e.user_id AND COALESCE(NULLIF(a.conversation_id, ''), a.id) = COALESCE(NULLIF(e.conversation_id, ''), e.id) AND a.archived_at IS NOT NULL) AS conversation_archived`).
 		Where("e.user_id = ?", userID).
 		Where("NOT EXISTS (SELECT 1 FROM agent_subagent_links l WHERE l.user_id = e.user_id AND l.child_run_id = COALESCE(NULLIF(e.conversation_id, ''), e.id))").
-		Where(`EXISTS (SELECT 1 FROM cloud_agent_executions c WHERE c.user_id = e.user_id AND c.canvas_id = ?
-			AND COALESCE(NULLIF(c.conversation_id, ''), c.id) = COALESCE(NULLIF(e.conversation_id, ''), e.id))`, canvasID).
 		Where(`NOT EXISTS (SELECT 1 FROM cloud_agent_executions n WHERE n.user_id = e.user_id
 			AND COALESCE(NULLIF(n.conversation_id, ''), n.id) = COALESCE(NULLIF(e.conversation_id, ''), e.id)
 			AND (n.created_at > e.created_at OR (n.created_at = e.created_at AND n.id > e.id)))`)
+	if len(scope) > 0 {
+		query = query.Where("e.scope_type = ? AND e.scope_id = ? AND e.agent_definition_id = ?", scope[0].ScopeType, scope[0].ScopeID, scope[0].AgentDefinitionID)
+	} else {
+		query = query.Where(`EXISTS (SELECT 1 FROM cloud_agent_executions c WHERE c.user_id = e.user_id AND c.canvas_id = ?
+			AND COALESCE(NULLIF(c.conversation_id, ''), c.id) = COALESCE(NULLIF(e.conversation_id, ''), e.id))`, canvasID)
+	}
 	if before != nil {
 		query = query.Where("e.created_at < ? OR (e.created_at = ? AND e.id < ?)", before.CreatedAt, before.CreatedAt, before.ID)
 	}
@@ -94,6 +99,9 @@ func (r *Repository) requireCurrentCloudAgentParent(run *model.CloudAgentExecuti
 		identity = parent.ID
 	}
 	if identity != run.ConversationID {
+		return ErrCloudAgentStaleParent
+	}
+	if run.AgentContextVersion != 0 && parent.AgentConversationBinding != run.AgentConversationBinding {
 		return ErrCloudAgentStaleParent
 	}
 	// Tip ordering must be monotonic even on a coarse clock or after a clock

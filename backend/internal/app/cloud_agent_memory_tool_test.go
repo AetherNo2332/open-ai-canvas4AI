@@ -88,13 +88,12 @@ func TestCloudAgentRunFreezesMemorySnapshotOutsideSystemPrompt(t *testing.T) {
 	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: `{"nodes":[]}`}).Error; err != nil {
 		t.Fatal(err)
 	}
-	doc, err := s.AgentMemoryDocument("user")
-	if err != nil {
+	scope := AgentContextScope{UserID: "user", Business: AgentBusinessScope{Type: "canvas", ID: "agent-canvas"}}
+	ops := []agentMemoryOperation{{Action: "add", Section: model.AgentMemorySectionUser, Text: "称呼用户为长官"}}
+	if _, _, err := s.agentWriteScopeMemory(scope, "previous-run", "save-pref", ops, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.UpdateAgentMemoryDocument("user", AgentMemoryDocUpdateRequest{Revision: doc.Revision, Entries: []AgentMemoryEntryInput{{Section: model.AgentMemorySectionUser, Text: "称呼用户为长官"}}}); err != nil {
-		t.Fatal(err)
-	}
+	enableScopeMemoryForTest(t, s)
 	req := agentTestRequest()
 	req.PermissionMode = "auto"
 	req.Prompt = "分析剧情"
@@ -104,13 +103,14 @@ func TestCloudAgentRunFreezesMemorySnapshotOutsideSystemPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstState, firstMemory := memoryRunMessages(t, s, first.ID)
-	if firstState.Request.MemoryMode != model.AgentMemoryDocumentModeAuto || !strings.Contains(firstState.Memory.Text, "[u1] 称呼用户为长官") {
-		t.Fatalf("run did not freeze the memory snapshot: mode=%q memory=%+v", firstState.Request.MemoryMode, firstState.Memory)
+	memory := firstState.Context.Memory
+	if firstState.Request.MemoryMode != model.AgentMemoryDocumentModeAuto || !strings.Contains(memory.Text, "[u1] 称呼用户为长官") {
+		t.Fatalf("run did not freeze the memory snapshot: mode=%q memory=%+v", firstState.Request.MemoryMode, memory)
 	}
 	if strings.Contains(firstState.Canonical.SystemPrompt, "称呼用户为长官") || strings.Contains(firstState.Canonical.SystemPrompt, "长期记忆】") {
 		t.Fatal("memory leaked into the stable system prompt")
 	}
-	if len(firstMemory) != 1 || stringField(firstMemory[0], "role") != "user" || stringField(firstMemory[0], "content") != firstState.Memory.Text {
+	if len(firstMemory) != 1 || stringField(firstMemory[0], "role") != "user" || stringField(firstMemory[0], "content") != memory.Text {
 		t.Fatalf("memory snapshot must be exactly one user data message: %+v", firstMemory)
 	}
 	messages := firstState.Canonical.Messages
@@ -143,10 +143,9 @@ func TestCloudAgentRunFreezesMemorySnapshotOutsideSystemPrompt(t *testing.T) {
 		t.Fatal("memory message is not byte-stable across runs with unchanged memory")
 	}
 
-	if _, err := s.UpdateAgentMemoryDocumentSettings("user", AgentMemoryDocSettingsRequest{Mode: model.AgentMemoryDocumentModeOff}); err != nil {
-		t.Fatal(err)
-	}
 	req.IdempotencyKey = "memory-run-off"
+	scopedRegistry := s.agentDefinitions
+	s.agentDefinitions = nil
 	off, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {
 		t.Fatal(err)
@@ -158,10 +157,8 @@ func TestCloudAgentRunFreezesMemorySnapshotOutsideSystemPrompt(t *testing.T) {
 	if len(offMemory) != 0 || offState.Request.MemoryMode != model.AgentMemoryDocumentModeOff || containsToolName(cloudAgentToolNames(offState.Canonical.Tools), "memory_update") {
 		t.Fatalf("off mode must neither inject memory nor expose memory_update: memory=%d mode=%q", len(offMemory), offState.Request.MemoryMode)
 	}
+	s.agentDefinitions = scopedRegistry
 
-	if _, err := s.UpdateAgentMemoryDocumentSettings("user", AgentMemoryDocSettingsRequest{Mode: model.AgentMemoryDocumentModeAuto}); err != nil {
-		t.Fatal(err)
-	}
 	completePiRunWithAssistantForTest(t, s, first.ID, "好的，长官")
 	child := req
 	child.IdempotencyKey, child.Prompt = "memory-run-child", "继续"
@@ -190,9 +187,10 @@ func memoryEvents(state cloudAgentRuntime) []CloudAgentEvent {
 func TestMemoryUpdateRuntimeAutoReviewOffAndOwnership(t *testing.T) {
 	s, _, args := agentMediaFixture(t)
 	run, state := agentMediaRun(t, s, args, "auto")
-	if state.Request.MemoryMode != model.AgentMemoryDocumentModeAuto {
-		t.Fatalf("server did not derive the memory mode: %q", state.Request.MemoryMode)
-	}
+	state.Context = nil
+	state.Capabilities = nil
+	state.Request.MemoryMode = model.AgentMemoryDocumentModeAuto
+	state.Canonical.Tools = compileCloudAgentToolsForRuntime(state.Request, state.SkillRuntimeMode)
 	call := memoryUpdateCall("memory-call-1", `{"operations":[{"action":"add","section":"user","text":"用户偏好竖屏 9:16、电影感暗调"}],"reason":"用户说以后都用竖屏"}`)
 	run, state = writeBatch(t, s, run, &state, []cloudAgentCall{call})
 	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
@@ -293,6 +291,7 @@ func TestMemoryUpdateRejectedInReadOnlyRun(t *testing.T) {
 	s, _, _ := agentMediaFixture(t)
 	req := agentTestRequest()
 	req.IdempotencyKey = "memory-read-only-run"
+	enableScopeMemoryForTest(t, s)
 	root, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {
 		t.Fatal(err)

@@ -13,6 +13,7 @@ import type { Skill } from "@/services/api/skills";
 import type { AgentSendMode } from "@/services/api/agent";
 import { AgentSendModeButton } from "./canvas-agent-message-queue";
 import { agentCopyText } from "@/lib/canvas/agent-composer-attachments";
+import { ThinkingLoader } from "@/components/ui/thinking-loader-clean";
 import { AgentChatComposer as UpstreamAgentChatComposer, AgentImagePreview } from "./canvas-cloud-agent-composer";
 export { AgentImagePreview } from "./canvas-cloud-agent-composer";
 import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary, isAgentCanvasReadTool, type AgentToolCategory } from "@/lib/canvas/agent-tool-presentation";
@@ -1072,16 +1073,8 @@ export function AgentRunUndoAction({ theme, pending, onUndo }: { theme: (typeof 
     );
 }
 
-export function AgentWorkingMessage({ theme, label = WORKING_TEXT }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; label?: string }) {
-    return (
-        <div role="status" aria-live="polite" className="agent-working-indicator" style={{ color: theme.node.muted }}>
-            <span className="agent-working-signal" aria-hidden="true">
-                <span />
-            </span>
-            <span>{label}</span>
-            <span className="agent-working-caption">实时处理中</span>
-        </div>
-    );
+export function AgentWorkingMessage({ label = WORKING_TEXT }: { label?: string }) {
+    return <ThinkingLoader phases={[label]} phase={0} variant="plain" size="sm" />;
 }
 
 export function AgentPlanBar({ items, theme, minimized, onToggle, terminal = false }: { items: CloudAgentPlanItem[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; minimized: boolean; onToggle: () => void; terminal?: boolean }) {

@@ -107,6 +107,20 @@ description: 影策后端核心持久化表与状态边界
 
 调用日志把各协议 usage 归一为同一口径：`input_tokens` 含缓存命中和缓存写入。Anthropic 原生 usage 的 `input_tokens` 不含 `cache_read_input_tokens` 与 `cache_creation_input_tokens`，写日志时补齐为总输入；百炼与 OpenRouter 的缓存写入分别读 `prompt_tokens_details.cache_creation_input_tokens` 和 `cache_write_tokens`。Token 预授权按输入价与缓存写入价中较高者估算全部输入 Token。
 
+## Agent 共享偏好与业务会话（Schema 108–109）
+
+版本 108 `agent_shared_preferences_scope_memory` 为隔离 Agent 运行增加三张表。SQLite 与 PostgreSQL 均按同一迁移记录执行，保留旧账户提示词和记忆，旧正文无需回填。
+
+| 表 | 归属和用途 |
+| --- | --- |
+| `user_agent_shared_preferences` | 用户主键。保存语言、语气、详略、格式和 `revision`，更新按 revision 条件写入 |
+| `agent_scope_memories` | `(user_id, scope_type, scope_id)` 主键。保存业务长期记忆的条目、序号和修订，只有 Agent 配置开启业务记忆时读取 |
+| `agent_scope_memory_writes` | 业务记忆归属加 `run_id`、`call_id`。记忆变更和回执一起提交，调用重投时返回原回执 |
+
+隔离快照由现有 Run 状态保存。升级先使用匹配后端版本的迁移命令再启动后端。旧后端按自身 schema 版本检查数据库，发布前需演练关闭准入并保留新版本的读取、取消和排空路径。
+
+版本 109 `agent_conversation_scope` 为 `cloud_agent_executions` 和 `cloud_agent_pi_sessions` 增加 `scope_type`、`scope_id`、`agent_definition_id`、`agent_context_version`。会话目录索引 `idx_cloud_agent_scope_directory` 按用户、业务、配置及时间分页。迁移根据持久化请求核对归属。矛盾或缺失的记录保留供账户历史查看，旧上下文标记为不可续聊。
+
 ## Agent 记忆文件列补齐（Schema 77）
 
 版本 77 `agent_memory_document_columns` 只做补列：确保 `agent_memory_documents.next_entry_seq` 与 `agent_memory_document_revisions.call_id` 存在，并把空值回填为 `0` / 空串。开发期的早期构建执行 v76 时这两列还没加入模型，v76 已记为完成、校验和不能再改，缺列会让创建 Agent 轮次时读取记忆文件失败（`no column named next_entry_seq`）。新库由 v76 一次建全，v77 是空操作；不改写既有记忆内容。

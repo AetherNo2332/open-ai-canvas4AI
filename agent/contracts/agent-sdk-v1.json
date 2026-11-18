@@ -1,0 +1,30 @@
+{
+  "contractVersion": "agent-sdk/v1",
+  "cases": [
+    {
+      "name": "legacy canvas",
+      "request": { "canvasId": "sdk-canvas", "prompt": "分析画布", "channelId": "sdk-text", "channelModelKey": "text-e2e", "permissionMode": "read_only", "budget": { "maxCredits": 20 }, "idempotencyKey": "fixture-legacy-canvas" },
+      "accepted": true, "scope": { "type": "canvas", "id": "sdk-canvas" }
+    },
+    {
+      "name": "explicit canvas",
+      "request": { "scope": { "type": "canvas", "id": "sdk-canvas" }, "canvasId": "sdk-canvas", "prompt": "分析画布", "channelId": "sdk-text", "channelModelKey": "text-e2e", "permissionMode": "read_only", "budget": { "maxCredits": 20 }, "idempotencyKey": "fixture-scoped-canvas" },
+      "accepted": true, "scope": { "type": "canvas", "id": "sdk-canvas" }
+    },
+    {
+      "name": "drama episode",
+      "request": { "scope": { "type": "drama", "id": "sdk-drama" }, "canvasId": "", "dramaEpisodeId": "sdk-episode", "prompt": "分析本集", "channelId": "sdk-text", "channelModelKey": "text-e2e", "permissionMode": "read_only", "budget": { "maxCredits": 20, "maxSteps": 12 }, "idempotencyKey": "fixture-drama-episode" },
+      "accepted": true, "scope": { "type": "drama", "id": "sdk-drama" }
+    },
+    {
+      "name": "mismatched canvas",
+      "request": { "scope": { "type": "canvas", "id": "other" }, "canvasId": "sdk-canvas", "prompt": "拒绝不一致范围", "channelId": "sdk-text", "channelModelKey": "text-e2e", "permissionMode": "read_only", "budget": { "maxCredits": 20 }, "idempotencyKey": "fixture-scope-conflict" },
+      "accepted": false, "reason": "agent_scope_invalid"
+    },
+    {
+      "name": "drama write denied",
+      "request": { "scope": { "type": "drama", "id": "sdk-drama" }, "canvasId": "", "prompt": "禁止越过业务采用", "channelId": "sdk-text", "channelModelKey": "text-e2e", "permissionMode": "auto", "budget": { "maxCredits": 20 }, "idempotencyKey": "fixture-drama-write" },
+      "accepted": false, "reason": "agent_scope_invalid"
+    }
+  ]
+}

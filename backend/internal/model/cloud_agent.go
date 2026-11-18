@@ -6,6 +6,13 @@ import "time"
 // < 它的旧运行把消息与事件一起放在 StateJSON 里，下一次保存时懒升级。
 const CloudAgentCheckpointVersion = 2
 
+type AgentConversationBinding struct {
+	ScopeType           string `gorm:"size:40;not null;default:''"`
+	ScopeID             string `gorm:"size:80;not null;default:''"`
+	AgentDefinitionID   string `gorm:"size:80;not null;default:''"`
+	AgentContextVersion int    `gorm:"not null;default:0"`
+}
+
 // CloudAgentExecution checkpoints orchestration independently of billed tasks.
 type CloudAgentExecution struct {
 	ID                   string     `gorm:"primaryKey;size:80"`
@@ -24,12 +31,13 @@ type CloudAgentExecution struct {
 	WaitReason        string `gorm:"size:160"`
 	CheckpointVersion int    `gorm:"not null;default:0"`
 	ConversationID    string `gorm:"index;size:80"`
-	ParentID          string `gorm:"index;size:80"`
-	Title             string `gorm:"size:240"`
-	EventCount        int
-	MessageCount      int
-	Journal           []CloudAgentEventRecord   `gorm:"foreignKey:RunID;references:ID" json:"-"`
-	Transcript        []CloudAgentMessageRecord `gorm:"foreignKey:RunID;references:ID" json:"-"`
+	AgentConversationBinding
+	ParentID     string `gorm:"index;size:80"`
+	Title        string `gorm:"size:240"`
+	EventCount   int
+	MessageCount int
+	Journal      []CloudAgentEventRecord   `gorm:"foreignKey:RunID;references:ID" json:"-"`
+	Transcript   []CloudAgentMessageRecord `gorm:"foreignKey:RunID;references:ID" json:"-"`
 	// Control fields remain writable even when the transcript cannot be decoded or saved.
 	CanvasID       string `gorm:"size:80"`
 	ActiveTaskID   string `gorm:"size:80"`

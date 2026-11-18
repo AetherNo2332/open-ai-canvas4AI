@@ -1,15 +1,20 @@
-import { ArrowUpRight, Clapperboard, Layers3, Sparkles } from "lucide-react";
+import { ArrowUpRight, Clapperboard, Film, NotebookPen } from "lucide-react";
 import { BrandLogo } from "@/components/brand/brand-logo";
 import { agentCopy, type CanvasAppearance } from "@/lib/canvas/agent-appearance";
 
 type AgentWelcomeProps = {
     appearance: CanvasAppearance;
-    nodeCount: number;
-    onChooseSkill: () => void;
     onDraftPrompt: (prompt: string) => void;
+    disabled?: boolean;
 };
 
-export function AgentWelcome({ appearance, nodeCount, onChooseSkill, onDraftPrompt }: AgentWelcomeProps) {
+const startingPoints = [
+    { icon: NotebookPen, title: "构思故事", subtitle: "主题、人物与冲突", prompt: "我想创作一段短片。请先询问我的想法，再一起梳理故事的主题、人物和核心冲突。" },
+    { icon: Clapperboard, title: "规划一组镜头", subtitle: "景别、动作与节奏", prompt: "请先问我这场戏的内容，再给出一组分镜草案，包含景别、动作和节奏。只出文字建议，不修改画布或提交生成任务。" },
+    { icon: Film, title: "探索视觉风格", subtitle: "色彩、光线与影调", prompt: "请先问我想呈现的情绪，再给出两种视觉风格方向，并比较它们的色彩、光线和影调。暂不生成素材。" },
+];
+
+export function AgentWelcome({ appearance, onDraftPrompt, disabled = false }: AgentWelcomeProps) {
     return (
         <section className="agent-welcome" aria-label="开始 Agent 创作">
             <div className="agent-welcome-intro">
@@ -19,32 +24,17 @@ export function AgentWelcome({ appearance, nodeCount, onChooseSkill, onDraftProm
                 <p>{agentCopy(appearance.welcomeDescription, appearance.agentName)}</p>
             </div>
             <div className="agent-welcome-actions">
-                <button type="button" onClick={onChooseSkill}>
-                    <Sparkles aria-hidden="true" />
-                    <span>
-                        <strong>选择技能，开始创作</strong>
-                        <small>为这次创作找到合适的帮手</small>
-                    </span>
-                    <ArrowUpRight className="agent-welcome-arrow" aria-hidden="true" />
-                </button>
-                <button type="button" onClick={() => onDraftPrompt("我想创作一段短片，请先和我一起梳理故事方向。先询问我的想法，不要直接生成。")}>
-                    <Clapperboard aria-hidden="true" />
-                    <span>
-                        <strong>从灵感构思故事</strong>
-                        <small>聊聊主题、角色，或一个难忘的画面</small>
-                    </span>
-                    <ArrowUpRight className="agent-welcome-arrow" aria-hidden="true" />
-                </button>
-                <button type="button" disabled={nodeCount === 0} onClick={() => onDraftPrompt("请先阅读当前画布，梳理素材与节点之间的关系，给出接下来的创作建议。先不要修改节点或提交生成任务。")}>
-                    <Layers3 aria-hidden="true" />
-                    <span>
-                        <strong>一起梳理当前画布</strong>
-                        <small>{nodeCount > 0 ? `${nodeCount} 个节点，看看下一步可以做什么` : "添加节点后，一起梳理创作思路"}</small>
-                    </span>
-                    <ArrowUpRight className="agent-welcome-arrow" aria-hidden="true" />
-                </button>
+                {startingPoints.map(({ icon: Icon, title, subtitle, prompt }) => (
+                    <button key={title} type="button" disabled={disabled} onClick={() => onDraftPrompt(prompt)}>
+                        <Icon aria-hidden="true" />
+                        <span>
+                            <strong>{title}</strong>
+                            <small>{subtitle}</small>
+                        </span>
+                        <ArrowUpRight className="agent-welcome-arrow" aria-hidden="true" />
+                    </button>
+                ))}
             </div>
-            <p className="agent-welcome-footnote">先聊想法，再决定下一步</p>
         </section>
     );
 }

@@ -1,7 +1,19 @@
-import { http, apiBaseURL, compactApiParams } from "@/services/api/request";
+import { http, apiBaseURL, compactApiParams, ApiError } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser } from "@/services/api/task-text-stream";
+import { createAgentClient, AgentRequestError } from "@/sdk/agent/client";
+import { agentWebTransport } from "@/sdk/agent/http-transport";
+import type { AgentRunRequest, AgentRunSnapshot, AgentEvent as SDKAgentEvent } from "@/sdk/agent/contract";
 
-export type AgentPermissionMode = "read_only" | "auto" | "request_approval";
+const agentClient = createAgentClient<AgentRun>({ transport: agentWebTransport });
+const canvasAgentClient = (canvasId?: string) => (canvasId ? createAgentClient<AgentRun>({ transport: agentWebTransport, scope: { type: "canvas", id: canvasId } }) : agentClient);
+function rethrowAgentApiError(error: unknown): never {
+    if (error instanceof AgentRequestError) {
+        throw new ApiError(error.message, { status: error.status, code: error.code, reason: error.reason, retryable: error.retryable, retryAfterMs: error.retryAfterMs, details: error.details, cause: error });
+    }
+    throw error;
+}
+
+export type AgentPermissionMode = import("@/sdk/agent/contract").AgentPermissionMode;
 export type AgentSystemPromptSettings = { systemPrompt: string; revision: number };
 export function getAgentSystemPrompt() {
     return http.get<AgentSystemPromptSettings>("/agent/settings", { timeout: 15_000 });
@@ -80,76 +92,16 @@ export type AgentApproval = {
     reason?: string;
 };
 
-export type AgentRunSkill = {
-    id: string;
-    name: string;
-    source?: "global" | "user";
-    version: string;
-    hash: string;
-    nativeName?: string;
-    versionId?: string;
-    versionLabel?: string;
-};
+export type AgentRunSkill = import("@/sdk/agent/contract").AgentRunSkill;
 
-export type AgentRun = {
-    id: string;
-    conversationId?: string;
-    parentId?: string;
-    userPrompt?: string;
-    idempotencyKey?: string;
-    canvasId: string;
-    status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "rejected";
-    permissionMode: AgentPermissionMode;
-    revision?: number;
-    runtimePhase?: "ready" | "advancing" | "waiting_model" | "waiting_tool" | "waiting_approval" | "waiting_compaction" | "waiting_resource" | "retry_delay" | "terminal";
-    waitReason?: string;
-    cleanupPending?: boolean;
-    failureMessage?: string;
-    model?: string;
-    channelId?: string;
-    channelModelKey?: string;
-    logicalModelId?: string;
-    createdAt: string;
-    updatedAt: string;
-    skillRuntimeMode?: "pi-native" | "legacy-go";
-    skills?: AgentRunSkill[];
+export type AgentRun = Omit<AgentRunSnapshot, "events" | "approval"> & {
     events?: AgentEvent[];
-    /** 事件已全量落库：本次返回的首条事件之前的已入库条数。 */
-    eventSeqBase?: number;
-    /** 该运行累计产生的事件条数（含未随本次返回的更早记录）。 */
-    eventCount?: number;
-    /** 本次返回的最后一条事件序号，可直接作为下次 sinceSeq。 */
-    latestSeq?: number;
-    /** 还有更早的记录未随本次返回（可按 sinceSeq 拉取）。 */
-    eventsTruncated?: boolean;
-    spentCredits?: number;
-    step?: number;
-    activeMessage?: { messageId: string; text: string };
     approval?: AgentApproval;
-    /** 非空表示步进循环正暂停在上下文压缩上（requested/running）。 */
-    contextCompaction?: AgentContextCompactionState;
 };
 
-export type AgentContextCompactionState = {
-    status: "requested" | "running";
-    sourceBytes?: number;
-    turnCount?: number;
-    /** 中途暂停压缩：压完继续本轮，而不是收尾。 */
-    resume?: boolean;
-    /** 触发读数：最近有效实测（无实测时估算）÷ 用户配置的可用输入。 */
-    projectedTokens?: number;
-    usableInputTokens?: number;
-    ratio?: number;
-    tokenSource?: "provider" | "estimate";
-};
+export type AgentContextCompactionState = import("@/sdk/agent/contract").AgentContextCompactionState;
 
-export type AgentEvent = {
-    eventId: string;
-    runId: string;
-    seq: number;
-    type: string;
-    payload: Record<string, unknown>;
-    createdAt: string;
+export type AgentEvent = SDKAgentEvent & {
     /** Local delivery order for synthetic snapshot events; never used as a resume cursor. */
     localSeq?: number;
 };
@@ -165,51 +117,14 @@ export class AgentStreamError extends Error {
     }
 }
 
-export type CreateAgentRunInput = {
-    reasoningMode?: AgentReasoningMode;
-    canvasId: string;
-    prompt: string;
-    model?: string;
-    logicalModelId?: string;
-    channelId?: string;
-    channelModelKey?: string;
-    skillIds?: string[];
-    focusNodeIds?: string[];
-    permissionMode?: AgentPermissionMode;
-    contextScope?: string[];
-    subagentEnabled?: boolean;
-    subagentWriteEnabled?: boolean;
-    storyboardDisabled?: boolean;
-    budget?: { maxCredits?: number; maxGenerationTasks?: number; maxVideoSeconds?: number; maxSteps?: number };
-    idempotencyKey: string;
-};
-
-// Only Agent admission endpoints have server-side fingerprint/idempotency protection.
-// Never apply this policy to arbitrary provider generation POSTs.
-async function submitAgentRequest<TResult = { run: AgentRun }>(path: string, input: CreateAgentRunInput | AgentConversationMessageInput, signal?: AbortSignal): Promise<TResult> {
-    const body = JSON.parse(JSON.stringify(input)) as typeof input;
-    for (let attempt = 0; ; attempt++) {
-        signal?.throwIfAborted();
-        try {
-            return await http.post<TResult>(path, body, { timeout: 15_000, ...(signal ? { signal } : {}) });
-        } catch (cause) {
-            const error = cause as { retryable?: boolean; retryAfterMs?: number };
-            if (!error.retryable || attempt >= 2) throw cause;
-            const delay = Math.max(500 * 2 ** attempt * (0.75 + Math.random() * 0.5), error.retryAfterMs || 0);
-            // Long rate-limit waits return control to the user with the original
-            // pending request intact instead of keeping the composer hung.
-            if (delay > 10_000) throw cause;
-            await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-    }
-}
+export type CreateAgentRunInput = AgentRunRequest;
 
 export async function createAgentRun(input: CreateAgentRunInput, signal?: AbortSignal) {
-    return submitAgentRequest("/agent/runs", input, signal);
+    return agentClient.startRun(input, signal).catch(rethrowAgentApiError);
 }
 
 export async function sendAgentMessage(runId: string, input: CreateAgentRunInput, signal?: AbortSignal) {
-    return submitAgentRequest(`/agent/runs/${encodeURIComponent(runId)}/messages`, input, signal);
+    return agentClient.continueRun(runId, input, signal).catch(rethrowAgentApiError);
 }
 
 /** 导演台浏览器视口录制完成（或失败）后回传结果，恢复 Agent 挂起的 director preview。 */
@@ -227,8 +142,8 @@ export function sendAgentInterjection(runId: string, input: { text: string; mess
 }
 
 export type AgentSendMode = "interject" | "queue";
-export type AgentConversationMessageInput = { mode: AgentSendMode; expectedRunId: string; replyToQuestionId?: string; request: CreateAgentRunInput };
-export type AgentMessageReceipt = { messageId: string; conversationId: string; delivery: "queued" | "started" | "interjected" | "cancelled"; runId?: string; queueRevision: number };
+export type AgentConversationMessageInput = import("@/sdk/agent/contract").AgentMessageInput;
+export type AgentMessageReceipt = import("@/sdk/agent/contract").AgentMessageReceipt;
 export type AgentQueuedMessage = {
     id: string;
     conversationId: string;
@@ -247,19 +162,19 @@ export type AgentMessageQueue = { conversationId: string; canvasId: string; revi
 export type AgentUISettings = { defaultSendMode: AgentSendMode; revision: number };
 
 export function sendAgentConversationMessage(conversationId: string, input: AgentConversationMessageInput, signal?: AbortSignal) {
-    return submitAgentRequest<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/messages`, input, signal);
+    return canvasAgentClient(input.request.canvasId).sendMessage(conversationId, input, signal).catch(rethrowAgentApiError);
 }
-export function getAgentMessageQueue(conversationId: string, signal?: AbortSignal) {
-    return http.get<AgentMessageQueue>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue`, { signal, timeout: 15_000 });
+export function getAgentMessageQueue(conversationId: string, canvasId: string, signal?: AbortSignal) {
+    return http.get<AgentMessageQueue>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue`, { params: { scopeType: "canvas", scopeId: canvasId }, signal, timeout: 15_000 });
 }
-export function updateAgentQueuedMessage(conversationId: string, messageId: string, input: { revision: number; prompt?: string; action?: "interject" }) {
-    return http.patch<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(messageId)}`, input, { timeout: 15_000 });
+export function updateAgentQueuedMessage(conversationId: string, messageId: string, input: { revision: number; prompt?: string; action?: "interject" }, canvasId: string) {
+    return http.patch<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(messageId)}`, input, { params: { scopeType: "canvas", scopeId: canvasId }, timeout: 15_000 });
 }
-export function cancelAgentQueuedMessage(conversationId: string, messageId: string, revision: number) {
-    return http.delete<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(messageId)}?revision=${revision}`, { timeout: 15_000 });
+export function cancelAgentQueuedMessage(conversationId: string, messageId: string, revision: number, canvasId: string) {
+    return http.delete<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(messageId)}`, { params: { revision, scopeType: "canvas", scopeId: canvasId }, timeout: 15_000 });
 }
-export function updateAgentMessageQueue(conversationId: string, input: { revision: number; action: "pause" | "resume" }) {
-    return http.patch<AgentMessageQueue>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue`, input, { timeout: 15_000 });
+export function updateAgentMessageQueue(conversationId: string, input: { revision: number; action: "pause" | "resume" }, canvasId: string) {
+    return http.patch<AgentMessageQueue>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue`, input, { params: { scopeType: "canvas", scopeId: canvasId }, timeout: 15_000 });
 }
 export function getAgentUISettings(signal?: AbortSignal) {
     return http.get<AgentUISettings>("/agent/ui-settings", { signal, timeout: 15_000 });
@@ -284,13 +199,15 @@ export function getAgentCapabilities() {
     }>("/agent/capabilities", { timeout: 15_000 });
 }
 
-export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sinceSeq?: number; eventLimit?: number; fromStart?: boolean }) {
+export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sinceSeq?: number; eventLimit?: number; fromStart?: boolean; canvasId?: string }) {
     const params = new URLSearchParams();
     if (options?.sinceSeq) params.set("sinceSeq", String(options.sinceSeq));
     if (options?.eventLimit) params.set("eventLimit", String(options.eventLimit));
     if (options?.fromStart !== undefined) params.set("fromStart", String(options.fromStart));
     const query = params.toString();
-    return http.get<{ run: AgentRun }>(`/agent/runs/${encodeURIComponent(runId)}${query ? `?${query}` : ""}`, { signal });
+    return canvasAgentClient(options?.canvasId)
+        .getRun(runId, signal, query ? `?${query}` : "")
+        .catch(rethrowAgentApiError);
 }
 
 export type AgentConversationSummary = {
@@ -313,19 +230,19 @@ export function listAgentConversations(options: { canvasId: string; before?: str
     });
 }
 
-export function archiveAgentConversation(conversationId: string) {
-    return http.delete<{ archived: boolean }>(`/agent/conversations/${encodeURIComponent(conversationId)}`);
+export function archiveAgentConversation(conversationId: string, canvasId?: string) {
+    return canvasAgentClient(canvasId).archiveConversation(conversationId).catch(rethrowAgentApiError);
 }
 
-export function listAgentConversationRuns(conversationId: string, options: { after?: string; limit?: number; signal?: AbortSignal } = {}) {
+export function listAgentConversationRuns(conversationId: string, options: { after?: string; limit?: number; signal?: AbortSignal; canvasId?: string } = {}) {
     return http.get<{ items: AgentRun[]; nextCursor?: string }>(`/agent/conversations/${encodeURIComponent(conversationId)}/runs`, {
-        params: compactApiParams({ after: options.after, limit: options.limit }),
+        params: compactApiParams({ after: options.after, limit: options.limit, scopeType: options.canvasId ? "canvas" : undefined, scopeId: options.canvasId }),
         signal: options.signal,
     });
 }
 
-export function cancelAgentRun(runId: string) {
-    return http.post<{ accepted: boolean }>(`/agent/runs/${encodeURIComponent(runId)}/cancel`, undefined, { timeout: 15_000 });
+export function cancelAgentRun(runId: string, canvasId?: string) {
+    return canvasAgentClient(canvasId).cancelRun(runId).catch(rethrowAgentApiError);
 }
 
 export type AgentRunUndoResult = { revision: number; restoredNodeIds: string[] };
@@ -335,14 +252,16 @@ export function undoAgentRun(runId: string, input: { reason?: string } = {}, sig
     return http.post<AgentRunUndoResult>(`/agent/runs/${encodeURIComponent(runId)}/undo`, { reason: input.reason?.trim() || undefined }, { signal, timeout: 30_000 });
 }
 
-export async function decideAgentApproval(runId: string, approvalId: string, decision: "approve" | "reject", reason?: string, signal?: AbortSignal, mediaSettings?: AgentMediaSettings) {
-    return http.post<{ accepted: boolean }>(`/agent/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision`, { decision, reason: reason?.trim() || undefined, ...(mediaSettings ? { mediaSettings } : {}) }, { signal });
+export async function decideAgentApproval(runId: string, approvalId: string, decision: "approve" | "reject", reason?: string, signal?: AbortSignal, mediaSettings?: AgentMediaSettings, canvasId?: string) {
+    return canvasAgentClient(canvasId)
+        .decideApproval(runId, approvalId, { decision, reason: reason?.trim() || undefined, ...(mediaSettings ? { mediaSettings } : {}) }, signal)
+        .catch(rethrowAgentApiError);
 }
 
 export function subscribeAgentEvents(
     runId: string,
     onEvent: (event: AgentEvent) => void,
-    options: { after?: number; onError?: (error: unknown) => void; onConnectionChange?: (status: "connecting" | "connected" | "reconnecting" | "disconnected") => void; timeoutMs?: number } = {},
+    options: { after?: number; canvasId?: string; onError?: (error: unknown) => void; onConnectionChange?: (status: "connecting" | "connected" | "reconnecting" | "disconnected") => void; timeoutMs?: number } = {},
 ) {
     const controller = new AbortController();
     let localSeq = 0;
@@ -369,7 +288,12 @@ export function subscribeAgentEvents(
             touch();
             options.onConnectionChange?.(failures ? "reconnecting" : "connecting");
             try {
-                const response = await fetch(`${String(apiBaseURL).replace(/\/+$/, "")}/agent/runs/${encodeURIComponent(runId)}/events?after=${cursor}`, {
+                const query = new URLSearchParams({ after: String(cursor) });
+                if (options.canvasId) {
+                    query.set("scopeType", "canvas");
+                    query.set("scopeId", options.canvasId);
+                }
+                const response = await fetch(`${String(apiBaseURL).replace(/\/+$/, "")}/agent/runs/${encodeURIComponent(runId)}/events?${query}`, {
                     credentials: "include",
                     signal: attempt.signal,
                     headers: { Accept: "text/event-stream", "Last-Event-ID": String(cursor) },

@@ -11,6 +11,7 @@
     "agent-prompt-policy",
     "agent-context-compaction",
     "http-api",
+    "agent-sdk",
     "creation-platform-sdk",
     "code-map",
     "backend-database",
