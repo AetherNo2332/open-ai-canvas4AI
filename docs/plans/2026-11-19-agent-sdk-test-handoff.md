@@ -7,7 +7,7 @@
 | 验收层级 | 当前证据 |
 | --- | --- |
 | 代码 | Go、Worker、Web 与文档站改动已整理到 4AI 交付分支 |
-| 自动化 | Go 隔离、注册、读取、偏好、OpenAPI、迁移 108/109 和 Redis 专项通过。Worker 202 项通过，Windows 跳过 1 项。Agent Web 专项 69 项通过，画布会话同步单独复跑通过，Web 类型检查和变更文件格式检查通过。文档站类型检查通过，构建生成 61 页。完整门禁的状态见下节，原开发工作树的分片结果见[验收台账](2026-11-18-agent-sdk-tools-session-acceptance.md) |
+| 自动化 | Go 隔离、注册、读取、偏好、OpenAPI、迁移 108/109 和 Redis 专项通过。Worker 202 项通过，Windows 跳过 1 项。Agent Web 专项 69 项通过，LF 检出上的 Web 全量 3,554 项通过，Web 类型检查和变更文件格式检查通过。文档站类型检查通过，构建生成 61 页。完整门禁的状态见下节，原开发工作树的分片结果见[验收台账](2026-11-18-agent-sdk-tools-session-acceptance.md) |
 | 页面 | 原开发工作树使用实际构建的页面、Chrome、Go 和 Pi Worker，通过画布看图、偏好保存回读、短剧提问与回答、项目隔离、续聊、归档和取消。模型为本地确定性替身。界面重设计的视觉与交互按下表复验 |
 | 供应商模型 | 待验。需要获准的文本与视觉测试渠道、预算和测试素材 |
 | 部署 | 待验。需要获准的目标测试环境、脱敏数据库副本和匹配的 Go/Worker 镜像 |
@@ -25,9 +25,9 @@ bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full
 
 | 本地门禁项目 | 状态与证据 |
 | --- | --- |
-| Go 全量与 lint | `backend:full`（rest）、架构基线、gofmt、vet 和工具合同通过。Windows app 分片存在文件权限和媒体探测失败，旧版 lint 二进制与本机 Go 的导出格式不兼容。WSL Ubuntu 22.04、Go 1.25、FFprobe 4.4.2 下，分支和 `main@422232409` 都复现 `TestTimelineRenderCropsNearAspectAndWritesProvenance` 与 `TestDramaCanvasAssetsProbesUnknownVideoDimensions` 失败 |
-| Web 全量与预演 E2E | 首次全量有 Agent 界面断言和其他模块断言失败。Agent 断言已在专项复跑通过。预演 E2E 在首次全量中因 Web 测试失败未运行 |
-| 容器与支付双架构 | Compose smoke 拉取 Go 模块时 TLS 握手超时，改用镜像和代理后构建仍因 Docker 后端连接中断失败。双架构 Buildx 遇到 Docker Hub 授权端点连接超时。未完成容器场景验收 |
+| Go 全量与 lint | `backend:full`（rest）、架构基线、gofmt、vet 和工具合同通过。Go 1.25.0 与 CI 固定的 golangci-lint 2.5.0 复跑为 0 个问题。Windows 此前 app 分片报文件权限和媒体探测失败，两个媒体用例后来在 Windows 专项通过。WSL Ubuntu 22.04 的 FFprobe 4.4.2 不支持 `stream_side_data`，分支与 `main@422232409` 均复现 `TestTimelineRenderCropsNearAspectAndWritesProvenance` 和 `TestDramaCanvasAssetsProbesUnknownVideoDimensions` 失败 |
+| Web 全量与预演 E2E | LF 检出上 `bun run test` 3,554 项通过，见 `.local/4ai-web-lf-final.log`。实际 Chrome 预演为 70 项通过、1 项失败，失败在 `shotOutputs` 录制未生成视频。相同浏览器下 `main@422232409` 的 `shotOutputs` 对照复现相同失败。见 `.local/4ai-web-previs-e2e-final.log` 与 `.local/4ai-web-previs-e2e-base.log` |
+| 容器与支付双架构 | Compose smoke 拉取 Go 模块时 TLS 握手超时，改用镜像和代理后构建仍因 Docker 后端连接中断失败。双架构 Buildx 遇到 Docker Hub 授权端点连接超时。Docker Desktop 的 `containerd` 崩溃，常规重启后 daemon 仍不可用。容器场景未验 |
 
 推送以最终提交通过仓库规定的本地 Quality checks 为准。基线对照结果用于定位失败来源，仍需在兼容工具链和可用的 Docker 环境复跑。
 
