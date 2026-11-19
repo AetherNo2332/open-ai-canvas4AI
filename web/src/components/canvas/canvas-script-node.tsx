@@ -6,19 +6,15 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { CheckboxGroup } from "@/components/ui/base/checkbox";
 import type { MenuProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { AlertCircle, Check, ChevronDown, ChevronUp, Clapperboard, Columns3, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Lock, Merge, MoreHorizontal, Plus, RefreshCw, Send, Square, Trash2, Unlock, Video } from "lucide-react";
+import { AlertCircle, ArrowUp, Check, ChevronDown, ChevronUp, Clapperboard, Columns3, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Lock, Merge, MoreHorizontal, Plus, RefreshCw, Square, Trash2, Unlock, Video } from "lucide-react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import { StoryboardAssetsCell } from "@/components/canvas/storyboard-assets-cell";
-import { ModelPicker } from "@/components/model-picker";
-import { buildGenerationConfig, logicalModelIDForConfig } from "@/lib/canvas/canvas-project-generation";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { type CanvasStoryboardPipelineProgress } from "@/lib/canvas/canvas-storyboard-progress";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { generationTaskShowsProgress, generationTaskStageLabel } from "@/lib/generation-task-display";
-import { navigateToSettings } from "@/lib/settings-navigation";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { resolveModelRequestConfig, useEffectiveConfig } from "@/stores/use-config-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import {
     STORYBOARD_COMPOSER_MIN_HEIGHT,
@@ -121,8 +117,7 @@ export function CanvasScriptNodeContent({
     onUpdateRow,
     onEditAssets,
     onPromptChange,
-    onGenerateScript,
-    onModelChange,
+    onSendToAgent,
     onShotDurationChange,
     onShotCountChange,
     onComposerHeightChange,
@@ -152,8 +147,7 @@ export function CanvasScriptNodeContent({
     onUpdateRow: (rowId: string, patch: Partial<StoryboardRow>) => void;
     onEditAssets: (rowId: string) => void;
     onPromptChange: (prompt: string) => boolean | void;
-    onGenerateScript: (prompt: string) => void;
-    onModelChange: (model: string) => void;
+    onSendToAgent: (prompt: string) => Promise<boolean>;
     onShotDurationChange: (duration: StoryboardShotDuration) => void;
     onShotCountChange: (count: StoryboardShotCount) => void;
     onComposerHeightChange: (height: number) => void;
@@ -162,9 +156,7 @@ export function CanvasScriptNodeContent({
     workspaceMode?: CanvasWorkspaceMode;
 }) {
     const theme = canvasThemes[useActiveTheme()];
-    const effectiveConfig = useEffectiveConfig();
-    const generationConfig = buildGenerationConfig(effectiveConfig, node, "text");
-    const storyboardGenerationAvailable = Boolean(logicalModelIDForConfig(generationConfig) || resolveModelRequestConfig(generationConfig, generationConfig.model).channelId);
+    const [sendingToAgent, setSendingToAgent] = useState(false);
     const simpleMode = workspaceMode === "simple";
     const rows = node.metadata?.storyboard?.rows || [];
     // 卡片展示哪些列完全跟随全屏编辑器里的列勾选；宽度放不下时卡片内部横向滚动。
@@ -257,9 +249,15 @@ export function CanvasScriptNodeContent({
               ]
             : []),
     ];
-    const submitPrompt = () => {
-        const value = prompt.trim();
-        if (value && node.metadata?.status !== "loading") onGenerateScript(value);
+    const sendDisabled = sendingToAgent || !prompt.trim() || node.metadata?.locked || node.metadata?.status === "loading";
+    const submitPrompt = async () => {
+        if (sendDisabled) return;
+        setSendingToAgent(true);
+        try {
+            await onSendToAgent(prompt);
+        } finally {
+            setSendingToAgent(false);
+        }
     };
     useLayoutEffect(() => {
         composerHeightChangeRef.current = onComposerHeightChange;
@@ -433,7 +431,7 @@ export function CanvasScriptNodeContent({
                     style={{ borderColor: theme.node.stroke, color: theme.node.text, "--tw-ring-color": theme.node.muted } as CSSProperties}
                     value={prompt}
                     readOnly={Boolean(node.metadata?.locked)}
-                    placeholder="输入剧本或剧情，以及总时长等要求，自动拆分为镜头"
+                    placeholder="输入剧本或剧情，交给当前 Agent 规划镜头"
                     onContentSizeChange={resizePrompt}
                     onChange={(value) => {
                         if (node.metadata?.locked || onPromptChange(value) === false) return false;
@@ -450,59 +448,39 @@ export function CanvasScriptNodeContent({
                     onWheel={(event) => event.stopPropagation()}
                 />
                 <div className="flex min-w-0 items-center justify-end gap-2" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-                    <Tooltip title="脚本生成需要文本理解与结构化输出能力，仅展示文本模型；视频/图片模型无法生成分镜表" placement="topLeft">
-                        <div className="mr-auto min-w-36 max-w-56 flex-1">
-                            <ModelPicker
-                                className="!h-7 !w-full !min-w-0 !text-[var(--fs-tiny)] !font-normal [&_img]:!size-3 [&_.lucide]:!size-3"
-                                fullWidth
-                                config={generationConfig}
-                                value={generationConfig.model}
-                                capability="text"
-                                placeholder="选择文本模型"
-                                showSelectedPrice={false}
-                                onChange={onModelChange}
-                                onMissingConfig={() => navigateToSettings({ continueCreation: true })}
-                            />
-                        </div>
-                    </Tooltip>
-                    {simpleMode ? (
-                        <span className="text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
-                            自动拆分 · 时长自动
-                        </span>
-                    ) : (
-                        <Select<StoryboardShotCount>
-                            className="min-w-24"
-                            size="small"
-                            value={shotCount}
-                            disabled={node.metadata?.status === "loading"}
-                            options={[{ value: "auto", label: "自动拆分" }, ...Array.from({ length: 10 }, (_, index) => ({ value: String(index + 1) as StoryboardShotCount, label: `${index + 1} 镜` }))]}
-                            popupMatchSelectWidth={false}
-                            onChange={onShotCountChange}
-                        />
-                    )}
-                    {simpleMode ? null : (
-                        <Select<StoryboardShotDuration>
-                            className="min-w-24"
-                            size="small"
-                            value={shotDuration}
-                            disabled={node.metadata?.status === "loading"}
-                            options={[
-                                { value: "auto", label: "单镜时长自动" },
-                                { value: "5", label: "每镜 5 秒" },
-                                { value: "10", label: "每镜 10 秒" },
-                                { value: "15", label: "每镜 15 秒" },
-                                { value: "30", label: "每镜 30 秒" },
-                            ]}
-                            popupMatchSelectWidth={false}
-                            onChange={onShotDurationChange}
-                        />
-                    )}
+                    <Select<StoryboardShotCount>
+                        ariaLabel="镜头数"
+                        className="min-w-24"
+                        size="small"
+                        value={shotCount}
+                        disabled={node.metadata?.status === "loading"}
+                        options={[{ value: "auto", label: "自动拆分" }, ...Array.from({ length: 10 }, (_, index) => ({ value: String(index + 1) as StoryboardShotCount, label: `${index + 1} 镜` }))]}
+                        popupMatchSelectWidth={false}
+                        onChange={onShotCountChange}
+                    />
+                    <Select<StoryboardShotDuration>
+                        ariaLabel="单镜时长"
+                        className="min-w-24"
+                        size="small"
+                        value={shotDuration}
+                        disabled={node.metadata?.status === "loading"}
+                        options={[
+                            { value: "auto", label: "单镜时长自动" },
+                            { value: "5", label: "每镜 5 秒" },
+                            { value: "10", label: "每镜 10 秒" },
+                            { value: "15", label: "每镜 15 秒" },
+                            { value: "30", label: "每镜 30 秒" },
+                        ]}
+                        popupMatchSelectWidth={false}
+                        onChange={onShotDurationChange}
+                    />
                     <Button
                         shape="circle"
-                        icon={<Send className="size-4" />}
-                        disabled={!prompt.trim() || node.metadata?.status === "loading" || !storyboardGenerationAvailable}
-                        loading={node.metadata?.status === "loading"}
-                        title={storyboardGenerationAvailable ? "生成分镜" : "拆镜由服务端执行，请改选系统模型"}
+                        icon={<ArrowUp className="size-4" />}
+                        disabled={sendDisabled}
+                        loading={sendingToAgent}
+                        title="发送到当前 Agent 规划拆镜"
+                        aria-label="发送到当前 Agent 规划拆镜"
                         style={{ background: theme.toolbar.itemHover, borderColor: theme.node.stroke, color: theme.node.text }}
                         onMouseDown={(event) => event.stopPropagation()}
                         onClick={submitPrompt}
@@ -546,13 +524,14 @@ export function CanvasScriptEditor({
     onVisibleColumnsChange: (columns: StoryboardColumn[]) => void;
     onGenerateImages: (rowIds: string[]) => void;
     onGenerateVideos: (rowIds: string[]) => void;
-    onResplitRows?: (rowIds: string[], request: string) => void;
+    onResplitRows?: (rowIds: string[], request: string) => Promise<boolean>;
     onVideoInputModeChange: (mode: StoryboardVideoInputMode) => void;
 }) {
     const [query, setQuery] = useState("");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [resplitRequest, setResplitRequest] = useState("");
     const [resplitOpen, setResplitOpen] = useState(false);
+    const [resplitSending, setResplitSending] = useState(false);
     const [tableHeight, setTableHeight] = useState(480);
     const [tableWidth, setTableWidth] = useState(0);
     const [tableWrap, setTableWrap] = useState<HTMLDivElement | null>(null);
@@ -560,8 +539,6 @@ export function CanvasScriptEditor({
     const visibleColumns = scriptVisibleColumns(node?.metadata?.storyboard?.visibleColumns);
     const totalDuration = rows.reduce((sum, row) => sum + (Number(row.durationSeconds) || 0), 0);
     const videoInputMode = node?.metadata?.storyboardVideoInputMode || "direct";
-    const generationConfig = buildGenerationConfig(useEffectiveConfig(), node || undefined, "text");
-    const storyboardGenerationAvailable = Boolean(logicalModelIDForConfig(generationConfig) || resolveModelRequestConfig(generationConfig, generationConfig.model).channelId);
     const nodeById = useMemo(() => new Map(nodes.map((item) => [item.id, item])), [nodes]);
     // Modal 的 portal 延迟挂载；等容器实际出现后再订阅尺寸，重开时也重新绑定。
     useLayoutEffect(() => {
@@ -773,10 +750,10 @@ export function CanvasScriptEditor({
                         <Button icon={<ImageIcon className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateImages(selectedIds)}>
                             生成{videoInputMode === "keyframe" ? "首帧" : "分镜图"}
                         </Button>
-                        <Tooltip title={!storyboardGenerationAvailable ? "拆镜由服务端执行，请改选系统模型" : "先选择连续且未锁定的镜头"}>
+                        <Tooltip title="选择连续且未锁定的镜头，交给当前 Agent 规划">
                             <Button
                                 icon={<RefreshCw className="size-4" />}
-                                disabled={!storyboardGenerationAvailable || !onResplitRows || selectedIds.length === 0 || !isContiguousUnlockedSelection(rows, selectedIds)}
+                                disabled={!onResplitRows || node?.metadata?.locked || selectedIds.length === 0 || !isContiguousUnlockedSelection(rows, selectedIds)}
                                 onClick={() => {
                                     setResplitOpen(true);
                                     setResplitRequest("");
@@ -814,13 +791,22 @@ export function CanvasScriptEditor({
                             <Button onClick={() => setResplitOpen(false)}>取消</Button>
                             <Button
                                 type="primary"
-                                disabled={!selectedIds.length || !isContiguousUnlockedSelection(rows, selectedIds) || !storyboardGenerationAvailable}
-                                onClick={() => {
-                                    onResplitRows?.(selectedIds, resplitRequest.trim());
-                                    setResplitOpen(false);
+                                disabled={!selectedIds.length || !isContiguousUnlockedSelection(rows, selectedIds) || node?.metadata?.locked || resplitSending}
+                                loading={resplitSending}
+                                onClick={async () => {
+                                    if (!onResplitRows) return;
+                                    setResplitSending(true);
+                                    try {
+                                        if (await onResplitRows(selectedIds, resplitRequest)) {
+                                            setResplitOpen(false);
+                                            onClose();
+                                        }
+                                    } finally {
+                                        setResplitSending(false);
+                                    }
                                 }}
                             >
-                                重拆 {selectedIds.length} 个镜头
+                                发送 {selectedIds.length} 镜到 Agent
                             </Button>
                         </div>
                     ) : null}

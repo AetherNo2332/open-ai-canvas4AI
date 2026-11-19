@@ -19,6 +19,46 @@ func queueTestInput(runID, key, mode string) AgentConversationMessageRequest {
 	return AgentConversationMessageRequest{Mode: mode, ExpectedRunID: runID, Request: req}
 }
 
+func TestAgentMessageQueueInheritsCurrentRunConfiguration(t *testing.T) {
+	s, _, root := reliableAgentRoot(t)
+	parent, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var frozen cloudAgentRuntime
+	if err := json.Unmarshal([]byte(parent.StateJSON), &frozen); err != nil {
+		t.Fatal(err)
+	}
+	input := queueTestInput(root.ID, "storyboard-queue-config", "queue")
+	input.Request.Model = ""
+	input.Request.ChannelID = ""
+	input.Request.ChannelModelKey = ""
+	input.Request.Budget = CloudAgentRequest{}.Budget
+	input.Request.PermissionMode = ""
+	input.Request.AgentDefinitionID = parent.AgentDefinitionID
+	input.Request.SkillIDs = []string{"other-skill"}
+	input.Request.FocusNodeIDs = []string{"storyboard"}
+	if err := json.Unmarshal([]byte(`{"inheritRunConfiguration":true}`), &input); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := s.SendAgentConversationMessage("user", root.ID, input)
+	if err != nil || receipt.Delivery != "queued" {
+		t.Fatalf("queue receipt = %+v, %v", receipt, err)
+	}
+	item, err := s.repo.AgentQueuedMessage("user", root.ID, receipt.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored CloudAgentRequest
+	if err := json.Unmarshal([]byte(item.RequestJSON), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Model != frozen.Request.Model || stored.ChannelID != frozen.Request.ChannelID || stored.PermissionMode != frozen.Request.PermissionMode || len(stored.SkillIDs) != len(frozen.Request.SkillIDs) || stored.Budget != frozen.Request.Budget ||
+		stored.Prompt != input.Request.Prompt || stored.IdempotencyKey != input.Request.IdempotencyKey || len(stored.FocusNodeIDs) != 1 || stored.FocusNodeIDs[0] != "storyboard" {
+		t.Fatalf("queue did not preserve current config and message: %+v", stored)
+	}
+}
+
 func TestAgentMessageQueueStopInvalidatesPreparedAdmission(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	input := queueTestInput(root.ID, "queue-stop-preparation", "queue")

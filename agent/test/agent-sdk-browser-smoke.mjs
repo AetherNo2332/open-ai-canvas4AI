@@ -75,6 +75,7 @@ try {
     return true;
   })()`));
   await cdp("Network.enable");
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
   await cdp("Network.setCookie", { url: base, name: process.env.AGENT_SDK_BROWSER_COOKIE_NAME, value: "sdk-session.sdk-token" });
   await goto("/canvas/sdk-canvas");
   await wait("canvas Agent launcher", () => evaluate(`(() => {
@@ -93,6 +94,35 @@ try {
   await button("发送");
   await text("SDK_RESULT: 待审阅分析建议", 50_000);
   console.log("Chrome: canvas image analysis passed");
+
+  const storyboardRows = () => evaluate(`(async () => {
+    const result = await (await fetch("/api/canvas-projects/sdk-canvas", {cache: "no-store"})).json();
+    return result.data.project.nodes.find(node => node.id === "sdk-board")?.metadata.storyboard.rows;
+  })()`);
+  const beforeStoryboard = await storyboardRows();
+  await wait("storyboard composer and constraints", () => evaluate(`(() => {
+    const editor = document.querySelector("[aria-label='分镜剧情与项目设定']");
+    if (!editor || !document.querySelector("[aria-label='镜头数']") || !document.querySelector("[aria-label='单镜时长']")) return false;
+    editor.focus();
+    return document.activeElement === editor;
+  })()`));
+  await cdp("Input.insertText", { text: "SDK_STORYBOARD_STORY 主角在雨中离场" });
+  await wait("send storyboard to current Agent", () => evaluate(`(() => {
+    const control = document.querySelector("button[aria-label='发送到当前 Agent 规划拆镜']");
+    if (!control || control.disabled) return false;
+    control.click();
+    return true;
+  })()`));
+  await text("SDK_STORYBOARD_PLAN", 40_000);
+  if (JSON.stringify(await storyboardRows()) !== JSON.stringify(beforeStoryboard)) throw new Error("storyboard changed before confirmation");
+  await button("SDK_CONFIRM_STORYBOARD");
+  await text("SDK_STORYBOARD_WRITTEN", 40_000);
+  const writtenStoryboard = await storyboardRows();
+  if (writtenStoryboard.length !== 3 || JSON.stringify(writtenStoryboard[0]) !== JSON.stringify(beforeStoryboard[0])
+      || writtenStoryboard[1].id !== "sdk-media-row" || writtenStoryboard[1].imageNodeId !== "cat"
+      || writtenStoryboard[1].plotDescription !== "SDK_UPDATED_SHOT" || writtenStoryboard[2].plotDescription !== "SDK_NEW_SHOT"
+      || writtenStoryboard.some(row => row.durationSeconds !== 10)) throw new Error(`unexpected storyboard write: ${JSON.stringify(writtenStoryboard)}`);
+  console.log("Chrome: storyboard prompt, confirmation before write, original table, locked row and media passed");
 
   await goto("/settings?section=preferences");
   await text("Agent 共享输出偏好");

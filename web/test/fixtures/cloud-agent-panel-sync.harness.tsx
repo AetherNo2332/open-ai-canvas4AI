@@ -273,6 +273,68 @@ type SendOutcome = Awaited<ReturnType<typeof sendExternal>>;
 
 const externalPrompt = { canvasId: "canvas", userScope: "sync-user", prompt: "为目标分镜表提出拆镜方案，先询问确认", focusNodeIds: ["storyboard-target"] };
 
+test("storyboard delivery saves first and interjects in the current running conversation", async () => {
+    const current = conversation("desktop", "local", "保留输入草稿");
+    current.run = { ...current.run!, status: "running", model: "current-model" };
+    const mounted = await mount([current], null, async () => [current], "queue");
+    try {
+        let prepared = false;
+        queueMessageOverride = async () => {
+            expect(prepared).toBe(true);
+            return { messageId: "storyboard", conversationId: "shared", queueRevision: 2, delivery: "interjected", runId: "desktop" };
+        };
+        await act(async () => {
+            const { prompt: text, ...request } = externalPrompt;
+            expect(
+                await requestAgentPrefill({
+                    ...request,
+                    text,
+                    autoSubmit: true,
+                    currentConversation: {
+                        prepare: async () => {
+                            prepared = true;
+                        },
+                    },
+                }),
+            ).toBe("sent");
+            await settle();
+        });
+        expect(createdRequests).toHaveLength(0);
+        expect(conversationRequests).toHaveLength(1);
+        expect(conversationRequests[0]).toMatchObject({ mode: "interject", expectedRunId: "desktop", inheritRunConfiguration: true, request: { focusNodeIds: ["storyboard-target"] } });
+        expect(conversationRequests[0].request).not.toHaveProperty("model");
+        expect(composer.prompt).toBe("保留输入草稿");
+    } finally {
+        await mounted.close();
+    }
+});
+
+test("storyboard delivery queues behind a pending question and reports a save failure without posting", async () => {
+    const current = conversation("desktop", "local", "保留输入草稿");
+    const mounted = await mount([current], null, async () => [current], "interject", "question-1");
+    try {
+        const { prompt: text, ...request } = externalPrompt;
+        await act(async () => {
+            const prepare = async () => {
+                throw new Error("剧情保存失败");
+            };
+            expect(await requestAgentPrefill({ ...request, text, autoSubmit: true, currentConversation: { prepare } })).toBe(false);
+            await settle();
+        });
+        expect(conversationRequests).toHaveLength(0);
+        expect(mounted.host.textContent).toContain("剧情保存失败");
+        await act(async () => {
+            expect(await requestAgentPrefill({ ...request, text, autoSubmit: true, currentConversation: { prepare: async () => undefined } })).toBe("queued");
+            await settle();
+        });
+        expect(conversationRequests[0]).toMatchObject({ mode: "queue", expectedRunId: "desktop", inheritRunConfiguration: true });
+        expect(conversationRequests[0]).not.toHaveProperty("replyToQuestionId");
+        expect(composer.prompt).toBe("保留输入草稿");
+    } finally {
+        await mounted.close();
+    }
+});
+
 for (const mode of ["queue", "interject"] as const) {
     test(`opposite send overrides ${mode} once without changing the account default`, async () => {
         const current = conversation("desktop", "local", "临时发送");
@@ -375,7 +437,7 @@ test("question answers bypass queue default and queued words do not hide the pen
             questionBar.onAnswer("确认");
             await settle();
         });
-        expect(conversationRequests[1]).toMatchObject({ mode: "interject", replyToQuestionId: "desktop:4", request: { prompt: "确认" } });
+        expect(conversationRequests[1]).toMatchObject({ mode: "interject", replyToQuestionId: "desktop:4", inheritRunConfiguration: true, request: { prompt: "确认" } });
     } finally {
         await mounted.close();
     }

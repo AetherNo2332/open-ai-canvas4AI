@@ -110,7 +110,7 @@ func prepareCloudAgentBuildBoard(repo *repository.Repository, userID, canvasID s
 		storyboard = nodes[index]
 	}
 	if storyboard == nil || stringValue(storyboard["type"]) != "script" {
-		return nil, cloudAgentFieldError("storyboardNodeId", "not_found", "分镜脚本节点不存在；请先用 storyboard action=split 建好分镜")
+		return nil, cloudAgentFieldError("storyboardNodeId", "not_found", "分镜脚本节点不存在；请读取画布并核对分镜节点 ID")
 	}
 	storyMeta, _ := storyboard["metadata"].(map[string]any)
 	table, _ := storyMeta["storyboard"].(map[string]any)

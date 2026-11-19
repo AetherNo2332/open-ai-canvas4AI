@@ -36,6 +36,8 @@ type cloudAgentStoryboardEditArgs struct {
 	StoryboardRevision string                          `json:"storyboardRevision,omitempty"`
 	Updates            []cloudAgentStoryboardRowUpdate `json:"updates,omitempty"`
 	Rows               []map[string]any                `json:"rows,omitempty"`
+	NewRows            []map[string]any                `json:"newRows,omitempty"`
+	RemoveRowIDs       []string                        `json:"removeRowIds,omitempty"`
 	RowIDs             []string                        `json:"rowIds,omitempty"`
 	References         []string                        `json:"references,omitempty"`
 	Assets             []cloudAgentStoryboardAsset     `json:"assets,omitempty"`
@@ -271,17 +273,17 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	if args.SnapshotHash == "" || args.NodeID == "" {
 		return nil, BadAuthRequest("编辑分镜需要快照和节点ID")
 	}
+	if args.Action != "write_rows" && (args.NewRows != nil || args.RemoveRowIDs != nil) {
+		return nil, BadAuthRequest("newRows 与 removeRowIds 仅用于 write_rows")
+	}
 	if args.StoryboardRevision != "" && !cloudAgentStoryboardScopedEdit(args) {
 		return nil, cloudAgentFieldError("storyboardRevision", "invalid_revision_scope", "表级版本仅用于纯创作字段 update/batch_update")
 	}
-	if cloudAgentStoryboardSharedAction(args.Action) || args.Action == "bind_output" || args.Action == "unbind_output" {
-		if args.Updates != nil || args.Rows != nil {
-			return nil, BadAuthRequest("引用或产物归属动作不接受 updates 或 rows")
-		}
-		return prepareCloudAgentStoryboardReferenceEdit(repo, userID, canvasID, args)
+	if err := validateCloudAgentStoryboardEditShape(args); err != nil {
+		return nil, err
 	}
-	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && !cloudAgentStoryboardAssetAction(args.Action) {
-		return nil, BadAuthRequest("分镜操作无效")
+	if cloudAgentStoryboardUsesReferences(args.Action) {
+		return prepareCloudAgentStoryboardReferenceEdit(repo, userID, canvasID, args)
 	}
 	canvas, err := repo.CanvasProjectForUser(userID, canvasID)
 	if err != nil {
@@ -300,35 +302,72 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 			return nil, err
 		}
 	}
+	return prepareCloudAgentStoryboardEditFromDocument(repo, canvas, call, args, doc, beforeHash)
+}
+
+func prepareCloudAgentStoryboardEditFromDocument(repo *repository.Repository, canvas *model.CanvasProject, call cloudAgentCall, args cloudAgentStoryboardEditArgs, doc map[string]any, beforeHash string) (*cloudAgentStoryboardMutationPlan, error) {
 	node, board, rows, err := storyboardNodeFromDocument(doc, args.NodeID)
 	if err != nil {
 		return nil, err
 	}
+	if err := validateStoryboardDirectWriteTarget(node, args.Action); err != nil {
+		return nil, err
+	}
+	next, fields, err := planCloudAgentStoryboardDocumentRows(repo, canvas, doc, rows, args, call)
+	if err != nil {
+		return nil, err
+	}
+	board["rows"] = mapsAsAny(next)
+	if err := reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
+		return nil, err
+	}
+	return &cloudAgentStoryboardMutationPlan{
+		Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
+		Preview: cloudAgentStoryboardEditPreview(node, args, rows, fields),
+	}, nil
+}
+
+func validateCloudAgentStoryboardEditShape(args cloudAgentStoryboardEditArgs) error {
+	if cloudAgentStoryboardUsesReferences(args.Action) && (args.Updates != nil || args.Rows != nil) {
+		return BadAuthRequest("引用或产物归属动作不接受 updates 或 rows")
+	}
+	return nil
+}
+
+func cloudAgentStoryboardUsesReferences(action string) bool {
+	return cloudAgentStoryboardSharedAction(action) || action == "bind_output" || action == "unbind_output"
+}
+
+func planCloudAgentStoryboardDocumentRows(repo *repository.Repository, canvas *model.CanvasProject, doc map[string]any, rows []map[string]any, args cloudAgentStoryboardEditArgs, call cloudAgentCall) ([]map[string]any, []string, error) {
 	mutationID := call.storyboardMutationID
 	if mutationID == "" {
 		// Internal callers outside the runtime have no run/step context. Scope
 		// their deterministic preparation to the exact document version.
 		mutationID = call.ID + ":" + args.SnapshotHash
 	}
-	next, fields, err := cloudAgentPlanStoryboardRows(doc, rows, args, userID, mutationID)
+	next, fields, err := cloudAgentPlanStoryboardRows(doc, rows, args, canvas.UserID, mutationID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if args.Action == "remove" {
-		ids := append([]string(nil), args.RowIDs...)
+	if args.Action == "remove" || len(args.RemoveRowIDs) != 0 {
+		ids := append(append([]string(nil), args.RowIDs...), args.RemoveRowIDs...)
 		if args.RowID != "" {
 			ids = append(ids, args.RowID)
 		}
 		for _, id := range ids {
-			if err := validateCloudAgentStoryboardOccupancy(repo, userID, canvasID, args.NodeID, id, ""); err != nil {
-				return nil, err
+			if err := validateCloudAgentStoryboardOccupancy(repo, canvas.UserID, canvas.ID, args.NodeID, id, ""); err != nil {
+				return nil, nil, err
 			}
 		}
 	}
+	return next, fields, nil
+}
+
+func cloudAgentStoryboardEditPreview(node map[string]any, args cloudAgentStoryboardEditArgs, rows []map[string]any, fields []string) cloudAgentApprovalPreview {
 	details := []string{}
 	for _, row := range rows {
 		id := stringValue(row["id"])
-		selected := id == args.RowID || cloudAgentContainsString(args.RowIDs, id)
+		selected := id == args.RowID || cloudAgentContainsString(args.RowIDs, id) || cloudAgentContainsString(args.RemoveRowIDs, id)
 		for _, update := range args.Updates {
 			selected = selected || id == update.RowID
 		}
@@ -344,12 +383,20 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 			details = append(details, "清空所选镜头的资产声明与旧角色列表，共享引用保留")
 		}
 	}
-	board["rows"] = mapsAsAny(next)
-	if err := reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
-		return nil, err
+	if len(args.NewRows) > 0 {
+		details = append(details, fmt.Sprintf("新增 %d 镜", len(args.NewRows)))
 	}
-	return &cloudAgentStoryboardMutationPlan{Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
-		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认修改分镜", Description: "整批校验并修改所选镜头的创作内容或资产引用。", Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeTitle: stringValue(node["title"]), NodeType: "script", NodeTypeLabel: "分镜脚本", Fields: fields, Details: details, Summary: fmt.Sprintf("%s：%s", args.Action, stringValue(node["title"]))}}}}, nil
+	return cloudAgentApprovalPreview{
+		Kind: "canvas_mutation", Title: "确认修改分镜", Description: "整批校验并修改所选镜头的创作内容或资产引用。",
+		Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeTitle: stringValue(node["title"]), NodeType: "script", NodeTypeLabel: "分镜脚本", Fields: fields, Details: details, Summary: fmt.Sprintf("%s：%s", args.Action, stringValue(node["title"]))}},
+	}
+}
+
+func validateStoryboardDirectWriteTarget(node map[string]any, action string) error {
+	if action == "write_rows" && cloudAgentNodeMetadata(node)["locked"] == true {
+		return cloudAgentFieldError("nodeId", "locked", "分镜表已锁定，本次未写入")
+	}
+	return nil
 }
 func applyCloudAgentStoryboardMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {
 	var result any

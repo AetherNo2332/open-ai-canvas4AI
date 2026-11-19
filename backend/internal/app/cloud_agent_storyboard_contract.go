@@ -19,8 +19,8 @@ func cloudAgentStoryboardContracts(schema map[string]any) {
 			}
 		}
 	}
-	for _, name := range []string{"patch", "updates", "assets"} {
-		compact(props[name])
+	for _, property := range props {
+		compact(property)
 	}
 	read := []string{"operationIds", "view", "mode", "offset", "rows", "rowIds", "fields", "missingAnyFields"}
 	model := []string{"selectionId", "logicalModelId", "channelId", "channelModelKey", "request", "shotCount", "shotDurationSeconds"}
@@ -47,25 +47,22 @@ func cloudAgentStoryboardContracts(schema map[string]any) {
 		{"anyOf": []map[string]any{{"properties": cloudAgentForbiddenFields("rowIds")}, {"properties": map[string]any{"offset": map[string]any{"const": 0}}}}},
 		{"anyOf": []map[string]any{{"properties": map[string]any{"view": map[string]any{"enum": []string{"creative", "summary", "bindings"}}}}, {"properties": map[string]any{"view": map[string]any{"const": "full"}, "rows": map[string]any{"maximum": 20}}, "required": []string{"view"}}}},
 	}
-	for _, action := range []string{"split", "resplit"} {
-		allowed := append([]string{}, model...)
-		required := []string{}
-		if action == "resplit" {
-			allowed = append(allowed, "rowIds")
-			required = append(required, "rowIds")
-		}
-		b := branch(action, allowed, required)
-		// 拆镜的模型选择可选：完全省略时服务端回退本轮运行的文本模型；
-		// 三种凭证互斥，与"全部省略"一起构成四个互斥分支。
-		b["anyOf"] = []map[string]any{
-			{"required": []string{"selectionId"}, "properties": cloudAgentForbiddenFields("logicalModelId", "channelId", "channelModelKey")},
-			{"required": []string{"logicalModelId"}, "properties": cloudAgentForbiddenFields("selectionId", "channelId", "channelModelKey")},
-			{"required": []string{"channelId", "channelModelKey"}, "properties": cloudAgentForbiddenFields("selectionId", "logicalModelId")},
-			{"properties": cloudAgentForbiddenFields("selectionId", "logicalModelId", "channelId", "channelModelKey")},
-		}
+	split := branch("split", append(model, "rowIds"), nil)
+	split["properties"].(map[string]any)["action"] = map[string]any{"enum": []string{"split", "resplit"}}
+	split["oneOf"] = []map[string]any{
+		{"properties": map[string]any{"action": map[string]any{"const": "split"}, "rowIds": false}},
+		{"required": []string{"rowIds"}, "properties": map[string]any{"action": map[string]any{"const": "resplit"}}},
+	}
+	split["anyOf"] = []map[string]any{
+		{"required": []string{"selectionId"}, "properties": cloudAgentForbiddenFields("logicalModelId", "channelId", "channelModelKey")},
+		{"required": []string{"logicalModelId"}, "properties": cloudAgentForbiddenFields("selectionId", "channelId", "channelModelKey")},
+		{"required": []string{"channelId", "channelModelKey"}, "properties": cloudAgentForbiddenFields("selectionId", "logicalModelId")},
+		{"properties": cloudAgentForbiddenFields("selectionId", "logicalModelId", "channelId", "channelModelKey")},
 	}
 	u := branch("update", append(append([]string{}, write...), "rowId", "rowIds", "patch", "updates", "storyboardRevision"), []string{"snapshotHash"})
 	purePatch := map[string]any{"type": "object", "properties": cloudAgentForbiddenFields("assets")}
+	direct := branch("write_rows", append(append([]string{}, write...), "updates", "newRows", "removeRowIds"), []string{"snapshotHash", "operationId"})
+	direct["anyOf"] = []map[string]any{{"required": []string{"updates"}}, {"required": []string{"newRows"}}, {"required": []string{"removeRowIds"}}}
 	u["anyOf"] = []map[string]any{{"properties": cloudAgentForbiddenFields("storyboardRevision")}, {"properties": map[string]any{"patch": purePatch, "updates": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"patch": purePatch}}}}}}
 	u["oneOf"] = []map[string]any{
 		{"required": []string{"patch"}, "properties": cloudAgentForbiddenFields("updates"), "oneOf": selectRows},
@@ -76,24 +73,26 @@ func cloudAgentStoryboardContracts(schema map[string]any) {
 		b["properties"].(map[string]any)["action"] = map[string]any{"enum": []string{"lock", "unlock"}}
 		b["oneOf"] = selectRows
 	}
-	for _, action := range []string{"set_assets", "add_assets"} {
-		b := branch(action, append(append([]string{}, write...), "rowId", "rowIds", "assets"), []string{"snapshotHash", "assets"})
-		b["oneOf"] = selectRows
-		if action != "set_assets" {
-			b["properties"].(map[string]any)["action"] = map[string]any{"enum": []string{"add_assets", "remove_assets", "upsert_assets"}}
-			b["properties"].(map[string]any)["assets"] = map[string]any{"type": "array", "minItems": 1}
-		}
-	}
-	for _, action := range []string{"set_references", "add_references"} {
-		b := branch(action, append(append([]string{}, write...), "references", "referenceNodeIds"), []string{"snapshotHash"})
-		if action != "set_references" {
-			b["properties"].(map[string]any)["action"] = map[string]any{"enum": []string{"add_references", "remove_references"}}
-			b["properties"].(map[string]any)["references"] = map[string]any{"type": "array", "minItems": 1}
-			b["properties"].(map[string]any)["referenceNodeIds"] = map[string]any{"type": "array", "minItems": 1}
-		}
-		b["oneOf"] = []map[string]any{{"required": []string{"references"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")}, {"required": []string{"referenceNodeIds"}, "properties": cloudAgentForbiddenFields("references")}}
-	}
+	assets := branch("set_assets", append(append([]string{}, write...), "rowId", "rowIds", "assets"), []string{"snapshotHash", "assets"})
+	assets["properties"].(map[string]any)["action"] = map[string]any{"enum": []string{"set_assets", "add_assets", "remove_assets", "upsert_assets"}}
+	assets["oneOf"] = selectRows
+	assets["anyOf"] = storyboardSetOrNonempty("set_assets", "assets")
+	references := branch("set_references", append(append([]string{}, write...), "references", "referenceNodeIds"), []string{"snapshotHash"})
+	references["properties"].(map[string]any)["action"] = map[string]any{"enum": []string{"set_references", "add_references", "remove_references"}}
+	references["oneOf"] = []map[string]any{{"required": []string{"references"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")}, {"required": []string{"referenceNodeIds"}, "properties": cloudAgentForbiddenFields("references")}}
+	references["anyOf"] = storyboardSetOrNonempty("set_references", "references", "referenceNodeIds")
 	branch("bind_output", append(append([]string{}, write...), "rowId", "outputMode", "outputNodeId"), []string{"snapshotHash", "rowId", "outputMode", "outputNodeId"})
 	branch("unbind_output", append(append([]string{}, write...), "rowId", "outputMode"), []string{"snapshotHash", "rowId", "outputMode"})
 	schema["oneOf"] = branches
+}
+
+func storyboardSetOrNonempty(action string, fields ...string) []map[string]any {
+	nonempty := map[string]any{}
+	for _, field := range fields {
+		nonempty[field] = map[string]any{"type": "array", "minItems": 1}
+	}
+	return []map[string]any{
+		{"properties": map[string]any{"action": map[string]any{"const": action}}},
+		{"properties": nonempty},
+	}
 }

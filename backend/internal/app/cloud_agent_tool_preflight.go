@@ -135,7 +135,7 @@ func cloudAgentAdmitCall(state *cloudAgentRuntime, call cloudAgentCall, schema m
 	admission := cloudAgentCallAdmission{CallID: call.ID, Allowed: true}
 	switch {
 	case cloudAgentLegacyStoryboardTool(name):
-		admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "tool", "旧分镜工具已退役；使用 storyboard，action=read/split/resplit/update/lock/unlock。新表通过 canvas_apply_ops 创建 script 并写入剧情后调用 split")
+		admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "tool", "旧分镜工具已退役；使用 storyboard，action=read/write_rows/update/lock/unlock")
 	case !advertised:
 		issue, message := cloudAgentUnadvertisedToolAdmission(state, name)
 		admission = cloudAgentRejectCall(call, issue, "", message)

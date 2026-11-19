@@ -169,6 +169,9 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 	if err := json.Unmarshal(raw, &next); err != nil {
 		return nil, nil, err
 	}
+	if args.Action == "write_rows" {
+		return cloudAgentPlanStoryboardDirectWrite(doc, next, args, userID, callID)
+	}
 	if args.Action == "batch_update" || args.Action == "append_rows" {
 		return cloudAgentPlanStoryboardBatch(doc, next, args, userID, callID)
 	}
@@ -206,13 +209,102 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 // checkCloudAgentStoryboardRowEditArgs rejects unknown actions and arguments
 // that belong to other storyboard actions.
 func checkCloudAgentStoryboardRowEditArgs(args cloudAgentStoryboardEditArgs) error {
-	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && !cloudAgentStoryboardAssetAction(args.Action) {
+	if args.Action != "write_rows" && args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && !cloudAgentStoryboardAssetAction(args.Action) {
 		return BadAuthRequest("不支持的镜头编辑操作")
 	}
 	if args.References != nil || args.ReferenceNodeIDs != nil || args.OutputMode != "" || args.OutputNodeID != "" || (!cloudAgentStoryboardAssetAction(args.Action) && args.Assets != nil) {
 		return BadAuthRequest("镜头编辑包含不适用于当前操作的参数")
 	}
 	return nil
+}
+
+func cloudAgentPlanStoryboardDirectWrite(doc map[string]any, rows []map[string]any, args cloudAgentStoryboardEditArgs, userID, callID string) ([]map[string]any, []string, error) {
+	if err := validateCloudAgentStoryboardDirectWriteArgs(args); err != nil {
+		return nil, nil, err
+	}
+	fields := []string{}
+	if len(args.RemoveRowIDs) > 0 {
+		start := len(rows) - len(args.RemoveRowIDs)
+		if start < 0 {
+			return nil, nil, BadAuthRequest("只能删除现有分镜末尾行")
+		}
+		for index, row := range rows[start:] {
+			id := stringValue(row["id"])
+			if id != args.RemoveRowIDs[index] || row["locked"] == true || stringValue(row["status"]) == "loading" || storyboardDirectWriteRowHasBindings(doc, args.NodeID, row) {
+				return nil, nil, cloudAgentFieldError("removeRowIds", "protected_rows", "仅可按原顺序删除未锁定、无素材或产物关联的末尾镜头；整批未执行")
+			}
+		}
+		rows = rows[:start]
+		fields = append(fields, "镜头行")
+	}
+	lockedRows := map[string]bool{}
+	for _, row := range rows {
+		lockedRows[stringValue(row["id"])] = row["locked"] == true
+	}
+	if err := validateStoryboardDirectUpdates(args.Updates, lockedRows); err != nil {
+		return nil, nil, err
+	}
+	if len(args.Updates) > 0 {
+		var changed []string
+		var err error
+		rows, changed, err = cloudAgentPlanStoryboardBatch(doc, rows, cloudAgentStoryboardEditArgs{Action: "batch_update", Updates: args.Updates}, userID, callID)
+		if err != nil {
+			return nil, nil, err
+		}
+		fields = append(fields, changed...)
+	}
+	if len(args.NewRows) > 0 {
+		var changed []string
+		var err error
+		rows, changed, err = cloudAgentPlanStoryboardBatch(doc, rows, cloudAgentStoryboardEditArgs{Action: "append_rows", NodeID: args.NodeID, Rows: args.NewRows}, userID, callID)
+		if err != nil {
+			return nil, nil, err
+		}
+		fields = append(fields, changed...)
+	}
+	return rows, fields, nil
+}
+
+func validateCloudAgentStoryboardDirectWriteArgs(args cloudAgentStoryboardEditArgs) error {
+	if args.OperationID == "" || len(args.Updates)+len(args.NewRows)+len(args.RemoveRowIDs) == 0 {
+		return BadAuthRequest("write_rows 需要 operationId 和至少一项镜头变更")
+	}
+	if args.RowID != "" || args.RowIDs != nil || args.Patch != nil || args.Rows != nil {
+		return BadAuthRequest("write_rows 使用 updates、newRows 或 removeRowIds")
+	}
+	return nil
+}
+
+func validateStoryboardDirectUpdates(updates []cloudAgentStoryboardRowUpdate, lockedRows map[string]bool) error {
+	return validateStoryboardDirectUpdatesForFields(updates, lockedRows, []string{"locked", "mediaReview", "assets", "assetBindings", "characters"})
+}
+
+func validateStoryboardDirectUpdatesForFields(updates []cloudAgentStoryboardRowUpdate, lockedRows map[string]bool, managedFields []string) error {
+	for _, update := range updates {
+		if lockedRows[update.RowID] {
+			return cloudAgentFieldError("updates.rowId", "locked", "镜头已锁定，整批未执行")
+		}
+		for _, key := range managedFields {
+			if _, exists := update.Patch[key]; exists {
+				return cloudAgentFieldError("updates.patch."+key, "managed_field", "write_rows 保留现有镜头的锁定和素材字段")
+			}
+		}
+	}
+	return nil
+}
+
+func storyboardDirectWriteRowHasBindings(doc map[string]any, nodeID string, row map[string]any) bool {
+	if stringValue(row["imageNodeId"]) != "" || stringValue(row["videoNodeId"]) != "" || stringValue(row["previsSceneId"]) != "" || stringValue(row["previsSnapshotUrl"]) != "" ||
+		len(creationMaps(row["assetBindings"])) != 0 || len(creationMaps(row["characters"])) != 0 {
+		return true
+	}
+	handle := "row:" + stringValue(row["id"])
+	for _, edge := range creationMaps(doc["connections"]) {
+		if (edge["fromNodeId"] == nodeID && edge["fromHandleId"] == handle) || (edge["toNodeId"] == nodeID && edge["toHandleId"] == handle) {
+			return true
+		}
+	}
+	return false
 }
 
 // cloudAgentStoryboardEditSelection resolves rowId/rowIds, checks the selection

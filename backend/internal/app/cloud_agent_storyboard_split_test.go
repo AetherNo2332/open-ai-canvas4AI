@@ -1,11 +1,79 @@
 package app
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
+
+func TestCloudAgentStoryboardWritesConfirmedRowsWithoutSplitTask(t *testing.T) {
+	s, db := storyboardSplitTestService(t)
+	req := agentTestRequest()
+	req.CanvasID = "split-canvas"
+	req.PermissionMode = "auto"
+	root, err := s.CreateCloudAgentRun("user", req, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := mustStoryboardDocument(t, s)
+	before := splitCanvasRows(t, s)
+	args := map[string]any{
+		"action": "write_rows", "nodeId": "board", "snapshotHash": cloudAgentCanvasHash(doc), "operationId": "confirmed-plan-01",
+		"updates": []map[string]any{{"rowId": "a", "patch": map[string]any{"durationSeconds": 10, "plotDescription": "确认后对视"}}},
+		"newRows": []map[string]any{{"durationSeconds": 10, "plotDescription": "确认后离场"}},
+	}
+	call := cloudAgentStoryboardCall(t, "storyboard", "confirmed-rows", args)
+	if err := validateCloudAgentToolArguments(workflowTool(t, "storyboard"), call.Function.Arguments); err != nil {
+		t.Fatal(err)
+	}
+	run, _ := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call})
+	if err := agentPiExecuteCallForTest(t, s, run.ID, call.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, state := agentInterjectionState(t, s, run.ID)
+	if len(state.PendingGenerations) != 0 || !strings.Contains(cloudAgentToolMessageForTest(t, state, call.ID), `"applied":true`) {
+		t.Fatal("expected a write receipt without an async split submission")
+	}
+	rows := splitCanvasRows(t, s)
+	if len(rows) != 4 || rows[0]["id"] != "a" || rows[0]["plotDescription"] != "确认后对视" || rows[0]["imageNodeId"] != before[0]["imageNodeId"] || rows[2]["locked"] != true || rows[3]["plotDescription"] != "确认后离场" {
+		t.Fatalf("unexpected writeback: %#v", rows)
+	}
+	policy, _ := s.RuntimePolicy()
+	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", req.CanvasID, call, policy); err != nil {
+		t.Fatalf("same operation should replay before snapshot validation: %v", err)
+	}
+	args["operationId"] = "confirmed-plan-02"
+	stale := cloudAgentStoryboardCall(t, "storyboard", "stale-rows", args)
+	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", req.CanvasID, stale, policy); err == nil {
+		t.Fatal("new operation accepted a stale snapshot")
+	}
+	snapshot, _ := json.Marshal(splitCanvasRows(t, s))
+	args["snapshotHash"] = cloudAgentCanvasHash(mustStoryboardDocument(t, s))
+	args["updates"] = []map[string]any{{"rowId": "c", "patch": map[string]any{"dialogue": "locked"}}}
+	locked := cloudAgentStoryboardCall(t, "storyboard", "locked-rows", args)
+	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", req.CanvasID, locked, policy); err == nil {
+		t.Fatal("locked update accepted")
+	}
+	after, _ := json.Marshal(splitCanvasRows(t, s))
+	if string(snapshot) != string(after) {
+		t.Fatal("replay or rejected call changed rows")
+	}
+}
+
+func mustStoryboardDocument(t *testing.T, s *Service) map[string]any {
+	t.Helper()
+	canvas, err := s.repo.CanvasProjectForUser("user", "split-canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
 
 func TestCloudAgentStoryboardAsyncSubmitWaitAndNotice(t *testing.T) {
 	s, db := storyboardSplitTestService(t)

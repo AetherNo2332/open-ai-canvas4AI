@@ -60,7 +60,7 @@ export function inspectStoryboardReadiness(nodes: CanvasNodeData[]) {
         storyboards,
         nextActions: [
             ...(!styleReady ? ["先 canvas_list_styles 读取真实画风，结合已确认风格调用 canvas_apply_style；该工具会复用或创建画风节点。仅在缺少关键风格取舍时询问用户。"] : []),
-            ...(storyboards.some((item) => !item.populated) ? ["先用 storyboard.read 检查目标表；剧情写入 composerContent，项目风格和要求写入相连文本节点，再用 storyboard.split 服务端拆镜；局部修改用 resplit，不手填整表。"] : []),
+            ...(storyboards.some((item) => !item.populated) ? ["先用 storyboard.read 检查目标表和关联上下文。用 ask_user 确认拆镜方案后，通过 storyboard.write_rows 写回原表。"] : []),
         ],
     };
 }

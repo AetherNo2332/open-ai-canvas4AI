@@ -112,6 +112,7 @@ import {
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
 import { requestAgentPrefill, useGlobalAgentStore } from "@/stores/use-global-agent-store";
+import { buildStoryboardAgentPrompt } from "@/lib/canvas/storyboard-agent-request";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
@@ -2089,18 +2090,58 @@ function CanvasViewportPage() {
         });
     }, [projectLoaded, setNodes]);
 
-    const { addScriptRow, createAndGenerateScriptVideos, createScriptActionBoards, createScriptImageNodes, createScriptVideoNodes, generateScriptImages, generateScriptRows, generateScriptVideos, removeScriptRow, replaceScriptRows, updateScriptRow } =
-        useCanvasStoryboard({
-            projectId,
-            prepareCanvasForServerAction,
-            addedSkills,
-            nodesRef,
-            connectionsRef,
-            setNodes,
-            setConnections,
-            setSelectedNodeIds,
-            enqueueGenerationBatch,
-        });
+    const sendStoryboardToAgent = useCallback(
+        async (nodeId: string, prompt?: string, selection?: { rowIds: string[]; request: string }) => {
+            const node = nodesRef.current.find((item) => item.id === nodeId && item.type === CanvasNodeType.Script);
+            if (!node || node.metadata?.locked || node.metadata?.status === "loading") {
+                message.warning("分镜表已锁定、不可用或已有拆镜任务正在处理");
+                return false;
+            }
+            const story = prompt ?? node.metadata?.composerContent ?? "";
+            const userScope = getActiveUserScope();
+            try {
+                const text = buildStoryboardAgentPrompt(node, story, selection);
+                openAgent();
+                const outcome = await requestAgentPrefill({
+                    canvasId: projectId,
+                    userScope,
+                    text,
+                    autoSubmit: true,
+                    focusNodeIds: [nodeId],
+                    currentConversation: {
+                        prepare: async () => {
+                            const current = nodesRef.current.find((item) => item.id === nodeId && item.type === CanvasNodeType.Script);
+                            if (!current || current.metadata?.locked || current.metadata?.status === "loading") throw new Error("分镜表状态已变化，请重新核对");
+                            if (!selection && current.metadata?.composerContent !== story) {
+                                if (current.metadata?.composerContent !== node.metadata?.composerContent || !handleConfigNodeChange(nodeId, { composerContent: story })) throw new Error("剧情未保存，请核对输入后重试");
+                            }
+                            await prepareCanvasForServerAction();
+                        },
+                    },
+                });
+                if (outcome === "sent") message.success("已发送到当前 Agent，请在会话中确认方案");
+                else if (outcome === "queued") message.info("已加入当前 Agent 会话队列");
+                else {
+                    message.warning("发送未确认。请选择已有 Agent 会话，并查看面板提示后重试");
+                    return false;
+                }
+                return true;
+            } catch (cause) {
+                message.error(cause instanceof Error ? cause.message : "发送到 Agent 失败");
+                return false;
+            }
+        },
+        [handleConfigNodeChange, message, openAgent, prepareCanvasForServerAction, projectId],
+    );
+
+    const { addScriptRow, createAndGenerateScriptVideos, createScriptActionBoards, createScriptImageNodes, createScriptVideoNodes, generateScriptImages, generateScriptVideos, removeScriptRow, replaceScriptRows, updateScriptRow } = useCanvasStoryboard({
+        nodesRef,
+        connectionsRef,
+        setNodes,
+        setConnections,
+        setSelectedNodeIds,
+        enqueueGenerationBatch,
+    });
 
     const createStoryboardFromBatchTable = useCallback(
         async (tableNodeId: string) => {
@@ -2428,8 +2469,7 @@ function CanvasViewportPage() {
                         onUpdateRow={(rowId, patch) => updateScriptRow(contentNode.id, rowId, patch)}
                         onEditAssets={(rowId) => setStoryboardAssetTarget({ nodeId: contentNode.id, rowId })}
                         onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
-                        onGenerateScript={(prompt) => void generateScriptRows(contentNode.id, prompt)}
-                        onModelChange={(model) => handleConfigNodeChange(contentNode.id, { model })}
+                        onSendToAgent={(prompt) => sendStoryboardToAgent(contentNode.id, prompt)}
                         onShotDurationChange={(duration: StoryboardShotDuration) => handleConfigNodeChange(contentNode.id, { storyboardShotDuration: duration })}
                         onShotCountChange={(count: StoryboardShotCount) => handleConfigNodeChange(contentNode.id, { storyboardShotCount: count })}
                         workspaceMode={workspaceMode}
@@ -2489,7 +2529,7 @@ function CanvasViewportPage() {
             focusCanvasImageNode,
             generateBatchRows,
             generateScriptImages,
-            generateScriptRows,
+            sendStoryboardToAgent,
             generateScriptVideos,
             handleConfigNodeChange,
             handleConnectDrop,
@@ -2556,12 +2596,12 @@ function CanvasViewportPage() {
                 return;
             }
             if (node.type === CanvasNodeType.Script) {
-                const prompt = (node.metadata?.composerContent || node.metadata?.prompt || "").trim();
-                if (!prompt) {
+                const prompt = node.metadata?.composerContent || node.metadata?.prompt || "";
+                if (!prompt.trim()) {
                     message.warning("分镜脚本缺少剧情内容，无法重试");
                     return;
                 }
-                void generateScriptRows(node.id, prompt);
+                void sendStoryboardToAgent(node.id, prompt);
                 return;
             }
             if (node.metadata?.experimentalLayerPlan || node.metadata?.layerExtraction) {
@@ -2584,7 +2624,7 @@ function CanvasViewportPage() {
             }
             void handleRetryNode(node);
         },
-        [generateScriptRows, handleRetryNode, message, nodesRef, retryImageBatchChildren, setLayerDecompositionNodeId],
+        [sendStoryboardToAgent, handleRetryNode, message, nodesRef, retryImageBatchChildren, setLayerDecompositionNodeId],
     );
     const openCanvasNodeTaskDetails = useCallback(
         (node: CanvasNodeData) => {
@@ -3648,7 +3688,7 @@ function CanvasViewportPage() {
                                     );
                                 }}
                                 onGenerateImages={(rowIds) => activeScriptNode && void generateScriptImages(activeScriptNode.id, rowIds)}
-                                onResplitRows={(rowIds, request) => activeScriptNode && void generateScriptRows(activeScriptNode.id, activeScriptNode.metadata?.composerContent || "", undefined, rowIds, request)}
+                                onResplitRows={(rowIds, request) => (activeScriptNode ? sendStoryboardToAgent(activeScriptNode.id, undefined, { rowIds, request }) : Promise.resolve(false))}
                                 onGenerateVideos={(rowIds) => {
                                     if (!activeScriptNode) return;
                                     if (activeScriptNode.metadata?.storyboardVideoInputMode === "keyframe") void generateScriptVideos(activeScriptNode.id, rowIds);

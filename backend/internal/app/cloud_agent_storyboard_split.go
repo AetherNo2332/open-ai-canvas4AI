@@ -122,9 +122,9 @@ func (s *Service) executeCloudAgentStoryboard(run *model.CloudAgentExecution, st
 
 func prepareStoryboardWriteCall(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, fields map[string]any, action string) (cloudAgentCall, error) {
 	switch action {
-	case "update", "lock", "unlock", "set_assets", "add_assets", "remove_assets", "upsert_assets", "set_references", "add_references", "remove_references", "bind_output", "unbind_output":
+	case "write_rows", "update", "lock", "unlock", "set_assets", "add_assets", "remove_assets", "upsert_assets", "set_references", "add_references", "remove_references", "bind_output", "unbind_output":
 	default:
-		return call, cloudAgentFieldError("action", "invalid_value", "未知分镜 action；生成分镜请使用 split 或 resplit")
+		return call, cloudAgentFieldError("action", "invalid_value", "未知分镜 action；请先读取工具合同")
 	}
 	canvas, err := repo.CanvasProjectForUser(userID, canvasID)
 	if err != nil {
@@ -142,18 +142,16 @@ func prepareStoryboardWriteCall(repo *repository.Repository, userID, canvasID st
 	if id := stringValue(fields["rowId"]); id != "" {
 		ids = append(ids, id)
 	}
-	for _, update := range creationMaps(fields["updates"]) {
-		ids = append(ids, stringValue(update["rowId"]))
-	}
+	ids = storyboardWriteRowIDs(fields, ids, action)
 	if cloudAgentStoryboardSharedAction(action) {
 		ids = nil
 		for _, row := range rows {
 			ids = append(ids, stringValue(row["id"]))
 		}
-	} else if len(ids) == 0 {
+	} else if len(ids) == 0 && action != "write_rows" {
 		return call, cloudAgentFieldError("rowIds", "required", "请指定要修改的真实镜头 ID")
 	}
-	if !cloudAgentStoryboardSharedAction(action) {
+	if !cloudAgentStoryboardSharedAction(action) && len(ids) > 0 {
 		if err := validateCloudAgentStoryboardRowIDs(rows, ids, "rowIds"); err != nil {
 			return call, err
 		}
@@ -166,8 +164,18 @@ func prepareStoryboardWriteCall(repo *repository.Repository, userID, canvasID st
 	return normalizedStoryboardWriteCall(call, fields, action)
 }
 
+func storyboardWriteRowIDs(fields map[string]any, ids []string, action string) []string {
+	for _, update := range creationMaps(fields["updates"]) {
+		ids = append(ids, stringValue(update["rowId"]))
+	}
+	if action == "write_rows" {
+		ids = append(ids, cloudAgentStrings(fields["removeRowIds"])...)
+	}
+	return ids
+}
+
 func normalizedStoryboardWriteCall(call cloudAgentCall, fields map[string]any, action string) (cloudAgentCall, error) {
-	internal := storyboardCallFields(call, fields, "operationId", "storyboardRevision", "snapshotHash", "nodeId", "rowId", "rowIds", "patch", "updates", "assets", "references", "referenceNodeIds", "outputMode", "outputNodeId")
+	internal := storyboardCallFields(call, fields, "operationId", "storyboardRevision", "snapshotHash", "nodeId", "rowId", "rowIds", "patch", "updates", "newRows", "removeRowIds", "assets", "references", "referenceNodeIds", "outputMode", "outputNodeId")
 	var args map[string]any
 	_ = json.Unmarshal([]byte(internal.Function.Arguments), &args)
 	if action == "lock" || action == "unlock" {
