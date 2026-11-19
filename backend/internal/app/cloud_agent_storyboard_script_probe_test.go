@@ -1,15 +1,16 @@
 package app
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
 
 // 分镜表工具关闭时 Agent 能力边界实证：
-//   - canvas_apply_ops 建 script 节点（分镜稿容器）照常可用；
+//   - canvas_apply_ops 不能创建 script 节点；
 //   - storyboard 工具调用被强制闸拒绝。
 
-func TestStoryboardDisabledStillAllowsScriptNodeCreation(t *testing.T) {
+func TestStoryboardDisabledRejectsScriptNodeCreation(t *testing.T) {
 	s, db := storyboardSplitTestService(t)
 	req := agentTestRequest()
 	req.CanvasID = "split-canvas"
@@ -26,8 +27,16 @@ func TestStoryboardDisabledStillAllowsScriptNodeCreation(t *testing.T) {
 	}
 	_, state = agentInterjectionState(t, s, run.ID)
 	receipt := cloudAgentToolMessageForTest(t, state, call.ID)
-	if !strings.Contains(receipt, "snapshotHash") {
-		t.Fatalf("script node creation not applied: %s", receipt)
+	var detail map[string]any
+	if err := json.Unmarshal([]byte(receipt), &detail); err != nil || detail["field"] != "ops[0].nodeType" || detail["errorClass"] != "schema_error" {
+		t.Fatalf("script node creation not rejected by the advertised contract: %s (%v)", receipt, err)
+	}
+	canvas, err := s.repo.CanvasProjectForUser("user", req.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(canvas.PayloadJSON, `"st1"`) {
+		t.Fatal("script node was created despite storyboard being disabled")
 	}
 }
 
