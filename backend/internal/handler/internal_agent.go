@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	internalAgentWireVersion      = "canvas-pi-wire/v6"
+	internalAgentWireVersion      = "canvas-pi-wire/v7"
 	internalAgentPiSDKVersion     = "0.87.1"
 	internalAgentSessionFormat    = "3"
 	internalAgentProtocolMismatch = "Pi Agent worker protocol version mismatch"

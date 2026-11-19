@@ -492,7 +492,7 @@ func TestCloudAgentMediaBatchImageApprovalEditsApplyToEveryTask(t *testing.T) {
 	for _, item := range submitted.MediaBatch.Items {
 		task, err := s.repo.TaskForUser("user", item.taskID())
 		if err != nil {
-			t.Fatalf("image task missing: %v; item=%+v", err, item)
+			t.Fatalf("image task missing: %v; phase=%s; item=%+v", err, submitted.MediaBatch.Phase, item)
 		}
 		var input canvasGenerationInput
 		if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {

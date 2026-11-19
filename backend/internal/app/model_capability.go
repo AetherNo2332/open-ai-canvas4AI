@@ -20,6 +20,7 @@ type ModelCapabilityConfig struct {
 }
 
 type TextCapabilityConfig struct {
+	ToolCallingSupported *bool `json:"toolCallingSupported,omitempty"`
 	// VisionSupported declares whether Agent image inspection is supported.
 	VisionSupported *bool `json:"visionSupported,omitempty"`
 	// VisionMaxBatchImages and VisionMaxBatchCost are optional Agent safeguards.

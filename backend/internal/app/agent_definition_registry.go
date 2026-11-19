@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
 	"yingce/backend/internal/kernel"
@@ -22,6 +23,7 @@ type AgentDefinition struct {
 	ReadOnly          bool
 	authorize         agentObjectAuthorizer
 	readAdapters      map[string]agentReadAdapter
+	tools             map[string]agentToolRegistration
 }
 
 type agentObjectAuthorizer func(*Service, string, CloudAgentRequest) (*model.CanvasProject, error)
@@ -36,6 +38,7 @@ type agentDefinitionRegistry struct {
 	latest       map[string]AgentDefinition
 	versions     map[agentDefinitionVersion]AgentDefinition
 	readAdapters map[string]agentReadAdapter
+	tools        map[string]agentToolRegistration
 }
 
 var defaultAgentDefinitionRegistry *agentDefinitionRegistry
@@ -71,9 +74,19 @@ func init() {
 }
 
 func newAgentDefinitionRegistry(definitions []AgentDefinition, additionalAdapters ...agentReadAdapter) (*agentDefinitionRegistry, error) {
+	return newAgentRegistry(definitions, nil, additionalAdapters...)
+}
+
+func newAgentRegistry(definitions []AgentDefinition, additionalTools []agentToolRegistration, additionalAdapters ...agentReadAdapter) (*agentDefinitionRegistry, error) {
 	registry := &agentDefinitionRegistry{
 		defaults: map[string]string{}, latest: map[string]AgentDefinition{}, versions: map[agentDefinitionVersion]AgentDefinition{},
-		readAdapters: map[string]agentReadAdapter{},
+		readAdapters: map[string]agentReadAdapter{}, tools: maps.Clone(agentToolRegistry),
+	}
+	for _, tool := range additionalTools {
+		tool.order = len(registry.tools)
+		if err := registerAgentTool(registry.tools, tool); err != nil {
+			return nil, err
+		}
 	}
 	for _, adapter := range append(builtinAgentReadAdapters(), additionalAdapters...) {
 		if !agentReadNamespace.MatchString(adapter.namespace) || adapter.business == "" || adapter.version <= 0 ||
@@ -96,6 +109,7 @@ func newAgentDefinitionRegistry(definitions []AgentDefinition, additionalAdapter
 }
 
 func (registry *agentDefinitionRegistry) add(definition AgentDefinition) error {
+	definition.tools = registry.tools
 	definition.readAdapters = make(map[string]agentReadAdapter, len(definition.ReadAdapters))
 	for _, name := range definition.ReadAdapters {
 		definition.readAdapters[name] = registry.readAdapters[name]

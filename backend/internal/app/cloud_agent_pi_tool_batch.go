@@ -39,16 +39,9 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	if cloudAgentRunTerminal(run.Status) {
 		return nil
 	}
-	state, err := cloudAgentDecode(run)
+	state, err := s.piToolBatchState(run, batch.Calls)
 	if err != nil {
 		return err
-	}
-	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
-		for _, call := range batch.Calls {
-			if call.Function.Name == "read" && !agentBusinessRead(call) {
-				return kernel.Forbidden("native Skill read does not use a canvas tool batch")
-			}
-		}
 	}
 	batch.TaskID = strings.TrimSpace(batch.TaskID)
 	if batch.TaskID == "" {
@@ -77,6 +70,24 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	return s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
 	})
+}
+
+func (s *Service) piToolBatchState(run *model.CloudAgentExecution, calls []cloudAgentCall) (cloudAgentRuntime, error) {
+	state, err := cloudAgentDecode(run)
+	if err != nil {
+		return state, err
+	}
+	if err := s.authorizeRegisteredAgentRun(run, &state); err != nil {
+		return state, err
+	}
+	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
+		for _, call := range calls {
+			if call.Function.Name == "read" && !agentBusinessRead(call) {
+				return state, kernel.Forbidden("native Skill read does not use a canvas tool batch")
+			}
+		}
+	}
+	return state, nil
 }
 
 // piAdmitToolBatchEnvelope checks the batch against the live call limits and

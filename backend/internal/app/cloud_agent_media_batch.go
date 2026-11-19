@@ -132,13 +132,13 @@ type cloudAgentMediaBatchArgs struct {
 	Quality                    string `json:"quality"`
 	ImageResolution            string `json:"imageResolution"`
 	Duration                   int    `json:"durationSeconds"`
-	VideoGenerateAudio         *bool  `json:"videoGenerateAudio"`
+	VideoGenerateAudio         *bool  `json:"videoGenerateAudio,omitempty"`
 	ImageParameters            string `json:"imageParameters,omitempty"`
 	VideoWatermark             *bool  `json:"videoWatermark,omitempty"`
 	VideoArkPrivateAssetUpload *bool  `json:"videoArkPrivateAssetUpload,omitempty"`
-	Concurrency                int    `json:"concurrency"`
+	Concurrency                int    `json:"concurrency,omitempty"`
 	Canary                     bool   `json:"canary"`
-	MaxRetries                 *int   `json:"maxRetriesPerItem"`
+	MaxRetries                 *int   `json:"maxRetriesPerItem,omitempty"`
 	Items                      []struct {
 		NodeID   string `json:"nodeId"`
 		Prompt   string `json:"prompt"`

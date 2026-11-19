@@ -79,11 +79,6 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 
 // 工具 schema 是每一步都发出去的固定开销。总量上限之外再给每个工具一个上限，
 // 防止某一个工具再次膨胀、挤占其他工具的空间；超限时应把细节挪到按需读取的工具（如 canvas_list_node_types）。
-const (
-	cloudAgentToolSchemaTotalBudget   = 64000
-	cloudAgentToolSchemaPerToolBudget = 12000
-)
-
 func TestCloudAgentEachToolSchemaStaysWithinBudget(t *testing.T) {
 	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}, VisionEnabled: true, WebSearchEnabled: true, MemoryMode: model.AgentMemoryDocumentModeAuto}
 	req.Budget.MaxGenerationTasks = 1

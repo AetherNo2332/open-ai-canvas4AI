@@ -629,11 +629,7 @@ async function bootstrapSession(
       resourceLoader,
       // 默认 coding 工具（read/bash/edit/write/ls/grep/find/powershell）一个都不注册。
       noTools: "all",
-      // SDK tools is also a lifetime allowlist. Reserve the eligible catalog;
-      // only advertised definitions are registered by our extension, so hidden
-      // L1 tools stay absent until a later boundary explicitly registers them.
-      // The catalog covers every tool a mid-run permission change could allow.
-      tools: [...new Set([...snapshot.tools.map(tool => tool.name), ...(snapshot.toolCatalog || [])])]
+      tools: (snapshot.toolCatalog ?? snapshot.tools.map(tool => tool.name))
         .filter(name => !name.startsWith("agent_tools_") && (nativeMode || name !== "read")),
     });
     return { session, sessionManager, cleanup: workspace.cleanup };

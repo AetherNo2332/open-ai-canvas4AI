@@ -96,3 +96,20 @@ func storyboardSetOrNonempty(action string, fields ...string) []map[string]any {
 		{"properties": nonempty},
 	}
 }
+
+func cloudAgentReadOnlyStoryboardSchema(tool map[string]any) {
+	function := tool["function"].(map[string]any)
+	schema := function["parameters"].(map[string]any)
+	read := schema["oneOf"].([]map[string]any)[0]
+	allowed := read["properties"].(map[string]any)
+	props := schema["properties"].(map[string]any)
+	for name := range props {
+		if _, ok := allowed[name]; !ok {
+			delete(props, name)
+		}
+	}
+	props["action"] = map[string]any{"type": "string", "enum": []string{"read"}}
+	schema["allOf"] = read["allOf"]
+	delete(schema, "oneOf")
+	function["description"] = "读取原分镜表、快照、分页和素材引用。支持按镜头和字段筛选。"
+}

@@ -2,7 +2,10 @@ package app
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
+	"sort"
+	"strings"
 
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
@@ -11,18 +14,52 @@ import (
 type agentToolExecutor func(*Service, *model.CloudAgentExecution, *cloudAgentRuntime, cloudAgentCall, bool) error
 
 type agentToolRegistration struct {
-	version int
-	execute agentToolExecutor
+	name               string
+	order              int
+	version            int
+	businesses         []string
+	platform           bool
+	writeOnly          bool
+	allowed            func(CloudAgentRequest) bool
+	schema             map[string]any
+	readOnlySchema     map[string]any
+	noStoryboardSchema map[string]any
+	execute            agentToolExecutor
 }
 
 var agentToolRegistry map[string]agentToolRegistration
+var agentRegisteredToolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
-func builtinAgentToolRegistry() map[string]agentToolRegistration {
-	registered := make(map[string]agentToolRegistration)
-	for _, name := range cloudAgentToolNames(backendToolArtifact().Tools) {
-		registered[name] = agentToolRegistration{version: 1, execute: (*Service).routeCloudAgentToolCall}
+func registerAgentTool(tools map[string]agentToolRegistration, tool agentToolRegistration) error {
+	if !agentRegisteredToolName.MatchString(tool.name) || strings.HasPrefix(tool.name, "agent_tools_") ||
+		!agentToolRegistrationSchemaValid(tool.name, tool.schema) ||
+		tool.version <= 0 || tool.execute == nil || tools[tool.name].version != 0 ||
+		(!tool.platform && len(tool.businesses) == 0) {
+		return agentCapabilityConfigurationError("工具注册无效或重复", tool.name)
 	}
-	return registered
+	for _, variant := range []map[string]any{tool.readOnlySchema, tool.noStoryboardSchema} {
+		if variant != nil && !agentToolRegistrationSchemaValid(tool.name, variant) {
+			return agentCapabilityConfigurationError("工具 Schema 变体无效", tool.name)
+		}
+	}
+	tools[tool.name] = tool
+	return nil
+}
+
+func agentToolRegistrationSchemaValid(name string, schema map[string]any) bool {
+	function, _ := schema["function"].(map[string]any)
+	parameters, _ := function["parameters"].(map[string]any)
+	_, description := function["description"].(string)
+	_, identity := cloudAgentToolSchemaIdentity(schema)
+	return schema["type"] == "function" && function["name"] == name && description &&
+		parameters["type"] == "object" && identity != "invalid"
+}
+
+func (definition AgentDefinition) toolRegistrations() map[string]agentToolRegistration {
+	if definition.tools != nil {
+		return definition.tools
+	}
+	return agentToolRegistry
 }
 
 func validateAgentDefinition(definition AgentDefinition) error {
@@ -37,8 +74,9 @@ func validateAgentDefinition(definition AgentDefinition) error {
 	}
 	seen := make(map[string]bool)
 	for _, name := range definition.BusinessTools {
-		if seen[name] || agentToolRegistry[name].execute == nil || agentPlatformTool(name) {
-			return fmt.Errorf("invalid or duplicate business tool %q in %q", name, definition.ID)
+		tool := definition.toolRegistrations()[name]
+		if seen[name] || !tool.appliesToDefinition(definition) {
+			return agentCapabilityConfigurationError("业务工具未知、重复或不适用于该业务", name)
 		}
 		seen[name] = true
 	}
@@ -57,13 +95,9 @@ func validateAgentDefinition(definition AgentDefinition) error {
 	return nil
 }
 
-func agentPlatformTool(name string) bool {
-	switch name {
-	case "plan_update", "finish_run", "ask_user", "read", "memory_update":
-		return true
-	default:
-		return false
-	}
+func (tool agentToolRegistration) appliesToDefinition(definition AgentDefinition) bool {
+	return tool.execute != nil && !tool.platform && slices.Contains(tool.businesses, definition.BusinessType) &&
+		(!definition.ReadOnly || !tool.writeOnly)
 }
 
 type AgentCapabilityAdmission struct {
@@ -80,6 +114,9 @@ type AgentCapabilitySnapshot struct {
 	ReadAdapterVersions map[string]int `json:"readAdapterVersions,omitempty"`
 	SkillRead           bool           `json:"skillRead,omitempty"`
 	ReadOnly            bool           `json:"readOnly,omitempty"`
+	DirectoryVersion    int            `json:"directoryVersion,omitempty"`
+	DirectoryHash       string         `json:"directoryHash,omitempty"`
+	WriteTools          []string       `json:"writeTools,omitempty"`
 }
 
 func CompileAgentCapabilities(definition AgentDefinition, admission AgentCapabilityAdmission) (AgentCapabilitySnapshot, error) {
@@ -109,15 +146,65 @@ func CompileAgentCapabilities(definition AgentDefinition, admission AgentCapabil
 		names = append(names, "read")
 	}
 	for _, name := range names {
-		tool := agentToolRegistry[name]
+		tool := definition.toolRegistrations()[name]
 		if tool.execute == nil {
-			return AgentCapabilitySnapshot{}, fmt.Errorf("missing executor for Agent tool %q", name)
+			return AgentCapabilitySnapshot{}, agentCapabilityConfigurationError("工具执行器不可用", name)
 		}
-		if name != "canvas_inspect_image" || admission.VisionEnabled {
-			snapshot.Tools[name] = tool.version
-		}
+		snapshot.Tools[name] = tool.version
 	}
 	return snapshot, nil
+}
+
+func compileAgentRunCapabilityDirectory(definition AgentDefinition, req CloudAgentRequest, hasSkills bool) (AgentCapabilitySnapshot, []map[string]any, error) {
+	if err := validateAgentDefinition(definition); err != nil {
+		return AgentCapabilitySnapshot{}, nil, err
+	}
+	capabilities, err := CompileAgentCapabilities(definition, AgentCapabilityAdmission{VisionEnabled: req.VisionEnabled, HasSkills: hasSkills})
+	if err != nil {
+		return AgentCapabilitySnapshot{}, nil, err
+	}
+	var selected []agentToolRegistration
+	for name := range capabilities.Tools {
+		tool := definition.toolRegistrations()[name]
+		if tool.eligible(req) {
+			selected = append(selected, tool)
+		} else {
+			delete(capabilities.Tools, name)
+		}
+	}
+	sort.Slice(selected, func(left, right int) bool { return selected[left].order < selected[right].order })
+	tools := make([]map[string]any, 0, len(selected))
+	for _, tool := range selected {
+		if tool.writeOnly || (req.PermissionMode != "read_only" && tool.readOnlySchema != nil && cloudAgentWrite(tool.name)) {
+			capabilities.WriteTools = append(capabilities.WriteTools, tool.name)
+		}
+		tools = append(tools, tool.modelSchema(req, &capabilities))
+	}
+	return capabilities, tools, nil
+}
+
+func (tool agentToolRegistration) eligible(req CloudAgentRequest) bool {
+	if req.PermissionMode == "read_only" && tool.writeOnly {
+		return false
+	}
+	if req.subagent != nil && (tool.name == "ask_user" || tool.name == "finish_run" ||
+		(!req.subagent.WriteGranted && cloudAgentWrite(tool.name))) {
+		return false
+	}
+	return tool.allowed == nil || tool.allowed(req)
+}
+
+func (tool agentToolRegistration) modelSchema(req CloudAgentRequest, capabilities *AgentCapabilitySnapshot) map[string]any {
+	switch {
+	case tool.name == "read":
+		return agentScopedReadToolSchema(capabilities)
+	case req.PermissionMode == "read_only" && tool.readOnlySchema != nil:
+		return tool.readOnlySchema
+	case req.StoryboardDisabled && tool.noStoryboardSchema != nil:
+		return tool.noStoryboardSchema
+	default:
+		return tool.schema
+	}
 }
 
 func compileRegisteredAgentTools(req CloudAgentRequest, runtimeMode string, capabilities *AgentCapabilitySnapshot) []map[string]any {
@@ -132,6 +219,10 @@ func compileRegisteredAgentTools(req CloudAgentRequest, runtimeMode string, capa
 }
 
 func cloudAgentRunAllowsTool(state *cloudAgentRuntime, name string) bool {
+	if state.Capabilities != nil && state.Capabilities.DirectoryVersion != 0 {
+		return state.Capabilities.Tools[name] != 0 && (state.Request.PermissionMode != "read_only" ||
+			!slices.Contains(state.Capabilities.WriteTools, name))
+	}
 	if state.Capabilities != nil && state.Capabilities.Tools[name] == 0 {
 		return false
 	}
@@ -149,22 +240,35 @@ func (s *Service) authorizeAgentRunTool(run *model.CloudAgentExecution, state *c
 	if state.Capabilities == nil {
 		return nil
 	}
-	if state.Capabilities.Tools[name] != agentToolRegistry[name].version {
+	registration := s.agentDefinitionRegistry().tools[name]
+	if registration.execute == nil || state.Capabilities.Tools[name] != registration.version {
 		return kernel.Forbidden("本轮工具执行器版本不可用")
 	}
 	return s.authorizeRegisteredAgentRun(run, state)
 }
 
-func (s *Service) checkRegisteredAgentToolBeforeDispatch(run *model.CloudAgentExecution, state *cloudAgentRuntime, name string) error {
-	if state.Capabilities == nil || !cloudAgentRunAllowsTool(state, name) {
+func (s *Service) checkRegisteredAgentToolBeforeDispatch(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
+	if state.Capabilities == nil {
 		return nil
 	}
-	return s.authorizeAgentRunTool(run, state, name)
+	name := call.Function.Name
+	parameters, disclosed := cloudAgentAdvertisedTool(state, name)
+	if !disclosed || !cloudAgentRunAllowsTool(state, name) {
+		return kernel.Forbidden("工具未获本轮权限授权")
+	}
+	if err := s.authorizeAgentRunTool(run, state, name); err != nil {
+		return err
+	}
+	return validateCloudAgentToolArguments(parameters, call.Function.Arguments)
 }
 
 func (s *Service) dispatchRegisteredAgentTool(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) error {
 	if state.Capabilities != nil && allowed {
-		return agentToolRegistry[call.Function.Name].execute(s, run, state, call, true)
+		registration := s.agentDefinitionRegistry().tools[call.Function.Name]
+		if registration.execute == nil || registration.version != state.Capabilities.Tools[call.Function.Name] {
+			return s.recordCloudAgentToolReceipt(run, state, call, nil, agentCapabilityConfigurationError("冻结工具执行器不可用", call.Function.Name))
+		}
+		return registration.execute(s, run, state, call, true)
 	}
 	return s.routeCloudAgentToolCall(run, state, call, allowed)
 }
@@ -183,6 +287,9 @@ func (s *Service) authorizeRegisteredAgentRun(run *model.CloudAgentExecution, st
 	if state.Capabilities == nil {
 		return nil
 	}
+	if err := s.verifyAgentCapabilityDirectory(state); err != nil {
+		return err
+	}
 	scope := agentBusinessScope(state.Request)
 	if err := agentRequireIsolatedContext(state.Context, run.UserID, scope); err != nil {
 		return err
@@ -190,10 +297,7 @@ func (s *Service) authorizeRegisteredAgentRun(run *model.CloudAgentExecution, st
 	if state.Capabilities.BusinessType != scope.Type {
 		return kernel.Forbidden("本轮 Agent 配置不属于当前业务")
 	}
-	definition, err := s.resolveFrozenAgentDefinition(state.Capabilities)
-	if err != nil {
-		return err
-	}
-	_, err = definition.authorize(s, run.UserID, state.Request)
+	definition := s.agentDefinitionRegistry().versions[agentDefinitionVersion{ID: state.Capabilities.DefinitionID, Version: state.Capabilities.DefinitionVersion}]
+	_, err := definition.authorize(s, run.UserID, state.Request)
 	return err
 }

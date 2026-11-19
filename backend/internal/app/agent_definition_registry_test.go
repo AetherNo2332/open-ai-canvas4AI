@@ -38,6 +38,11 @@ func TestAgentDefinitionRegistry(t *testing.T) {
 			def.ReadAdapters = []string{"drama:episode"}
 			return []AgentDefinition{def}
 		}},
+		{"foreign business tool", func(def AgentDefinition) []AgentDefinition {
+			def.BusinessType = "drama"
+			def.BusinessTools = []string{"canvas_apply_ops"}
+			return []AgentDefinition{def}
+		}},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			if _, err := newAgentDefinitionRegistry(item.change(baseline)); err == nil {

@@ -17,8 +17,7 @@ import (
 //   - 模型通过注入的系统通知得知变化，**不改写系统提示**：系统提示与 prompt cache key
 //     始终按开局权限计算（cloudAgentCacheRequest），换权限只让工具段缓存失效一次；
 //   - 正在等待的审批卡保持原样，仍需用户明确批准或拒绝；只有之后的写入按新权限处理；
-//   - 预算不随权限改变：从只读放宽时生成预算保持原值（0 表示不另设上限），
-//     生成仍受本轮积分上限约束，通知里如实告诉模型。
+//   - 权限切换仅作用于本轮已经准入的工具，目录与预算不随权限改变。
 const (
 	cloudAgentPermissionSource = "permission"
 	// 权限变更历史只记最近这些，用于 requestId 幂等；有界，不随运行时长增长。
@@ -61,9 +60,9 @@ func cloudAgentPermissionNoticeText(from, to string) string {
 	case "read_only":
 		return prefix + "：从现在起不能写入画布或生成，已提交的任务不受影响。这不是新的任务要求。"
 	case "request_approval":
-		return prefix + "：从现在起写入和生成需要用户审批。这不是新的任务要求。"
+		return prefix + "：本轮已获准的写入和生成仍需用户审批；新增工具须开启新一轮。这不是新的任务要求。"
 	default:
-		return prefix + "：从现在起写入无需审批（生成仍受本轮积分预算限制）。这不是新的任务要求。"
+		return prefix + "：本轮已获准的写入可自动执行（生成仍受审批与积分预算限制）；新增工具须开启新一轮。这不是新的任务要求。"
 	}
 }
 
@@ -93,27 +92,6 @@ func cloudAgentPermissionRequestSeen(state *cloudAgentRuntime, requestID string)
 		}
 	}
 	return false
-}
-
-// cloudAgentExtendToolCatalog 把新权限下合格、但开局目录里没有的工具补进运行目录。
-//
-// 目录只增不减：已经注册到 Pi 的工具定义不能中途换 schema（服务端逐字段比对漂移），
-// 所以已存在的工具（例如只读开局时只带 action=read 的 director）保持原定义；
-// 是否可用始终由 cloudAgentToolAllowed 按当前权限判定。
-func cloudAgentExtendToolCatalog(state *cloudAgentRuntime) {
-	existing := map[string]bool{}
-	for _, name := range cloudAgentToolNames(state.Canonical.Tools) {
-		existing[name] = true
-	}
-	req := state.Request
-	req.subagent = state.Subagent
-	for _, tool := range compileRegisteredAgentTools(req, firstNonEmpty(state.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy), state.Capabilities) {
-		name := stringField(tool["function"].(map[string]any), "name")
-		if name != "" && !existing[name] {
-			state.Canonical.Tools = append(state.Canonical.Tools, tool)
-			existing[name] = true
-		}
-	}
 }
 
 // cloudAgentQueuePermissionNotice 排一条权限通知。下一步之前多次切换只保留一条：
@@ -187,7 +165,6 @@ func (s *Service) ChangeCloudAgentPermission(userID, id, mode, requestID string)
 				state.StartPermissionMode = from
 			}
 			state.Request.PermissionMode = mode
-			cloudAgentExtendToolCatalog(&state)
 			state.PermissionChanges = append(state.PermissionChanges, cloudAgentPermissionChange{From: from, To: mode, At: time.Now().UTC(), RequestID: requestID})
 			if len(state.PermissionChanges) > cloudAgentPermissionHistoryMemory {
 				state.PermissionChanges = state.PermissionChanges[len(state.PermissionChanges)-cloudAgentPermissionHistoryMemory:]

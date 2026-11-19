@@ -737,7 +737,7 @@ worker 仅在传输边界分类暂时故障。恢复前读取 Go 的权威快照
 
 ## Canary Agent 调度协议
 
-运行视图增加 `runtimePhase` 与 `waitReason`，区分模型、工具、审批和容量等待。当前内部协议为 `canvas-pi-wire/v6`，Pi SDK 为 `0.87.1`，不匹配的协议返回 426。`GET /internal-agent/events` 为内部 Token 鉴权 SSE，支持递增全局游标续传。`POST /internal-agent/capacity` 保存实例容量，运行 `/phase`、`/control`、`/release` 分别提交阶段、读取轻量控制和按 epoch 释放租约。工具 `/advance` 保存幂等操作后返回 pending 与 operationId。公开请求确认在持久化成功后返回，继续使用已有的幂等键及 SSE 游标。
+运行视图增加 `runtimePhase` 与 `waitReason`，区分模型、工具、审批和容量等待。当前内部协议为 `canvas-pi-wire/v7`，Pi SDK 为 `0.87.1`，不匹配的协议返回 426。领取和恢复的快照携带 `capabilityDirectory`，用于验证本轮冻结的工具版本及 hash。预算及协议升级见 [Agent SDK 业务接入](./agent-sdk.mdx)。`GET /internal-agent/events` 为内部 Token 鉴权 SSE，支持递增全局游标续传。`POST /internal-agent/capacity` 保存实例容量，运行 `/phase`、`/control`、`/release` 分别提交阶段、读取轻量控制和按 epoch 释放租约。工具 `/advance` 保存幂等操作后返回 pending 与 operationId。公开请求确认在持久化成功后返回，继续使用已有的幂等键及 SSE 游标。
 
 路径前缀是 `/api`。前后端一起发布，不按 `/api/v1`、`/api/v2` 做路径版本。不兼容变更随版本一起改接口和调用方。
 

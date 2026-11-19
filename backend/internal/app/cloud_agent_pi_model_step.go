@@ -168,6 +168,9 @@ func piModelStepCheckDisclosure(state *cloudAgentRuntime, request PiModelStepReq
 			return kernel.Forbidden("Pi 模型请求缺少服务端策略")
 		}
 	}
+	if state.Capabilities != nil && state.Capabilities.DirectoryVersion == agentCapabilityDirectoryVersion {
+		return piModelStepMatchesFrozenTools(state, request.Canonical.Tools)
+	}
 	if err := piModelStepRequestedToolsDisclosed(state, request); err != nil {
 		return err
 	}
@@ -188,6 +191,23 @@ func piModelStepCheckDisclosure(state *cloudAgentRuntime, request PiModelStepReq
 	// （例如只读工具被改写成带可写参数）。这里与 Go 目录逐字段比对参数结构。
 	if err := cloudAgentToolSchemaDrift(state.Canonical.Tools, request.Canonical.Tools); err != nil {
 		return kernel.Forbidden(err.Error())
+	}
+	return nil
+}
+
+func piModelStepMatchesFrozenTools(state *cloudAgentRuntime, requested []map[string]any) error {
+	expected := agentSchemasByName(cloudAgentToolsNamed(state.Canonical.Tools, cloudAgentNextAdvertisedToolNames(state)))
+	if len(requested) != len(expected) {
+		return kernel.Forbidden("Pi 模型工具数量与本轮冻结目录不一致")
+	}
+	for _, schema := range requested {
+		name, _ := cloudAgentToolSchemaIdentity(schema)
+		want, _ := json.Marshal(expected[name])
+		actual, err := json.Marshal(schema)
+		if expected[name] == nil || err != nil || string(want) != string(actual) || !cloudAgentRunAllowsTool(state, name) {
+			return kernel.Forbidden("Pi 模型工具与本轮冻结目录不一致")
+		}
+		delete(expected, name)
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import type { PromptParts } from "./system-prompt.js";
 import { EventScheduler, RunEvents } from "./event-scheduler.js";
 import { RetryableBridgeError, safeWorkerDetail } from "./worker-errors.js";
 import type { SubagentRuntime } from "./subagent-wire.js";
+import { validateCapabilityDirectory } from "./capability-directory.js";
 
 /**
  * 内部协议里的**确定性**客户端错误：同一条请求重发不可能成功。
@@ -18,7 +19,7 @@ import type { SubagentRuntime } from "./subagent-wire.js";
 const NON_RETRYABLE_BRIDGE_STATUSES = new Set([400, 401, 403, 404, 405, 406, 410, 413, 414, 415, 422, 426]);
 
 export const CANVAS_PI_WIRE_IDENTITY = {
-  protocolVersion: "canvas-pi-wire/v6",
+  protocolVersion: "canvas-pi-wire/v7",
   piSdkVersion: "0.87.1",
   sessionFormatVersion: "3",
 } as const;
@@ -111,7 +112,7 @@ export interface PiSnapshot {
     tokensBefore: number;
   };
   tools: CanvasToolSpec[];
-  /** Pi 会话的终身工具白名单（平台工具全集）；授权仍看 tools[].allowed 与 Go 校验。 */
+  capabilityDirectory?: { version: number; hash: string; definitionId?: string; definitionVersion?: number };
   toolCatalog?: string[];
   piMessages?: Record<string, unknown>[];
   openedCategories?: string[];
@@ -239,6 +240,7 @@ export class CanvasBridge {
     this.availability.nextProbeAt=0;
     if (result.run) {
       if (!result.runAuthorization) throw new FatalWorkerError("Canvas bridge missing run authorization");
+      validateCapabilityDirectory(result.run);
       result.run.runAuthorization = result.runAuthorization;
     }
     return result.run;
@@ -257,6 +259,7 @@ export class CanvasBridge {
 
   async snapshot(run: PiSnapshot, signal?: AbortSignal): Promise<PiSnapshot> {
     const result = await this.request<{ run: PiSnapshot }>("GET", `/runs/${encodeURIComponent(run.runId)}`, undefined, run, signal);
+    validateCapabilityDirectory(result.run, run);
     result.run.runAuthorization = run.runAuthorization;
     return result.run;
   }

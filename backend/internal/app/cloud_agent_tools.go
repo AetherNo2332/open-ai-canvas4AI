@@ -15,6 +15,10 @@ import (
 )
 
 func cloudAgentCanonical(system string, history []providerTextMessage, prompt string, req CloudAgentRequest) canonicalAgentRequest {
+	return cloudAgentCanonicalWithTools(system, history, prompt, req, compileCloudAgentTools(req))
+}
+
+func cloudAgentCanonicalWithTools(system string, history []providerTextMessage, prompt string, req CloudAgentRequest, tools []map[string]any) canonicalAgentRequest {
 	messages := []map[string]any{}
 	for _, m := range history {
 		// 旧版本会把失败轮次的空回复存进历史；空 assistant 消息不带信息，且会被 Claude 等上游整单拒绝。
@@ -28,7 +32,7 @@ func cloudAgentCanonical(system string, history []providerTextMessage, prompt st
 		messages = append(messages, message)
 	}
 	messages = append(messages, map[string]any{"role": "user", "content": prompt})
-	return canonicalAgentRequest{SystemPrompt: system, Messages: messages, Tools: compileCloudAgentTools(req), ToolChoice: "auto", PromptCacheKey: cloudAgentPromptCacheKey(req)}
+	return canonicalAgentRequest{SystemPrompt: system, Messages: messages, Tools: tools, ToolChoice: "auto", PromptCacheKey: cloudAgentPromptCacheKey(req)}
 }
 
 func cloudAgentPromptCacheKey(req CloudAgentRequest) string {
@@ -54,7 +58,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v25"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v26"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -151,18 +155,18 @@ func cloudAgentPatchSchema() map[string]any {
 			// repeated in every model request. The descriptor still validates
 			// the complete nested contract during preview and execution.
 			if field.Kind == "object" {
-				property = map[string]any{"type": kind, "description": "字段完整合同见 canvas_list_node_types(nodeType)"}
+				property = map[string]any{"type": kind}
 			}
 			if field.Kind == "array" {
-				property = map[string]any{"type": kind, "maxItems": field.MaxItems, "items": map[string]any{}, "description": "数组元素合同见 canvas_list_node_types(nodeType)"}
+				property = map[string]any{"type": kind, "maxItems": field.MaxItems, "items": map[string]any{}}
 				if field.MaxItems == 0 {
 					delete(property, "maxItems")
 				}
 			}
 			if field.Resettable && (field.Kind == "object" || field.Kind == "array") {
 				property["x-canvas-resettable"] = true
-				property["description"] = fmt.Sprint(property["description"]) + "；null 清除该可选字段，省略保持原值。"
 			}
+			delete(property, "description")
 			addVariant(key, property)
 		}
 	}
@@ -188,7 +192,7 @@ func cloudAgentPatchSchema() map[string]any {
 		}
 	}
 	return map[string]any{"type": "object", "minProperties": 1, "properties": properties, "additionalProperties": false,
-		"description": "title、content、prompt、composerContent 之外的字段只列类型；取值范围、枚举和适用节点用 canvas_list_node_types(nodeType) 读取"}
+		"description": "通过 canvas_list_node_types(nodeType) 读取完整字段合同。带 x-canvas-resettable 的字段可用 null 清除，省略则保留。"}
 }
 
 // cloudAgentPatchTypeOnly 只保留字段的 JSON 类型（含可空），去掉枚举、范围、说明等按节点类型才成立的约束。
