@@ -209,19 +209,21 @@ func (s *Service) PiToolAdvanceAsync(userID, runID, owner, taskID, callID string
 	}
 	operationID := fmt.Sprintf("ato_%x", sha256.Sum256([]byte(runID+"\x00"+taskID+"\x00"+callID)))
 	operation := model.AgentToolOperation{ID: operationID, UserID: userID, RunID: runID, TaskID: taskID, CallID: callID, Status: "queued"}
-	if err := s.repo.PrepareAgentToolOperation(&operation); err != nil {
+	created, err := s.repo.PrepareAgentToolOperation(&operation)
+	if err != nil {
 		return nil, err
 	}
 	if operation.Status == "failed" {
 		return nil, kernel.BadAuthRequest("Agent 工具执行失败：" + operation.Error)
 	}
-	// 入队即给前端一条可见事件；回执仍由真正的执行产生，这里只是"已接单"。
-	pendingCall := state.Calls[state.CallIndex]
-	s.cloudAgentAppendOperationEvent(userID, runID, "tool_pending", map[string]any{
-		"toolName": pendingCall.Function.Name, "callId": callID, "operationId": operationID,
-		"queuedAt": time.Now().UTC().Format(time.RFC3339), "text": "工具已接单，正在后台执行",
-	})
-	s.wakeAgentTools()
+	if created {
+		pendingCall := state.Calls[state.CallIndex]
+		s.cloudAgentAppendOperationEvent(userID, runID, "tool_pending", map[string]any{
+			"toolName": pendingCall.Function.Name, "callId": callID, "operationId": operationID,
+			"queuedAt": operation.CreatedAt.UTC().Format(time.RFC3339), "text": "工具已接单，正在后台执行",
+		})
+		s.wakeAgentTools()
+	}
 	return &PiToolReceipt{CallID: callID, Pending: true, OperationID: operationID}, nil
 }
 

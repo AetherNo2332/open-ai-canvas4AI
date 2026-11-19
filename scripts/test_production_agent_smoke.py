@@ -221,6 +221,26 @@ class ProductionSmokeTests(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "timed out"):
                     harness.media_versions()
 
+    def test_run_timeout_keeps_latest_redacted_snapshot_in_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            harness.secrets.add("private-test-value")
+            initial = {"id": "run-1", "status": "queued", "events": []}
+            latest = {"id": "run-1", "status": "running", "events": [
+                {"seq": 4, "type": "tool_failed", "payload": {
+                    "toolName": "read", "text": "private-test-value", "errorClass": "schema_error",
+                    "arguments": {"resource": "omit-tool-arguments"}}}]}
+            with patch.object(harness, "view", side_effect=[initial, latest]), \
+                    patch.object(smoke.time, "monotonic", side_effect=[0, 0, 1, 180]), \
+                    patch.object(smoke.time, "sleep"):
+                with self.assertRaisesRegex(AssertionError, "timed out after 180s"):
+                    harness.complete(initial)
+            harness.save()
+            self.assertEqual(json.loads(harness.output.read_text())["runs"], [{
+                "id": "run-1", "status": "running", "events": [
+                    {"seq": 4, "type": "tool_failed", "tool": "read",
+                     "error": "[redacted]", "errorClass": "schema_error"}]}])
+
     def test_preflight_accepts_persisted_finish_and_canvas_receipts(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = smoke.Smoke(directory, Path(directory) / "report.json")

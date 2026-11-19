@@ -245,12 +245,21 @@ class Smoke:
         return self.api("GET", f"/agent/runs/{run['id']}?eventLimit=200")["run"]
 
     def complete(self, run):
-        view = wait(lambda: (row if (row := self.view(run))["status"] in TERMINAL else None), 180)
-        self.report["runs"].append({"id": run["id"], "status": view["status"], "events": [
-            {"seq": e["seq"], "type": e["type"], "tool": e.get("payload", {}).get("toolName"),
-             **({"error": str(e["payload"].get("text", ""))[:300], "errorClass": e["payload"].get("errorClass")}
-                if e["type"] == "tool_failed" else {})}
-            for e in view["events"]]})
+        view = run
+
+        def terminal_view():
+            nonlocal view
+            view = self.view(run)
+            return view if view["status"] in TERMINAL else None
+
+        try:
+            wait(terminal_view, 180)
+        finally:
+            self.report["runs"].append({"id": run["id"], "status": view["status"], "events": [
+                {"seq": e["seq"], "type": e["type"], "tool": e.get("payload", {}).get("toolName"),
+                 **({"error": self.redact(str(e["payload"].get("text", "")))[:300],
+                     "errorClass": e["payload"].get("errorClass")} if e["type"] == "tool_failed" else {})}
+                for e in view.get("events", [])]})
         self.check("real run reaches completed", view["status"] == "completed", status=view["status"])
         return view
 

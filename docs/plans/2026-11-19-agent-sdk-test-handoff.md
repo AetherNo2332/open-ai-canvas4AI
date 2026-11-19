@@ -27,9 +27,14 @@ bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full
 | --- | --- |
 | Go 全量与 lint | `backend:full`（rest）、架构基线、gofmt、vet 和工具合同通过。Go 1.25.0 与 CI 固定的 golangci-lint 2.5.0 复跑为 0 个问题。Windows 此前 app 分片报文件权限和媒体探测失败，两个媒体用例后来在 Windows 专项通过。WSL Ubuntu 22.04 的 FFprobe 4.4.2 不支持 `stream_side_data`，分支与 `main@422232409` 均复现 `TestTimelineRenderCropsNearAspectAndWritesProvenance` 和 `TestDramaCanvasAssetsProbesUnknownVideoDimensions` 失败 |
 | Web 全量与预演 E2E | LF 检出上 `bun run test` 3,554 项通过，见 `.local/4ai-web-lf-final.log`。实际 Chrome 预演为 70 项通过、1 项失败，失败在 `shotOutputs` 录制未生成视频。相同浏览器下 `main@422232409` 的 `shotOutputs` 对照复现相同失败。见 `.local/4ai-web-previs-e2e-final.log` 与 `.local/4ai-web-previs-e2e-base.log` |
-| 容器与支付双架构 | Compose smoke 拉取 Go 模块时 TLS 握手超时，改用镜像和代理后构建仍因 Docker 后端连接中断失败。双架构 Buildx 遇到 Docker Hub 授权端点连接超时。Docker Desktop 的 `containerd` 崩溃，常规重启后 daemon 仍不可用。容器场景未验 |
+| 容器冒烟基线 | 2026-11-19 重建本机 Docker 数据盘后，Compose 构建四个镜像并启动隔离服务。迁移门禁、Worker 就绪状态、容器隔离和错误凭据拒绝等 11 项通过。首个确定性模型 Run 在 `canvas_get_state` 超时。Go 日志记录了工具执行反复遇到 Run 版本冲突。见 `.local/4ai-container-smoke-after-docker-rebuild-mirror/` |
+| Luna 容器复跑 | Compose 配置、回环端口、存储与镜像隔离检查通过。BuildKit 在 `auth.docker.io` 鉴权超时，未进入容器启动。两个复跑项目无遗留容器或卷。见 `.local/4ai-container-smoke-luna-20261119/summary.md` |
+| 工具轮询回归 | 旧实现在同一 operation 的第二次轮询产生两个 `tool_pending` 事件，Run revision 从 6 升到 7。修复后仅首次入队写事件并唤醒执行器，重复轮询复用操作标识和状态，Go 回归通过。冒烟超时报告保留最近一次脱敏 Run 快照，部署脚本测试 43 项通过 |
+| 修复后正式容器冒烟 | 基于 `b5c0205ab` 加本地修复，使用现有 `workspace-gap-mirror` 构建器复跑正式脚本，21 项全通过，4 个确定性模型 Run 全部完成。每轮各有 3 条接单事件和 3 条成功回执。通过自动写入、审批前拦截、审批后落库、SSE 游标续读、图片生成及同节点版本切换。测试项目的容器、卷和网络已清理。见 `.local/4ai-container-smoke-after-tool-poll-fix/report.json` |
+| Go + Pi 跨进程 | 修复后的 4AI 工作树在独立 PostgreSQL 14 测试库通过 Worker 接管和偏好 API 测试。覆盖两用户、两业务、八对象、16 个隔离会话、38 次本地确定性模型调用和等量结算，越界标记为零。Windows SQLite 对照在并发用例中出现 `database is locked`，其中一个会话返回 `failed`。见 `.local/4ai-container-smoke-after-tool-poll-fix/handler-sdk-postgres.jsonl` 与 `handler-sdk-restart.jsonl` |
+| 支付制品与双架构 | 六种目标平台的支付制品检查通过。使用本机镜像源构建器复跑，Docker `linux/amd64` 和 `linux/arm64` 的 `payment-package-smoke` 均通过。见 `.local/4ai-container-smoke-after-tool-poll-fix/payment-buildx.log` |
 
-推送以最终提交通过仓库规定的本地 Quality checks 为准。基线对照结果用于定位失败来源，仍需在兼容工具链和可用的 Docker 环境复跑。
+本次先创建草稿 PR 供测试交接。转为待评审前，用最终提交复跑仓库规定的 Quality checks，并核对上表的待复验项。
 
 | 目录 | 命令 |
 | --- | --- |
