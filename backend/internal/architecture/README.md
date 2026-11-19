@@ -9,6 +9,7 @@
 - **函数字面量**：单独度量，不计入外层函数，但自身也受同样的上限约束。
   - ID 为 `<文件>:func:<外层函数或包级变量>.func<序号>`，序号按源码顺序从 1 开始，与行号无关。
   - 这样把逻辑挪进闭包就绕不过上限。
+- **model 持久化**：`internal/model` 的生产代码不得通过 GORM 执行写操作（`Create`、`Save`、`Update*`、`Delete`、`Exec`、`Raw`、关联写入等），包括别名 import、包级/函数内句柄和链式 builder。规则按接收者类型识别，不匹配方法名；纯结构体、GORM 字段标签和只读模型钩子继续允许。失败报告 `<文件>:<行>:model_gorm_write`，不能登记基线。
 - **依赖方向**（`layerViolation`），调用链为 `handler -> service -> app -> 业务域包 -> repository/model -> database`：
   - `package_roles.go` 明确登记 internal 顶层包角色，未知包报告 `package_classification`，必须先补分类且不能用基线豁免；子包继承顶层角色。该分类不额外禁止域包之间的调用。
   - handler 不得 import app、repository、database，应该经 service 调用；
@@ -67,6 +68,7 @@ go test -count=1 ./internal/architecture
 负例测试覆盖以下情形，它们只在临时目录里写源码文本，不编译违规样例：
 
 - 越层 import，以及依赖违规不能登记例外；
+- model 里的 GORM 写入（含别名、链式 builder、包级句柄、多返回值句柄和 `Raw`），以及纯模型、GORM 标签和非 GORM 同名方法的放行；
 - 别名隐藏的 map，以及 map 规则只约束 Agent 文件；
 - 文件、函数、闭包和包级函数字面量的规模与复杂度；
 - 基线增长、改善后未下调、通配和重复条目。
