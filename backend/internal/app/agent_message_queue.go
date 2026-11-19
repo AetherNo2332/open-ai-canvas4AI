@@ -274,19 +274,22 @@ func checkAgentMessageQuestion(tx *repository.Repository, userID, conversationID
 		return BadAuthRequest("插话内容超过 4000 字，请改为排队")
 	}
 	if input.InheritRunConfiguration {
-		request := state.Request
-		request.Prompt = input.Request.Prompt
-		request.IdempotencyKey = input.Request.IdempotencyKey
-		if input.Request.FocusNodeIDs != nil {
-			request.FocusNodeIDs = input.Request.FocusNodeIDs
-		}
-		raw, err := json.Marshal(request)
-		if err != nil {
-			return err
-		}
-		row.RequestJSON = string(raw)
+		return storeInheritedAgentMessageRequest(row, state.Request, input.Request)
 	}
 	return nil
+}
+
+func storeInheritedAgentMessageRequest(row *model.AgentQueuedMessage, frozen, incoming CloudAgentRequest) error {
+	frozen.Prompt = incoming.Prompt
+	frozen.IdempotencyKey = incoming.IdempotencyKey
+	if incoming.FocusNodeIDs != nil {
+		frozen.FocusNodeIDs = incoming.FocusNodeIDs
+	}
+	raw, err := json.Marshal(frozen)
+	if err == nil {
+		row.RequestJSON = string(raw)
+	}
+	return err
 }
 
 func (s *Service) agentMessageReceipt(userID, conversationID, id string) (*AgentMessageReceipt, error) {
