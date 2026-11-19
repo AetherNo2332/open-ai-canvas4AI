@@ -5,6 +5,7 @@ import (
 	"gorm.io/gorm/clause"
 	"strings"
 	"time"
+	"yingce/backend/internal/database/agentwake"
 	"yingce/backend/internal/model"
 )
 
@@ -158,6 +159,6 @@ func (r *Repository) FinishAgentToolOperation(operation model.AgentToolOperation
 		if result.RowsAffected != 1 {
 			return ErrCreationConflict
 		}
-		return model.AppendAgentWake(tx, model.AgentWakeEvent{RunID: operation.RunID, UserID: operation.UserID, TaskID: operation.TaskID, Kind: "tool_changed"})
+		return agentwake.Append(tx, model.AgentWakeEvent{RunID: operation.RunID, UserID: operation.UserID, TaskID: operation.TaskID, Kind: "tool_changed"})
 	})
 }
