@@ -142,7 +142,7 @@ func registerAgentSettingsRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		view, err := svc.AgentSkillDefaultsForUser(user.ID)
+		view, err := svc.AgentSkillDefaultsForBusiness(user.ID, c.Query("scopeType"), c.Query("agentDefinitionId"))
 		if err != nil {
 			failService(c, err)
 			return

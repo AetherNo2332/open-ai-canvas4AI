@@ -12,17 +12,19 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+var agentSkillDefaultScopes = []string{"global", "canvas", "drama"}
+
 // AgentSkillDefaultRows 返回全部默认技能行，按 (position, skill_id) 稳定排序。
 func (r *Repository) AgentSkillDefaultRows() ([]model.AgentSkillDefault, error) {
 	var rows []model.AgentSkillDefault
-	err := r.db.Where("scope = ?", "global").Order("position asc, skill_id asc").Find(&rows).Error
+	err := r.db.Where("scope IN ?", agentSkillDefaultScopes).Order("position asc, skill_id asc").Find(&rows).Error
 	return rows, err
 }
 
 // EnabledAgentSkillDefaults 返回仅启用的默认技能行，排序同 AgentSkillDefaultRows。
 func (r *Repository) EnabledAgentSkillDefaults() ([]model.AgentSkillDefault, error) {
 	var rows []model.AgentSkillDefault
-	err := r.db.Where("scope = ? AND enabled = ?", "global", true).Order("position asc, skill_id asc").Find(&rows).Error
+	err := r.db.Where("scope IN ? AND enabled = ?", agentSkillDefaultScopes, true).Order("position asc, skill_id asc").Find(&rows).Error
 	return rows, err
 }
 
@@ -40,7 +42,7 @@ func (r *Repository) ReplaceAgentSkillDefaults(expectedRevision int64, rows []mo
 		if current != expectedRevision {
 			return kernel.AgentSkillDefaultsConflict(current)
 		}
-		if err := tx.Where("scope = ?", "global").Delete(&model.AgentSkillDefault{}).Error; err != nil {
+		if err := tx.Where("scope IN ?", agentSkillDefaultScopes).Delete(&model.AgentSkillDefault{}).Error; err != nil {
 			return err
 		}
 		newRevision = current + 1
@@ -52,7 +54,9 @@ func (r *Repository) ReplaceAgentSkillDefaults(expectedRevision int64, rows []mo
 		}
 		rows = append([]model.AgentSkillDefault(nil), rows...)
 		for i := range rows {
-			rows[i].Scope = "global"
+			if rows[i].Scope == "" {
+				rows[i].Scope = "global"
+			}
 			rows[i].Revision = current + 1
 			rows[i].UpdatedBy = updatedBy
 		}
@@ -99,9 +103,9 @@ func (r *Repository) CreateAgentSkillDefaultIfMissing(row *model.AgentSkillDefau
 
 // UpdateAgentSkillDefaultVersion 把一行全局默认技能从 fromVersionID 改指 toVersionID，
 // 不改 enabled 与 position；行已不在旧版本时返回 false。
-func (r *Repository) UpdateAgentSkillDefaultVersion(skillID, fromVersionID, toVersionID string, revision int64, updatedBy string) (bool, error) {
+func (r *Repository) UpdateAgentSkillDefaultVersion(scope, skillID, fromVersionID, toVersionID string, revision int64, updatedBy string) (bool, error) {
 	result := r.db.Model(&model.AgentSkillDefault{}).
-		Where("scope = ? AND skill_id = ? AND skill_version_id = ?", "global", skillID, fromVersionID).
+		Where("scope = ? AND skill_id = ? AND skill_version_id = ?", scope, skillID, fromVersionID).
 		Updates(map[string]any{"skill_version_id": toVersionID, "revision": revision, "updated_by": updatedBy})
 	return result.RowsAffected == 1, result.Error
 }
@@ -146,7 +150,7 @@ func (r *Repository) agentSkillDefaultsRevision() (int64, error) {
 	}
 	// Bootstrap databases whose v51 rows predate the durable revision key.
 	var rowRevision int64
-	if err := r.db.Model(&model.AgentSkillDefault{}).Where("scope = ?", "global").Select("COALESCE(MAX(revision), 0)").Scan(&rowRevision).Error; err != nil {
+	if err := r.db.Model(&model.AgentSkillDefault{}).Where("scope IN ?", agentSkillDefaultScopes).Select("COALESCE(MAX(revision), 0)").Scan(&rowRevision).Error; err != nil {
 		return 0, err
 	}
 	if rowRevision > revision {

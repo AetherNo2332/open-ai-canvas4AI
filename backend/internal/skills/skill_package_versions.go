@@ -175,8 +175,9 @@ func (s *Service) installedSkillForFrozenRead(userID, skillID string) (*model.Sk
 }
 
 func SkillEntryMetadata(content string) (name, description string) {
-	metadata := parseSkillPackageMetadata([]byte(content))
-	return metadata.Name, metadata.Description
+	content = strings.TrimPrefix(content, "\uFEFF")
+	metadata, _ := skillPackageFrontmatter(strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n"))
+	return truncateSkillMetadata(metadata.Name, 80), truncateSkillMetadata(metadata.Description, 500)
 }
 
 // skillPackageIntegrityError 标记冻结版本的包内容与登记的哈希不一致，Agent 不得读取。

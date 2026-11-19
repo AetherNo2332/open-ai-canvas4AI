@@ -74,10 +74,10 @@ func TestAgentSkillDefaultSeedPrimitives(t *testing.T) {
 	if err != nil || created {
 		t.Fatalf("duplicate (scope, skill_id) must be a no-op: created=%v err=%v", created, err)
 	}
-	if moved, err := r.UpdateAgentSkillDefaultVersion("guide", "stale", "v2", 2, "system"); err != nil || moved {
+	if moved, err := r.UpdateAgentSkillDefaultVersion("global", "guide", "stale", "v2", 2, "system"); err != nil || moved {
 		t.Fatalf("stale source version must not match: moved=%v err=%v", moved, err)
 	}
-	if moved, err := r.UpdateAgentSkillDefaultVersion("guide", "v1", "v2", 2, "system"); err != nil || !moved {
+	if moved, err := r.UpdateAgentSkillDefaultVersion("global", "guide", "v1", "v2", 2, "system"); err != nil || !moved {
 		t.Fatalf("version follow failed: moved=%v err=%v", moved, err)
 	}
 	rows, err := r.AgentSkillDefaultRows()

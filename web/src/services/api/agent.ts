@@ -22,8 +22,8 @@ export function updateAgentSystemPrompt(input: AgentSystemPromptSettings) {
     return http.patch<AgentSystemPromptSettings>("/agent/settings", input, { timeout: 15_000 });
 }
 export type AgentSkillDefaultsSummary = { count: number; skills: Array<{ skillId: string; skillName: string }> };
-export function listAgentSkillDefaults() {
-    return http.get<AgentSkillDefaultsSummary>("/agent/skill-defaults");
+export function listAgentSkillDefaults(scopeType: "canvas" | "drama", signal?: AbortSignal) {
+    return http.get<AgentSkillDefaultsSummary>("/agent/skill-defaults", { params: { scopeType }, signal });
 }
 export type AgentReasoningMode = import("@/lib/text-thinking").ThinkingRequest;
 export type AgentMediaSettings = {

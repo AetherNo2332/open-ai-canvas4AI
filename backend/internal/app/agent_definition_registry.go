@@ -10,20 +10,21 @@ import (
 )
 
 type AgentDefinition struct {
-	ID                string
-	Version           int
-	BusinessType      string
-	IsDefault         bool
-	BusinessTools     []string
-	ReadAdapters      []string
-	SkillIDs          []string
-	AllowUserSkills   bool
-	MemoryPolicy      string
-	InteractionPolicy string
-	ReadOnly          bool
-	authorize         agentObjectAuthorizer
-	readAdapters      map[string]agentReadAdapter
-	tools             map[string]agentToolRegistration
+	ID                 string
+	Version            int
+	BusinessType       string
+	IsDefault          bool
+	BusinessTools      []string
+	ReadAdapters       []string
+	SkillIDs           []string
+	DefaultSkillScopes []string
+	AllowUserSkills    bool
+	MemoryPolicy       string
+	InteractionPolicy  string
+	ReadOnly           bool
+	authorize          agentObjectAuthorizer
+	readAdapters       map[string]agentReadAdapter
+	tools              map[string]agentToolRegistration
 }
 
 type agentObjectAuthorizer func(*Service, string, CloudAgentRequest) (*model.CanvasProject, error)
@@ -48,6 +49,7 @@ func init() {
 	drama := AgentDefinition{
 		ID: "drama.analysis", Version: 1, BusinessType: "drama", IsDefault: true, ReadOnly: true,
 		BusinessTools: []string{"task_get"}, ReadAdapters: []string{"drama:episode"}, MemoryPolicy: "off",
+		DefaultSkillScopes: []string{"global", "drama"},
 	}
 	interactiveDrama := drama
 	interactiveDrama.Version = 2
@@ -64,6 +66,7 @@ func init() {
 				"web_search", "spawn_subagent", "wait_subagents", "message_subagent", "subagent_status", "send_parent_message", "finish_subagent",
 			},
 			ReadAdapters: []string{"canvas:text", "canvas:image"}, AllowUserSkills: true, InteractionPolicy: "ask_user", MemoryPolicy: "off",
+			DefaultSkillScopes: []string{"global", "canvas"},
 		},
 		drama, interactiveDrama,
 	})
@@ -143,6 +146,7 @@ func cloneAgentDefinition(definition AgentDefinition) AgentDefinition {
 	definition.BusinessTools = slices.Clone(definition.BusinessTools)
 	definition.ReadAdapters = slices.Clone(definition.ReadAdapters)
 	definition.SkillIDs = slices.Clone(definition.SkillIDs)
+	definition.DefaultSkillScopes = slices.Clone(definition.DefaultSkillScopes)
 	return definition
 }
 

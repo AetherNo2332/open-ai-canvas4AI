@@ -92,6 +92,15 @@ func validateAgentDefinition(definition AgentDefinition) error {
 	if definition.InteractionPolicy != "" && definition.InteractionPolicy != "ask_user" {
 		return fmt.Errorf("invalid Agent interaction policy in %q", definition.ID)
 	}
+	return validateAgentDefaultSkillScopes(definition)
+}
+
+func validateAgentDefaultSkillScopes(definition AgentDefinition) error {
+	for index, scope := range definition.DefaultSkillScopes {
+		if (scope != "global" && scope != definition.BusinessType) || slices.Contains(definition.DefaultSkillScopes[:index], scope) {
+			return fmt.Errorf("invalid default Skill scope %q in %q", scope, definition.ID)
+		}
+	}
 	return nil
 }
 

@@ -1,6 +1,7 @@
 import { http } from "@/services/api/request";
 
-export type AgentSkillDefaultItemInput = { skillId: string; skillVersionId: string; position: number; enabled: number };
+export type AgentSkillDefaultScope = "global" | "canvas" | "drama";
+export type AgentSkillDefaultItemInput = { skillId: string; skillVersionId: string; position: number; enabled: number; scope: AgentSkillDefaultScope };
 export type AgentSkillDefaultsViewItem = AgentSkillDefaultItemInput & { skillName: string; versionLabel: string; status: number; fileCount: number; totalBytes: number };
 export type AgentSkillDefaultsView = { revision: number; items: AgentSkillDefaultsViewItem[]; totalFiles: number; totalBytes: number; contextEstimateBytes: number };
 

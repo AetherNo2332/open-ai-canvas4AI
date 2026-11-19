@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -13,6 +14,7 @@ import (
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
+	"yingce/backend/internal/skills"
 )
 
 type AgentConversationMessageRequest struct {
@@ -198,6 +200,10 @@ func enqueueAgentConversationMessage(tx *repository.Repository, userID, conversa
 	if !errors.Is(lookup, gorm.ErrRecordNotFound) {
 		return lookup
 	}
+	immediateInterjection, err := agentMessageSkillDelivery(latest, &input, row)
+	if err != nil {
+		return err
+	}
 	if err := checkAgentMessageQuestion(tx, userID, conversationID, input, row, q, latest); err != nil {
 		return err
 	}
@@ -205,7 +211,6 @@ func enqueueAgentConversationMessage(tx *repository.Repository, userID, conversa
 	if err != nil {
 		return err
 	}
-	immediateInterjection := input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status)
 	incoming := len(row.RequestJSON) + len(row.Prompt) + len(row.Fingerprint)
 	if immediateInterjection {
 		incoming = len(row.Fingerprint)
@@ -232,6 +237,40 @@ func enqueueAgentConversationMessage(tx *repository.Repository, userID, conversa
 		return tx.SaveAgentConversationQueue(q)
 	}
 	return nil
+}
+
+func agentMessageSkillDelivery(latest *model.CloudAgentExecution, input *AgentConversationMessageRequest, row *model.AgentQueuedMessage) (bool, error) {
+	if input.Mode != "interject" || !cloudAgentAcceptsInterjection(latest.Status) {
+		return false, nil
+	}
+	if input.InheritRunConfiguration {
+		return true, nil
+	}
+	needsRun, err := agentMessageNeedsNewSkillRun(latest, input.Request.SkillIDs)
+	if needsRun && input.ReplyToQuestionID == "" {
+		input.Mode, row.Mode = "queue", "queue"
+	}
+	return !needsRun, err
+}
+
+func agentMessageNeedsNewSkillRun(latest *model.CloudAgentExecution, skillIDs []string) (bool, error) {
+	if len(skillIDs) == 0 {
+		return false, nil
+	}
+	var frozen struct {
+		Skills []cloudAgentSkill `json:"skills"`
+	}
+	if err := json.Unmarshal([]byte(latest.StateJSON), &frozen); err != nil {
+		return false, err
+	}
+	for _, id := range skillIDs {
+		if !slices.ContainsFunc(frozen.Skills, func(skill cloudAgentSkill) bool {
+			return skill.ID == id && skill.Source == skills.SkillSourceUser
+		}) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // checkAgentMessageQuestion checks the expected turn and canvas, the pending
@@ -352,6 +391,17 @@ func (s *Service) UpdateAgentQueuedMessage(userID, conversationID, id string, in
 				return repository.ErrAgentMessageQuestionPending
 			}
 			if cloudAgentAcceptsInterjection(latest.Status) {
+				var request CloudAgentRequest
+				if err := json.Unmarshal([]byte(row.RequestJSON), &request); err != nil {
+					return err
+				}
+				needsRun, err := agentMessageNeedsNewSkillRun(latest, request.SkillIDs)
+				if err != nil {
+					return err
+				}
+				if needsRun {
+					return creationConflict("该消息包含新选技能，需等待当前轮次完成后发送")
+				}
 				if utf8.RuneCountInString(row.Prompt) > cloudAgentInterjectionMaxRunes {
 					return BadAuthRequest("插话内容超过 4000 字")
 				}

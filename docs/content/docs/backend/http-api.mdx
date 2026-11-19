@@ -755,11 +755,13 @@ worker 仅在传输边界分类暂时故障。恢复前读取 Go 的权威快照
 
 ## 管理员 Agent 默认技能
 
-- `GET /api/admin/agent/skill-defaults`：管理员读取 `{ revision, items, totalFiles, totalBytes, contextEstimateBytes }`。每项含技能 ID、名称、固定版本 ID、版本标签、position、enabled（0/1）、status、fileCount、totalBytes；合计仅统计启用项，上下文预估是技能包整体读入的保守上限。
-- `PUT /api/admin/agent/skill-defaults`：管理员提交 `{ revision, items: [{ skillId, skillVersionId, position, enabled }] }` 整体替换，返回新 `{ revision }`。私有、已删除、禁用技能或不属于该技能的版本均拒绝。revision 冲突须重新读取后再编辑。
-- `GET /api/agent/skill-defaults`：普通登录用户可读取 `{ count, skills: [{ skillId, skillName }] }`，仅启用项，按 position 排序，不要求先安装技能。
+- `GET /api/admin/agent/skill-defaults` 返回修订号、逐项版本和适用业务、文件统计和初始索引估计。
+- `PUT /api/admin/agent/skill-defaults` 提交 `{ revision, items: [{ skillId, skillVersionId, scope, position, enabled }] }` 整体替换，返回新修订号。`scope` 可选 `global`、`canvas`、`drama`，默认 `global`。私有、已删除、禁用技能或版本归属不符的配置会被拒绝。
+- `GET /api/agent/skill-defaults?scopeType=canvas|drama` 返回 `{ count, skills: [{ skillId, skillName }] }`。可用 `agentDefinitionId` 指定该业务下的配置。预览与 Run 共用服务端装配规则，按后台排序，只包含该配置适用的启用项。
 
-默认技能只注入新会话，来源、版本和内容 hash 随成功建 Run 的事务冻结到会话；旧会话不随管理配置改变，被拒绝的请求不修改基线。公共 Run 技能摘要的 `source` 为 `global` 或 `user`；选择器据此显示旧会话的有效默认集合，新会话则读取当前默认摘要，默认技能展示不依赖市场分页或安装。用户可追加新技能，或将同 ID 的全局来源升级为用户来源；已选用户技能即使每轮重复提交 ID 也保持冻结版本，更新该技能版本目前需要新会话。
+画布与短剧的 Agent 配置分别声明可装配的默认技能范围。全局项供两个业务使用，画布工具指南只向画布提供。新会话首轮将适用技能的索引发给模型，来源、版本和内容指纹在建 Run 的事务中冻结。后台变更只影响之后创建的新会话。
+
+画布支持手动追加已安装技能。运行中提交包含新选技能的普通消息时，服务端将其排到下一轮。分镜发送沿用当前会话已冻结的技能。短剧分析继续使用只读配置及其后台默认技能。已启用的用户技能版本在会话中保持固定。
 
 后端启动时把平台预置的内置技能 `yingce-canvas-tools-guide` 补种为首位启用的默认技能，每个技能只补种一次；技能不存在、已删除或已停用时跳过，管理员停用、调整顺序或移除后不再补回。已在默认集合中的平台技能随内置包更新改指当前版本，保留管理员设置的启用状态与顺序。补种和版本跟随都会递增 revision，基于旧 revision 的后台保存返回冲突；没有变化的重启不改 revision。
 

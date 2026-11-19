@@ -41,6 +41,7 @@ let local: CloudAgentConversation[] = [];
 let remote: CloudAgentConversation[] = [];
 let pending: CloudAgentPendingSubmission | null = null;
 let composer: any;
+let skillLibrary: { onToggle: (id: string) => void; frozenUserSkillIds: string[]; globalDefaultSkillIds: string[] };
 let sendMessageOverride: ((parentId: string, request: CreateAgentRunInput) => AgentRun | Promise<AgentRun>) | undefined;
 let createRunOverride: (() => Promise<AgentRun>) | undefined;
 let interjectionOverride: (() => Promise<void>) | undefined;
@@ -182,7 +183,12 @@ mock.module("@/components/canvas/canvas-cloud-agent-chat-ui", () => ({
     },
     AgentSceneCapsules: () => null,
 }));
-mock.module("@/components/canvas/canvas-agent-skill-library-modal", () => ({ CanvasAgentSkillLibraryModal: () => null }));
+mock.module("@/components/canvas/canvas-agent-skill-library-modal", () => ({
+    CanvasAgentSkillLibraryModal: (props: typeof skillLibrary) => {
+        skillLibrary = props;
+        return null;
+    },
+}));
 mock.module("@/components/canvas/canvas-cloud-agent-settings", () => ({
     CanvasCloudAgentSettings: () => null,
     agentPermissionLabel: () => "自动",
@@ -273,9 +279,36 @@ type SendOutcome = Awaited<ReturnType<typeof sendExternal>>;
 
 const externalPrompt = { canvasId: "canvas", userScope: "sync-user", prompt: "为目标分镜表提出拆镜方案，先询问确认", focusNodeIds: ["storyboard-target"] };
 
+test("canvas composer sends a manually selected skill on the first request", async () => {
+    const mounted = await mount([], null, async () => []);
+    try {
+        await act(async () => {
+            skillLibrary.onToggle("manual-skill");
+            composer.onPromptChange("请使用我选的技能");
+            await settle();
+        });
+        await act(async () => {
+            composer.onSubmit();
+            await settle();
+        });
+        expect(createdRequests).toHaveLength(1);
+        expect(createdRequests[0].skillIds).toEqual(["manual-skill"]);
+    } finally {
+        await mounted.close();
+    }
+});
+
 test("storyboard delivery saves first and interjects in the current running conversation", async () => {
     const current = conversation("desktop", "local", "保留输入草稿");
-    current.run = { ...current.run!, status: "running", model: "current-model" };
+    current.run = {
+        ...current.run!,
+        status: "running",
+        model: "current-model",
+        skills: [
+            { id: "board-default", name: "默认技能", source: "global", version: "v1", hash: "default-hash" },
+            { id: "board-manual", name: "手动技能", source: "user", version: "v1", hash: "manual-hash" },
+        ],
+    };
     const mounted = await mount([current], null, async () => [current], "queue");
     try {
         let prepared = false;
@@ -303,6 +336,9 @@ test("storyboard delivery saves first and interjects in the current running conv
         expect(conversationRequests).toHaveLength(1);
         expect(conversationRequests[0]).toMatchObject({ mode: "interject", expectedRunId: "desktop", inheritRunConfiguration: true, request: { focusNodeIds: ["storyboard-target"] } });
         expect(conversationRequests[0].request).not.toHaveProperty("model");
+        expect(conversationRequests[0].request).not.toHaveProperty("skillIds");
+        expect(skillLibrary.globalDefaultSkillIds).toEqual(["board-default"]);
+        expect(skillLibrary.frozenUserSkillIds).toEqual(["board-manual"]);
         expect(composer.prompt).toBe("保留输入草稿");
     } finally {
         await mounted.close();

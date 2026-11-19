@@ -378,8 +378,6 @@ func TestAdminAgentSkillDefaultsConcurrentReplaceSingleWinner(t *testing.T) {
 	}
 }
 
-const canvasToolsGuideSkillID = "yingce-canvas-tools-guide"
-
 func agentSkillDefaultsState(t *testing.T, db *gorm.DB) ([]model.AgentSkillDefault, int64, []string) {
 	t.Helper()
 	repo := repository.New(db)

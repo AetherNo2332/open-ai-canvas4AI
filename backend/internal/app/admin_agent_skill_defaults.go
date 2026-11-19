@@ -17,6 +17,7 @@ import (
 // Enabled 用 0/1 整数便于 JSON 往返；GET 与 PUT 使用同一结构。
 type AgentSkillDefaultItem struct {
 	SkillID        string `json:"skillId"`
+	Scope          string `json:"scope"`
 	SkillVersionID string `json:"skillVersionId"`
 	Position       int    `json:"position"`
 	Enabled        int    `json:"enabled"`
@@ -25,6 +26,7 @@ type AgentSkillDefaultItem struct {
 // AgentSkillDefaultsViewItem 是默认技能列表的单行展示，附带技能与版本的实时快照。
 type AgentSkillDefaultsViewItem struct {
 	SkillID        string `json:"skillId"`
+	Scope          string `json:"scope"`
 	SkillName      string `json:"skillName"`
 	SkillVersionID string `json:"skillVersionId"`
 	VersionLabel   string `json:"versionLabel"`
@@ -60,6 +62,7 @@ func (s *Service) AdminAgentSkillDefaults(actor *model.User) (*AgentSkillDefault
 	for _, row := range rows {
 		item := AgentSkillDefaultsViewItem{
 			SkillID:        row.SkillID,
+			Scope:          effectiveAgentSkillDefaultScope(row.SkillID, row.Scope),
 			SkillVersionID: row.SkillVersionID,
 			Position:       row.Position,
 			Enabled:        boolToInt(row.Enabled),
@@ -139,6 +142,10 @@ func (s *Service) ReplaceAgentSkillDefaults(actor *model.User, revision int64, i
 // 版本确实属于该技能。违规统一返回 kernel.AgentSkillDefaultsInvalid，message 携带技能 ID。
 func (s *Service) validateAgentSkillDefaultItem(item AgentSkillDefaultItem) (model.AgentSkillDefault, skills.SkillCapacityFacts, error) {
 	skillID := item.SkillID
+	scope := effectiveAgentSkillDefaultScope(skillID, firstNonEmpty(item.Scope, "global"))
+	if (scope != "global" && scope != "canvas" && scope != "drama") || (skillID == canvasToolsGuideSkillID && scope != "canvas") {
+		return model.AgentSkillDefault{}, skills.SkillCapacityFacts{}, kernel.AgentSkillDefaultsInvalid("默认技能适用范围无效", map[string]any{"skillId": skillID})
+	}
 	skill, err := s.repo.Skill(skillID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -165,6 +172,7 @@ func (s *Service) validateAgentSkillDefaultItem(item AgentSkillDefaultItem) (mod
 	}
 	row := model.AgentSkillDefault{
 		ID:             newID(),
+		Scope:          scope,
 		SkillID:        skillID,
 		SkillVersionID: item.SkillVersionID,
 		Position:       item.Position,
@@ -187,7 +195,16 @@ func boolToInt(value bool) int {
 }
 
 // platformAgentSkillDefaultIDs 是平台为新会话预置的默认技能，补种时按列表顺序排在默认集合最前。
-var platformAgentSkillDefaultIDs = []string{"yingce-canvas-tools-guide"}
+var platformAgentSkillDefaultIDs = []string{canvasToolsGuideSkillID}
+
+const canvasToolsGuideSkillID = "yingce-canvas-tools-guide"
+
+func effectiveAgentSkillDefaultScope(skillID, scope string) string {
+	if skillID == canvasToolsGuideSkillID && scope == "global" {
+		return "canvas"
+	}
+	return scope
+}
 
 // platformAgentSkillDefaultsActor 标记由启动流程而不是管理员写入的默认技能行与设置。
 const platformAgentSkillDefaultsActor = "system"
@@ -222,7 +239,7 @@ func (s *Service) EnsureBuiltinAgentSkillDefaults() error {
 			existing[row.SkillID] = row
 		}
 		applied := append([]string(nil), seeded...)
-		type versionMove struct{ skillID, from, to string }
+		type versionMove struct{ scope, skillID, from, to string }
 		var moves []versionMove
 		var inserts []model.AgentSkillDefault
 		for _, skillID := range platformAgentSkillDefaultIDs {
@@ -235,7 +252,7 @@ func (s *Service) EnsureBuiltinAgentSkillDefaults() error {
 			}
 			if row, ok := existing[skillID]; ok {
 				if row.SkillVersionID != versionID {
-					moves = append(moves, versionMove{skillID: skillID, from: row.SkillVersionID, to: versionID})
+					moves = append(moves, versionMove{scope: row.Scope, skillID: skillID, from: row.SkillVersionID, to: versionID})
 				}
 			} else if !marked[skillID] {
 				inserts = append(inserts, model.AgentSkillDefault{ID: newID(), SkillID: skillID, SkillVersionID: versionID, Enabled: true})
@@ -254,7 +271,7 @@ func (s *Service) EnsureBuiltinAgentSkillDefaults() error {
 		next := revision + 1
 		changed := false
 		for _, move := range moves {
-			ok, err := repo.UpdateAgentSkillDefaultVersion(move.skillID, move.from, move.to, next, platformAgentSkillDefaultsActor)
+			ok, err := repo.UpdateAgentSkillDefaultVersion(move.scope, move.skillID, move.from, move.to, next, platformAgentSkillDefaultsActor)
 			if err != nil {
 				return err
 			}
@@ -320,20 +337,28 @@ type AgentSkillDefaultsSummaryItem struct {
 }
 
 func (s *Service) AgentSkillDefaultsForUser(userID string) (*AgentSkillDefaultsSummary, error) {
+	return s.AgentSkillDefaultsForBusiness(userID, "canvas", "")
+}
+
+func (s *Service) AgentSkillDefaultsForBusiness(userID, businessType, definitionID string) (*AgentSkillDefaultsSummary, error) {
 	if strings.TrimSpace(userID) == "" {
 		return nil, kernel.BadAuthRequest("用户 ID 不能为空")
 	}
-	rows, err := s.repo.EnabledAgentSkillDefaults()
+	definition, err := s.ResolveAgentDefinition(firstNonEmpty(businessType, "canvas"), definitionID)
 	if err != nil {
 		return nil, err
 	}
-	view := &AgentSkillDefaultsSummary{Skills: make([]AgentSkillDefaultsSummaryItem, 0, len(rows))}
-	for _, row := range rows {
-		skill, err := s.repo.Skill(row.SkillID)
+	selected, err := s.agentDefinitionDefaultSkills(definition)
+	if err != nil {
+		return nil, err
+	}
+	view := &AgentSkillDefaultsSummary{Skills: make([]AgentSkillDefaultsSummaryItem, 0, len(selected))}
+	for _, item := range selected {
+		skill, err := s.repo.Skill(item.SkillID)
 		if err != nil {
 			return nil, err
 		}
-		view.Skills = append(view.Skills, AgentSkillDefaultsSummaryItem{SkillID: row.SkillID, SkillName: skill.Name})
+		view.Skills = append(view.Skills, AgentSkillDefaultsSummaryItem{SkillID: item.SkillID, SkillName: skill.Name})
 	}
 	view.Count = len(view.Skills)
 	return view, nil
