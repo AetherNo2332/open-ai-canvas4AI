@@ -150,7 +150,10 @@ func TestCloudAgentRepairCountsOneBatchOnceAndInspectionSuccessCloses(t *testing
 	if err == nil || !strings.Contains(err.Error(), "传成了字符串") || !strings.Contains(err.Error(), "不是合法 JSON") {
 		t.Fatalf("summary 传成坏 JSON 字符串时应点明原因：%v", err)
 	}
-	example := cloudAgentArgumentExample(inspect("x", broken), "summary")
+	call := inspect("x", broken)
+	var args map[string]any
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+	example := cloudAgentArgumentExampleForFields(call.Function.Name, args, "summary")
 	body, _ := json.Marshal(example)
 	if example == nil || validateCloudAgentToolArguments(schema, string(body)) != nil {
 		t.Fatalf("summary 出错时应给出可直接照抄结构的合法示例：%s", body)

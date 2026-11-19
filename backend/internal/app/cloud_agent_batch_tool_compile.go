@@ -5,6 +5,7 @@ func (c *cloudAgentToolCompiler) addBatchProductionTools() {
 	batchProperties := func() map[string]any {
 		return map[string]any{
 			"mode":           map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()},
+			"selectionId":    str("model_list 凭证，不与旧字段混用"),
 			"logicalModelId": str("同 generate_media"), "channelId": str("同 generate_media"), "channelModelKey": str("同 generate_media"),
 			"size": str("同 generate_media"), "quality": str("同 generate_media"), "imageResolution": str("同 generate_media"),
 			"durationSeconds":    map[string]any{"type": "integer", "minimum": 0},

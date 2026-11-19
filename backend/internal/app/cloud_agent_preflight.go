@@ -25,7 +25,7 @@ func cloudAgentHandleCanvasPreflight(repo *repository.Repository, userID string,
 		return nil, BadAuthRequest("体检服务不可用")
 	}
 	s := services[0]
-	args, err := decodeCloudAgentMediaBatchArgs(call.Function.Arguments)
+	args, err := s.decodeCloudAgentBatchSelection(userID, call.Function.Arguments)
 	if err != nil {
 		return nil, err
 	}

@@ -125,6 +125,7 @@ func (b *cloudAgentMediaBatch) nextPending() int {
 
 type cloudAgentMediaBatchArgs struct {
 	Mode                       string `json:"mode"`
+	SelectionID                string `json:"selectionId,omitempty"`
 	LogicalModelID             string `json:"logicalModelId"`
 	ChannelID                  string `json:"channelId"`
 	ChannelModelKey            string `json:"channelModelKey"`
@@ -144,6 +145,20 @@ type cloudAgentMediaBatchArgs struct {
 		Prompt   string `json:"prompt"`
 		Duration int    `json:"durationSeconds"`
 	} `json:"items"`
+}
+
+func (s *Service) decodeCloudAgentBatchSelection(userID, raw string) (cloudAgentMediaBatchArgs, error) {
+	args, err := decodeCloudAgentMediaBatchArgs(raw)
+	if err != nil || !cloudAgentModelSelectionProvided(raw) {
+		return args, err
+	}
+	selection := cloudAgentMediaArgs{SelectionID: args.SelectionID, LogicalModelID: args.LogicalModelID, ChannelID: args.ChannelID, ChannelModelKey: args.ChannelModelKey}
+	if err := s.validateCloudAgentModelSelection(userID, raw, &selection); err != nil {
+		return args, err
+	}
+	args.SelectionID = ""
+	args.LogicalModelID, args.ChannelID, args.ChannelModelKey = selection.LogicalModelID, selection.ChannelID, selection.ChannelModelKey
+	return args, nil
 }
 
 func decodeCloudAgentMediaBatchArgs(raw string) (cloudAgentMediaBatchArgs, error) {

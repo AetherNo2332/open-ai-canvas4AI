@@ -11,7 +11,7 @@ import (
 )
 
 func (s *Service) requestCloudAgentMediaBatchApproval(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
-	args, err := decodeCloudAgentMediaBatchArgs(call.Function.Arguments)
+	args, err := s.decodeCloudAgentBatchSelection(run.UserID, call.Function.Arguments)
 	if err != nil {
 		return s.cloudAgentMediaError(run, state, "admission", false, false, err)
 	}
