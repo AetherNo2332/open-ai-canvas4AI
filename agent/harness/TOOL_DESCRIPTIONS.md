@@ -413,11 +413,11 @@ add/replace 必填：一两句话，跨会话仍成立
 
 ## generate_media_batch
 
-一次审批批量生成同模式占位节点。items 传节点 ID，提示词与参考取自节点。审批卡列明细、积分、并发和重试额度，批准后逐条提交回写，结束返回回执。先以相同参数调用 canvas_preflight，视频依赖关键帧时先生成关键帧。
+一次审批批量生成同模式占位节点。items 传节点 ID，提示词与参考取自节点。先用相同模型选择和条目调用 canvas_preflight。审批列积分、并发与重试额度，批准后逐条提交回写。视频依赖关键帧时先生成关键帧。
 
 ## media_batch_control
 
-在已批准额度内操作。continue 放行试跑余项。retry 重跑已结束项，可改 prompt，规格保持批准值，成功项在旁新建节点。cancel 取消未提交项。status 查看进度。
+批准额度只限当前运行。continue 放行试跑余项；retry 在原规格内重跑，可改 prompt；cancel 取消未提交项；status 查进度。新轮改单项用 generate_media 的 intent=new_version，整批需新批准。
 
 ## canvas_build_board
 
@@ -425,4 +425,4 @@ add/replace 必填：一两句话，跨会话仍成立
 
 ## canvas_preflight
 
-批量只读检查，参数同 generate_media_batch。检查节点、提示词、参考就绪与 @ 标签。带模型时无扣费核对能力、报价与预算，返回失败/警告数及逐条问题。
+批量只读检查：节点、提示词、参考、@ 标签。可传与 generate_media_batch 相同的模型选择，无扣费核对能力、报价与预算。

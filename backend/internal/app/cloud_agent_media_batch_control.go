@@ -34,11 +34,14 @@ func (s *Service) advanceCloudAgentMediaBatchControl(run *model.CloudAgentExecut
 		return record(nil, cloudAgentJSONArgumentError(err))
 	}
 	batch := state.MediaBatch
-	if batch == nil || batch.Phase == cloudAgentMediaBatchPhaseApproval {
-		return record(nil, cloudAgentFieldError("action", "invalid_value", "本轮没有已批准的批次；请先调用 generate_media_batch 申请批准"))
+	if batch == nil {
+		return record(nil, &cloudAgentMediaAdmissionError{Reason: "batch_not_in_run", error: BadAuthRequest("批次批准仅限当前运行。需要修改已生成的单项时，核对目标后用 generate_media 的 intent=new_version；整批重跑需申请新批准")})
+	}
+	if batch.Phase == cloudAgentMediaBatchPhaseApproval {
+		return record(nil, &cloudAgentMediaAdmissionError{Reason: "batch_awaiting_approval", error: BadAuthRequest("本轮批次尚未批准，请等待用户审批")})
 	}
 	if batch.active() {
-		return record(nil, cloudAgentFieldError("action", "invalid_value", "批次仍在执行，等它结束后再操作"))
+		return record(nil, &cloudAgentMediaAdmissionError{Reason: "batch_running", error: BadAuthRequest("批次仍在执行，等它结束后再操作")})
 	}
 	switch args.Action {
 	case "status":
