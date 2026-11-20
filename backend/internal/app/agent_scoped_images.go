@@ -21,6 +21,18 @@ func cloudAgentCanonicalImageKeys(canonical *canonicalAgentRequest) []string {
 }
 
 func (s *Service) cloudAgentImageReferences(userID string, req CloudAgentRequest, canonical *canonicalAgentRequest, isolated ...bool) ([]providerMedia, error) {
+	var authorized map[string]bool
+	if len(isolated) > 0 && isolated[0] && len(cloudAgentCanonicalImageKeys(canonical)) > 0 {
+		var err error
+		authorized, err = s.agentScopedImageKeys(userID, agentBusinessScope(req))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return s.cloudAgentAuthorizedImageReferences(userID, req, canonical, authorized)
+}
+
+func (s *Service) cloudAgentAuthorizedImageReferences(userID string, req CloudAgentRequest, canonical *canonicalAgentRequest, authorized map[string]bool) ([]providerMedia, error) {
 	keys := cloudAgentCanonicalImageKeys(canonical)
 	if len(keys) == 0 {
 		return nil, nil
@@ -31,13 +43,6 @@ func (s *Service) cloudAgentImageReferences(userID string, req CloudAgentRequest
 	}
 	if len(keys) > limits.MaxImages {
 		return nil, BadAuthRequest(fmt.Sprintf("上下文包含 %d 张图片，当前模型最多支持 %d 张；原始图片不会被裁剪或移出，请选择支持更多图片的模型", len(keys), limits.MaxImages))
-	}
-	var authorized map[string]bool
-	if len(isolated) > 0 && isolated[0] {
-		authorized, err = s.agentScopedImageKeys(userID, agentBusinessScope(req))
-		if err != nil {
-			return nil, err
-		}
 	}
 	refs := make([]providerMedia, 0, len(keys))
 	seen := map[string]bool{}

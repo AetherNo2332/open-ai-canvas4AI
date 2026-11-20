@@ -12,3 +12,10 @@
 | 部署 | 以 6060 实例运行版本、readiness 和 Worker 健康检查确认，不以 PR 状态代替。 |
 
 本次不改前端纠错时间线，不自动拆小已确认的分镜批次，不新增跨轮审批状态。
+
+## 续聊历史图片回归
+
+- 6060 原故障：上一轮看过的图片切为历史版本或所属节点被删除后，Pi 仍携带旧引用，Go 在首个模型预检 400。本轮没有创建模型步骤或发给上游。
+- 自动化：`go test ./internal/app -run 'TestPiContinuesAfterHistoricalCanvasImageLosesBinding|TestAgentResourceScope|TestPiModelStep|TestAgentToolSchemaArtifactMatchesRuntime' -count=1`。新增用例先复现换图和删节点的预检失败，再核对预检与正式准入通过、仅发送有效图、原始请求和会话记录不变，以及未证明来自旧轮次或本轮图继续被拒绝。架构守卫独立验证。
+- 文档站：Agent SDK 增加服务端注册、scoped client、首轮、续聊和事件示例；Agent SDK 和创作平台 SDK 各有最佳实践与验收边界。
+- 真实画布、真实模型和部署证据单独记录；Go 准入回归不等同于真实模型通过。
