@@ -317,25 +317,7 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 	// 编辑器常给文件加 UTF-8 BOM；不去掉的话首行不是 "---"，整段 frontmatter 会被当成正文。
 	text := strings.TrimPrefix(string(data), "\uFEFF")
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	metadata := skillPackageMetadata{}
-	bodyStart := 0
-	if len(lines) > 2 && strings.TrimSpace(lines[0]) == "---" {
-		closing := -1
-		for index := 1; index < len(lines); index++ {
-			if strings.TrimSpace(lines[index]) == "---" {
-				closing = index
-				break
-			}
-		}
-		if closing > 0 {
-			bodyStart = closing + 1
-			if parsed, ok := parseSkillFrontmatterYAML(strings.Join(lines[1:closing], "\n")); ok {
-				metadata = parsed
-			} else {
-				metadata = parseSkillFrontmatterLines(lines[1:closing])
-			}
-		}
-	}
+	metadata, bodyStart := skillPackageFrontmatter(lines)
 	body := lines[bodyStart:]
 	if metadata.Name == "" {
 		for _, line := range body {
@@ -366,6 +348,21 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 	metadata.Description = truncateSkillMetadata(metadata.Description, 500)
 	metadata.Version = truncateSkillMetadata(metadata.Version, 64)
 	return metadata
+}
+
+func skillPackageFrontmatter(lines []string) (skillPackageMetadata, int) {
+	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
+		return skillPackageMetadata{}, 0
+	}
+	for index := 1; index < len(lines); index++ {
+		if strings.TrimSpace(lines[index]) == "---" {
+			if parsed, ok := parseSkillFrontmatterYAML(strings.Join(lines[1:index], "\n")); ok {
+				return parsed, index + 1
+			}
+			return parseSkillFrontmatterLines(lines[1:index]), index + 1
+		}
+	}
+	return skillPackageMetadata{}, 0
 }
 
 // parseSkillFrontmatterYAML 按标准 YAML 读取 frontmatter。Agent Skills 规范允许折叠或多行

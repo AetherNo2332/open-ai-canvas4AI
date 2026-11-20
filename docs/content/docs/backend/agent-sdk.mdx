@@ -1,13 +1,93 @@
 ---
 title: Agent SDK 业务接入
-description: 注册 Agent 配置和读取适配器，绑定会话归属，维护升级与回退
+description: 新业务接入 Agent API 的服务端注册、TypeScript 调用、会话续聊与上线清单
 ---
+
+需要多轮讨论、工具调用或审批时用 Agent SDK；只需要一次文本、图片、视频或音频生成时，用 [创作平台 SDK](./creation-platform-sdk.mdx)。两者都使用登录用户身份，但 Agent 的 `scope` 用于会话授权，创作平台的 `business` 用于任务归属与汇总，不能互换。
+
+## 新业务接入步骤
+
+1. **选定会话归属对象。** 例如短剧用 `{ type: "drama", id: projectId }` 绑定项目，将 `dramaEpisodeId` 作为本轮分析目标。整个会话的历史、发送、审批、取消与事件读取都用同一 `scope` 和 Agent 配置 ID。
+2. **注册 Go 配置。** 在 `backend/internal/app/agent_definition_registry.go` 的服务端注册表声明稳定的 `BusinessType`、`ID` 和 `Version`；为该业务注册 `IsDefault`，并在对象授权函数中检查登录用户、对象归属和子对象关联。新业务不能仅在前端自定义 `scope.type`；未注册的业务不会获得 Agent 能力。参考 `drama.analysis` 的只读模式与 `agent_definition_registry_test.go` 的第三业务注册示例。
+3. **从最小目录开始。** 首版可用 `BusinessTools: []string{}`、`MemoryPolicy: "off"`。确需读取时再接入独立命名空间，声明适用业务和版本，并在读取函数中复查对象归属。新工具在服务端注册 Schema、执行器和版本，再由定义显式选择。平台控制与技能读取不用伪装成业务写工具。
+4. **在 Web 做业务适配。** 用 `web/src/sdk/agent` 的 `createAgentClient` 与 `agentWebTransport`；业务适配器负责把对象、模型选择、预算和用户消息映射成请求。不要让页面直接访问 `/internal-agent`、拼接工具参数授权或替用户决定审批结果。
+5. **验证再上线。** 同时测合法调用、同用户跨对象、跨用户、只读写入拒绝、重复提交、断线续读和 Worker 接管。用确定性上游测真实 HTTP + Go + Pi 链路；在目标环境另验登录、模型权限和真实页面。
+
+## TypeScript 调用示例
+
+以下以已注册的短剧分集分析为例。新业务完成服务端注册后，替换 `scope`、配置 ID 和业务参数；不要复用画布 ID 冒充自己的业务对象。`logicalModelId` 是当前账户有权使用的逻辑文本模型，也可改为一组 `channelId` 和 `channelModelKey`。
+
+```ts
+import { createAgentClient, type AgentRunRequest } from "@/sdk/agent";
+import { agentWebTransport } from "@/sdk/agent/http-transport";
+
+const scope = { type: "drama", id: projectId };
+const agentDefinitionId = "drama.analysis";
+const agent = createAgentClient({ transport: agentWebTransport, scope, agentDefinitionId });
+const request: AgentRunRequest = {
+    scope,
+    agentDefinitionId,
+    canvasId: "",
+    dramaEpisodeId: episodeId,
+    prompt: "分析本集剧情节奏，列出需要确认的分镜问题，不改写剧本。",
+    logicalModelId,
+    permissionMode: "read_only",
+    budget: { maxCredits: 1, maxSteps: 12 },
+    idempotencyKey: firstTurnKey,
+};
+
+const { run } = await agent.startRun(request);
+await agent.readEvents(run.id, onEvent, { after: lastAppliedSeq, signal, onSnapshot });
+```
+
+`firstTurnKey` 在一次用户发送开始时生成并保留，同一次提交的网络重试复用原键；`lastAppliedSeq` 按 Run 保存，新 Run 从 `0` 开始。`onEvent` 按 `seq` 应用事件，`onSnapshot` 更新状态。取消订阅只断开事件读取，不等于 `cancelRun`。
+
+### 续聊、忙时插话与提问
+
+从 Run 回执或会话列表取实际的 `conversationId`，不要用项目 ID 或 Run ID 代替会话 ID。活跃会话用 `sendMessage` 进入当前队列；终态且可续聊的 Run 也可用 `continueRun` 创建下一轮。不要在忙时另行调用 `startRun`。
+
+```ts
+const queue = await agent.getConversationQueue(conversationId);
+const receipt = await agent.sendMessage(conversationId, {
+    expectedRunId: queue.latestRunId,
+    mode: queue.awaitingQuestionId ? "interject" : "queue",
+    replyToQuestionId: queue.awaitingQuestionId,
+    inheritRunConfiguration: true,
+    request: { ...request, prompt: replyText, idempotencyKey: replyKey },
+});
+```
+
+回复提问时携带对应的 `replyToQuestionId`。普通消息如需立即插话，由界面明确选择 `interject`，否则排队。按 `receipt.delivery` 提示已启动、已插话、已排队或已取消；排队回执不等于新 Run 已开始，后续以队列和运行快照为准。若服务端拒绝了过期的 `expectedRunId`，先刷新会话，再根据用户意图决定是否重送，不要静默发送到另一轮。业务审批用 `decideApproval`；回答 Agent 的问题不等于批准工具写入。
+
+| 场景 | 公开 API（前缀 `/api`） |
+| --- | --- |
+| 创建一轮 / 从终态 Run 继续 | `POST /agent/runs` / `POST /agent/runs/:id/messages` |
+| 会话发送及队列 | `POST /agent/conversations/:id/messages` / `GET /agent/conversations/:id/queue` |
+| 读状态及续读事件 | `GET /agent/runs/:id` / `GET /agent/runs/:id/events?after=<seq>` |
+| 列出会话及轮次 | `GET /agent/conversations` / `GET /agent/conversations/:id/runs` |
+| 审批、取消、归档 | `POST /agent/runs/:id/approvals/:approvalId/decision`、`POST /agent/runs/:id/cancel`、`DELETE /agent/conversations/:id` |
+
+不用 TypeScript 时，调用同一公开 API：使用受支持的登录凭据，创建和续聊的 JSON 带 `scope`；目标接口和 SSE 带 `scopeType`、`scopeId`，指定了配置时也带 `agentDefinitionId`。请求成功需要 HTTP 成功且响应 `code: 0`，业务错误按 `reason` 分类；SSE 用事件 `seq` 作为 `after` 或 `Last-Event-ID`，不是 Run ID。完整字段见 [HTTP API](./http-api.mdx) 和实例的 `/api/openapi.yaml`。
 
 ## 注册业务 Agent
 
 业务在调用 Agent 前，由 Go 服务端注册默认配置。配置声明业务类型、配置 ID、版本、对象授权、业务工具、读取适配器、记忆和交互策略。`businessTools: []` 表示明确禁用业务工具。服务端仍可按配置提供结束本轮、计划和提问等控制能力。普通业务接口无需注册。
 
 当前配置为 `canvas.default` v1 和 `drama.analysis` v2。短剧配置允许提问并保持业务只读。Run 冻结配置版本、工具版本、读取适配器版本和能力上限。Go 在运行和工具执行时检查当前对象权限，遇到部署不支持的冻结版本时拒绝执行。
+
+工具注册项绑定 Schema、执行器版本、适用业务和运行条件。短剧只声明 `task_get` 及分集 `read` 适配器，计划、提问、结束属于平台控制能力。画布声明自己的读取、编辑、生成和可选子代理工具。模型、画布上下文、功能开关和执行权限共同决定本轮目录。Skill 文件读取根据实际启用的技能单独授予。
+
+## 运行目录与预算
+
+Run 准入对发给模型的规范化工具目录检查 **64,000 字节总量**与**单工具 12,000 字节**上限。`TOOL_SCHEMA.json` 是 CI 校验的离线合同全集。模型和 Pi 执行器使用当前 Run 冻结的目录子集。
+
+上下文准入先从模型窗口预留输出与协议余量，再扣除工具 JSON 的估算 Token，剩余预算用于初始消息、策略与 Skill 索引。配置了逻辑模型时，输入预算取可用线路的最小值。模型窗口未声明时采用现有安全估算。模型或可用回退线路明确声明 `text.toolCallingSupported: false` 时，Agent 准入拒绝该模型。存量未声明的模型沿用当前调用合同。
+
+- `agent_tool_schema_budget_exceeded` 携带 `tool_bytes` 或 `directory_bytes`、实际值、上限及诊断 ID。单工具超限还包含工具名。
+- `agent_context_budget_exceeded` 携带估算输入 Token、输入上限、工具 Token 和诊断 ID。
+- `agent_capability_directory_unavailable` 表示检查点目录版本、内容或执行器无法恢复。保留历史，可发起新一轮。
+
+两类预算拒绝发生在 Run、占位任务和积分预留写入之前。Worker 恢复复用原目录及 hash。运行中权限收紧即时拒绝写入，后续模型步隐藏相关工具。放宽权限可以恢复本轮原已准入的工具。要新增工具，按新权限发起新一轮。
 
 ## 读取与写入
 
@@ -20,7 +100,7 @@ description: 注册 Agent 配置和读取适配器，绑定会话归属，维护
 
 业务引用使用 `<业务>:<类型>/<对象ID>`。服务端按配置授权命名空间和对象。新业务通过注册读取函数与对象授权函数接入。第三方地址和本机路径不属于业务读取合同。图片经当前业务绑定、资源属主、就绪和大小校验后水合到模型请求。文本或图片的读取结果沿用工具批次、预算与持久回执。
 
-画布写入继续走具体命令、审批、快照冲突和变更记录。短剧分析的结果留待用户在剧本编辑器审阅和采用。
+画布写入继续走具体命令、审批、快照冲突和变更记录。短剧分析的结果留待用户在剧本编辑器审阅和采用。画布换图或删除节点后，已失去当前绑定、且能从同一会话旧轮次核实的原图，只从本次模型请求省略，不改写会话记录。重新看图应读取当前节点；未获授权的新引用仍会被拒绝。
 
 ## 共享偏好与会话归属
 
@@ -30,11 +110,21 @@ description: 注册 Agent 配置和读取适配器，绑定会话归属，维护
 
 业务记忆默认关闭，启用时按用户、业务类型、对象 ID 分区。历史、摘要与工具结果保存在各自会话。旧账户提示词和旧记忆保留在原管理入口，旧上下文的续聊需要新建会话。
 
+## 最佳实践
+
+| 实践 | 上线前检查 |
+| --- | --- |
+| 先只读、再加写入 | 新业务从零业务工具或少量只读工具开始。需要写入时接入具体业务命令，保留审批、冲突校验、幂等和审计；不给通用写入口。 |
+| 按当前对象授权 | 对象切换时重建 scoped client、停掉旧 SSE、清空旧视图缓存。即使同属一个用户也不能复用其他项目的会话或图片引用。 |
+| 控制真实上下文成本 | 用目标对象 ID 和分页读取代替整项目正文；技能只加载索引，正文按需读取。记录冻结目录版本、工具字节和预算错误的诊断 ID。 |
+| 明确消息交付状态 | 保留待发送输入与幂等键，确认回执再清空；插话和排队分别提示。按 Run 保存事件游标，用状态快照收敛终态，不以断流判断成功或失败。 |
+| 分开测试阶段 | 自动化覆盖双对象、双账户、断线、状态冲突与图片撤权；真实页面检查审批/问题回复，真实模型单独检查工具调用和预算。 |
+
 ## 升级与回退
 
 1. 在隔离数据库副本验证 Schema 108、109，核对 Run 与 Pi 会话数量、明确归属、只读旧会话和冲突记录。保留数据库与资源备份。
 2. 暂停新准入，排空或按现有流程取消不兼容的运行。确认读取、事件与取消接口仍可用。
-3. 配套切换 Go 与 Node Worker。当前协议为 `canvas-pi-wire/v6`，Pi SDK 为 `0.87.1`，Pi 持久会话格式为 3。先确认 Worker wire 身份兼容、就绪，再恢复准入。
+3. 配套切换 Go 与 Node Worker。当前协议为 `canvas-pi-wire/v7`，Pi SDK 为 `0.87.1`，Pi 持久会话格式为 3。先确认 Worker wire 身份兼容、就绪，再恢复准入。v6 注册式 Run 缺少可验证目录版本，升级前应排空。升级后旧记录仍可查阅，需重新发起一轮才能执行。
 4. 冒烟验证画布看图、短剧提问与回答、断线恢复、单次计费和旧会话只读入口，检查占用与失败指标。
 5. 回退先停止准入，保留兼容的读取、取消和排空路径。保留迁移后的业务数据、事件、回执和账单。二进制回退前在副本验证目标版本是否接受已迁移的数据库与新运行。
 

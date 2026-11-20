@@ -13,6 +13,13 @@ import (
 )
 
 func (s *Service) isolatedAgentSkillSelection(draft *cloudAgentRunDraft) ([]skills.SkillSelectionItem, error) {
+	if draft.parentID == "" {
+		defaults, err := s.agentDefinitionDefaultSkills(draft.definition)
+		if err != nil {
+			return nil, err
+		}
+		return s.layerAgentUserSkills(draft.userID, draft.req.SkillIDs, defaults)
+	}
 	selected, err := s.existingConversationSkillSelection(draft.userID, draft.conversationID, draft.req.SkillIDs)
 	if err != nil {
 		return nil, err
@@ -21,30 +28,38 @@ func (s *Service) isolatedAgentSkillSelection(draft *cloudAgentRunDraft) ([]skil
 		if item.Source == skills.SkillSourceUser {
 			return !draft.definition.AllowUserSkills
 		}
-		return !slices.Contains(draft.definition.SkillIDs, item.SkillID)
+		return len(draft.definition.DefaultSkillScopes) == 0 && !slices.Contains(draft.definition.SkillIDs, item.SkillID)
 	})
-	if len(draft.definition.SkillIDs) == 0 {
-		return selected, nil
+	return selected, nil
+}
+
+func (s *Service) agentDefinitionDefaultSkills(definition AgentDefinition) ([]skills.SkillSelectionItem, error) {
+	if len(definition.DefaultSkillScopes)+len(definition.SkillIDs) == 0 {
+		return nil, nil
 	}
 	defaults, err := s.repo.EnabledAgentSkillDefaults()
 	if err != nil {
 		return nil, err
 	}
-	for _, skillID := range draft.definition.SkillIDs {
-		if slices.ContainsFunc(selected, func(item skills.SkillSelectionItem) bool { return item.SkillID == skillID }) {
+	var selected []skills.SkillSelectionItem
+	for _, row := range defaults {
+		scope := effectiveAgentSkillDefaultScope(row.SkillID, row.Scope)
+		explicit := slices.Contains(definition.SkillIDs, row.SkillID) && (scope == "global" || scope == definition.BusinessType)
+		if !explicit && !slices.Contains(definition.DefaultSkillScopes, scope) {
 			continue
 		}
-		index := slices.IndexFunc(defaults, func(item model.AgentSkillDefault) bool { return item.SkillID == skillID })
-		if index == -1 {
-			return nil, kernel.BadAuthRequest("注册的 Agent 技能未启用：" + skillID)
-		}
-		item, err := s.cloudAgentSkillDefaultItem(defaults[index])
+		item, err := s.cloudAgentSkillDefaultItem(row)
 		if err != nil {
 			return nil, err
 		}
 		selected = append(selected, item)
 	}
-	return selected, nil
+	for _, skillID := range definition.SkillIDs {
+		if !slices.ContainsFunc(selected, func(item skills.SkillSelectionItem) bool { return item.SkillID == skillID }) {
+			return nil, kernel.BadAuthRequest("注册的 Agent 技能未启用或不适用于业务：" + skillID)
+		}
+	}
+	return skills.ResolveSkillSelection(selected)
 }
 
 // cloudAgentConversationIDFor 在创建运行前解析会话归属：新会话（parentID 为空）的
@@ -97,18 +112,14 @@ func (s *Service) resolveRunSkills(userID, conversationID string, userSkillIDs [
 // newConversationSkillSelection layers the enabled global defaults under the
 // user's selection for a new conversation.
 func (s *Service) newConversationSkillSelection(userID string, userSkillIDs []string) ([]skills.SkillSelectionItem, error) {
-	defaults, err := s.repo.EnabledAgentSkillDefaults()
+	globalLayer, err := s.agentDefinitionDefaultSkills(AgentDefinition{BusinessType: "canvas", DefaultSkillScopes: []string{"global", "canvas"}})
 	if err != nil {
 		return nil, err
 	}
-	globalLayer := make([]skills.SkillSelectionItem, 0, len(defaults))
-	for _, row := range defaults {
-		item, err := s.cloudAgentSkillDefaultItem(row)
-		if err != nil {
-			return nil, err
-		}
-		globalLayer = append(globalLayer, item)
-	}
+	return s.layerAgentUserSkills(userID, userSkillIDs, globalLayer)
+}
+
+func (s *Service) layerAgentUserSkills(userID string, userSkillIDs []string, globalLayer []skills.SkillSelectionItem) ([]skills.SkillSelectionItem, error) {
 	userLayer := make([]skills.SkillSelectionItem, 0, len(userSkillIDs))
 	for _, id := range userSkillIDs {
 		// 用户选择沿用既有语义：必须是本人技能库中已安装且启用的技能；
@@ -132,11 +143,15 @@ func (s *Service) cloudAgentSkillDefaultItem(row model.AgentSkillDefault) (skill
 		}
 		return skills.SkillSelectionItem{}, err
 	}
-	if _, err := s.repo.Skill(row.SkillID); err != nil {
+	skill, err := s.repo.Skill(row.SkillID)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return skills.SkillSelectionItem{}, kernel.AgentSkillDefaultsInvalid(fmt.Sprintf("默认技能 %s 不存在或已删除，请联系管理员重新配置", row.SkillID), map[string]any{"skillId": row.SkillID})
 		}
 		return skills.SkillSelectionItem{}, err
+	}
+	if skill.IsPrivate || version.SkillID != row.SkillID {
+		return skills.SkillSelectionItem{}, kernel.AgentSkillDefaultsInvalid("默认技能可见性或版本归属已变化", map[string]any{"skillId": row.SkillID})
 	}
 	return skills.SkillSelectionItem{
 		SkillID: row.SkillID, VersionID: row.SkillVersionID,
@@ -252,11 +267,14 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 		if err != nil {
 			return nil, err
 		}
-		snapshot.Source = item.Source
-		snapshot.Name, snapshot.Description = skills.SkillEntryMetadata(entry.Content)
-		if snapshot.Name == "" {
-			snapshot.Name = item.SkillID
+		catalog, err := s.repo.Skill(item.SkillID)
+		if err != nil {
+			return nil, err
 		}
+		_, description := skills.SkillEntryMetadata(entry.Content)
+		snapshot.Source = item.Source
+		snapshot.Name = firstNonEmpty(catalog.Name, item.SkillID)
+		snapshot.Description = firstNonEmpty(description, catalog.Description)
 		snapshots = append(snapshots, *snapshot)
 		facts = append(facts, skills.SkillCapacityFacts{SkillID: item.SkillID, FileCount: len(files), TotalBytes: version.TotalBytes, ContextBytes: nativeSkillIndexContextBytes(*snapshot)})
 	}
@@ -318,9 +336,8 @@ func (s *Service) cloudAgentUserSkillSnapshotAtSelection(userID string, item ski
 	}
 	snapshot.Source = skills.SkillSourceUser
 	snapshot.Name, snapshot.Description = skills.SkillEntryMetadata(entry.Content)
-	if snapshot.Name == "" {
-		snapshot.Name = item.SkillID
-	}
+	snapshot.Name = firstNonEmpty(snapshot.Name, detail.SkillName, item.SkillID)
+	snapshot.Description = firstNonEmpty(snapshot.Description, detail.Description)
 	return cloudAgentSkillSnapshot{skill: *snapshot, fileCount: len(files), totalBytes: version.TotalBytes}, nil
 }
 

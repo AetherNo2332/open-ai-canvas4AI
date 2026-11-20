@@ -8,6 +8,7 @@ import { createAgentClient } from "@/sdk/agent/client";
 import type { AgentConversation, AgentRunRequest, AgentRunSnapshot } from "@/sdk/agent/contract";
 import { agentWebTransport } from "@/sdk/agent/http-transport";
 import type { DramaModelChoice } from "@/services/api/drama";
+import { listAgentSkillDefaults, type AgentSkillDefaultsSummary } from "@/services/api/agent";
 import { dramaAgentAnalysisRequest } from "@/services/api/drama-agent";
 import "./agent-analysis.css";
 
@@ -29,6 +30,8 @@ export function DramaAgentAnalysis({ projectId, episodeId, model }: { projectId:
     const runId = params.get("agentProject") && params.get("agentProject") !== projectId ? "" : params.get("agentRun") || "";
     const client = useMemo(() => createAgentClient({ transport: agentWebTransport, scope: { type: "drama", id: projectId } }), [projectId]);
     const [run, setRun] = useState<AgentRunSnapshot>();
+    const [skillDefaults, setSkillDefaults] = useState<AgentSkillDefaultsSummary>();
+    const [skillDefaultsError, setSkillDefaultsError] = useState(false);
     const [conversations, setConversations] = useState<AgentConversation[]>([]);
     const [turns, setTurns] = useState<AgentRunSnapshot[]>([]);
     const [cursor, setCursor] = useState<string>();
@@ -69,6 +72,18 @@ export function DramaAgentAnalysis({ projectId, episodeId, model }: { projectId:
             viewIdentity.current++;
         };
     }, [projectId, episodeId]);
+    useEffect(() => {
+        const controller = new AbortController();
+        void listAgentSkillDefaults("drama", controller.signal)
+            .then((summary) => {
+                setSkillDefaults(summary);
+                setSkillDefaultsError(false);
+            })
+            .catch(() => {
+                if (!controller.signal.aborted) setSkillDefaultsError(true);
+            });
+        return () => controller.abort();
+    }, [projectId, runId]);
     useEffect(() => {
         const controller = new AbortController();
         void client
@@ -320,6 +335,12 @@ export function DramaAgentAnalysis({ projectId, episodeId, model }: { projectId:
                 />
             )}
             <div className="drama-agent-composer">
+                {skillDefaultsError ? (
+                    <p className="drama-agent-progress">新对话的默认技能暂时无法读取。</p>
+                ) : skillDefaults?.skills.length ? (
+                    <p className="drama-agent-progress">新对话默认技能 {skillDefaults.skills.map((skill) => skill.skillName).join("、")}</p>
+                ) : null}
+                {current?.skills?.length ? <p className="drama-agent-progress">当前会话技能 {current.skills.map((skill) => skill.name).join("、")}</p> : null}
                 <Input.TextArea
                     variant="borderless"
                     aria-label="分析要求"

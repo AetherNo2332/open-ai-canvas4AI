@@ -77,7 +77,7 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 ## canvas_apply_ops
 
-基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的版本 id 切换当前媒体，已是当前版本即成功；锁定 media_version_locked、上传中或首次生成中 media_version_loading（可稍后重试；原位生成新版本期间可切换，切换后新结果只进历史）、版本不存在或无媒体 media_version_missing。extract_media_version 给 versionId 和新 nodeId，把该版取出为右侧独立节点（无版本历史和任务绑定）。均无生成费用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。update_node 的 patch 在 schema 里只完整列出 title、content、prompt、composerContent，其余字段只给类型；改其他字段前先用 canvas_list_node_types(nodeType) 读该类型的字段合同，字段或取值不对会按字段报错。
+按 snapshotHash 原子编辑。add_node 只填 nodeType、title/content/x/y，其他字段用 update_node.patch，先查 canvas_list_node_types。delete_node 保留素材。set_parent 的 parentId 空串解除归属。replace_text 要求 match 唯一。排序传全部 ID 各一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档或恢复用 usageStatus=archived/active。不写任意 metadata、托管标记、任务状态或 URL。use_media_version 切换已有版本，extract_media_version 用已有 versionId 和新 nodeId 生成独立节点，两者无生成费。生成中切换版本后，新结果仅进历史。
 
 ## canvas_arrange_nodes
 
@@ -413,11 +413,11 @@ add/replace 必填：一两句话，跨会话仍成立
 
 ## generate_media_batch
 
-一次审批批量生成同模式占位节点。items 传节点 ID，提示词与参考取自节点。审批卡列明细、积分、并发和重试额度，批准后逐条提交回写，结束返回回执。先以相同参数调用 canvas_preflight，视频依赖关键帧时先生成关键帧。
+一次审批批量生成同模式占位节点。items 传节点 ID，提示词与参考取自节点。先用相同模型选择和条目调用 canvas_preflight。审批列积分、并发与重试额度，批准后逐条提交回写。视频依赖关键帧时先生成关键帧。
 
 ## media_batch_control
 
-在已批准额度内操作。continue 放行试跑余项。retry 重跑已结束项，可改 prompt，规格保持批准值，成功项在旁新建节点。cancel 取消未提交项。status 查看进度。
+批准额度只限当前运行。continue 放行试跑余项；retry 在原规格内重跑，可改 prompt；cancel 取消未提交项；status 查进度。新轮改单项用 generate_media 的 intent=new_version，整批需新批准。
 
 ## canvas_build_board
 
@@ -425,4 +425,4 @@ add/replace 必填：一两句话，跨会话仍成立
 
 ## canvas_preflight
 
-批量只读检查，参数同 generate_media_batch。检查节点、提示词、参考就绪与 @ 标签。带模型时无扣费核对能力、报价与预算，返回失败/警告数及逐条问题。
+批量只读检查：节点、提示词、参考、@ 标签。可传与 generate_media_batch 相同的模型选择，无扣费核对能力、报价与预算。

@@ -87,7 +87,7 @@ export function buildVerificationPlan({
         "test",
         "./internal/app",
         "-run",
-        "^(TestCloudAgent(PatchSchema|ToolsFollowCanvasCapabilityRegistry|FunctionSchemasAreWellFormed|ToolArgumentValidation)|TestAgentToolSchemaArtifactMatchesRuntime)",
+        "^(TestCloudAgent(PatchSchema|ToolsFollowCanvasCapabilityRegistry|FunctionSchemasAreWellFormed|ToolArgumentValidation)|TestAgent(ToolSchemaArtifactMatchesRuntime|CapabilityDirectorySizes|DefinitionRegistry))",
         "-count=1",
       ],
       why,

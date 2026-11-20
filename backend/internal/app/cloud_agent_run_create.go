@@ -39,6 +39,7 @@ type cloudAgentRunDraft struct {
 	policy             cloudAgentPolicySnapshot
 	state              cloudAgentState
 	canonical          canonicalAgentRequest
+	tools              []map[string]any
 	advertisedNames    []string
 }
 
@@ -275,16 +276,22 @@ func (s *Service) freezeCloudAgentRunInputs(draft *cloudAgentRunDraft) error {
 	if err != nil {
 		return err
 	}
-	draft.capabilities, err = CompileAgentCapabilities(draft.definition, AgentCapabilityAdmission{
-		VisionEnabled: draft.req.VisionEnabled, HasSkills: len(draft.skillSnapshots) > 0,
-	})
-	if err != nil {
-		return err
-	}
 	draft.req.MemoryMode = draft.contextSnapshot.Memory.Mode
 	draft.req.WebSearchEnabled, err = s.agentWebSearchEnabled()
 	if err != nil {
 		return err
+	}
+	draft.capabilities, draft.tools, err = compileAgentRunCapabilityDirectory(draft.definition, draft.req, len(draft.skillSnapshots) > 0)
+	if err != nil {
+		return err
+	}
+	if err := s.checkAgentModelToolSupport(draft.req, draft.id); err != nil {
+		return err
+	}
+	draft.capabilities.DirectoryVersion = agentCapabilityDirectoryVersion
+	draft.capabilities.DirectoryHash, err = agentCapabilityDirectoryHash(draft.capabilities, draft.tools)
+	if err != nil {
+		return agentCapabilityConfigurationError("无法冻结工具目录", "")
 	}
 	if len(draft.req.ContextScope) != 0 {
 		draft.canvasSummary, err = cloudAgentCanvasSummary(draft.canvas, draft.req.FocusNodeIDs...)
@@ -338,6 +345,7 @@ func (s *Service) buildCloudAgentRunPrompt(draft *cloudAgentRunDraft) error {
 	system += canvasRules
 	cloudAgentRecordSystemSegment(&policy, "canvasRules", "当前画布规则", canvasRules)
 	system += subagentSystemPrompt(req.subagent)
+	system += "\n每步最多提交一个写工具调用（可包含多项操作）。等待回执后再写；快照冲突先重读，成功后使用回执中的新快照或重新读取。\n"
 	draft.system, draft.policy = system, policy
 	draft.state = cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: draft.linkedParentID, Fingerprint: draft.fingerprint, CreativeAnchor: draft.creativeAnchor, Plan: draft.inheritedPlan, Skills: draft.skillSnapshots, Context: &draft.contextSnapshot, Capabilities: &draft.capabilities, Policy: policy, Subagent: req.subagent}
 	draft.state.Workspace = &draft.workspace
@@ -351,8 +359,7 @@ func (s *Service) buildCloudAgentRunPrompt(draft *cloudAgentRunDraft) error {
 		cloudAgentRecordSystemSegment(&policy, "business", "短剧顾问边界", businessPolicy)
 		draft.policy, draft.state.Policy = policy, policy
 	}
-	canonical := cloudAgentCanonical(system, draft.history, req.Prompt, req)
-	canonical.Tools = compileRegisteredAgentTools(req, cloudAgentSkillRuntimeNative, &draft.capabilities)
+	canonical := cloudAgentCanonicalWithTools(system, draft.history, req.Prompt, req, draft.tools)
 	if req.DramaEpisodeID != "" {
 		businessInput, _ := json.Marshal(map[string]string{"episodeId": req.DramaEpisodeID, "readPath": "drama:episode/" + req.DramaEpisodeID})
 		last := len(canonical.Messages) - 1
@@ -381,13 +388,17 @@ func (s *Service) buildCloudAgentRunPrompt(draft *cloudAgentRunDraft) error {
 }
 
 func (s *Service) checkCloudAgentRunContextBudget(draft *cloudAgentRunDraft) error {
-	if draft.workspace.AgentsMD == "" && len(draft.skillSnapshots) == 0 {
-		return nil
-	}
-	projected, err := cloudAgentRequestEstimatedTokens(&draft.canonical)
+	toolTokens, err := cloudAgentToolDirectoryCost(draft.canonical.Tools, draft.id)
 	if err != nil {
 		return err
 	}
+	content := draft.canonical
+	content.Tools = nil
+	projected, err := cloudAgentRequestEstimatedTokens(&content)
+	if err != nil {
+		return err
+	}
+	projected += toolTokens
 	// Pi adds the Skill index to its initial prompt after this canonical
 	// snapshot. Use index bytes as a conservative token bound; bodies and
 	// references enter later requests only after an on-demand read.
@@ -396,7 +407,7 @@ func (s *Service) checkCloudAgentRunContextBudget(draft *cloudAgentRunDraft) err
 	}
 	budget := s.cloudAgentContextBudgetForRequest(draft.req)
 	if projected > budget.InputBudgetTokens {
-		return kernel.AgentSkillBudgetExceeded(map[string]any{"budget": "context_tokens", "limit": budget.InputBudgetTokens, "actual": projected})
+		return agentCapabilityBudgetError(draft.id, "context_tokens", "", projected, budget.InputBudgetTokens, toolTokens)
 	}
 	return nil
 }

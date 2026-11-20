@@ -1,10 +1,7 @@
 package app
 
 // 工具清单在一轮开始时就是完整的合格目录，运行中不再按提示词关键词或画布内容增减。
-// 合格目录仍按权限模式、画布上下文、识图、记忆、联网和子代理身份编译（compileCloudAgentTools），
-// AdvertisedToolNames 是对它的冻结记录：preflight 只放行已下发的工具，Pi worker 只注册已下发的工具。
-// 每步刷新按当前权限重算：保持已冻结的顺序，剔除不再允许的工具；运行中放宽权限时
-// （cloudAgentExtendToolCatalog 已把新工具补进运行目录）在末尾追加目录里现在允许的工具。
+// AdvertisedToolNames 记录模型步的实际目录；下一步的权限变更只在冻结目录内生效。
 
 func cloudAgentSelectAdvertisedTools(eligible []map[string]any) []string {
 	return cloudAgentToolNames(eligible)
@@ -17,6 +14,18 @@ func cloudAgentAdvertisedToolNames(req CloudAgentRequest) []string {
 // cloudAgentNextAdvertisedToolNames 返回下一步下发的工具：已冻结的工具保持原顺序并去掉当前不允许的，
 // 运行目录里其余当前允许的工具追加在后面。进行中的模型步或工具批次沿用已准入的清单，不做任何调整。
 func cloudAgentNextAdvertisedToolNames(state *cloudAgentRuntime) []string {
+	if state.Capabilities != nil && state.Capabilities.DirectoryVersion == agentCapabilityDirectoryVersion {
+		if state.ActiveTaskID != "" || state.CallIndex < len(state.Calls) {
+			return append([]string(nil), state.AdvertisedToolNames...)
+		}
+		names := make([]string, 0, len(state.Canonical.Tools))
+		for _, name := range cloudAgentToolNames(state.Canonical.Tools) {
+			if cloudAgentRunAllowsTool(state, name) {
+				names = append(names, name)
+			}
+		}
+		return names
+	}
 	if len(state.AdvertisedToolNames) == 0 {
 		return cloudAgentToolNames(state.Canonical.Tools)
 	}
@@ -62,7 +71,7 @@ func cloudAgentToolAdvertisedForRun(state *cloudAgentRuntime, name string) bool 
 	if state == nil || name == "" {
 		return false
 	}
-	if len(state.AdvertisedToolNames) == 0 {
+	if len(state.AdvertisedToolNames) == 0 && (state.Capabilities == nil || state.Capabilities.DirectoryVersion == 0) {
 		return true
 	}
 	for _, advertised := range state.AdvertisedToolNames {

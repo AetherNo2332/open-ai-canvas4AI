@@ -454,6 +454,7 @@ func TestCloudAgentCompactionContinuationIncludesFinalReplyWithoutReplayingPromp
 	})
 	req := agentTestRequest()
 	req.Prompt, req.IdempotencyKey = "继续下一镜", "compaction-continuation-final"
+	declareTestChannelWindow(t, db, 128_000, 8_000)
 	child, err := s.CreateCloudAgentRun("user", req, run.ID)
 	if err != nil {
 		t.Fatal(err)

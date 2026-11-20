@@ -148,6 +148,12 @@ func TestAgentSDKRealHTTPWorkerRestart(t *testing.T) {
 	_, peer := agentSDKStartWorker(t, ctx, node, agentDir, server.URL, "peer", false)
 	agentSDKAwaitLine(t, peer, "READY")
 	if err := client.Wait(); err != nil {
+		var failed []model.CloudAgentExecution
+		if readErr := db.Select("id", "failure_message").Where("status = ?", "failed").Find(&failed).Error; readErr == nil {
+			for _, run := range failed {
+				t.Logf("SDK run %s failed: %s", run.ID, run.FailureMessage)
+			}
+		}
 		t.Fatalf("SDK cross-process client: %v\n%s", err, output.String())
 	}
 	if err := svc.RenewPiAgentLease(leased.UserID, leased.ID, oldOwner); err == nil {

@@ -534,7 +534,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         setSkillDefaults({ count: 0, skills: [] });
         const refresh = () => {
             const sequence = ++requestSequence;
-            void listAgentSkillDefaults()
+            void listAgentSkillDefaults("canvas")
                 .then((result) => {
                     if (active && sequence === requestSequence) {
                         setSkillDefaults(result);
@@ -562,7 +562,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
             window.removeEventListener("canvas-skills-changed", refresh);
             window.removeEventListener("focus", refresh);
         };
-    }, [open, userId]);
+    }, [open, userId, activeConversationId]);
 
     useEffect(() => {
         if (view !== "settings" && !skillsOpen) return;
@@ -1624,6 +1624,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
                     installedSkills={installedSkills}
                     marketSkills={marketSkills}
                     selectedSkillIds={selectedSkillIds}
+                    frozenUserSkillIds={(run?.skills || []).filter((skill) => skill.source === "user").map((skill) => skill.id)}
                     globalDefaultSkillIds={globalDefaultSkillIds}
                     globalDefaultSkills={globalDefaultSkills}
                     categories={skillCategories}

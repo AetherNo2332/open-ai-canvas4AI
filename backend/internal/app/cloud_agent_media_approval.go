@@ -207,6 +207,7 @@ func (s *Service) updateCloudAgentMediaBatchApproval(repo *repository.Repository
 		prepared = append(prepared, cloudAgentMediaBatchPrepared{plan: plan, item: item, model: name})
 		if index == 0 {
 			batch.ModelName = name
+			args.SelectionID = ""
 			args.LogicalModelID, args.ChannelID, args.ChannelModelKey = stored.LogicalModelID, stored.ChannelID, stored.ChannelModelKey
 			args.Size, args.Quality, args.ImageResolution, args.ImageParameters = stored.Size, stored.Quality, stored.ImageResolution, stored.ImageParameters
 			args.VideoGenerateAudio, args.VideoWatermark, args.VideoArkPrivateAssetUpload = stored.VideoGenerateAudio, stored.VideoWatermark, stored.VideoArkPrivateAssetUpload

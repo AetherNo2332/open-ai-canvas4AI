@@ -80,8 +80,7 @@ func permissionLastToolEvent(state cloudAgentRuntime, callID string) *CloudAgent
 	return nil
 }
 
-// 只读开局，中途放宽为自动执行：下一次写入直接执行，不弹审批；工具出现在下一份快照的 allowed 里。
-func TestCloudAgentPermissionLoosenReadOnlyToAutoAppliesNextWrite(t *testing.T) {
+func TestCloudAgentPermissionLoosenReadOnlyToAutoDoesNotGrantNewWrites(t *testing.T) {
 	s, db, root := permissionTestRun(t, "read_only")
 	agentSettleToolStep(t, s, db, root.ID, "read-1", "canvas_get_state", `{}`)
 	if permissionSnapshotAllowed(t, s, root.ID, "canvas_apply_ops") {
@@ -91,15 +90,15 @@ func TestCloudAgentPermissionLoosenReadOnlyToAutoAppliesNextWrite(t *testing.T) 
 	if err != nil || !result.Changed || result.PermissionMode != "auto" {
 		t.Fatalf("change permission: %+v %v", result, err)
 	}
-	if !permissionSnapshotAllowed(t, s, root.ID, "canvas_apply_ops") {
-		t.Fatal("canvas_apply_ops must be allowed in the next snapshot after loosening")
+	if permissionSnapshotAllowed(t, s, root.ID, "canvas_apply_ops") {
+		t.Fatal("loosening must not introduce canvas_apply_ops into the original run")
 	}
 	run, state := agentSettleToolStep(t, s, db, root.ID, "write-1", "canvas_apply_ops", permissionAddNodeArgs(t, db, "loosen-node"))
 	if run.Status == "waiting_approval" || state.Approval != nil {
-		t.Fatalf("auto write must not request approval: status=%s", run.Status)
+		t.Fatalf("an unfrozen tool must not request approval: status=%s", run.Status)
 	}
-	if !permissionCanvasHas(t, db, "loosen-node") {
-		t.Fatal("write after loosening to auto did not reach the canvas")
+	if permissionCanvasHas(t, db, "loosen-node") {
+		t.Fatal("an unfrozen write reached the canvas")
 	}
 	if !agentHasEvent(state, "permission_changed") {
 		t.Fatal("permission_changed event missing")
@@ -330,21 +329,20 @@ func TestCloudAgentPermissionNoticeDeliveredOnceAtNextStep(t *testing.T) {
 	}
 }
 
-// 工具目录在放宽后补齐新合格工具，已有工具定义不变（schema 不漂移）。
-func TestCloudAgentPermissionCatalogExtendsWithoutSchemaDrift(t *testing.T) {
+func TestCloudAgentPermissionCatalogDoesNotExpand(t *testing.T) {
 	s, _, root := permissionTestRun(t, "read_only")
 	_, before := agentInterjectionState(t, s, root.ID)
 	if _, err := s.ChangeCloudAgentPermission("user", root.ID, "auto", "perm-1"); err != nil {
 		t.Fatal(err)
 	}
 	_, after := agentInterjectionState(t, s, root.ID)
-	if err := cloudAgentToolSchemaDrift(before.Canonical.Tools, after.Canonical.Tools); err != nil {
-		t.Fatal(err)
+	if before.Capabilities.DirectoryHash == "" || before.Capabilities.DirectoryHash != after.Capabilities.DirectoryHash {
+		t.Fatal("permission change replaced the frozen directory")
 	}
 	names := cloudAgentToolNames(after.Canonical.Tools)
 	for _, name := range []string{"canvas_apply_ops", "canvas_arrange_nodes", "canvas_undo"} {
-		if !cloudAgentContainsString(names, name) {
-			t.Fatalf("catalog missing %s after loosening: %v", name, names)
+		if cloudAgentContainsString(names, name) {
+			t.Fatalf("loosening added %s to the frozen catalog: %v", name, names)
 		}
 	}
 	run, _ := agentStartPiModelStep(t, s, root.ID)
@@ -353,8 +351,8 @@ func TestCloudAgentPermissionCatalogExtendsWithoutSchemaDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"canvas_apply_ops", "generate_media", "spawn_subagent", "send_parent_message"} {
-		if !cloudAgentContainsString(snapshot.ToolCatalog, name) {
-			t.Fatalf("worker lifetime catalog missing %s", name)
+		if cloudAgentContainsString(snapshot.ToolCatalog, name) {
+			t.Fatalf("worker lifetime catalog inherited %s", name)
 		}
 	}
 }

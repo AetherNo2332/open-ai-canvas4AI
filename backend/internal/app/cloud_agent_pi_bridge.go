@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -70,11 +69,10 @@ type PiAgentSnapshot struct {
 	PendingInterjections     []PiPendingInterjection      `json:"pendingInterjections,omitempty"`
 	PendingContextCompaction *PiPendingContextCompaction  `json:"pendingContextCompaction,omitempty"`
 	Tools                    []PiAgentToolSpec            `json:"tools"`
-	// ToolCatalog 是 Pi 会话的终身工具白名单（平台工具全集）。它不是授权：运行中切换
-	// 权限后新允许的工具要能在下一边界注册，是否可用仍由 tools[].allowed 与服务端校验决定。
-	ToolCatalog []string          `json:"toolCatalog,omitempty"`
-	PiMessages  []json.RawMessage `json:"piMessages"`
-	Opened      []string          `json:"openedCategories"`
+	CapabilityDirectory      PiAgentCapabilityDirectory   `json:"capabilityDirectory"`
+	ToolCatalog              []string                     `json:"toolCatalog"`
+	PiMessages               []json.RawMessage            `json:"piMessages"`
+	Opened                   []string                     `json:"openedCategories"`
 	// Harness 是首步合同冻结的 Harness 正文（版本 2 运行在首步之后非空）。
 	//
 	// Node 恢复时优先用它而不是重读磁盘文件：运维改了 SYSTEM.md / AGENTS.md 再重启进程，
@@ -260,6 +258,10 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 	}
 	if !cloudAgentRunTerminal(run.Status) {
 		if err := s.authorizeRegisteredAgentRun(run, &state); err != nil {
+			var denied *kernel.AppError
+			if errors.As(err, &denied) && denied.Reason == "agent_capability_directory_unavailable" {
+				return nil, s.stopIncompatibleAgentDirectory(run, &state, err)
+			}
 			return nil, err
 		}
 	}
@@ -312,8 +314,9 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 		Subagent:    state.Subagent,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, HistoricalToolReceipts: historicalReceipts, PiActiveLeafID: session.ActiveLeafID,
-		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, Tools: tools, ToolCatalog: cloudAgentPiToolCatalog(state.Canonical.Tools),
-		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
+		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, Tools: tools, ToolCatalog: cloudAgentToolNames(state.Canonical.Tools),
+		CapabilityDirectory: piAgentCapabilityDirectory(&state),
+		Opened:              state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
 		PendingToolBatch: pendingBatch,
 		SkillRuntimeMode: mode, Skills: nativeSkills,
 		VisionBatchBudget: visionBudget,
@@ -548,18 +551,4 @@ func (s *Service) sweepPiRuns(runs []model.CloudAgentExecution, reason, message 
 		swept++
 	}
 	return swept, nil
-}
-
-// cloudAgentPiToolCatalog 是平台工具全集与本轮目录的并集（含子代理工具与 native read）。
-func cloudAgentPiToolCatalog(tools []map[string]any) []string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, name := range append(append(cloudAgentToolNames(tools), CloudAgentSupportedToolNames()...), cloudAgentToolNames(CloudAgentToolSchemaArtifact().Tools)...) {
-		if name != "" && !seen[name] {
-			seen[name] = true
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out
 }

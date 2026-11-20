@@ -3636,9 +3636,13 @@ paths:
   /agent/skill-defaults:
     get:
       tags: [agent]
-      summary: 读取全局默认技能摘要（登录即可）
+      summary: 读取新会话的有效默认技能摘要（登录即可）
+      parameters:
+        - {name: scopeType, in: query, schema: {type: string, default: canvas}, description: Agent 的业务类型，如 canvas 或 drama}
+        - {name: agentDefinitionId, in: query, schema: {type: string}, description: 省略时使用该业务的默认 Agent 配置}
       responses:
-        "200": {description: 信封 data 为 count 与按 position 排序的 skills，每项只含 skillId、skillName；仅启用项，不含正文或管理员版本详情}
+        "200": {description: 信封 data 为 count 与按 position 排序的 skills，每项只含 skillId、skillName；仅返回该配置适用的启用项}
+        "400": {description: 业务或 Agent 配置无效，或默认技能引用失效}
         "401": {description: 未登录}
   /admin/agent/skill-defaults:
     get:
@@ -3646,7 +3650,7 @@ paths:
       summary: 读取管理员 Agent 默认技能配置
       responses:
         "200":
-          description: 信封 data 包含 revision、items（skillId、skillName、skillVersionId、versionLabel、position、enabled、status、fileCount、totalBytes）、totalFiles、totalBytes、contextEstimateBytes；合计仅统计启用项，上下文预估为技能包整体读入的保守上限
+          description: 信封 data 包含 revision、items（skillId、skillName、skillVersionId、versionLabel、scope、position、enabled、status、fileCount、totalBytes）、totalFiles、totalBytes、contextEstimateBytes；合计仅统计启用项，上下文预估仅统计索引
         "401": {description: 未登录}
         "403": {description: 需要管理员权限}
     put:
@@ -3669,6 +3673,7 @@ paths:
                     properties:
                       skillId: {type: string}
                       skillVersionId: {type: string}
+                      scope: {type: string, enum: [global, canvas, drama], default: global}
                       position: {type: integer}
                       enabled: {type: integer, enum: [0, 1]}
       responses:

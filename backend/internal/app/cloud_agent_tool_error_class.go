@@ -92,26 +92,40 @@ func cloudAgentToolErrorClass(req CloudAgentRequest, call cloudAgentCall, err er
 	}
 	var admissionErr *cloudAgentMediaAdmissionError
 	if errors.As(err, &admissionErr) {
-		switch admissionErr.Reason {
-		case "new_version_required":
-			return cloudAgentToolErrorSchemaError, false, "confirm_new_version"
-		case "task_in_progress":
-			return cloudAgentToolErrorStateConflict, false, "query_original_task"
-		case "submission_uncertain":
-			return cloudAgentToolErrorStateConflict, false, "verify_original_submission"
-		case "materialization_pending":
-			return cloudAgentToolErrorStateConflict, false, "recover_original_task"
-		case "task_unavailable", "target_unavailable":
-			return cloudAgentToolErrorStateConflict, false, "reread_canvas"
-		case "snapshot_conflict":
-			return cloudAgentToolErrorStateConflict, true, "reread_canvas"
-		}
-		// 媒体准入里"上游拒绝该规格"属于上游故障；其余是参数/状态问题。
-		if strings.Contains(admissionErr.Error(), "上游") {
-			return cloudAgentToolErrorUpstream, false, "report_to_user"
-		}
-		return cloudAgentToolErrorSchemaError, true, "fix_arguments"
+		return cloudAgentMediaAdmissionErrorClass(admissionErr)
 	}
+	return cloudAgentExternalToolErrorClass(err)
+}
+
+func cloudAgentMediaAdmissionErrorClass(admissionErr *cloudAgentMediaAdmissionError) (string, bool, string) {
+	switch admissionErr.Reason {
+	case "batch_not_in_run":
+		return cloudAgentToolErrorStateConflict, false, "start_new_generation"
+	case "batch_awaiting_approval":
+		return cloudAgentToolErrorStateConflict, false, "await_approval"
+	case "batch_running":
+		return cloudAgentToolErrorStateConflict, false, "wait_for_generations"
+	case "new_version_required":
+		return cloudAgentToolErrorSchemaError, false, "confirm_new_version"
+	case "task_in_progress":
+		return cloudAgentToolErrorStateConflict, false, "query_original_task"
+	case "submission_uncertain":
+		return cloudAgentToolErrorStateConflict, false, "verify_original_submission"
+	case "materialization_pending":
+		return cloudAgentToolErrorStateConflict, false, "recover_original_task"
+	case "task_unavailable", "target_unavailable":
+		return cloudAgentToolErrorStateConflict, false, "reread_canvas"
+	case "snapshot_conflict":
+		return cloudAgentToolErrorStateConflict, true, "reread_canvas"
+	}
+	// 媒体准入里"上游拒绝该规格"属于上游故障；其余是参数/状态问题。
+	if strings.Contains(admissionErr.Error(), "上游") {
+		return cloudAgentToolErrorUpstream, false, "report_to_user"
+	}
+	return cloudAgentToolErrorSchemaError, true, "fix_arguments"
+}
+
+func cloudAgentExternalToolErrorClass(err error) (string, bool, string) {
 	var httpErr providerHTTPError
 	if errors.As(err, &httpErr) {
 		return cloudAgentToolErrorUpstream, httpErr.StatusCode >= 500 || httpErr.StatusCode == 429, "report_to_user"

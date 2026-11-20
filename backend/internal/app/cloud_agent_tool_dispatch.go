@@ -24,7 +24,13 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		return s.failCloudAgent(run, state, "Agent 工具调用状态无效，本轮已停止")
 	}
 	call := state.Calls[state.CallIndex]
-	if err := s.checkRegisteredAgentToolBeforeDispatch(run, state, call.Function.Name); err != nil {
+	if cloudAgentLegacyStoryboardTool(call.Function.Name) {
+		return s.recordStoryboardResult(run, state, call, nil, cloudAgentFieldError("tool", "retired", "旧分镜工具已退役；请使用 storyboard 的 read/write_rows/update 等 action。"))
+	}
+	if admission, ok := cloudAgentAdmissionFor(state, state.CallIndex); ok && !admission.Allowed {
+		return s.recordCloudAgentToolReceipt(run, state, call, nil, cloudAgentAdmissionError(admission))
+	}
+	if err := s.checkRegisteredAgentToolBeforeDispatch(run, state, call); err != nil {
 		return s.recordCloudAgentToolReceipt(run, state, call, nil, err)
 	}
 	// director preview 挂起在浏览器视口上：回传由 SubmitCloudAgentDirectorPreview 处理，
@@ -43,11 +49,6 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 	if state.Approval != nil && state.Approval.Decision != "" && state.Approval.CallHash != "" && state.Approval.CallHash != cloudAgentApprovalCallHash(call) {
 		return s.terminateCloudAgent(run, "审批内容与待执行操作不一致，本轮已停止")
 	}
-	// 预检没过就不进任何业务分支：不申请审批、不读画布、不提交任务，只回一条结构化错误。
-	// 这一步必须在写工具的审批分支之前——否则一个参数就不合法的写入会先弹出审批卡。
-	if admission, ok := cloudAgentAdmissionFor(state, state.CallIndex); ok && !admission.Allowed {
-		return s.recordCloudAgentToolReceipt(run, state, call, nil, cloudAgentAdmissionError(admission))
-	}
 	allowed := cloudAgentRunAllowsTool(state, call.Function.Name)
 	if allowed {
 		normalized, err := cloudAgentResolveWorkflowIDs(run.UserID, run.ID, state, call)
@@ -60,14 +61,11 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 	return s.dispatchRegisteredAgentTool(run, state, call, allowed)
 }
 
-// routeCloudAgentToolCall 依次检查只读拒绝、退役工具、分镜执行器和两类审批闸门；都不命中时交给已准入调用的执行路径。
+// routeCloudAgentToolCall 检查只读限制、分镜执行器和审批闸门；都不命中时交给已准入调用的执行路径。
 func (s *Service) routeCloudAgentToolCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) error {
 	// read_only 只放行 director read；写 action 即使绕过了预检 schema 也在执行前拒绝。
 	if allowed && cloudAgentReadOnlyDirectorWrite(state, call) {
 		return s.recordCloudAgentToolReceipt(run, state, call, nil, kernel.Forbidden("只读模式下 director 只允许 action=read"))
-	}
-	if cloudAgentLegacyStoryboardTool(call.Function.Name) {
-		return s.recordStoryboardResult(run, state, call, nil, cloudAgentFieldError("tool", "retired", "旧分镜工具已退役；请使用 storyboard 的 read/write_rows/update 等 action。"))
 	}
 	if allowed && call.Function.Name == "storyboard" {
 		return s.executeCloudAgentStoryboard(run, state, call)

@@ -18,9 +18,6 @@ func (c *cloudAgentToolCompiler) add(name, description string, properties map[st
 	if name == "generate_media" {
 		description += " " + cloudAgentModelSelectionDescription
 	}
-	if cloudAgentWrite(name) {
-		description += " 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。"
-	}
 	c.tools = append(c.tools, map[string]any{"type": "function", "function": map[string]any{"name": name, "description": description, "parameters": parameters}})
 }
 
@@ -170,7 +167,7 @@ func (c *cloudAgentToolCompiler) addStoryboardPlanTool(req CloudAgentRequest) {
 		"outputMode": map[string]any{"type": "string", "enum": []string{"image", "video"}}, "outputNodeId": str("绑定或解除产物时的节点 ID"),
 	}, "action", "nodeId")
 	if req.PermissionMode == "read_only" {
-		c.tools[len(c.tools)-1]["function"].(map[string]any)["parameters"].(map[string]any)["properties"].(map[string]any)["action"] = map[string]any{"type": "string", "enum": []string{"read"}}
+		cloudAgentReadOnlyStoryboardSchema(c.tools[len(c.tools)-1])
 	}
 }
 
@@ -204,7 +201,7 @@ func (c *cloudAgentToolCompiler) addCanvasWriteTools(req CloudAgentRequest) {
 		"globalPrompt": str(cloudAgentToolText("parameter_055")),
 	}, "snapshotHash", "nodeId", "action")
 	opProperties := map[string]any{
-		"type":         map[string]any{"type": "string", "enum": []string{"add_node", "update_node", "delete_node", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows", "use_media_version", "extract_media_version"}, "description": "创建、修改、删除、复制节点，维护分组和排序，或精确替换文本；use_media_version 切换节点到已有版本，extract_media_version 把版本取出为右侧独立节点，均无生成费用；输入引用写引用字段"},
+		"type":         map[string]any{"type": "string", "enum": []string{"add_node", "update_node", "delete_node", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows", "use_media_version", "extract_media_version"}},
 		"versionId":    str("media_versions 返回的版本 id"),
 		"nodeId":       str("extract_media_version 新节点 ID"),
 		"id":           str(cloudAgentToolText("parameter_057")),
@@ -265,7 +262,7 @@ func (c *cloudAgentToolCompiler) addGenerationTools() {
 		"storyboardNodeId": str("分镜表节点 ID；分镜模式不传 prompt、引用和时长，由服务端读取行字段"), "storyboardRowId": str("分镜行 ID，与 storyboardNodeId 同时传入"),
 		"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "prompt": str(cloudAgentToolText("parameter_070")),
 		"selectionId": str(cloudAgentToolText("model_selection_id")), "logicalModelId": str(cloudAgentToolText("parameter_071")), "channelId": str(cloudAgentToolText("parameter_038")), "channelModelKey": str(cloudAgentToolText("parameter_039")),
-		"durationSeconds": map[string]any{"type": "integer", "minimum": 0}, "size": str(cloudAgentToolText("parameter_074")), "quality": str(cloudAgentToolText("parameter_075")), "videoGenerateAudio": map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_076")},
+		"durationSeconds": map[string]any{"type": "integer", "minimum": 0}, "size": str(cloudAgentToolText("parameter_074")), "quality": str(cloudAgentToolText("parameter_075")), "imageResolution": str("图片模型的分辨率档位，与模型目录一致"), "videoGenerateAudio": map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_076")},
 		"snapshotHash": str(cloudAgentToolText("parameter_077")), "nodeId": str(cloudAgentToolText("parameter_078")), "title": str(cloudAgentToolText("parameter_079")), "sourceNodeId": str(cloudAgentToolText("parameter_080")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_081"))}, "referenceTransientIds": map[string]any{"type": "array", "maxItems": 4, "items": str(cloudAgentToolText("parameter_082"))},
 	}, "mode")
 	c.add("wait_generations", cloudAgentToolText("wait_generations"), map[string]any{})

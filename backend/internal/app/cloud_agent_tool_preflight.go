@@ -69,6 +69,10 @@ func cloudAgentAdvertisedTool(state *cloudAgentRuntime, name string) (map[string
 	if state == nil || name == "" {
 		return nil, false
 	}
+	if state.Capabilities != nil && state.Capabilities.DirectoryVersion != 0 &&
+		(state.Capabilities.Tools[name] == 0 || !cloudAgentToolAdvertisedForRun(state, name)) {
+		return nil, false
+	}
 	if state.DisclosureVersion >= cloudAgentToolDisclosureVersion {
 		found := false
 		for _, advertised := range state.AdvertisedToolNames {
@@ -110,7 +114,7 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 	for index, call := range calls {
 		schema, advertised := cloudAgentAdvertisedTool(state, call.Function.Name)
 		// 工具表为空（旧检查点或测试构造的状态）时不拿"没下发"当罪证，退回平台工具集判断。
-		if !advertised && len(state.Canonical.Tools) == 0 {
+		if !advertised && len(state.Canonical.Tools) == 0 && state.Capabilities == nil {
 			advertised = cloudAgentPlatformToolNames()[call.Function.Name]
 		}
 		admission := cloudAgentAdmitCall(state, call, schema, advertised, seenCalls, categoryAdmitted)
