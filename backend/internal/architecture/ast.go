@@ -265,7 +265,7 @@ func FormatFindings(findings []Finding) string {
 	var text strings.Builder
 	for _, finding := range findings {
 		text.WriteString(finding.ID + ": " + finding.Detail)
-		if finding.Rule != "dependency" && finding.Rule != "untyped_protocol_map" {
+		if finding.Rule != "dependency" && finding.Rule != "untyped_protocol_map" && finding.Rule != "model_gorm_write" {
 			text.WriteString(" (value=" + strconv.Itoa(finding.Value) + ", limit=" + strconv.Itoa(finding.Limit) + ")")
 		}
 		text.WriteString("\n")

@@ -4,6 +4,7 @@ import (
 	"gorm.io/gorm"
 	"reflect"
 	"sync"
+	"yingce/backend/internal/database/agentwake"
 	"yingce/backend/internal/model"
 )
 
@@ -103,7 +104,7 @@ func InstallAgentEventCallbacks(db *gorm.DB) {
 				}
 				event = model.AgentWakeEvent{Kind: "run_changed", RunID: id, UserID: run.UserID, Revision: run.Revision}
 			}
-			if err := model.AppendAgentWake(clean, event); err != nil {
+			if err := agentwake.Append(clean, event); err != nil {
 				tx.AddError(err)
 				return
 			}
@@ -117,7 +118,7 @@ func InstallAgentEventCallbacks(db *gorm.DB) {
 		if !ok || run.Engine != "pi" {
 			return
 		}
-		if err := model.AppendAgentWake(tx.Session(&gorm.Session{NewDB: true}), model.AgentWakeEvent{RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Kind: "run_changed"}); err != nil {
+		if err := agentwake.Append(tx.Session(&gorm.Session{NewDB: true}), model.AgentWakeEvent{RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Kind: "run_changed"}); err != nil {
 			tx.AddError(err)
 		}
 	})

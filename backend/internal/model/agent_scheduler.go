@@ -1,10 +1,6 @@
 package model
 
-import (
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-	"time"
-)
+import "time"
 
 // The counter row is updated inside the producer transaction. Unlike a database
 // sequence, its lock survives until commit, so SSE cannot skip a late commit.
@@ -21,22 +17,6 @@ type AgentWakeEvent struct {
 	Kind      string    `gorm:"size:40" json:"kind"`
 	Revision  int64     `json:"revision"`
 	CreatedAt time.Time `json:"createdAt"`
-}
-
-func AppendAgentWake(tx *gorm.DB, event AgentWakeEvent) error {
-	counter := AgentEventCounter{ID: 1}
-	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&counter).Error; err != nil {
-		return err
-	}
-	if err := tx.Model(&AgentEventCounter{}).Where("id = ?", 1).UpdateColumn("value", gorm.Expr("value + 1")).Error; err != nil {
-		return err
-	}
-	if err := tx.First(&counter, 1).Error; err != nil {
-		return err
-	}
-	event.Sequence = counter.Value
-	event.CreatedAt = time.Now()
-	return tx.Create(&event).Error
 }
 
 // A prepared tool operation is durable before any asynchronous execution starts.

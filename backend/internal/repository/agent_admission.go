@@ -6,6 +6,7 @@ import (
 	"gorm.io/gorm/clause"
 	"sort"
 	"time"
+	"yingce/backend/internal/database/agentwake"
 	"yingce/backend/internal/model"
 )
 
@@ -49,7 +50,7 @@ func (r *Repository) SaveAgentSchedulerSetting(p *model.AgentSchedulerSetting, e
 		if err := tx.Create(audit).Error; err != nil {
 			return err
 		}
-		if err := model.AppendAgentWake(tx, model.AgentWakeEvent{Kind: "scheduler_config_changed", Revision: next.Revision}); err != nil {
+		if err := agentwake.Append(tx, model.AgentWakeEvent{Kind: "scheduler_config_changed", Revision: next.Revision}); err != nil {
 			return err
 		}
 		*p = next

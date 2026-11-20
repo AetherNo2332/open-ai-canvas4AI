@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"yingce/backend/internal/database/agentwake"
 	"yingce/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -335,7 +336,7 @@ func runAgentSchedulerPostgresCommitOrder(t *testing.T, rollbackA bool) {
 	caseID := t.Name() + "-" + time.Now().UTC().Format("20060102T150405.000000000")
 	runA, runB := caseID+"-A", caseID+"-B"
 	appendRun := func(tx *gorm.DB, runID string) error {
-		return model.AppendAgentWake(tx, model.AgentWakeEvent{RunID: runID, UserID: "scheduler-test", Kind: "run_changed"})
+		return agentwake.Append(tx, model.AgentWakeEvent{RunID: runID, UserID: "scheduler-test", Kind: "run_changed"})
 	}
 
 	aHasCounterLock := make(chan struct{})
@@ -409,6 +410,13 @@ func runAgentSchedulerPostgresCommitOrder(t *testing.T, rollbackA bool) {
 	if bErr != nil {
 		t.Fatalf("producer B commit failed: %v", bErr)
 	}
+	wantCounter := base + 2
+	if rollbackA {
+		wantCounter = base + 1
+	}
+	if got := agentSchedulerPostgresCounter(t, db); got != wantCounter {
+		t.Fatalf("committed counter = %d, want %d", got, wantCounter)
+	}
 
 	var rows []model.AgentWakeEvent
 	if err := db.Where("run_id IN ?", []string{runA, runB}).Order("sequence ASC").Find(&rows).Error; err != nil {
@@ -420,6 +428,37 @@ func runAgentSchedulerPostgresCommitOrder(t *testing.T, rollbackA bool) {
 		}
 	} else if len(rows) != 2 || rows[0].RunID != runA || rows[0].Sequence != base+1 || rows[1].RunID != runB || rows[1].Sequence != base+2 {
 		t.Fatalf("committed producer order is not contiguous A then B: base=%d rows=%+v", base, rows)
+	}
+
+	// A reader starting at N must page through the committed events exactly
+	// once in sequence order. Continuing past the last page must not replay them.
+	cursor := base
+	paged := []model.AgentWakeEvent{}
+	for len(paged) <= len(rows) {
+		var page []model.AgentWakeEvent
+		if err := db.Where("sequence > ? AND run_id IN ?", cursor, []string{runA, runB}).Order("sequence ASC").Limit(1).Find(&page).Error; err != nil {
+			t.Fatal("could not page committed producer events")
+		}
+		if len(page) == 0 {
+			break
+		}
+		paged = append(paged, page...)
+		cursor = page[0].Sequence
+	}
+	if len(paged) != len(rows) {
+		t.Fatalf("cursor pages replayed or skipped events: base=%d paged=%+v rows=%+v", base, paged, rows)
+	}
+	for index := range rows {
+		if paged[index].Sequence != rows[index].Sequence || paged[index].RunID != rows[index].RunID {
+			t.Fatalf("cursor page %d = %+v, want %+v", index, paged[index], rows[index])
+		}
+	}
+	var replayed []model.AgentWakeEvent
+	if err := db.Where("sequence > ? AND run_id IN ?", cursor, []string{runA, runB}).Order("sequence ASC").Find(&replayed).Error; err != nil {
+		t.Fatal("could not continue from the last wake cursor")
+	}
+	if len(replayed) != 0 {
+		t.Fatalf("continuing from the last cursor replayed events: %+v", replayed)
 	}
 }
 

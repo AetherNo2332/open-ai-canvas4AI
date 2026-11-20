@@ -188,7 +188,7 @@ func Check(backendRoot string, baseline Baseline) ([]Finding, error) {
 			findings = append(findings, metric)
 			continue
 		}
-		if metric.Rule == "dependency" || metric.Rule == "package_classification" {
+		if metric.Rule == "dependency" || metric.Rule == "package_classification" || metric.Rule == "model_gorm_write" {
 			findings = append(findings, metric)
 			continue
 		}
@@ -303,6 +303,7 @@ func moduleName(root string) (string, error) {
 func (s *scanner) fileFindings(src *source) []Finding {
 	findings := s.dependencyFindings(src)
 	findings = append(findings, s.facadeFindings(src)...)
+	findings = append(findings, s.modelWriteFindings(src)...)
 	lines := len(strings.Split(strings.TrimSuffix(string(src.body), "\n"), "\n"))
 	if lines > fileLineLimit {
 		findings = append(findings, Finding{ID: src.path + ":file_lines", Rule: "file_lines", Value: lines, Limit: fileLineLimit, Detail: "production Go file exceeds 600 lines"})
