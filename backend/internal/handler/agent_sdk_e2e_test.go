@@ -66,7 +66,7 @@ func TestAgentSDKRealHTTPWorkerRestart(t *testing.T) {
 		&model.Project{ID: "sdk-drama", UserID: "sdk-user", Name: "SDK drama", Status: model.ProjectStatusActive},
 		&model.DramaProduction{ProjectID: "sdk-drama", UserID: "sdk-user", Status: "paused", Stage: "script", SettingsJSON: agentSDKDramaSettings},
 		&model.DramaEpisode{ID: "sdk-episode", ProjectID: "sdk-drama", Synopsis: "SDK_DRAMA_SOURCE"},
-		&model.CanvasProject{ID: "sdk-canvas", UserID: "sdk-user", Title: "SDK canvas", PayloadJSON: `{"referenceFieldsVersion":1,"nodes":[{"id":"cat","type":"image","title":"SDK image","position":{"x":200,"y":200},"width":240,"height":240,"metadata":{"status":"success","storageKey":"resource:sdk-image"}}],"connections":[],"chatSessions":[],"activeChatId":null,"previsScenes":[],"viewport":{"x":0,"y":0,"k":1}}`},
+		&model.CanvasProject{ID: "sdk-canvas", UserID: "sdk-user", Title: "SDK canvas", PayloadJSON: `{"referenceFieldsVersion":1,"nodes":[{"id":"cat","type":"image","title":"SDK image","position":{"x":200,"y":200},"width":240,"height":240,"metadata":{"status":"success","storageKey":"resource:sdk-image"}},{"id":"sdk-board","type":"script","title":"SDK storyboard","position":{"x":450,"y":140},"width":650,"height":480,"metadata":{"storyboardShotCount":"3","storyboardShotDuration":"10","storyboard":{"rows":[{"id":"sdk-locked","shotNumber":1,"durationSeconds":10,"plotDescription":"SDK_LOCKED_SHOT","locked":true},{"id":"sdk-media-row","shotNumber":2,"durationSeconds":5,"plotDescription":"SDK_OLD_SHOT","imageNodeId":"cat"}],"referenceNodeIds":[]}}}],"connections":[],"chatSessions":[],"activeChatId":null,"previsScenes":[],"viewport":{"x":0,"y":0,"k":1}}`},
 		&model.User{ID: "sdk-user-two", Username: "sdk-user-two", Role: model.UserRoleUser, Status: model.UserStatusActive},
 		&model.AuthSession{ID: "sdk-second", UserID: "sdk-user-two", TokenHash: auth.HashToken("sdk-second-token"), ExpiresAt: time.Now().Add(time.Hour)},
 		&model.CreditAccount{UserID: "sdk-user-two", AvailableMicrocredits: 500_000_000},
@@ -92,12 +92,23 @@ func TestAgentSDKRealHTTPWorkerRestart(t *testing.T) {
 		_ = svc.Close()
 	})
 	router := gin.New()
+	var splitRequests atomic.Int32
+	router.Use(func(c *gin.Context) {
+		if c.Request.Method == http.MethodPost && strings.HasSuffix(c.Request.URL.Path, "/storyboard/split") {
+			splitRequests.Add(1)
+		}
+		c.Next()
+	})
 	RegisterCanvasAPI(router.Group("/api"), svc)
 	RegisterInternalAgentRoutes(router, svc)
 	if browserScript := os.Getenv("AGENT_SDK_BROWSER_SCRIPT"); browserScript != "" {
 		runAgentSDKBrowserSmoke(t, bun, node, agentDir, browserScript, router)
 		if pixels.Load() != 1 || leaks.Load() != 0 {
 			t.Fatalf("browser model requests: images=%d, leaks=%d", pixels.Load(), leaks.Load())
+		}
+		var splitTasks int64
+		if err := db.Model(&model.Task{}).Where("operation = ?", "storyboard").Count(&splitTasks).Error; err != nil || splitTasks != 0 || splitRequests.Load() != 0 {
+			t.Fatalf("storyboard used legacy split: requests=%d tasks=%d err=%v", splitRequests.Load(), splitTasks, err)
 		}
 		return
 	}
@@ -327,6 +338,7 @@ func agentSDKSeedIsolation(t *testing.T, db *gorm.DB, svc *service.Service) {
 
 var agentSDKIsolationMarker = regexp.MustCompile(`SDK_ISOLATION_([01])_(canvas|drama)_([01])_([01])`)
 var agentSDKSourceMarker = regexp.MustCompile(`SDK_SOURCE_[01]_(canvas|drama)_[01]`)
+var agentSDKStoryboardSnapshot = regexp.MustCompile(`"snapshotHash"\s*:\s*"([a-f0-9]{64})"`)
 
 func agentSDKToolDelta(name, arguments string) map[string]any {
 	return map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": "sdk-" + name,
@@ -343,6 +355,8 @@ func agentSDKUpstream(requests, pixels, isolated, leaks *atomic.Int32) http.Hand
 		delta, finish := map[string]any{"content": "SDK_RESULT: 待审阅分析建议"}, "stop"
 		identity := agentSDKIsolationMarker.FindStringSubmatch(text)
 		switch {
+		case strings.Contains(text, "SDK_STORYBOARD_STORY"):
+			delta, finish = agentSDKStoryboardDelta(body["messages"], text)
 		case len(identity) > 0:
 			isolated.Add(1)
 			source := "SDK_SOURCE_" + strings.Join(identity[1:4], "_")
@@ -389,6 +403,47 @@ func agentSDKUpstream(requests, pixels, isolated, leaks *atomic.Int32) http.Hand
 			"usage": map[string]int{"prompt_tokens": 30, "completion_tokens": 10, "total_tokens": 40}})
 		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", end)
 	})
+}
+
+func agentSDKStoryboardDelta(messages any, text string) (map[string]any, string) {
+	if !strings.Contains(text, "3 镜") || !strings.Contains(text, "每镜 10 秒") || !strings.Contains(text, "sdk-board") {
+		return map[string]any{"content": "SDK_STORYBOARD_INVALID_CONSTRAINTS"}, "stop"
+	}
+	confirmed := false
+	snapshot := ""
+	applied := false
+	items, _ := messages.([]any)
+	for _, item := range items {
+		message, _ := item.(map[string]any)
+		raw, _ := json.Marshal(message["content"])
+		content := strings.ReplaceAll(string(raw), `\"`, `"`)
+		if message["role"] == "user" && strings.Contains(content, "SDK_CONFIRM_STORYBOARD") {
+			confirmed = true
+		}
+		if message["role"] == "tool" && strings.Contains(content, `"applied":true`) && strings.Contains(content, "sdk-board") {
+			applied = true
+		}
+		if message["role"] == "tool" && strings.Contains(content, `"nodeId":"sdk-board"`) {
+			if match := agentSDKStoryboardSnapshot.FindStringSubmatch(content); len(match) != 0 {
+				snapshot = match[1]
+			}
+		}
+	}
+	switch {
+	case applied:
+		return map[string]any{"content": "SDK_STORYBOARD_WRITTEN"}, "stop"
+	case snapshot == "":
+		return agentSDKToolDelta("storyboard", `{"action":"read","nodeId":"sdk-board"}`), "tool_calls"
+	case !confirmed:
+		return agentSDKToolDelta("ask_user", `{"question":"SDK_STORYBOARD_PLAN：保留锁定镜头、更新第二镜、追加第三镜，共三镜，每镜十秒","options":[{"label":"SDK_CONFIRM_STORYBOARD"},{"label":"调一下方案"}]}`), "tool_calls"
+	default:
+		arguments, _ := json.Marshal(map[string]any{
+			"action": "write_rows", "nodeId": "sdk-board", "snapshotHash": snapshot, "operationId": "sdk-storyboard-confirmed-01",
+			"updates": []any{map[string]any{"rowId": "sdk-media-row", "patch": map[string]any{"plotDescription": "SDK_UPDATED_SHOT", "durationSeconds": 10}}},
+			"newRows": []any{map[string]any{"plotDescription": "SDK_NEW_SHOT", "durationSeconds": 10}},
+		})
+		return agentSDKToolDelta("storyboard", string(arguments)), "tool_calls"
+	}
 }
 
 func agentSDKModelHasForeignMarker(text, prompt, source string) bool {

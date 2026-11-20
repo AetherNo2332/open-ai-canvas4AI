@@ -141,6 +141,7 @@ func cloudAgentStoryboardEditWritesReferences(args cloudAgentStoryboardEditArgs)
 		return true
 	}
 	rows := append([]map[string]any{args.Patch}, args.Rows...)
+	rows = append(rows, args.NewRows...)
 	for _, update := range args.Updates {
 		rows = append(rows, update.Patch)
 	}

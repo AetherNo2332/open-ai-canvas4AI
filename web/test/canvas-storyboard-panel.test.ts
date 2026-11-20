@@ -26,18 +26,30 @@ describe("storyboard prompt panel boundaries", () => {
         expect(project).toMatch(/else if \(node.type === CanvasNodeType.Script\) \{\s*setDialogNodeId\(null\)/);
         expect(project).toContain("dialogNode.type !== CanvasNodeType.Script");
         expect(project).toContain("onOpen={() => setScriptEditorNodeId(contentNode.id)}");
-        expect(project).toContain("onGenerateScript={(prompt) => void generateScriptRows(contentNode.id, prompt)}");
+        expect(project).toContain("onSendToAgent={(prompt) => sendStoryboardToAgent(contentNode.id, prompt)}");
     });
 
-    test("storyboard generation strips legacy style instructions without sending project style", () => {
-        const storyboard = source("use-canvas-storyboard.ts");
-        expect(storyboard).toContain("stripProjectStyleExecutionBlocks(prompt)");
-        expect(storyboard).not.toContain("projectStyle: storyboardContext.projectStyle");
+    test("node retry and the full-screen editor reuse Agent delivery without a split task", () => {
+        const project = source("project.tsx");
+        expect(project).toContain("sendStoryboardToAgent(node.id, prompt)");
+        expect(project).toContain("sendStoryboardToAgent(activeScriptNode.id");
+        expect(project + source("use-canvas-storyboard.ts")).not.toMatch(/splitCanvasStoryboard|generateScriptRows/);
+        expect(project).toContain("prepareCanvasForServerAction");
     });
 });
 
 describe("storyboard table rendering boundaries", () => {
     const script = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-script-node.tsx"), "utf8");
+
+    test("both modes share the count, duration, click and keyboard controls", () => {
+        const composer = script.slice(script.indexOf("onKeyDown={(event)"), script.indexOf('<RowHandle side="left" top={composerHeight'));
+        expect(composer).toContain("submitPrompt()");
+        expect(composer).toContain("onClick={submitPrompt}");
+        expect(composer).toContain("onChange={onShotCountChange}");
+        expect(composer).toContain("onChange={onShotDurationChange}");
+        expect(composer).toContain("发送到当前 Agent 规划拆镜");
+        expect(composer).not.toMatch(/simpleMode|ModelPicker/);
+    });
 
     test("the in-node row list mounts only the visible window and keeps the edited row", () => {
         expect(script).toContain("storyboardVisibleRowWindow(scrollTop, tableHeight, STORYBOARD_ROW_HEIGHT, rows.length)");

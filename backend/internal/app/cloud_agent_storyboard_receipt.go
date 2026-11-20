@@ -127,6 +127,8 @@ func cloudAgentStoryboardAffectedRows(call cloudAgentCall, createdCount int) (in
 		return createdCount, nil
 	case "batch_update":
 		return len(args.Updates), nil
+	case "write_rows":
+		return len(args.Updates) + len(args.RemoveRowIDs) + createdCount, nil
 	}
 	if args.RowID != "" {
 		return 1, nil

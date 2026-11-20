@@ -103,7 +103,15 @@ import { getAgentSubagentPolicy, listAgentSubagents, updateAgentSubagentPolicy, 
 import { useAgentMessageQueue } from "./use-agent-message-queue";
 import { AgentMessageQueueList } from "./canvas-agent-message-queue";
 
-type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[]; mode?: AgentSendMode; oppositeMode?: boolean; replyToQuestionId?: string; requiresVision?: boolean };
+type AgentSubmitOptions = {
+    preserveDraft?: boolean;
+    focusNodeIds?: string[];
+    mode?: AgentSendMode;
+    oppositeMode?: boolean;
+    replyToQuestionId?: string;
+    requiresVision?: boolean;
+    currentConversation?: AgentPrefillRequest["currentConversation"];
+};
 const AgentPanelVisibilityContext = createContext(true);
 const EMPTY_REFERENCES: CanvasResourceReference[] = [];
 const EMPTY_IDS: string[] = [];
@@ -885,8 +893,9 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         const value = (override ?? prompt).trim();
         // 没有画布时绝不发送：fork 后端以 canvasId 归属运行，离开画布后旧 canvasId 也不能再用。
         if (!canvasId) return false;
+        if (options.currentConversation && !run) return false;
         if (!value || busy || composerAttachments.blockReason || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return false;
-        if (subagentsAvailable && (!subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicy.canvasId !== canvasId || subagentPolicySaving || subagentPolicyError)) {
+        if (!options.currentConversation && subagentsAvailable && (!subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicy.canvasId !== canvasId || subagentPolicySaving || subagentPolicyError)) {
             setSubagentPolicyError("请先加载并确认子代理授权设置，再发送消息");
             return false;
         }
@@ -902,41 +911,49 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
             // An ambiguous previous POST owns its body/key until reconciled.
             // Editing model settings or prompt must not silently create a new charge.
             if (pending?.request && pending.request.prompt !== value) throw new Error("上一条请求结果待确认，请先原样重试上一条消息，再发送新要求");
+            if (options.currentConversation && pending?.request && !pending.conversationMessage?.inheritRunConfiguration) throw new Error("请先核对上一条待确认的会话消息");
             if (!pending?.request) {
-                const defaultMode = options.mode ?? (await messageQueue.getMode());
-                const mode = options.oppositeMode ? (defaultMode === "queue" ? "interject" : "queue") : defaultMode;
                 const queueSnapshot = run ? messageQueue.queue || (await getAgentMessageQueue(run.conversationId || run.id, canvasId, controller.signal)) : undefined;
+                const defaultMode = options.currentConversation ? (queueSnapshot?.awaitingQuestionId || Array.from(value).length > 4000 ? "queue" : "interject") : (options.mode ?? (await messageQueue.getMode()));
+                const mode = options.oppositeMode ? (defaultMode === "queue" ? "interject" : "queue") : defaultMode;
+                const replyToQuestionId = mode === "interject" ? options.replyToQuestionId || (!options.preserveDraft && pendingQuestion ? queueSnapshot?.awaitingQuestionId : undefined) : undefined;
+                const inheritRunConfiguration = Boolean(options.currentConversation || replyToQuestionId);
                 if (currentScope.current !== scope) return false;
                 const capabilities = await getAgentCapabilities();
                 if (currentScope.current !== scope) return false;
                 setWorkerAvailability(capabilities.availability);
                 if (!capabilities.availability.configured) throw new Error(capabilities.availability.reason);
-                if (!capabilities.permissionModes.includes(permissionMode)) throw new Error("当前后端不支持所选 Agent 权限，请更新后端");
-                if (selectedSkillIds.length && !capabilities.skills) throw new Error("当前后端尚未接入技能库");
+                if (!inheritRunConfiguration && !capabilities.permissionModes.includes(permissionMode)) throw new Error("当前后端不支持所选 Agent 权限，请更新后端");
+                if (!inheritRunConfiguration && selectedSkillIds.length && !capabilities.skills) throw new Error("当前后端尚未接入技能库");
                 const effectiveModel = options.requiresVision ? selectImageInspectionModel(config, selectedModel) : selectedModel;
                 if (options.requiresVision && !effectiveModel) throw new Error("当前没有配置支持图片输入的文本模型，请在模型能力设置中为一个文本模型开启图片输入后重试");
-                await saveRemoteUserDataNow(canvasId);
+                if (options.currentConversation) await options.currentConversation.prepare();
+                else await saveRemoteUserDataNow(canvasId);
                 if (currentScope.current !== scope) return false;
                 const agentConfig = { ...config, model: effectiveModel };
                 const requestConfig = resolveModelRequestConfig(agentConfig, effectiveModel);
                 const logicalModelId = logicalModelIDForConfig(agentConfig);
-                const input = {
-                    canvasId,
-                    prompt: value,
-                    reasoningMode: reasoningSupported && effectiveModel === selectedModel ? reasoningMode : "off",
-                    model: modelOptionName(effectiveModel) || undefined,
-                    ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(effectiveModel) || undefined } : {}),
-                    skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
-                    permissionMode,
-                    subagentEnabled: subagentsAvailable && subagentPolicy?.enabled === true,
-                    subagentWriteEnabled: subagentsAvailable && subagentPolicy?.enabled === true && subagentPolicy?.writeEnabled === true,
-                    storyboardDisabled,
-                    contextScope,
-                    focusNodeIds: options.focusNodeIds?.slice(0, 8) ?? (selectedNodeIds.length <= 8 ? selectedNodeIds : []),
-                    budget: { maxCredits: positiveNumber(maxCredits), maxGenerationTasks: permissionMode === "read_only" ? 0 : Number(maxGenerationTasks), maxVideoSeconds: permissionMode === "read_only" ? 0 : Number(maxVideoSeconds) },
-                };
-                const replyToQuestionId = options.replyToQuestionId || (!options.preserveDraft && pendingQuestion ? queueSnapshot?.awaitingQuestionId : undefined);
-                const conversationMessage = run ? { conversationId: run.conversationId || run.id, mode, expectedRunId: run.id, ...(mode === "interject" && replyToQuestionId ? { replyToQuestionId } : {}) } : undefined;
+                const input =
+                    inheritRunConfiguration && run
+                        ? { canvasId, agentDefinitionId: run.agentDefinitionId, prompt: value, focusNodeIds: options.focusNodeIds }
+                        : {
+                              canvasId,
+                              prompt: value,
+                              reasoningMode: reasoningSupported && effectiveModel === selectedModel ? reasoningMode : "off",
+                              model: modelOptionName(effectiveModel) || undefined,
+                              ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(effectiveModel) || undefined } : {}),
+                              skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
+                              permissionMode,
+                              subagentEnabled: subagentsAvailable && subagentPolicy?.enabled === true,
+                              subagentWriteEnabled: subagentsAvailable && subagentPolicy?.enabled === true && subagentPolicy?.writeEnabled === true,
+                              storyboardDisabled,
+                              contextScope,
+                              focusNodeIds: options.focusNodeIds?.slice(0, 8) ?? (selectedNodeIds.length <= 8 ? selectedNodeIds : []),
+                              budget: { maxCredits: positiveNumber(maxCredits), maxGenerationTasks: permissionMode === "read_only" ? 0 : Number(maxGenerationTasks), maxVideoSeconds: permissionMode === "read_only" ? 0 : Number(maxVideoSeconds) },
+                          };
+                const conversationMessage = run
+                    ? { conversationId: run.conversationId || run.id, mode, expectedRunId: run.id, ...(inheritRunConfiguration ? { inheritRunConfiguration: true } : {}), ...(replyToQuestionId ? { replyToQuestionId } : {}) }
+                    : undefined;
                 const fingerprint = JSON.stringify({ scope, parent: run?.id, input, conversationMessage });
                 if (pending && pending.fingerprint !== fingerprint) throw new Error("上一条请求尚未确认，请恢复原消息与设置后核对，不能覆盖原幂等记录");
                 const key = pending?.key || createClientUUID();
@@ -1080,7 +1097,7 @@ export function CanvasCloudAgentPanel({ launcher = true }: { launcher?: boolean 
         if (busy || submissionRequestRef.current) return;
         appliedPrefillRef.current = request.id;
         release();
-        void submit(request.text, { preserveDraft: true, focusNodeIds: request.focusNodeIds, requiresVision: request.requiresVision }).then(
+        void submit(request.text, { preserveDraft: true, focusNodeIds: request.focusNodeIds, requiresVision: request.requiresVision, currentConversation: request.currentConversation }).then(
             (outcome) => settleAgentPrefill(request.id, outcome),
             () => settleAgentPrefill(request.id, false),
         );

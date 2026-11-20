@@ -67,7 +67,7 @@ func (s *Service) routeCloudAgentToolCall(run *model.CloudAgentExecution, state 
 		return s.recordCloudAgentToolReceipt(run, state, call, nil, kernel.Forbidden("只读模式下 director 只允许 action=read"))
 	}
 	if cloudAgentLegacyStoryboardTool(call.Function.Name) {
-		return s.recordStoryboardResult(run, state, call, nil, cloudAgentFieldError("tool", "retired", "旧分镜工具已退役；请使用 storyboard 的 read/split/resplit/update 等 action。新分镜先用 canvas_apply_ops 创建 script 并写入剧情。"))
+		return s.recordStoryboardResult(run, state, call, nil, cloudAgentFieldError("tool", "retired", "旧分镜工具已退役；请使用 storyboard 的 read/write_rows/update 等 action。"))
 	}
 	if allowed && call.Function.Name == "storyboard" {
 		return s.executeCloudAgentStoryboard(run, state, call)

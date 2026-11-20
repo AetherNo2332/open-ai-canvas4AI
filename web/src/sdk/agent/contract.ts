@@ -27,6 +27,7 @@ export type AgentMessageInput = {
     expectedRunId: string;
     mode: "queue" | "interject";
     replyToQuestionId?: string;
+    inheritRunConfiguration?: boolean;
     request: AgentRunRequest;
 };
 export type AgentEvent = {

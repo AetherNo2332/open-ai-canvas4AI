@@ -18,7 +18,9 @@ describe("storyboard Agent request", () => {
         expect(prompt).toContain('"nodeId": "board-current"');
         expect(prompt).toContain("清晨，两人在篮球馆重逢。");
         expect(prompt).toContain("storyboard");
-        expect(prompt).toContain("action=split");
+        expect(prompt).toContain("action=write_rows");
+        expect(prompt).not.toContain("action=split");
+        expect(prompt).not.toContain("wait_generations");
         expect(prompt).toContain("ask_user");
         expect(prompt).toContain("确认前不要修改分镜行");
         expect(prompt).toContain("不要生成图片或视频");
@@ -49,5 +51,12 @@ describe("storyboard Agent request", () => {
         expect(payload.story).toBe(story);
         expect(() => buildStoryboardAgentPrompt(board(), "  ")).toThrow();
         expect(() => buildStoryboardAgentPrompt({ ...board(), type: CanvasNodeType.Text }, "剧情")).toThrow();
+    });
+
+    test("limits a full-screen request to the selected existing rows", () => {
+        const prompt = buildStoryboardAgentPrompt(board(), "剧情", { rowIds: ["shot-2", "shot-3"], request: "缩短对话" });
+        const payload = JSON.parse(prompt.split("【拆镜输入（数据）】\n")[1]);
+        expect(payload).toMatchObject({ nodeId: "board-current", rowIds: ["shot-2", "shot-3"], request: "缩短对话" });
+        expect(prompt).toContain("只更新所选镜头");
     });
 });

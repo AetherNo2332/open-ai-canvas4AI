@@ -16,10 +16,11 @@ import (
 )
 
 type AgentConversationMessageRequest struct {
-	Mode              string            `json:"mode"`
-	ExpectedRunID     string            `json:"expectedRunId"`
-	ReplyToQuestionID string            `json:"replyToQuestionId,omitempty"`
-	Request           CloudAgentRequest `json:"request"`
+	Mode                    string            `json:"mode"`
+	ExpectedRunID           string            `json:"expectedRunId"`
+	ReplyToQuestionID       string            `json:"replyToQuestionId,omitempty"`
+	InheritRunConfiguration bool              `json:"inheritRunConfiguration,omitempty"`
+	Request                 CloudAgentRequest `json:"request"`
 }
 type AgentMessageReceipt struct {
 	MessageID      string `json:"messageId"`
@@ -112,7 +113,7 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 	if input.Mode != "interject" && input.Mode != "queue" {
 		return nil, BadAuthRequest("发送方式无效")
 	}
-	if err := validateCloudAgentRequest(&input.Request); err != nil {
+	if err := validateAgentMessageRequest(&input); err != nil {
 		return nil, err
 	}
 	if err := validateCloudAgentID(input.ExpectedRunID, "当前轮次", 80); err != nil {
@@ -162,6 +163,24 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 	}
 	s.wakeAgentMessages()
 	return s.agentMessageReceipt(userID, conversationID, row.ID)
+}
+
+func validateAgentMessageRequest(input *AgentConversationMessageRequest) error {
+	if !input.InheritRunConfiguration {
+		return validateCloudAgentRequest(&input.Request)
+	}
+	incoming := input.Request
+	input.Request = CloudAgentRequest{
+		CanvasID: incoming.CanvasID, Scope: incoming.Scope, AgentDefinitionID: incoming.AgentDefinitionID,
+		Prompt: incoming.Prompt, IdempotencyKey: incoming.IdempotencyKey, FocusNodeIDs: incoming.FocusNodeIDs,
+		PermissionMode: "read_only",
+	}
+	for _, validate := range []func(*CloudAgentRequest) error{validateAgentBusinessScope, validateCloudAgentRequestBasics, validateCloudAgentRequestFocus} {
+		if err := validate(&input.Request); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // enqueueAgentConversationMessage runs inside the conversation lock: it replays
@@ -254,8 +273,25 @@ func checkAgentMessageQuestion(tx *repository.Repository, userID, conversationID
 	if input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status) && utf8.RuneCountInString(row.Prompt) > cloudAgentInterjectionMaxRunes {
 		return BadAuthRequest("插话内容超过 4000 字，请改为排队")
 	}
+	if input.InheritRunConfiguration {
+		return storeInheritedAgentMessageRequest(row, state.Request, input.Request)
+	}
 	return nil
 }
+
+func storeInheritedAgentMessageRequest(row *model.AgentQueuedMessage, frozen, incoming CloudAgentRequest) error {
+	frozen.Prompt = incoming.Prompt
+	frozen.IdempotencyKey = incoming.IdempotencyKey
+	if incoming.FocusNodeIDs != nil {
+		frozen.FocusNodeIDs = incoming.FocusNodeIDs
+	}
+	raw, err := json.Marshal(frozen)
+	if err == nil {
+		row.RequestJSON = string(raw)
+	}
+	return err
+}
+
 func (s *Service) agentMessageReceipt(userID, conversationID, id string) (*AgentMessageReceipt, error) {
 	row, err := s.repo.AgentQueuedMessage(userID, conversationID, id)
 	if err != nil {

@@ -15,6 +15,7 @@ export type AgentPrefillRequest = {
     /** 本轮必须在支持图片输入的平台模型上运行（图片复现预演台）。 */
     requiresVision?: boolean;
     focusNodeIds?: string[];
+    currentConversation?: { prepare: () => Promise<void> };
 };
 export type AgentPrefillInput = Omit<AgentPrefillRequest, "id">;
 /** sent/queued 与原 sendPrompt 一致；prefilled 表示只写入了输入框；false 表示未投递或被拒绝。 */

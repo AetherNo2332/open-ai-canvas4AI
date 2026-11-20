@@ -18,7 +18,7 @@ const conversionPrompt = `请把我提供的技能转换为“影策云端 Agent
 3. native read 只读取本轮已选技能包里的 .md、.txt、.json。当前技能路径来自系统 available_skills 的 location；同包引用用这个位置拼接包内路径。跨技能先定位目标 location，不能猜目录名或把 ../ 路径直接交给 read。目标技能未选中时说明缺少依赖。
 4. 云端不提供 bash、PowerShell、Python 执行或任意磁盘读写。scripts/assets 可以保留为资料，但不能要求自动运行脚本，也不能声称它们已经执行。外部 SQLite、OCR、下载器和本地知识库未接入时必须明确说明，不能用模型记忆假冒检索结果。
 5. 把本地工程文件、版本登记和检查点改为通过现有画布工具保存的文本节点；先读取真实节点和最新快照，保存成功后回读。保留原稿、已确认版本和来源，不虚构保存结果。
-6. 涉及实际拆镜时，把剧情写入 script 分镜节点，把风格和用户要求作为文本节点连接到它；用 model_list 查询文本模型，再调用 storyboard 的 split/resplit。局部修改使用真实 rowIds，尊重锁定范围，不用聊天 Markdown 冒充分镜写回。
+6. 拆镜时读取目标分镜表、剧情和相关风格，先询问确认，再用 storyboard 的 write_rows 写回原表。局部修改使用真实行 ID，保留锁定行和已有媒体。
 7. 涉及媒体时使用实际可用的 generate_media、canvas_create_character 等工具，字段以运行时 schema 为准。拆镜和媒体均异步提交；依赖结果时用 wait_generations，同一运行下一模型步骤收到完成通知后回读结果。submitted 只表示入队。
 8. 只在用户要求的范围内创作或生成，保留报价、预算和审批要求；声明 allowed-tools 或把工具名写进 SKILL.md 不会增加云端权限。所需工具不存在时如实说明，不能编造替代执行。
 

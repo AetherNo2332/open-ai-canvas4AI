@@ -60,7 +60,7 @@ export type CloudAgentPendingSubmission = {
     messageId?: string;
     /** Draft retained when a canvas node sends a separate request. */
     composerDraft?: string;
-    conversationMessage?: { conversationId: string; mode: import("@/services/api/agent").AgentSendMode; expectedRunId: string; replyToQuestionId?: string };
+    conversationMessage?: { conversationId: string } & Omit<import("@/sdk/agent/contract").AgentMessageInput, "request">;
 };
 
 const CLOUD_AGENT_CONVERSATIONS_KEY = "cloud-agent-conversations-v1";
@@ -126,6 +126,7 @@ export async function loadCloudAgentPendingSubmission(canvasId: string, conversa
                 (delivery.mode !== "interject" && delivery.mode !== "queue") ||
                 typeof delivery.expectedRunId !== "string" ||
                 delivery.expectedRunId !== parsed.parentRunId ||
+                (delivery.inheritRunConfiguration !== undefined && typeof delivery.inheritRunConfiguration !== "boolean") ||
                 (delivery.replyToQuestionId !== undefined && (typeof delivery.replyToQuestionId !== "string" || delivery.mode !== "interject")))
         )
             throw new Error("invalid delivery");

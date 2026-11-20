@@ -20,6 +20,32 @@ func storyboardBatchRows() []map[string]any {
 	return []map[string]any{{"id": "r1", "durationSeconds": float64(5), "plotDescription": "old one"}, {"id": "r2", "durationSeconds": float64(6), "plotDescription": "old two", "imageNodeId": "keep"}}
 }
 
+func TestStoryboardDirectWriteRemovesOnlyUnboundTrailingRows(t *testing.T) {
+	rows := storyboardBatchRows()
+	rows = append(rows, map[string]any{"id": "r3", "durationSeconds": float64(6), "plotDescription": "trailing"})
+	doc := workflowDocument()
+	args := storyboardBatchArgs(t, `{"action":"write_rows","nodeId":"board","operationId":"remove-trailing-row","removeRowIds":["r3"]}`)
+	next, _, err := cloudAgentPlanStoryboardRows(doc, rows, args, "user", "call")
+	if err != nil || len(next) != 2 || next[1]["imageNodeId"] != "keep" {
+		t.Fatalf("unexpected retained rows: %v, %v", next, err)
+	}
+	args.RemoveRowIDs = []string{"r2", "r3"}
+	if _, _, err := cloudAgentPlanStoryboardRows(doc, rows, args, "user", "call"); err == nil {
+		t.Fatal("removed an attached image")
+	}
+	args.RemoveRowIDs = []string{"r3"}
+	doc["connections"] = []any{map[string]any{"toNodeId": "board", "toHandleId": "row:r3", "fromNodeId": "source"}}
+	if _, _, err := cloudAgentPlanStoryboardRows(doc, rows, args, "user", "call"); err == nil {
+		t.Fatal("removed a connected row")
+	}
+	args.RemoveRowIDs = nil
+	args.Updates = []cloudAgentStoryboardRowUpdate{{RowID: "r1", Patch: map[string]any{"plotDescription": "new"}}}
+	args.NewRows = []map[string]any{{"durationSeconds": float64(10), "plotDescription": "new", "assets": []any{map[string]any{"ref": "missing", "role": "prop"}}}}
+	if _, _, err := cloudAgentPlanStoryboardRows(doc, rows, args, "user", "call"); err == nil || rows[0]["plotDescription"] != "old one" {
+		t.Fatalf("invalid append did not roll back the preceding update: %v", err)
+	}
+}
+
 func TestStoryboardBatchUpdateDistinctPatches(t *testing.T) {
 	rows := storyboardBatchRows()
 	args := storyboardBatchArgs(t, `{"action":"batch_update","updates":[{"rowId":"r1","patch":{"imageGenerationPrompt":"one","motion":"pan"}},{"rowId":"r2","patch":{"videoMotionPrompt":"two","shotSize":"wide","lightingAndAtmosphere":"dawn"}}]}`)

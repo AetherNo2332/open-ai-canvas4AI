@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v24",
+  "schemaVersion": "cloud-agent-tools/v25",
   "tools": [
     {
       "function": {
@@ -1166,7 +1166,7 @@
     },
     {
       "function": {
-        "description": "统一分镜：read 读 Markdown、分页与引用；split/resplit 异步调用服务端从剧情、风格和相邻镜头拆镜，不手填整表。写回后在同一运行的下一模型步骤通知，依赖结果用 wait_generations。update 小范围改行，lock/unlock 保护镜头；资产和绑定 action 维护引用。写动作拒绝锁定目标，unlock 除外。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "read 读取原表及快照。先用 ask_user 确认拆镜方案，再用 write_rows 批量写回原表，保留锁定行及产物。split/resplit 供明确要求的旧流程。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "storyboard",
         "parameters": {
           "additionalProperties": false,
@@ -1303,90 +1303,32 @@
                   }
                 }
               ],
-              "properties": {
-                "action": {
-                  "const": "split"
-                },
-                "channelId": {},
-                "channelModelKey": {},
-                "logicalModelId": {},
-                "nodeId": {},
-                "request": {},
-                "selectionId": {},
-                "shotCount": {},
-                "shotDurationSeconds": {}
-              },
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "anyOf": [
+              "oneOf": [
                 {
                   "properties": {
-                    "channelId": {
-                      "not": {}
+                    "action": {
+                      "const": "split"
                     },
-                    "channelModelKey": {
-                      "not": {}
-                    },
-                    "logicalModelId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "selectionId"
-                  ]
-                },
-                {
-                  "properties": {
-                    "channelId": {
-                      "not": {}
-                    },
-                    "channelModelKey": {
-                      "not": {}
-                    },
-                    "selectionId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "logicalModelId"
-                  ]
-                },
-                {
-                  "properties": {
-                    "logicalModelId": {
-                      "not": {}
-                    },
-                    "selectionId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "channelId",
-                    "channelModelKey"
-                  ]
-                },
-                {
-                  "properties": {
-                    "channelId": {
-                      "not": {}
-                    },
-                    "channelModelKey": {
-                      "not": {}
-                    },
-                    "logicalModelId": {
-                      "not": {}
-                    },
-                    "selectionId": {
-                      "not": {}
-                    }
+                    "rowIds": false
                   }
+                },
+                {
+                  "properties": {
+                    "action": {
+                      "const": "resplit"
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
                 }
               ],
               "properties": {
                 "action": {
-                  "const": "resplit"
+                  "enum": [
+                    "split",
+                    "resplit"
+                  ]
                 },
                 "channelId": {},
                 "channelModelKey": {},
@@ -1398,9 +1340,6 @@
                 "shotCount": {},
                 "shotDurationSeconds": {}
               },
-              "required": [
-                "rowIds"
-              ],
               "type": "object"
             },
             {
@@ -1512,6 +1451,42 @@
             },
             {
               "additionalProperties": false,
+              "anyOf": [
+                {
+                  "required": [
+                    "updates"
+                  ]
+                },
+                {
+                  "required": [
+                    "newRows"
+                  ]
+                },
+                {
+                  "required": [
+                    "removeRowIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "write_rows"
+                },
+                "newRows": {},
+                "nodeId": {},
+                "operationId": {},
+                "removeRowIds": {},
+                "snapshotHash": {},
+                "updates": {}
+              },
+              "required": [
+                "snapshotHash",
+                "operationId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "oneOf": [
                 {
                   "properties": {
@@ -1554,6 +1529,23 @@
             },
             {
               "additionalProperties": false,
+              "anyOf": [
+                {
+                  "properties": {
+                    "action": {
+                      "const": "set_assets"
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "assets": {
+                      "minItems": 1,
+                      "type": "array"
+                    }
+                  }
+                }
+              ],
               "oneOf": [
                 {
                   "properties": {
@@ -1578,7 +1570,12 @@
               ],
               "properties": {
                 "action": {
-                  "const": "set_assets"
+                  "enum": [
+                    "set_assets",
+                    "add_assets",
+                    "remove_assets",
+                    "upsert_assets"
+                  ]
                 },
                 "assets": {},
                 "nodeId": {},
@@ -1595,93 +1592,27 @@
             },
             {
               "additionalProperties": false,
-              "oneOf": [
+              "anyOf": [
                 {
                   "properties": {
-                    "rowIds": {
-                      "not": {}
+                    "action": {
+                      "const": "set_references"
                     }
-                  },
-                  "required": [
-                    "rowId"
-                  ]
+                  }
                 },
-                {
-                  "properties": {
-                    "rowId": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "rowIds"
-                  ]
-                }
-              ],
-              "properties": {
-                "action": {
-                  "enum": [
-                    "add_assets",
-                    "remove_assets",
-                    "upsert_assets"
-                  ]
-                },
-                "assets": {
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "nodeId": {},
-                "operationId": {},
-                "rowId": {},
-                "rowIds": {},
-                "snapshotHash": {}
-              },
-              "required": [
-                "snapshotHash",
-                "assets"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "oneOf": [
                 {
                   "properties": {
                     "referenceNodeIds": {
-                      "not": {}
-                    }
-                  },
-                  "required": [
-                    "references"
-                  ]
-                },
-                {
-                  "properties": {
+                      "minItems": 1,
+                      "type": "array"
+                    },
                     "references": {
-                      "not": {}
+                      "minItems": 1,
+                      "type": "array"
                     }
-                  },
-                  "required": [
-                    "referenceNodeIds"
-                  ]
+                  }
                 }
               ],
-              "properties": {
-                "action": {
-                  "const": "set_references"
-                },
-                "nodeId": {},
-                "operationId": {},
-                "referenceNodeIds": {},
-                "references": {},
-                "snapshotHash": {}
-              },
-              "required": [
-                "snapshotHash"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
               "oneOf": [
                 {
                   "properties": {
@@ -1707,20 +1638,15 @@
               "properties": {
                 "action": {
                   "enum": [
+                    "set_references",
                     "add_references",
                     "remove_references"
                   ]
                 },
                 "nodeId": {},
                 "operationId": {},
-                "referenceNodeIds": {
-                  "minItems": 1,
-                  "type": "array"
-                },
-                "references": {
-                  "minItems": 1,
-                  "type": "array"
-                },
+                "referenceNodeIds": {},
+                "references": {},
                 "snapshotHash": {}
               },
               "required": [
@@ -1773,6 +1699,7 @@
             "action": {
               "enum": [
                 "read",
+                "write_rows",
                 "split",
                 "resplit",
                 "update",
@@ -1822,11 +1749,9 @@
               "type": "array"
             },
             "channelId": {
-              "description": "系统渠道 ID",
               "type": "string"
             },
             "channelModelKey": {
-              "description": "系统渠道模型键",
               "type": "string"
             },
             "fields": {
@@ -1860,7 +1785,6 @@
               "uniqueItems": true
             },
             "logicalModelId": {
-              "description": "系统逻辑模型 ID",
               "type": "string"
             },
             "missingAnyFields": {
@@ -1900,8 +1824,143 @@
               ],
               "type": "string"
             },
+            "newRows": {
+              "items": {
+                "additionalProperties": false,
+                "anyOf": [
+                  {
+                    "properties": {
+                      "plotDescription": {
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "plotDescription"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "videoMotionPrompt": {
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "videoMotionPrompt"
+                    ]
+                  }
+                ],
+                "properties": {
+                  "assets": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "ref": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "role": {
+                          "enum": [
+                            "character",
+                            "environment",
+                            "wardrobe",
+                            "prop",
+                            "weapon",
+                            "style",
+                            "motion",
+                            "audio"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "ref",
+                        "role"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "audioEffects": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "camera": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "continuityOut": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "dialogue": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "durationSeconds": {
+                    "maximum": 86400,
+                    "minimum": 5e-324,
+                    "type": "number"
+                  },
+                  "emotion": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "imageGenerationPrompt": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "lightingAndAtmosphere": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "motion": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "narrativeIntent": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "negativePrompt": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "performanceBlocking": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "plotDescription": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "shotSize": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "timeBeats": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "videoMotionPrompt": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "viewerPOV": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "durationSeconds"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
             "nodeId": {
-              "description": "分镜节点 ID",
               "type": "string"
             },
             "offset": {
@@ -1932,7 +1991,6 @@
               "type": "string"
             },
             "outputNodeId": {
-              "description": "绑定或解除产物时的节点 ID",
               "type": "string"
             },
             "patch": {
@@ -2044,7 +2102,6 @@
             },
             "referenceNodeIds": {
               "items": {
-                "description": "画布节点 ID",
                 "type": "string"
               },
               "maxItems": 100,
@@ -2052,24 +2109,29 @@
             },
             "references": {
               "items": {
-                "description": "画布节点 ID 或唯一名称",
                 "type": "string"
               },
               "maxItems": 100,
               "type": "array"
             },
+            "removeRowIds": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
             "request": {
-              "description": "resplit 的修改意见，尽量使用用户原话",
               "maxLength": 4000,
               "type": "string"
             },
             "rowId": {
-              "description": "单个真实 rowId",
               "type": "string"
             },
             "rowIds": {
               "items": {
-                "description": "真实分镜 rowId",
                 "type": "string"
               },
               "maxItems": 100,
@@ -2083,7 +2145,6 @@
               "type": "integer"
             },
             "selectionId": {
-              "description": "model_list 返回的一次性系统模型选择凭证",
               "type": "string"
             },
             "shotCount": {
@@ -2097,11 +2158,9 @@
               "type": "integer"
             },
             "snapshotHash": {
-              "description": "update 或资产/绑定写入使用的最新画布快照",
               "type": "string"
             },
             "storyboardRevision": {
-              "description": "read 返回的表级版本",
               "type": "string"
             },
             "updates": {

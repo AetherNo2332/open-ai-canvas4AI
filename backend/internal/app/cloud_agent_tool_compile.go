@@ -151,8 +151,8 @@ func (c *cloudAgentToolCompiler) addStoryboardTools(req CloudAgentRequest) {
 func (c *cloudAgentToolCompiler) addStoryboardPlanTool(req CloudAgentRequest) {
 	str := cloudAgentToolStringSchema
 	readFields := append([]string{"durationSeconds", "locked", "mediaReview"}, cloudAgentStoryboardTextFields...)
-	c.add("storyboard", "统一分镜：read 读 Markdown、分页与引用；split/resplit 异步调用服务端从剧情、风格和相邻镜头拆镜，不手填整表。写回后在同一运行的下一模型步骤通知，依赖结果用 wait_generations。update 小范围改行，lock/unlock 保护镜头；资产和绑定 action 维护引用。写动作拒绝锁定目标，unlock 除外。", map[string]any{
-		"action": map[string]any{"type": "string", "enum": []string{"read", "split", "resplit", "update", "lock", "unlock", "set_assets", "add_assets", "remove_assets", "upsert_assets", "set_references", "add_references", "remove_references", "bind_output", "unbind_output"}},
+	c.add("storyboard", "read 读取原表及快照。先用 ask_user 确认拆镜方案，再用 write_rows 批量写回原表，保留锁定行及产物。split/resplit 供明确要求的旧流程。", map[string]any{
+		"action": map[string]any{"type": "string", "enum": []string{"read", "write_rows", "split", "resplit", "update", "lock", "unlock", "set_assets", "add_assets", "remove_assets", "upsert_assets", "set_references", "add_references", "remove_references", "bind_output", "unbind_output"}},
 		"nodeId": str("分镜节点 ID"), "snapshotHash": str("update 或资产/绑定写入使用的最新画布快照"),
 		"rowId": str("单个真实 rowId"), "rowIds": map[string]any{"type": "array", "maxItems": 100, "uniqueItems": true, "items": str("真实分镜 rowId")},
 		"view": map[string]any{"type": "string", "enum": []string{"creative", "summary", "bindings", "full"}}, "mode": map[string]any{"type": "string", "enum": []string{"image", "video"}},
@@ -163,8 +163,10 @@ func (c *cloudAgentToolCompiler) addStoryboardPlanTool(req CloudAgentRequest) {
 		"shotCount":        map[string]any{"type": "integer", "minimum": 0, "maximum": 100}, "shotDurationSeconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 60},
 		"selectionId": str("model_list 返回的一次性系统模型选择凭证"), "logicalModelId": str("系统逻辑模型 ID"), "channelId": str("系统渠道 ID"), "channelModelKey": str("系统渠道模型键"),
 		"operationId": map[string]any{"type": "string", "minLength": 8, "maxLength": 128}, "operationIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": map[string]any{"type": "string", "minLength": 8, "maxLength": 128}}, "storyboardRevision": str("read 返回的表级版本"),
-		"updates": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "object", "properties": map[string]any{"rowId": str("真实镜头 ID"), "patch": cloudAgentStoryboardPatchSchema()}, "required": []string{"rowId", "patch"}, "additionalProperties": false}},
-		"patch":   cloudAgentStoryboardPatchSchema(), "assets": cloudAgentStoryboardAssetsSchema(), "references": map[string]any{"type": "array", "maxItems": 100, "items": str("画布节点 ID 或唯一名称")}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 100, "items": str("画布节点 ID")},
+		"updates":      map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "object", "properties": map[string]any{"rowId": str("真实镜头 ID"), "patch": cloudAgentStoryboardPatchSchema()}, "required": []string{"rowId", "patch"}, "additionalProperties": false}},
+		"newRows":      map[string]any{"type": "array", "minItems": 1, "maxItems": maxCloudAgentStoryboardRows, "items": cloudAgentStoryboardRowSchema()},
+		"removeRowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": maxCloudAgentStoryboardRows, "uniqueItems": true, "items": str("已确认可删除的末尾镜头 ID")},
+		"patch":        cloudAgentStoryboardPatchSchema(), "assets": cloudAgentStoryboardAssetsSchema(), "references": map[string]any{"type": "array", "maxItems": 100, "items": str("画布节点 ID 或唯一名称")}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 100, "items": str("画布节点 ID")},
 		"outputMode": map[string]any{"type": "string", "enum": []string{"image", "video"}}, "outputNodeId": str("绑定或解除产物时的节点 ID"),
 	}, "action", "nodeId")
 	if req.PermissionMode == "read_only" {

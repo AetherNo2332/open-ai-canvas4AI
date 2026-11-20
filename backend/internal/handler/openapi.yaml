@@ -6478,6 +6478,7 @@ components:
         mode: { type: string, enum: [interject, queue] }
         expectedRunId: { type: string, maxLength: 80 }
         replyToQuestionId: { type: string, maxLength: 160 }
+        inheritRunConfiguration: { type: boolean, description: 沿用当前轮次配置，消息只提供剧情、焦点和幂等键等投递数据 }
         request:
           $ref: "#/components/schemas/CloudAgentRequest"
     PlatformErrorEnvelope:
