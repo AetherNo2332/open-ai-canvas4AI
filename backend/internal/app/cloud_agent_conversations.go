@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -14,19 +13,27 @@ import (
 )
 
 type CloudAgentConversation struct {
-	ID             string    `json:"id"`
-	CanvasID       string    `json:"canvasId"`
-	Title          string    `json:"title"`
-	LatestRunID    string    `json:"latestRunId"`
-	Status         string    `json:"status"`
-	Revision       int64     `json:"revision"`
-	CleanupPending bool      `json:"cleanupPending"`
-	Archived       bool      `json:"archived"`
-	QueueRevision  int64     `json:"queueRevision"`
-	QueuedCount    int       `json:"queuedCount"`
-	QueuePaused    bool      `json:"queuePaused"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	Scope             AgentBusinessScope `json:"scope"`
+	AgentDefinitionID string             `json:"agentDefinitionId"`
+	Resumable         bool               `json:"resumable"`
+	ID                string             `json:"id"`
+	CanvasID          string             `json:"canvasId"`
+	Title             string             `json:"title"`
+	LatestRunID       string             `json:"latestRunId"`
+	Status            string             `json:"status"`
+	Revision          int64              `json:"revision"`
+	CleanupPending    bool               `json:"cleanupPending"`
+	Archived          bool               `json:"archived"`
+	QueueRevision     int64              `json:"queueRevision"`
+	QueuedCount       int                `json:"queuedCount"`
+	QueuePaused       bool               `json:"queuePaused"`
+	CreatedAt         time.Time          `json:"createdAt"`
+	UpdatedAt         time.Time          `json:"updatedAt"`
+}
+
+type AgentConversationSelector struct {
+	Scope             AgentBusinessScope
+	AgentDefinitionID string
 }
 
 type CloudAgentConversationPage struct {
@@ -62,26 +69,70 @@ func encodeCloudAgentHistoryCursor(run model.CloudAgentExecution) string {
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
-// Canvas ownership is checked before directory lookup, including empty results.
-// A conversation that visited this canvas retains its global latest turn.
 func (s *Service) CloudAgentConversations(userID, canvasID, before string, limit int) (*CloudAgentConversationPage, error) {
+	return s.ScopedCloudAgentConversations(userID, AgentConversationSelector{Scope: AgentBusinessScope{Type: "canvas", ID: canvasID}}, before, limit)
+}
+
+func (s *Service) agentConversationBinding(userID string, selector AgentConversationSelector) (model.AgentConversationBinding, error) {
+	var binding model.AgentConversationBinding
 	if userID == "" {
-		return nil, kernel.Unauthorized("请先登录")
+		return binding, kernel.Unauthorized("请先登录")
 	}
-	if strings.TrimSpace(canvasID) == "" || validateCloudAgentID(canvasID, "画布 ID", 80) != nil {
-		return nil, BadAuthRequest("需要有效的画布 ID")
+	scope := selector.Scope
+	if validateCloudAgentID(scope.Type, "业务类型", 40) != nil || validateCloudAgentID(scope.ID, "业务对象 ID", 80) != nil {
+		return binding, BadAuthRequest("需要有效的业务类型和对象 ID")
 	}
+	definition, err := s.ResolveAgentDefinition(scope.Type, selector.AgentDefinitionID)
+	if err != nil {
+		return binding, err
+	}
+	req := CloudAgentRequest{Scope: &scope, PermissionMode: "read_only"}
+	if scope.Type == "canvas" {
+		req.CanvasID = scope.ID
+	}
+	if _, err := s.authorizeAgentDefinition(definition, userID, req); err != nil {
+		return binding, err
+	}
+	return model.AgentConversationBinding{ScopeType: scope.Type, ScopeID: scope.ID, AgentDefinitionID: definition.ID}, nil
+}
+
+func (s *Service) RequireAgentTargetScope(userID, id string, conversation bool, selector AgentConversationSelector) error {
+	if err := validateCloudAgentID(id, "会话或运行 ID", 80); err != nil {
+		return err
+	}
+	binding, err := s.agentConversationBinding(userID, selector)
+	if err != nil {
+		return err
+	}
+	var run *model.CloudAgentExecution
+	if conversation {
+		run, err = s.repo.LatestAgentConversationRun(userID, id)
+	} else {
+		run, err = s.repo.CloudAgentControlRow(userID, id)
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return kernel.NotFound("Agent 会话或运行不存在")
+	}
+	if err != nil {
+		return err
+	}
+	binding.AgentContextVersion = run.AgentContextVersion
+	if run.AgentConversationBinding != binding {
+		return kernel.NotFound("当前业务没有此 Agent 会话或运行")
+	}
+	return nil
+}
+
+func (s *Service) ScopedCloudAgentConversations(userID string, selector AgentConversationSelector, before string, limit int) (*CloudAgentConversationPage, error) {
 	cursor, err := cloudAgentHistoryCursor(before, limit)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.repo.CanvasProjectMetadataForUser(userID, canvasID); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, kernel.NotFound("画布不存在")
-		}
+	binding, err := s.agentConversationBinding(userID, selector)
+	if err != nil {
 		return nil, err
 	}
-	rows, err := s.repo.CloudAgentConversations(userID, canvasID, cursor, limit+1)
+	rows, err := s.repo.CloudAgentConversations(userID, "", cursor, limit+1, binding)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +160,8 @@ func (s *Service) CloudAgentConversations(userID, canvasID, before string, limit
 		}
 		page.Items = append(page.Items, CloudAgentConversation{
 			ID: id, CanvasID: run.CanvasID, Title: run.Title, LatestRunID: run.ID,
+			Scope:             AgentBusinessScope{Type: run.ScopeType, ID: run.ScopeID},
+			AgentDefinitionID: run.AgentDefinitionID, Resumable: run.AgentContextVersion == agentContextVersion,
 			Status: run.Status, Revision: run.Revision, CleanupPending: run.CleanupPending,
 			Archived:  run.ConversationArchived,
 			CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,

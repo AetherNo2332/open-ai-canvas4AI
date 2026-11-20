@@ -107,7 +107,7 @@ func cloudAgentExtendToolCatalog(state *cloudAgentRuntime) {
 	}
 	req := state.Request
 	req.subagent = state.Subagent
-	for _, tool := range compileCloudAgentToolsForRuntime(req, firstNonEmpty(state.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy)) {
+	for _, tool := range compileRegisteredAgentTools(req, firstNonEmpty(state.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy), state.Capabilities) {
 		name := stringField(tool["function"].(map[string]any), "name")
 		if name != "" && !existing[name] {
 			state.Canonical.Tools = append(state.Canonical.Tools, tool)
@@ -161,6 +161,12 @@ func (s *Service) ChangeCloudAgentPermission(userID, id, mode, requestID string)
 		}
 		state, err := cloudAgentDecode(run)
 		if err != nil {
+			return nil, err
+		}
+		if !agentRunPermissionPermitted(&state, mode) {
+			return nil, kernel.Forbidden("该 Agent 配置仅允许只读运行")
+		}
+		if err := s.authorizeRegisteredAgentRun(run, &state); err != nil {
 			return nil, err
 		}
 		if cloudAgentPermissionRequestSeen(&state, requestID) {

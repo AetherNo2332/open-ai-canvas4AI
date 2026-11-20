@@ -20,10 +20,11 @@ func PiSessionStorageID(userID, conversationID string) string {
 // Its owner and canvas are checked on every repository access; the worker token is not an
 // authorization boundary.
 type CloudAgentPiSession struct {
-	ID             string     `gorm:"primaryKey;size:80"`
-	UserID         string     `gorm:"not null;uniqueIndex:idx_cloud_agent_pi_sessions_owner_conversation,priority:1;size:36"`
-	ConversationID string     `gorm:"not null;uniqueIndex:idx_cloud_agent_pi_sessions_owner_conversation,priority:2;size:80"`
-	CanvasID       string     `gorm:"not null;index;size:80"`
+	ID             string `gorm:"primaryKey;size:80"`
+	UserID         string `gorm:"not null;uniqueIndex:idx_cloud_agent_pi_sessions_owner_conversation,priority:1;size:36"`
+	ConversationID string `gorm:"not null;uniqueIndex:idx_cloud_agent_pi_sessions_owner_conversation,priority:2;size:80"`
+	CanvasID       string `gorm:"not null;index;size:80"`
+	AgentConversationBinding
 	FormatVersion  int        `gorm:"not null;default:3"`
 	HeaderJSON     string     `gorm:"type:text;not null"`
 	ActiveLeafID   string     `gorm:"size:160"`

@@ -53,6 +53,7 @@ var agentMemoryNudgePattern = regexp.MustCompile(`(?i)记住|记下|别忘|牢�
 
 // cloudAgentMemorySnapshot 是建 run 时冻结的记忆快照；本轮内 Agent 的修改只体现在工具结果里。
 type cloudAgentMemorySnapshot struct {
+	Source   string `json:"source,omitempty"`
 	Mode     string `json:"mode,omitempty"`
 	Revision int64  `json:"revision,omitempty"`
 	Text     string `json:"text,omitempty"`
@@ -100,23 +101,6 @@ func agentMemoryNudge(prompt string) bool {
 // cloudAgentSkillMentionPattern 匹配用户消息里的 @[skill:id] 技能提及；记忆提示判断前先去掉它们。
 // 上游把它放在技能目录（cloud_agent_skill_catalog.go）里，fork 移植技能目录前暂放这里。
 var cloudAgentSkillMentionPattern = regexp.MustCompile(`@\[skill:([^\]\s]{1,80})\]`)
-
-// cloudAgentMemorySnapshotForRun 冻结本轮记忆快照；关闭记忆时既不注入也不暴露写入工具。
-func (s *Service) cloudAgentMemorySnapshotForRun(userID, prompt string) (cloudAgentMemorySnapshot, error) {
-	doc, err := s.memoryDocuments().EnsureDocument(userID)
-	if err != nil {
-		return cloudAgentMemorySnapshot{}, err
-	}
-	mode := document.ModeOf(doc.Mode)
-	if mode == model.AgentMemoryDocumentModeOff {
-		return cloudAgentMemorySnapshot{Mode: mode}, nil
-	}
-	entries, err := document.DocumentEntries(doc)
-	if err != nil {
-		return cloudAgentMemorySnapshot{}, err
-	}
-	return cloudAgentMemorySnapshot{Mode: mode, Revision: doc.Revision, Text: agentMemorySnapshotText(mode, document.CapacityOf(doc), entries, agentMemoryNudge(prompt))}, nil
-}
 
 // cloudAgentAttachMemorySnapshot 把冻结的记忆快照作为一条有来源的 user 数据消息插在当前用户
 // 消息之前。放在消息里而不是系统提示：系统提示是跨运行的缓存前缀，记忆随用户整理而变。

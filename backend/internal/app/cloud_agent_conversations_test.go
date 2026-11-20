@@ -118,6 +118,7 @@ func TestCloudAgentConversationDirectoryKeysetAndValidation(t *testing.T) {
 		{ID: "history-b", UserID: "user", ConversationID: "history-b", CanvasID: "agent-canvas", Status: "completed", CreatedAt: stamp},
 		{ID: "foreign-latest", UserID: "other", ConversationID: root.ID, CanvasID: "agent-canvas", Status: "running", CreatedAt: stamp.Add(time.Hour)},
 	} {
+		row.AgentConversationBinding = model.AgentConversationBinding{ScopeType: "canvas", ScopeID: row.CanvasID, AgentDefinitionID: "canvas.default"}
 		if err := db.Create(&row).Error; err != nil {
 			t.Fatal(err)
 		}

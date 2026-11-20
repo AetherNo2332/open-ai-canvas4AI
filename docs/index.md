@@ -18,6 +18,9 @@
 
 ## 设计沉淀
 
+- [Agent SDK 增量开发规划](plans/2026-11-18-agent-sdk-incremental-delivery.md)及[工具注册与会话隔离计划](plans/2026-11-18-agent-sdk-tools-session-delivery.md)。
+- [Agent SDK 测试交接](plans/2026-11-19-agent-sdk-test-handoff.md)：覆盖共享偏好、业务隔离、读取、会话交互、Worker 接管与升级。
+
 - [平台内部创作 SDK：实施设计与分片验收](plans/2026-11-05-internal-platform-sdk-rollout.md)及 [S0 合同锁定与迁移清单](plans/2026-11-05-internal-platform-sdk-s0-contract.md)：模型生成、任务、计费、媒体资源的统一合同、调用方迁移矩阵与 S0–S8 验收（实施中，S0 完成）。
 
 - [资源访问与 OSS/CDN 分发架构重构](design/resource-delivery-architecture.md)：资源身份、场景授权与分发策略分离，统一访问合同、全入口迁移、旧实现退场及流量/安全验收门槛（核心代码已实施，待真实 OSS/CDN 链路验收）。

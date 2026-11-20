@@ -18,12 +18,13 @@ import (
 
 // Agent orchestration is durable; the browser stream never drives execution.
 func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
-	RegisterAgentMessageQueueRoutes(r, svc)
-	registerAgentConversationRoutes(r, svc)
+	scoped := r.Group("", agentTargetScopeGuard(svc))
+	RegisterAgentMessageQueueRoutes(scoped, svc)
+	registerAgentConversationRoutes(scoped, svc)
 	registerAgentSettingsRoutes(r, svc)
-	registerAgentRunRoutes(r, svc)
-	registerAgentApprovalRoutes(r, svc)
-	registerAgentEventStreamRoute(r, svc)
+	registerAgentRunRoutes(scoped, svc)
+	registerAgentApprovalRoutes(scoped, svc)
+	registerAgentEventStreamRoute(scoped, svc)
 }
 
 // registerAgentConversationRoutes 会话归档、列表与按会话列出运行。
@@ -51,7 +52,14 @@ func registerAgentConversationRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		page, err := svc.CloudAgentConversations(user.ID, c.Query("canvasId"), c.Query("before"), limit)
+		selector, provided := agentTargetScope(c)
+		if !provided {
+			selector.Scope = service.AgentBusinessScope{Type: "canvas", ID: c.Query("canvasId")}
+		} else if canvasID := c.Query("canvasId"); canvasID != "" && (selector.Scope.Type != "canvas" || selector.Scope.ID != canvasID) {
+			fail(c, http.StatusBadRequest, errors.New("画布 ID 与业务范围不一致"))
+			return
+		}
+		page, err := svc.ScopedCloudAgentConversations(user.ID, selector, c.Query("before"), limit)
 		if err != nil {
 			failService(c, err)
 			return

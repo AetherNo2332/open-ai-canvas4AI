@@ -904,7 +904,7 @@ test("after leaving the canvas the composer is disabled and no request carries t
             await settle();
         });
         expect(composer.disabled).toBe(true);
-        expect(composer.placeholder).toBe("进入画布后使用 Agent");
+        expect(composer.placeholder).toContain("画布素材为只读参考");
         const readsBefore = reads.length;
         await act(async () => {
             composer.onSubmit();
@@ -922,7 +922,7 @@ test("after leaving the canvas the composer is disabled and no request carries t
         expect(conversationRequests).toHaveLength(0);
         // 离开画布后不再按旧画布轮询会话目录。
         expect(reads.length).toBe(readsBefore);
-        expect(mounted.host.textContent).toContain("进入画布后使用 Agent");
+        expect(mounted.host.textContent).toContain("画布素材为只读参考");
     } finally {
         await mounted.close();
     }

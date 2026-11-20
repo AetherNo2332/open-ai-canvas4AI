@@ -39,6 +39,23 @@ function client(overrides: Partial<CloudAgentHistoryClient> = {}): CloudAgentHis
 }
 
 describe("Agent cloud conversation history", () => {
+    test("restores canvas runs and event pages with the directory's canvas scope", async () => {
+        const scopes: Array<string | undefined> = [];
+        await refreshCloudAgentConversations({
+            canvasId: "canvas-1",
+            client: client({
+                listRuns: async (_id, options) => {
+                    scopes.push(options?.canvasId);
+                    return { items: [run("first")] };
+                },
+                getRun: async (id, _signal, options) => {
+                    scopes.push(options?.canvasId);
+                    return { run: run(id, { eventCount: 0, events: [] }) };
+                },
+            }),
+        });
+        expect(scopes).toEqual(["canvas-1", "canvas-1"]);
+    });
     test("remote archive removes cached history without loading its runs", async () => {
         const local = await loadCloudAgentConversation(conversationId, { client: client() });
         const remote = await refreshCloudAgentConversations({

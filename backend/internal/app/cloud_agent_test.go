@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,6 +101,7 @@ func TestCloudAgentLegacyRunSurvivesTaskInputCompaction(t *testing.T) {
 	delete(stored, "parentId")
 	delete(stored, "fingerprint")
 	delete(stored, "textHistory")
+	delete(stored, "context")
 	encoded, _ := json.Marshal(stored)
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).Update("state_json", string(encoded)).Error; err != nil {
 		t.Fatal(err)
@@ -124,22 +126,10 @@ func TestCloudAgentLegacyRunSurvivesTaskInputCompaction(t *testing.T) {
 	}
 	next := req
 	next.IdempotencyKey = "agent-next-after-legacy"
-	continued, err := s.CreateCloudAgentRun("user", next, root.ID)
-	if err != nil {
-		t.Fatalf("legacy compacted run cannot continue: %v", err)
-	}
-	var child model.Task
-	if err := db.First(&child, "id = ?", continued.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	var input struct {
-		TextHistory []providerTextMessage `json:"textHistory"`
-	}
-	if err := json.Unmarshal([]byte(child.InputJSON), &input); err != nil {
-		t.Fatal(err)
-	}
-	if len(input.TextHistory) != 2 || input.TextHistory[0].Content != req.Prompt || input.TextHistory[1].Content != "旧轮次回复" {
-		t.Fatalf("legacy history lost after compaction: %+v", input.TextHistory)
+	_, err = s.CreateCloudAgentRun("user", next, root.ID)
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Reason != "agent_context_new_conversation_required" {
+		t.Fatalf("legacy compacted run must remain read-only: %v", err)
 	}
 }
 

@@ -21,7 +21,7 @@ import (
 // 抽取三条集合，再做集合断言（用户已允许在结构做不到纯断言时退一步做源码级断言）。
 // 读源码的好处是它检查的正是"分派有没有写"，而不会被运行期提前 return 掩盖。
 func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
-	registered := cloudAgentRegisteredToolNames(t)
+	registered := append(cloudAgentRegisteredToolNames(t), stringField(nativeSkillReadToolSchema()["function"].(map[string]any), "name"))
 	supported := CloudAgentSupportedToolNames()
 	// Include both dynamic parent and child catalogs in the dispatch contract.
 	for _, req := range []CloudAgentRequest{

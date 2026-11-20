@@ -24,6 +24,9 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		return s.failCloudAgent(run, state, "Agent 工具调用状态无效，本轮已停止")
 	}
 	call := state.Calls[state.CallIndex]
+	if err := s.checkRegisteredAgentToolBeforeDispatch(run, state, call.Function.Name); err != nil {
+		return s.recordCloudAgentToolReceipt(run, state, call, nil, err)
+	}
 	// director preview 挂起在浏览器视口上：回传由 SubmitCloudAgentDirectorPreview 处理，
 	// 这里只负责超时回执，避免页面未打开时卡死运行。
 	if cloudAgentDirectorPreviewPending(state, call) {
@@ -45,9 +48,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 	if admission, ok := cloudAgentAdmissionFor(state, state.CallIndex); ok && !admission.Allowed {
 		return s.recordCloudAgentToolReceipt(run, state, call, nil, cloudAgentAdmissionError(admission))
 	}
-	allowedRequest := state.Request
-	allowedRequest.subagent = state.Subagent
-	allowed := cloudAgentToolAllowed(allowedRequest, call.Function.Name)
+	allowed := cloudAgentRunAllowsTool(state, call.Function.Name)
 	if allowed {
 		normalized, err := cloudAgentResolveWorkflowIDs(run.UserID, run.ID, state, call)
 		if err != nil {
@@ -56,7 +57,7 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		call = normalized
 		state.Calls[state.CallIndex] = call
 	}
-	return s.routeCloudAgentToolCall(run, state, call, allowed)
+	return s.dispatchRegisteredAgentTool(run, state, call, allowed)
 }
 
 // routeCloudAgentToolCall 依次检查只读拒绝、退役工具、分镜执行器和两类审批闸门；都不命中时交给已准入调用的执行路径。
@@ -217,6 +218,20 @@ func (s *Service) checkpointCloudAgentToolCall(run *model.CloudAgentExecution, s
 // readCloudAgentToolOutsideCheckpoint 在检查点事务之前完成识图准备、服务读取和长期记忆写入。
 // budgetExhausted 表示识图额度已用尽，调用方终止本轮。
 func (s *Service) readCloudAgentToolOutsideCheckpoint(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) (reads cloudAgentToolOutsideReads, budgetExhausted bool) {
+	if allowed && agentBusinessRead(call) {
+		if state.ReadToolCalls >= state.callLimits().ReadCallsPerRun {
+			reads.skillErr = &cloudAgentReadLoopError{ToolName: "read", Count: state.ReadToolCalls + 1, Budget: true}
+			return reads, false
+		}
+		state.ReadToolCalls++
+		result, err := s.agentReadBusinessContent(run.UserID, state, call)
+		if _, image := result.(cloudAgentImageInspection); image {
+			reads.inspectionResult, reads.inspectionErr = result, err
+		} else {
+			reads.skillResult, reads.skillErr = result, err
+		}
+		return reads, errors.Is(err, errCloudAgentImageInspectionBudget)
+	}
 	// 看图的资源与能力校验在写事务外完成；真实图片只在模型任务执行时读取。
 	if allowed && call.Function.Name == "canvas_inspect_image" && state.Request.VisionEnabled {
 		reads.inspectionResult, reads.inspectionErr = s.prepareCloudAgentImageInspection(run.UserID, state.Request.CanvasID, state, call)
@@ -322,7 +337,7 @@ func runCloudAgentCanvasWriteTool(tc *cloudAgentToolCheckpoint, repo *repository
 	case call.Function.Name == "canvas_apply_ops":
 		result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, state.Request.StoryboardDisabled, cloudAgentCanvasEventRecorder(run.ID, state))
 	case call.Function.Name == "canvas_bind_asset":
-		result, toolErr = applyCloudAgentAssetBinding(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+		result, toolErr = applyCloudAgentAssetBinding(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state), state.Context != nil)
 	case call.Function.Name == "canvas_undo", call.Function.Name == "canvas_redo":
 		result, toolErr = applyCloudAgentHistory(repo, run.UserID, state.Request.CanvasID, run.ID, state, call, policy)
 	case call.Function.Name == "director" && cloudAgentWriteCall(call):
@@ -349,6 +364,14 @@ func runCloudAgentCanvasWriteTool(tc *cloudAgentToolCheckpoint, repo *repository
 func (s *Service) runCloudAgentControlTool(tc *cloudAgentToolCheckpoint, current *model.CloudAgentExecution, repo *repository.Repository) cloudAgentToolOutcome {
 	run, state, call := tc.run, tc.state, tc.call
 	switch call.Function.Name {
+	case "read":
+		if !agentBusinessRead(call) {
+			return cloudAgentToolOutcome{toolErr: BadAuthRequest("read 引用未获本轮业务授权")}
+		}
+		if tc.outside.inspectionResult != nil || tc.outside.inspectionErr != nil {
+			return s.settleCloudAgentImageInspection(tc, repo)
+		}
+		return cloudAgentToolOutcome{result: tc.outside.skillResult, toolErr: tc.outside.skillErr}
 	case "wait_generations":
 		result, suspended := cloudAgentWaitGenerations(current, state, call)
 		if suspended {

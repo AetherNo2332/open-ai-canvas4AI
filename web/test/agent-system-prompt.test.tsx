@@ -15,7 +15,7 @@ test("account system prompt form renders saved content and an explicit save acti
 
 test("empty settings provide an editable input and explain when changes take effect", () => {
     const html = renderToStaticMarkup(<AgentSystemPromptForm settings={{ systemPrompt: "", revision: 0 }} onSave={async () => ({ systemPrompt: "", revision: 1 })} onReload={() => {}} />);
-    expect(html).toContain("后续新建的运行");
-    expect(html).toContain("留空");
+    expect(html).toContain("新运行的语言、语气、详略和格式");
+    expect(html).toContain("清空后保存会移除这份账户正文");
     expect(html).toContain("textarea");
 });

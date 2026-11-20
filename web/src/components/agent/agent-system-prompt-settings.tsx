@@ -39,8 +39,8 @@ export function AgentSystemPromptForm({ settings, onSave, onReload }: FormProps)
     return (
         <section className="space-y-4" aria-labelledby="agent-system-prompt-heading">
             <div className="settings-preference-heading">
-                <h3 id="agent-system-prompt-heading">全局自定义系统提示词</h3>
-                <p className="max-w-[60ch]">设置画布 Agent 的回复口吻、创作偏好和工作方式。保存后用于本账户所有画布后续新建的运行，运行中的任务保持原有设置。留空使用默认行为。</p>
+                <h3 id="agent-system-prompt-heading">旧版账户系统提示词</h3>
+                <p className="max-w-[60ch]">此处保留旧版账户正文供查看和编辑。新运行的语言、语气、详略和格式可在「设置 → 偏好」中维护。画布专用要求请保存到当前画布规则。</p>
             </div>
             <label htmlFor="agent-system-prompt" className="sr-only">
                 自定义系统提示词
@@ -74,7 +74,7 @@ export function AgentSystemPromptForm({ settings, onSave, onReload }: FormProps)
                 <span className="ml-auto text-xs tabular-nums text-foreground/60">{count} / 12000 字符</span>
             </div>
             <p id="agent-system-prompt-help" className="max-w-[60ch] text-xs text-foreground/60">
-                清空后需保存才能恢复默认行为。自定义要求仍遵循平台权限、预算和审批规则。
+                清空后保存会移除这份账户正文。
             </p>
             {count > 12000 ? (
                 <p role="alert" className="text-sm">
@@ -89,7 +89,7 @@ export function AgentSystemPromptForm({ settings, onSave, onReload }: FormProps)
             ) : null}
             {success ? (
                 <p role="status" className="text-sm text-foreground/70">
-                    已保存，将用于下一次运行。
+                    账户正文已保存。
                 </p>
             ) : null}
         </section>
@@ -118,7 +118,7 @@ export function AgentSystemPromptPane() {
             onSave={async (input) => {
                 const result = await updateAgentSystemPrompt(input);
                 queryClient.setQueryData(queryKey, result);
-                message.success("系统提示词已保存，将用于下一次运行");
+                message.success("账户正文已保存");
                 return result;
             }}
             onReload={() => void query.refetch()}

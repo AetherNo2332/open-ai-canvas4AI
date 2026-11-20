@@ -32,22 +32,7 @@ test("pending messages expose their first preview and accessible actions without
 
 test("Skills uses only an icon and active color while retaining its accessible count and dialog state", () => {
     const html = renderToStaticMarkup(
-        <AgentHeader
-            theme={canvasThemes.dark}
-            hasMessages
-            statusLabel="运行中"
-            statusColor="green"
-            nodeCount={12}
-            onNew={noop}
-            onHistory={noop}
-            onSettings={noop}
-            onCollapse={noop}
-            onExport={noop}
-            exporting={false}
-            skillsOpen
-            selectedSkillCount={3}
-            onSkills={noop}
-        />,
+        <AgentHeader theme={canvasThemes.dark} hasMessages statusLabel="运行中" statusColor="green" onNew={noop} onHistory={noop} onSettings={noop} onCollapse={noop} onExport={noop} exporting={false} skillsOpen selectedSkillCount={3} onSkills={noop} />,
     );
     const skillsButton = html.match(/<button\b[^>]*class="[^"]*\bagent-header-skills\b[^"]*"[^>]*>[\s\S]*?<\/button>/)?.[0];
     expect(skillsButton).toBeDefined();
@@ -58,21 +43,24 @@ test("Skills uses only an icon and active color while retaining its accessible c
     expect(html).toContain('aria-label="打开 Skills 技能库，已启用 3 个"');
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain('aria-haspopup="dialog"');
-    expect(html.indexOf("agent-header-skills")).toBeLessThan(html.indexOf("导出 Agent 调试记录"));
+    expect(html).toContain('aria-label="更多 Agent 操作"');
+    expect(html).not.toContain('aria-label="导出 Agent 调试记录"');
 });
 
-test("welcome uses the independent assistant name and escapes it as text", () => {
-    const html = renderToStaticMarkup(<AgentWelcome appearance={{ ...DEFAULT_CANVAS_APPEARANCE, agentName: "我的<工作室>" }} nodeCount={2} onChooseSkill={noop} onDraftPrompt={noop} />);
+test("welcome uses the independent assistant name without making canvas inventory the starting point", () => {
+    const html = renderToStaticMarkup(<AgentWelcome appearance={{ ...DEFAULT_CANVAS_APPEARANCE, agentName: "我的<工作室>" }} onDraftPrompt={noop} />);
     expect(html).toContain("在这里，和我的&lt;工作室&gt;让灵感，慢慢成形");
-    expect(html).toContain("2 个节点");
+    expect(html).not.toContain("2 个节点");
+    expect(html).not.toContain("一起梳理当前画布");
     expect(html.match(/type="button"/g)).toHaveLength(3);
     expect(html).not.toContain('disabled=""');
 });
 
-test("empty canvas disables only the canvas-analysis shortcut", () => {
-    const html = renderToStaticMarkup(<AgentWelcome appearance={DEFAULT_CANVAS_APPEARANCE} nodeCount={0} onChooseSkill={noop} onDraftPrompt={noop} />);
-    expect(html.match(/disabled=""/g)).toHaveLength(1);
-    expect(html).toContain("添加节点后，一起梳理创作思路");
+test("all creative starting points are available in an empty canvas", () => {
+    const html = renderToStaticMarkup(<AgentWelcome appearance={DEFAULT_CANVAS_APPEARANCE} onDraftPrompt={noop} />);
+    expect(html).not.toContain('disabled=""');
+    expect(html).toContain("规划一组镜头");
+    expect(html).toContain("规划一组镜头");
     expect(html).not.toContain("生成前由你确认");
 });
 

@@ -33,15 +33,15 @@ func TestAgentSchedulerToolOperationPrepareAndFinishAreIdempotent(t *testing.T) 
 	operation := model.AgentToolOperation{
 		ID: "operation-idempotent", UserID: "user", RunID: "run", TaskID: "task", CallID: "call", Status: "queued",
 	}
-	if err := repo.PrepareAgentToolOperation(&operation); err != nil {
-		t.Fatal(err)
+	if created, err := repo.PrepareAgentToolOperation(&operation); err != nil || !created {
+		t.Fatalf("first prepare created = %v, err = %v", created, err)
 	}
 	claimed, err := repo.ClaimAgentToolOperation(operation.ID, "owner-a")
 	if err != nil || !claimed {
 		t.Fatalf("first claim = %v, err = %v", claimed, err)
 	}
-	if err := repo.PrepareAgentToolOperation(&operation); err != nil {
-		t.Fatal(err)
+	if created, err := repo.PrepareAgentToolOperation(&operation); err != nil || created {
+		t.Fatalf("duplicate prepare created = %v, err = %v", created, err)
 	}
 	if err := repo.FinishAgentToolOperation(operation, "owner-a", "succeeded", ""); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestAgentSchedulerToolOperationRejectsExpiredOwnerCompletion(t *testing.T) 
 	operation := model.AgentToolOperation{
 		ID: "operation-expired-owner", UserID: "user", RunID: "run", TaskID: "task", CallID: "call", Status: "queued",
 	}
-	if err := repo.PrepareAgentToolOperation(&operation); err != nil {
+	if _, err := repo.PrepareAgentToolOperation(&operation); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := repo.ClaimAgentToolOperation(operation.ID, "owner-expired")
@@ -113,7 +113,7 @@ func TestAgentSchedulerToolOperationLeaseTakeoverFencesOldOwner(t *testing.T) {
 	operation := model.AgentToolOperation{
 		ID: "operation-takeover", UserID: "user", RunID: "run", TaskID: "task", CallID: "call", Status: "queued",
 	}
-	if err := repo.PrepareAgentToolOperation(&operation); err != nil {
+	if _, err := repo.PrepareAgentToolOperation(&operation); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := repo.ClaimAgentToolOperation(operation.ID, "owner-old")

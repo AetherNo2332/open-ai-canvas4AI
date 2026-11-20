@@ -1,8 +1,6 @@
 package app
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -22,11 +20,14 @@ const cloudAgentOperation = "cloud_agent"
 // turns reference the previous run, not a mutable in-memory conversation. This
 // reuses transactional billing, worker leases, cancellation and text replay.
 type CloudAgentRequest struct {
-	subagent      *SubagentRuntime
-	ReasoningMode string `json:"reasoningMode,omitempty"`
-	CanvasID      string `json:"canvasId"`
-	Prompt        string `json:"prompt"`
-	Workflow      string `json:"workflow,omitempty"`
+	AgentDefinitionID string              `json:"agentDefinitionId,omitempty"`
+	DramaEpisodeID    string              `json:"dramaEpisodeId,omitempty"`
+	Scope             *AgentBusinessScope `json:"scope,omitempty"`
+	subagent          *SubagentRuntime
+	ReasoningMode     string `json:"reasoningMode,omitempty"`
+	CanvasID          string `json:"canvasId"`
+	Prompt            string `json:"prompt"`
+	Workflow          string `json:"workflow,omitempty"`
 	// SubagentEnabled is the frozen per-canvas consent for this turn.
 	SubagentEnabled bool `json:"subagentEnabled,omitempty"`
 	// SubagentWriteEnabled 冻结本画布"写型子代理"授权；仍需 spawn 显式申请。
@@ -64,6 +65,9 @@ type CloudAgentRequest struct {
 }
 
 type cloudAgentState struct {
+	Capabilities     *AgentCapabilitySnapshot `json:"capabilities,omitempty"`
+	Context          *AgentContextSnapshot    `json:"context,omitempty"`
+	Rules            []AgentRuleSnapshot      `json:"rules,omitempty"`
 	Subagent         *SubagentRuntime         `json:"subagent,omitempty"`
 	Workspace        *WorkspaceSnapshot       `json:"workspace,omitempty"`
 	Version          int                      `json:"version"`
@@ -79,27 +83,33 @@ type cloudAgentState struct {
 }
 
 type CloudAgentRun struct {
-	SkillRuntimeMode string            `json:"skillRuntimeMode,omitempty"`
-	ID               string            `json:"id"`
-	ConversationID   string            `json:"conversationId"`
-	UserPrompt       string            `json:"userPrompt,omitempty"`
-	IdempotencyKey   string            `json:"idempotencyKey,omitempty"`
-	CanvasID         string            `json:"canvasId"`
-	ParentID         string            `json:"parentId,omitempty"`
-	Status           string            `json:"status"`
-	Revision         int64             `json:"revision"`
-	RuntimePhase     string            `json:"runtimePhase"`
-	WaitReason       string            `json:"waitReason,omitempty"`
-	CleanupPending   bool              `json:"cleanupPending,omitempty"`
-	FailureMessage   string            `json:"failureMessage,omitempty"`
-	PermissionMode   string            `json:"permissionMode"`
-	Model            string            `json:"model"`
-	ChannelID        string            `json:"channelId,omitempty"`
-	ChannelModelKey  string            `json:"channelModelKey,omitempty"`
-	LogicalModelID   string            `json:"logicalModelId,omitempty"`
-	CreatedAt        time.Time         `json:"createdAt"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
-	Events           []CloudAgentEvent `json:"events,omitempty"`
+	AgentDefinitionID      string              `json:"agentDefinitionId,omitempty"`
+	AgentDefinitionVersion int                 `json:"agentDefinitionVersion,omitempty"`
+	DramaEpisodeID         string              `json:"dramaEpisodeId,omitempty"`
+	Rules                  []AgentRuleSnapshot `json:"rules,omitempty"`
+	ContractVersion        string              `json:"contractVersion"`
+	Scope                  AgentBusinessScope  `json:"scope"`
+	SkillRuntimeMode       string              `json:"skillRuntimeMode,omitempty"`
+	ID                     string              `json:"id"`
+	ConversationID         string              `json:"conversationId"`
+	UserPrompt             string              `json:"userPrompt,omitempty"`
+	IdempotencyKey         string              `json:"idempotencyKey,omitempty"`
+	CanvasID               string              `json:"canvasId"`
+	ParentID               string              `json:"parentId,omitempty"`
+	Status                 string              `json:"status"`
+	Revision               int64               `json:"revision"`
+	RuntimePhase           string              `json:"runtimePhase"`
+	WaitReason             string              `json:"waitReason,omitempty"`
+	CleanupPending         bool                `json:"cleanupPending,omitempty"`
+	FailureMessage         string              `json:"failureMessage,omitempty"`
+	PermissionMode         string              `json:"permissionMode"`
+	Model                  string              `json:"model"`
+	ChannelID              string              `json:"channelId,omitempty"`
+	ChannelModelKey        string              `json:"channelModelKey,omitempty"`
+	LogicalModelID         string              `json:"logicalModelId,omitempty"`
+	CreatedAt              time.Time           `json:"createdAt"`
+	UpdatedAt              time.Time           `json:"updatedAt"`
+	Events                 []CloudAgentEvent   `json:"events,omitempty"`
 	// 事件已全量落库，运行详情只返回一页，因此必须把"这一页在整条日志里的位置"说清楚：
 	// EventSeqBase 是本次返回的首条事件之前已入库的条数（不变量 events[i].seq ==
 	// eventSeqBase + i + 1），EventCount 是该运行累计事件条数，LatestSeq 可直接当作下次
@@ -137,20 +147,6 @@ func validateCloudAgentPrompt(value string, maxRunes int) error {
 	return nil
 }
 
-func cloudAgentID(userID, key string) string {
-	sum := sha256.Sum256([]byte(userID + "\x00" + key))
-	return "ag" + hex.EncodeToString(sum[:16])
-}
-
-func cloudAgentFingerprint(req CloudAgentRequest, parent string) string {
-	data, _ := json.Marshal(struct {
-		Request CloudAgentRequest
-		Parent  string
-	}{req, parent})
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
 // cloudAgentRunIdentity 是渲染运行视图所需的最小身份字段。
 //
 // 旧 run 的身份来自根任务行；阶段 2 之后的新 run 由 Go 直接创建（run + 预授权 + 不可变快照），
@@ -177,10 +173,16 @@ func cloudAgentTaskIdentity(task *model.Task) cloudAgentRunIdentity {
 }
 
 func agentRunOutput(identity cloudAgentRunIdentity, state cloudAgentState) *CloudAgentRun {
-	return &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model,
-		UserPrompt: state.Request.Prompt, IdempotencyKey: state.Request.IdempotencyKey,
+	view := &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model,
+		ContractVersion: AgentSDKContractVersion, Scope: agentBusinessScope(state.Request), Rules: state.Rules,
+		DramaEpisodeID: state.Request.DramaEpisodeID,
+		UserPrompt:     state.Request.Prompt, IdempotencyKey: state.Request.IdempotencyKey,
 		ChannelID: state.Request.ChannelID, ChannelModelKey: state.Request.ChannelModelKey, LogicalModelID: state.Request.LogicalModelID,
 		CreatedAt: identity.CreatedAt, UpdatedAt: identity.UpdatedAt, Skills: state.Skills}
+	if state.Capabilities != nil {
+		view.AgentDefinitionID, view.AgentDefinitionVersion = state.Capabilities.DefinitionID, state.Capabilities.DefinitionVersion
+	}
+	return view
 }
 
 func (s *Service) cloudAgentTask(userID, id string) (*model.Task, cloudAgentState, error) {
@@ -279,7 +281,10 @@ func (s *Service) cloudAgentRunRefFor(userID, id string) (*cloudAgentRunRef, err
 		Identity: cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status,
 			Model: state.Request.Model, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt},
 		State: cloudAgentState{Version: 1, SkillRuntimeMode: state.SkillRuntimeMode, Request: state.Request, ParentID: state.ParentID,
-			Fingerprint: state.Fingerprint, CreativeAnchor: state.CreativeAnchor, Skills: state.Skills,
+			Rules:        state.Rules,
+			Context:      state.Context,
+			Capabilities: state.Capabilities,
+			Fingerprint:  state.Fingerprint, CreativeAnchor: state.CreativeAnchor, Skills: state.Skills,
 			Policy: state.Policy}}, nil
 }
 
@@ -358,6 +363,13 @@ func (s *Service) newCloudAgentExecution(userID, id, canvasID, parentID, convers
 	run := &model.CloudAgentExecution{
 		ID: id, UserID: userID, Status: "queued", Engine: "pi", Revision: 1,
 		CanvasID: canvasID, ParentID: parentID, ConversationID: conversationID, CreatedAt: now, UpdatedAt: now,
+	}
+	if state.Capabilities != nil && state.Context != nil {
+		scope := agentBusinessScope(state.Request)
+		run.AgentConversationBinding = model.AgentConversationBinding{
+			ScopeType: scope.Type, ScopeID: scope.ID, AgentDefinitionID: state.Capabilities.DefinitionID,
+			AgentContextVersion: state.Context.Version,
+		}
 	}
 	if parentID != "" {
 		// 标题仍从父轮继承；会话归属已在建 run 前由 cloudAgentConversationIDFor 解析，

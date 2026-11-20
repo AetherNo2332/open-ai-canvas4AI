@@ -2,13 +2,29 @@ package app
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"yingce/backend/internal/assets"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
 
-func cloudAgentListAssets(repo *repository.Repository, userID string, call cloudAgentCall) (any, error) {
+func cloudAgentListScopedAssets(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {
+	if state == nil || state.Context == nil {
+		return cloudAgentListAssets(repo, userID, call)
+	}
+	canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		return nil, err
+	}
+	return cloudAgentListAssets(repo, userID, call, cloudAgentBoundAssetIDs(doc))
+}
+
+func cloudAgentListAssets(repo *repository.Repository, userID string, call cloudAgentCall, allowedIDs ...[]string) (any, error) {
 	var args struct {
 		Query string `json:"query"`
 		Kind  string `json:"kind"`
@@ -28,7 +44,11 @@ func cloudAgentListAssets(repo *repository.Repository, userID string, call cloud
 	default:
 		return nil, BadAuthRequest("素材类型不受支持")
 	}
-	rows, total, err := repo.UserAssetsPage(userID, args.Page, 40, repository.UserAssetPageFilter{Query: args.Query, Kind: args.Kind, Status: "active"})
+	filter := repository.UserAssetPageFilter{Query: args.Query, Kind: args.Kind, Status: "active"}
+	if len(allowedIDs) != 0 {
+		filter.AllowedIDs = allowedIDs[0]
+	}
+	rows, total, err := repo.UserAssetsPage(userID, args.Page, 40, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +59,18 @@ func cloudAgentListAssets(repo *repository.Repository, userID string, call cloud
 	return map[string]any{"assets": result, "page": args.Page, "hasMore": int64(args.Page*40) < total, "totalAssets": total, "usage": "assetId 供 canvas_bind_asset 替换画布媒体节点；分镜 assets.ref 使用替换后的画布节点 ID 或唯一名称"}, nil
 }
 
-func prepareCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID string, call cloudAgentCall) (*cloudAgentCanvasMutationPlan, error) {
+func cloudAgentBoundAssetIDs(doc map[string]any) []string {
+	ids := []string{}
+	for _, node := range creationMaps(doc["nodes"]) {
+		if id := stringValue(cloudAgentNodeMetadata(node)["assetId"]); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
+}
+
+func prepareCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, isolated ...bool) (*cloudAgentCanvasMutationPlan, error) {
 	var args struct {
 		SnapshotHash string `json:"snapshotHash"`
 		NodeID       string `json:"nodeId"`
@@ -55,6 +86,9 @@ func prepareCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID
 	doc, err := creationDocument(canvas.PayloadJSON)
 	if err != nil {
 		return nil, err
+	}
+	if len(isolated) > 0 && isolated[0] && !slices.Contains(cloudAgentBoundAssetIDs(doc), args.AssetID) {
+		return nil, BadAuthRequest("素材未绑定到当前画布")
 	}
 	hash := cloudAgentCanvasHash(doc)
 	if hash != args.SnapshotHash {
@@ -179,8 +213,8 @@ func cloudAgentAssetResourceID(data map[string]any) string {
 	return ""
 }
 
-func applyCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder cloudAgentMutationRecorder) (any, error) {
-	plan, err := prepareCloudAgentAssetBinding(repo, userID, canvasID, call)
+func applyCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder cloudAgentMutationRecorder, isolated ...bool) (any, error) {
+	plan, err := prepareCloudAgentAssetBinding(repo, userID, canvasID, call, isolated...)
 	if err != nil {
 		return nil, err
 	}

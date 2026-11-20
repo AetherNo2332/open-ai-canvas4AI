@@ -94,7 +94,7 @@ func piVerifyNativeReadRejection(repo *repository.Repository, userID string, sta
 		return denied()
 	}
 	task, err := repo.TaskForUser(userID, state.PiAssistantCheckpointTaskID)
-	if err != nil || task.Status != model.TaskStatusSucceeded || task.ProjectID != state.Request.CanvasID {
+	if err != nil || task.Status != model.TaskStatusSucceeded || task.ProjectID != agentTaskProjectID(state.Request) {
 		return denied()
 	}
 	if !piNativeReadMatchesBilledCall(state, task, callID, raw) {

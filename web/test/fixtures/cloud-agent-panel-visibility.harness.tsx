@@ -483,11 +483,17 @@ test("programmatic close removes the real Skills modal and clears its open state
     }
 });
 
-test("programmatic close removes the settings model-picker portal", async () => {
+test("more menu exposes Agent settings outside the header and closes its model picker", async () => {
     const mounted = await mount();
     try {
         await act(async () => {
-            mounted.aside().querySelector<HTMLButtonElement>('[aria-label="Agent 设置"]')!.click();
+            mounted.aside().querySelector<HTMLButtonElement>('[aria-label="更多 Agent 操作"]')!.click();
+            await settle();
+        });
+        const settingsItem = document.body.querySelector<HTMLElement>(".ant-dropdown-menu-title-content");
+        expect(settingsItem?.textContent).toContain("Agent 设置");
+        await act(async () => {
+            settingsItem!.click();
             await settle();
         });
         await act(async () => {
@@ -903,7 +909,8 @@ test("off canvas the panel keeps the conversation readable but disables the comp
             await settle();
         });
         const aside = mounted.aside();
-        expect(aside.textContent).toContain("进入画布后使用 Agent");
+        expect(aside.textContent).toContain("画布素材为只读参考");
+        expect(mounted.aside().querySelector<HTMLTextAreaElement>("textarea")!.placeholder).toContain("画布素材为只读参考");
         expect(aside.textContent).toContain("A user message");
         expect(aside.classList.contains("is-docked")).toBe(false);
         expect(aside.querySelector('[aria-label="停靠到画布右侧"]')).toBeNull();

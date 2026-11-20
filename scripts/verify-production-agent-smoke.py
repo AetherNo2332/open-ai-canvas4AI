@@ -245,12 +245,21 @@ class Smoke:
         return self.api("GET", f"/agent/runs/{run['id']}?eventLimit=200")["run"]
 
     def complete(self, run):
-        view = wait(lambda: (row if (row := self.view(run))["status"] in TERMINAL else None), 180)
-        self.report["runs"].append({"id": run["id"], "status": view["status"], "events": [
-            {"seq": e["seq"], "type": e["type"], "tool": e.get("payload", {}).get("toolName"),
-             **({"error": str(e["payload"].get("text", ""))[:300], "errorClass": e["payload"].get("errorClass")}
-                if e["type"] == "tool_failed" else {})}
-            for e in view["events"]]})
+        view = run
+
+        def terminal_view():
+            nonlocal view
+            view = self.view(run)
+            return view if view["status"] in TERMINAL else None
+
+        try:
+            wait(terminal_view, 180)
+        finally:
+            self.report["runs"].append({"id": run["id"], "status": view["status"], "events": [
+                {"seq": e["seq"], "type": e["type"], "tool": e.get("payload", {}).get("toolName"),
+                 **({"error": self.redact(str(e["payload"].get("text", "")))[:300],
+                     "errorClass": e["payload"].get("errorClass")} if e["type"] == "tool_failed" else {})}
+                for e in view.get("events", [])]})
         self.check("real run reaches completed", view["status"] == "completed", status=view["status"])
         return view
 
@@ -431,7 +440,7 @@ class Smoke:
                    availability["queueReason"] == "worker_offline", stage="worker_not_ready",
                    queueReason=availability["queueReason"])
         probe = self.compose("run", "--rm", "--no-deps", "agent", "node", "-e",
-            "fetch('http://backend:8080/internal-agent/capacity',{method:'POST',headers:{Authorization:'Bearer '+process.env.CANVAS_AGENT_WORKER_TOKEN,'X-Agent-Identity':process.env.CANVAS_AGENT_WORKER_ID,'X-Agent-Protocol-Version':'canvas-pi-wire/v4','X-Pi-SDK-Version':'0.87.1','X-Pi-Session-Format':'3','Content-Type':'application/json'},body:JSON.stringify({owner:process.env.CANVAS_AGENT_WORKER_ID+':ci-probe',active:0,capacity:1,readiness:'degraded',readinessReason:'CI startup gate'})}).then(r=>{console.log(r.status);process.exit(r.status===200?0:1)})",
+            "fetch('http://backend:8080/internal-agent/capacity',{method:'POST',headers:{Authorization:'Bearer '+process.env.CANVAS_AGENT_WORKER_TOKEN,'X-Agent-Identity':process.env.CANVAS_AGENT_WORKER_ID,'X-Agent-Protocol-Version':'canvas-pi-wire/v6','X-Pi-SDK-Version':'0.87.1','X-Pi-Session-Format':'3','Content-Type':'application/json'},body:JSON.stringify({owner:process.env.CANVAS_AGENT_WORKER_ID+':ci-probe',active:0,capacity:1,readiness:'degraded',readinessReason:'CI startup gate'})}).then(r=>{console.log(r.status);process.exit(r.status===200?0:1)})",
             timeout=60, success=False)
         self.check("unready worker report is accepted", probe.returncode == 0 and probe.stdout.strip() == "200")
         availability = self.api("GET", "/agent/capabilities")["availability"]

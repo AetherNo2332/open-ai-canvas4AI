@@ -383,7 +383,7 @@ func (s *Service) piEnqueueNativeCompactionCall(run *model.CloudAgentExecution, 
 		"config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey,
 			"model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model), "systemPrompt": input.SystemPrompt},
 		"textOptions": map[string]any{"stream": false, "thinking": false, "maxOutputTokens": input.MaxTokens}}
-	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: cloudAgentContextCompactionOperation,
+	req := CreateTaskRequest{ProjectID: agentTaskProjectID(state.Request), Type: "canvas_text", Operation: cloudAgentContextCompactionOperation,
 		Prompt: input.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: taskInput}
 	if err := s.enqueueCloudAgentTask(run, state, req, nil); err != nil {
 		return cloudAgentPiNativeCall{}, err

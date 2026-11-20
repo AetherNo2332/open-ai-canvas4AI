@@ -34,7 +34,7 @@ func (r *Repository) AttachCloudAgentPiSession(run *model.CloudAgentExecution) e
 		sessionID := model.PiSessionStorageID(run.UserID, conversationID)
 		header, err := json.Marshal(map[string]any{
 			"type": "session", "version": cloudAgentPiSessionFormatVersion, "id": sessionID,
-			"timestamp": createdAt.UTC().Format(time.RFC3339Nano), "cwd": "canvas://" + run.CanvasID,
+			"timestamp": createdAt.UTC().Format(time.RFC3339Nano), "cwd": cloudAgentPiSessionCwd(run),
 		})
 		if err != nil {
 			return err
@@ -43,6 +43,7 @@ func (r *Repository) AttachCloudAgentPiSession(run *model.CloudAgentExecution) e
 			ID: sessionID, UserID: run.UserID, ConversationID: conversationID, CanvasID: run.CanvasID,
 			FormatVersion: cloudAgentPiSessionFormatVersion, HeaderJSON: string(header), Revision: 1,
 			ActiveRunID: run.ID, CreatedAt: createdAt, UpdatedAt: time.Now(),
+			AgentConversationBinding: run.AgentConversationBinding,
 		}
 		created := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&session)
 		if created.Error != nil {
@@ -57,8 +58,8 @@ func (r *Repository) AttachCloudAgentPiSession(run *model.CloudAgentExecution) e
 	} else if err != nil {
 		return err
 	}
-	if session.CanvasID != run.CanvasID || session.ConversationID != conversationID {
-		return fmt.Errorf("Pi session %q owner or canvas does not match run", conversationID)
+	if !cloudAgentPiSessionMatches(&session, run, conversationID) {
+		return fmt.Errorf("Pi session %q owner or scope does not match run", conversationID)
 	}
 	if session.FormatVersion != cloudAgentPiSessionFormatVersion {
 		return fmt.Errorf("unsupported Pi session format version %d", session.FormatVersion)
@@ -84,6 +85,17 @@ func (r *Repository) AttachCloudAgentPiSession(run *model.CloudAgentExecution) e
 		return ErrCreationConflict
 	}
 	return nil
+}
+
+func cloudAgentPiSessionCwd(run *model.CloudAgentExecution) string {
+	if run.ScopeType != "" {
+		return run.ScopeType + "://" + run.ScopeID
+	}
+	return "canvas://" + run.CanvasID
+}
+
+func cloudAgentPiSessionMatches(session *model.CloudAgentPiSession, run *model.CloudAgentExecution, conversationID string) bool {
+	return session.CanvasID == run.CanvasID && session.ConversationID == conversationID && session.AgentConversationBinding == run.AgentConversationBinding
 }
 
 // CloudAgentPiSession loads a session only in the authenticated user's scope.

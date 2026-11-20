@@ -1,0 +1,118 @@
+.drama-agent {
+    display: grid;
+    gap: 16px;
+    max-width: 46rem;
+    min-width: 0;
+    margin-block: 24px;
+    padding-block: 20px 8px;
+    border-top: 1px solid var(--border);
+    color: var(--foreground);
+    overflow-wrap: anywhere;
+}
+
+.drama-agent-header,
+.drama-agent-heading,
+.drama-agent-scope,
+.drama-agent-budget {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.drama-agent-heading {
+    flex-wrap: wrap;
+}
+
+.drama-agent-heading h2 {
+    font-size: 17px;
+    font-weight: 650;
+    color: inherit;
+}
+
+.drama-agent-scope {
+    gap: 4px;
+    padding: 2px 7px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--muted-foreground);
+    font-size: 11px;
+}
+
+.drama-agent-directory,
+.drama-agent-composer-actions,
+.drama-agent-progress {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: var(--muted-foreground);
+    font-size: 12px;
+}
+
+.drama-agent-directory > .ant-select {
+    min-width: 0;
+    width: min(16rem, 100%);
+}
+
+.drama-agent-thread {
+    display: grid;
+    justify-items: start;
+    gap: 12px;
+    min-width: 0;
+}
+
+.drama-agent-thread:empty {
+    display: none;
+}
+
+.drama-agent-message {
+    justify-self: end;
+    max-width: 84%;
+    padding: 10px 14px;
+    border-radius: 12px 12px 4px 12px;
+    background: var(--muted);
+    white-space: pre-wrap;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.drama-agent-answer {
+    min-width: 0;
+    max-width: 100%;
+    text-align: left;
+}
+
+.drama-agent-composer {
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--background);
+}
+
+.drama-agent-composer:focus-within {
+    border-color: color-mix(in srgb, var(--ring) 75%, var(--border));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 18%, transparent);
+}
+
+.drama-agent-composer-actions {
+    padding: 4px;
+}
+
+.drama-agent-budget .ant-input-number {
+    width: 6rem;
+}
+
+.drama-agent .ant-alert {
+    max-width: 100%;
+}
+
+.drama-agent .ant-input-number-input {
+    text-align: end;
+}
+
+.drama-agent-send {
+    margin-inline-start: auto;
+    justify-content: flex-end;
+}

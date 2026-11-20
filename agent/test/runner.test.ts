@@ -1275,3 +1275,22 @@ test("native system prompt is byte-identical across runs and resumes, with stabl
   await runCanvasAgent(resumed.bridge, resumed.snapshot, undefined, promptParts());
   assert.equal(resumed.state.canonical[0]!.systemPrompt, prompt, "a resumed legacy session must send the stable prompt");
 });
+
+test("unified native read executes business references through the admitted durable batch", async () => {
+  for (const path of ["drama:episode/ep-1", "library:document/item"]) {
+    const { bridge, state, snapshot } = fakeBridge([
+      { toolCalls: [{ id: "read-business", function: { name: "read", arguments: JSON.stringify({ path }) } }] },
+      { text: "读取完成" },
+    ], { receiptText: '{"content":"BUSINESS_TEXT"}' });
+    snapshot.skillRuntimeMode = "pi-native";
+    snapshot.skills = [];
+    snapshot.tools = [{ name: "read", category: "native_skill", description: "Read authorized content", allowed: true,
+      parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }];
+    await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+    assert.equal(state.steps, 2);
+    assert.deepEqual(state.batches.map(batch => batch.map(call => call.id)), [["read-business"]]);
+    assert.deepEqual(state.executions, ["read-business"]);
+    assert.match(state.checkpoints.find(item => item.role === "toolResult")!.text, /BUSINESS_TEXT/);
+    assert.ok(state.ops.indexOf("checkpoint:assistant") < state.ops.indexOf("batch:task-1"));
+  }
+});

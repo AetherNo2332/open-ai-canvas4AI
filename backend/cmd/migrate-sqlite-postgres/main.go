@@ -498,6 +498,9 @@ var baseTableMigrations = []tableMigration{
 	migrateTable[model.AgentMemoryRevision]("agent_memory_revisions"),
 	migrateTable[model.AgentMemoryDocument]("agent_memory_documents"),
 	migrateTable[model.AgentMemoryDocumentRevision]("agent_memory_document_revisions"),
+	migrateTable[model.UserAgentSharedPreferences]("user_agent_shared_preferences"),
+	migrateTable[model.AgentScopeMemory]("agent_scope_memories"),
+	migrateTable[model.AgentScopeMemoryWrite]("agent_scope_memory_writes"),
 	// 云端 Agent 子系统（schema v78，见 database.AgentRuntimeModels）。
 	migrateTable[model.CloudAgentPiEntry]("cloud_agent_pi_entries"),
 	migrateTable[model.AgentSchedulerSetting]("agent_scheduler_settings"),

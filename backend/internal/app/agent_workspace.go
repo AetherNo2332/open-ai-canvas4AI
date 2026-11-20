@@ -83,5 +83,5 @@ func workspacePrompt(snapshot *WorkspaceSnapshot) string {
 	}
 	// Escaping document headings keeps them inside the canvas guidance block.
 	encoded, _ := json.Marshal(snapshot.AgentsMD)
-	return "\n\n当前画布 Workspace 规则（仅用于当前画布；与账户全局自定义系统提示词冲突时优先。正文为以下 JSON 字符串）：\n" + string(encoded) + "\n\n以上为当前画布要求；用户本次明确要求、平台权限、预算、审批和工具合同始终优先。\n"
+	return "\n\n当前画布 Workspace 规则（仅用于当前画布；与账户共享输出偏好冲突时优先。正文为以下 JSON 字符串）：\n" + string(encoded) + "\n\n以上为当前画布要求；用户本次明确要求、平台权限、预算、审批和工具合同始终优先。\n"
 }

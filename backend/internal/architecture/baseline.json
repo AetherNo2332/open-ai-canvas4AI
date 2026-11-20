@@ -92,7 +92,7 @@
     {"id":"internal/app/cloud_agent_tool_error_class.go:func:cloudAgentToolErrorClass:complexity","max":29,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_tool_repair.go:func:cloudAgentTrackToolRepair:complexity","max":26,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_user_errors.go:func:classifyUserFacingTaskError:complexity","max":21,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/cloud_agent_vision.go:file_lines","max":1170,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
+    {"id":"internal/app/cloud_agent_vision.go:file_lines","max":1107,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_vision.go:func:Service.prepareCloudAgentImageInspection:complexity","max":44,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/cloud_agent_vision.go:func:Service.prepareCloudAgentImageInspection:lines","max":172,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/app/creation.go:file_lines","max":913,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},

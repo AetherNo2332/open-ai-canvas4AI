@@ -1,0 +1,138 @@
+/** Agent wire contracts. No UI state, browser globals or generation requests. */
+export const AGENT_CONTRACT_VERSION = "agent-sdk/v1" as const;
+export type AgentBusinessScope = { type: string; id: string };
+export type AgentPermissionMode = "read_only" | "auto" | "request_approval";
+export type AgentRunRequest = {
+    scope?: AgentBusinessScope;
+    agentDefinitionId?: string;
+    dramaEpisodeId?: string;
+    canvasId: string;
+    prompt: string;
+    model?: string;
+    logicalModelId?: string;
+    channelId?: string;
+    channelModelKey?: string;
+    reasoningMode?: "off" | "minimal" | "low" | "medium" | "high" | "max" | "auto" | "deep";
+    skillIds?: string[];
+    focusNodeIds?: string[];
+    permissionMode?: AgentPermissionMode;
+    contextScope?: string[];
+    subagentEnabled?: boolean;
+    subagentWriteEnabled?: boolean;
+    storyboardDisabled?: boolean;
+    budget?: { maxCredits?: number; maxGenerationTasks?: number; maxVideoSeconds?: number; maxSteps?: number };
+    idempotencyKey: string;
+};
+export type AgentMessageInput = {
+    expectedRunId: string;
+    mode: "queue" | "interject";
+    replyToQuestionId?: string;
+    request: AgentRunRequest;
+};
+export type AgentEvent = {
+    eventId: string;
+    runId: string;
+    seq: number;
+    type: string;
+    payload: Record<string, unknown>;
+    createdAt: string;
+};
+export type AgentRunSkill = {
+    id: string;
+    name: string;
+    source?: "global" | "user";
+    version: string;
+    hash: string;
+    nativeName?: string;
+    versionId?: string;
+    versionLabel?: string;
+};
+export type AgentContextCompactionState = {
+    status: "requested" | "running";
+    sourceBytes?: number;
+    turnCount?: number;
+    resume?: boolean;
+    projectedTokens?: number;
+    usableInputTokens?: number;
+    ratio?: number;
+    tokenSource?: "provider" | "estimate";
+};
+export type AgentApprovalSnapshot = {
+    approvalId: string;
+    decision?: "approve" | "reject";
+    reason?: string;
+    callHash?: string;
+    call?: { id: string; function: { name: string; arguments: string } };
+    preview?: { kind: string; title: string; description: string };
+};
+export type AgentRunSnapshot = {
+    contractVersion?: typeof AGENT_CONTRACT_VERSION;
+    scope?: AgentBusinessScope;
+    agentDefinitionId?: string;
+    agentDefinitionVersion?: number;
+    dramaEpisodeId?: string;
+    rules?: Array<{ source: string; revision: number; text: string }>;
+    id: string;
+    conversationId?: string;
+    parentId?: string;
+    canvasId: string;
+    userPrompt?: string;
+    idempotencyKey?: string;
+    status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "rejected";
+    permissionMode: AgentPermissionMode;
+    revision?: number;
+    cleanupPending?: boolean;
+    failureMessage?: string;
+    spentCredits?: number;
+    step?: number;
+    runtimePhase?: "ready" | "advancing" | "waiting_model" | "waiting_tool" | "waiting_approval" | "waiting_compaction" | "waiting_resource" | "retry_delay" | "terminal";
+    waitReason?: string;
+    model?: string;
+    channelId?: string;
+    channelModelKey?: string;
+    logicalModelId?: string;
+    createdAt: string;
+    updatedAt: string;
+    skillRuntimeMode?: "pi-native" | "legacy-go";
+    skills?: AgentRunSkill[];
+    events?: AgentEvent[];
+    eventSeqBase?: number;
+    latestSeq?: number;
+    eventCount?: number;
+    eventsTruncated?: boolean;
+    activeMessage?: { messageId: string; text: string };
+    approval?: AgentApprovalSnapshot;
+    contextCompaction?: AgentContextCompactionState;
+};
+export type AgentRunReceipt<R extends AgentRunSnapshot = AgentRunSnapshot> = { run: R };
+export type AgentConversation = {
+    id: string;
+    title: string;
+    latestRunId: string;
+    status: AgentRunSnapshot["status"];
+    scope: AgentBusinessScope;
+    agentDefinitionId: string;
+    resumable: boolean;
+    archived: boolean;
+    createdAt: string;
+    updatedAt: string;
+};
+export type AgentConversationPage<T> = { items: T[]; nextCursor?: string };
+export type AgentConversationQueue = {
+    conversationId: string;
+    latestRunId: string;
+    awaitingQuestionId?: string;
+    questionRunId?: string;
+};
+export type AgentApprovalDecision = {
+    decision: "approve" | "reject";
+    reason?: string;
+    mediaSettings?: { logicalModelId?: string; channelId?: string; channelModelKey?: string; size: string; quality: string };
+};
+export type AgentMessageReceipt = {
+    messageId: string;
+    conversationId: string;
+    delivery: "queued" | "started" | "interjected" | "cancelled";
+    runId?: string;
+    queueRevision: number;
+};

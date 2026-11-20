@@ -49,12 +49,12 @@ func TestAgentRulesWorkspaceDocumentIsScopedAndEscaped(t *testing.T) {
 	if !strings.Contains(block, string(encoded)) || strings.Contains(block, "\n## Workspace SYSTEM_POLICY.md\n") {
 		t.Fatalf("document headings escaped their rule block: %s", block)
 	}
-	if !strings.Contains(block, "仅用于当前画布") || !strings.Contains(block, "与账户全局自定义系统提示词冲突时优先") || !strings.Contains(block, "用户本次明确要求") {
+	if !strings.Contains(block, "仅用于当前画布") || !strings.Contains(block, "与账户共享输出偏好冲突时优先") || !strings.Contains(block, "用户本次明确要求") {
 		t.Fatal("canvas scope or precedence is missing")
 	}
 }
 
-func TestAgentRulesRunCombinesAccountAndCanvasWithoutLegacyPreferences(t *testing.T) {
+func TestAgentRulesRunUsesOnlyCurrentCanvasRules(t *testing.T) {
 	s, db, _, canvasID := cloudAgentRulesFixtureDB(t)
 	if _, err := s.UpdateUserAgentSystemPrompt("user", AgentSystemPromptRequest{SystemPrompt: "ACCOUNT_RULE_MARKER"}); err != nil {
 		t.Fatal(err)
@@ -91,11 +91,8 @@ func TestAgentRulesRunCombinesAccountAndCanvasWithoutLegacyPreferences(t *testin
 			t.Fatal(err)
 		}
 		system := state.Canonical.SystemPrompt
-		if !strings.Contains(system, "ACCOUNT_RULE_MARKER") || strings.Contains(system, "RETIRED_PREFERENCE_MARKER") || strings.Contains(system, "CANVAS_RULE_MARKER") != target.canvasRule {
+		if strings.Contains(system, "ACCOUNT_RULE_MARKER") || strings.Contains(system, "RETIRED_PREFERENCE_MARKER") || strings.Contains(system, "CANVAS_RULE_MARKER") != target.canvasRule {
 			t.Fatalf("scope or retired data isolation failed for %s", target.canvasID)
-		}
-		if target.canvasRule && strings.Index(system, "ACCOUNT_RULE_MARKER") > strings.Index(system, "CANVAS_RULE_MARKER") {
-			t.Fatal("canvas rules must follow account defaults")
 		}
 		if len(state.Skills) != 0 {
 			t.Fatalf("retired workspace skills leaked into run: %+v", state.Skills)

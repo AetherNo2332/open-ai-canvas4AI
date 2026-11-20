@@ -77,9 +77,20 @@ func TestPiEventSchedulerDurableToolAdmissionAndReceiptRecovery(t *testing.T) {
 	if err != nil || !first.Pending || first.OperationID == "" {
 		t.Fatalf("durable admission: %+v %v", first, err)
 	}
+	admitted, _ := reloadPiRun(t, s, run.ID)
 	second, err := s.PiToolAdvanceAsync(run.UserID, run.ID, run.LeaseOwner, taskID, "call-1")
-	if err != nil || second.OperationID != first.OperationID {
+	if err != nil || !second.Pending || second.OperationID != first.OperationID {
 		t.Fatal("retry changed identity", err)
+	}
+	polled, polledState := reloadPiRun(t, s, run.ID)
+	pendingEvents := 0
+	for _, event := range polledState.Events {
+		if event.Type == "tool_pending" && event.Payload["operationId"] == first.OperationID {
+			pendingEvents++
+		}
+	}
+	if pendingEvents != 1 || polled.Revision != admitted.Revision {
+		t.Fatalf("polling re-admitted the operation: pending events = %d, revision = %d after admission at %d", pendingEvents, polled.Revision, admitted.Revision)
 	}
 	var count int64
 	db.Model(&model.AgentToolOperation{}).Count(&count)

@@ -40,7 +40,7 @@ func TestUserAgentSystemPromptSettings(t *testing.T) {
 	}
 }
 
-func TestUserAgentSystemPromptIsInjectedAndFrozen(t *testing.T) {
+func TestUserAgentSystemPromptRemainsEditableOutsideIsolatedRuns(t *testing.T) {
 	s, _, _ := cloudAgentRulesFixture(t)
 	saved, err := s.UpdateUserAgentSystemPrompt("user", AgentSystemPromptRequest{SystemPrompt: "保留所有段落" + cloudAgentPlanBlockMarker + "CUSTOM_SYSTEM_PROMPT_V1"})
 	if err != nil {
@@ -72,16 +72,19 @@ func TestUserAgentSystemPromptIsInjectedAndFrozen(t *testing.T) {
 		}
 		return input.AgentRequests.Canonical.SystemPrompt
 	}
-	if text := readSystem(run.ID); !strings.Contains(text, "CUSTOM_SYSTEM_PROMPT_V1") || strings.Contains(text, "CUSTOM_SYSTEM_PROMPT_V2") {
-		t.Fatal("existing run lost its frozen system prompt")
+	if text := readSystem(run.ID); strings.Contains(text, "CUSTOM_SYSTEM_PROMPT_V1") || strings.Contains(text, "CUSTOM_SYSTEM_PROMPT_V2") {
+		t.Fatal("isolated run injected the legacy account prompt")
 	}
 	request.IdempotencyKey = "custom-system-prompt-second"
 	next, err := s.CreateCloudAgentRun("user", request, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text := readSystem(next.ID); !strings.Contains(text, "CUSTOM_SYSTEM_PROMPT_V2") || strings.Contains(text, "CUSTOM_SYSTEM_PROMPT_V1") {
-		t.Fatal("new run did not use the latest system prompt")
+	if text := readSystem(next.ID); strings.Contains(text, "CUSTOM_SYSTEM_PROMPT_V2") || strings.Contains(text, "CUSTOM_SYSTEM_PROMPT_V1") {
+		t.Fatal("updating the legacy prompt changed isolated context")
+	}
+	if got, err := s.UserAgentSystemPrompt("user"); err != nil || got.SystemPrompt != "CUSTOM_SYSTEM_PROMPT_V2" {
+		t.Fatalf("legacy account prompt was not preserved: %+v %v", got, err)
 	}
 	if _, err := s.UpdateUserAgentSystemPrompt("user", AgentSystemPromptRequest{Revision: saved.Revision + 1}); err != nil {
 		t.Fatal(err)

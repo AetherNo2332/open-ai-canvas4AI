@@ -112,14 +112,18 @@ func sqliteLockError(err error) bool {
 		strings.Contains(text, "sqlite_busy")
 }
 
-func (r *Repository) PrepareAgentToolOperation(operation *model.AgentToolOperation) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+func (r *Repository) PrepareAgentToolOperation(operation *model.AgentToolOperation) (bool, error) {
+	created := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// The operation key is a business identity, never a random retry identity.
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(operation).Error; err != nil {
-			return err
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(operation)
+		if result.Error != nil {
+			return result.Error
 		}
+		created = result.RowsAffected == 1
 		return tx.First(operation, "id = ?", operation.ID).Error
 	})
+	return created && err == nil, err
 }
 
 func (r *Repository) AgentToolOperations(limit int) ([]model.AgentToolOperation, error) {

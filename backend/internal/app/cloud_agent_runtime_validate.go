@@ -42,7 +42,7 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 }
 
 func validateCloudAgentRuntimeRequest(_ *model.CloudAgentExecution, state *cloudAgentRuntime) error {
-	if state.Request.CanvasID == "" || state.Request.Prompt == "" || state.Request.PermissionMode == "" {
+	if agentTaskProjectID(state.Request) == "" || state.Request.Prompt == "" || state.Request.PermissionMode == "" {
 		return errors.New("Agent runtime request is incomplete")
 	}
 	// 运行中可以切换权限，但预算按开局请求校验（例如自动执行开局带生成预算、中途收紧为只读）。

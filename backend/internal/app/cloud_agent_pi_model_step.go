@@ -134,6 +134,9 @@ func (s *Service) piModelStepResume(userID, runID, owner string, state *cloudAge
 // piModelStepGate rejects a new step when the run cannot continue or the request
 // envelope is out of bounds.
 func (s *Service) piModelStepGate(run *model.CloudAgentExecution, state *cloudAgentRuntime, request PiModelStepRequest) error {
+	if err := s.authorizeRegisteredAgentRun(run, state); err != nil {
+		return err
+	}
 	if run.Status != "running" && run.Status != "queued" {
 		return kernel.Forbidden("Agent 当前状态不允许继续请求模型")
 	}
@@ -173,8 +176,8 @@ func piModelStepCheckDisclosure(state *cloudAgentRuntime, request PiModelStepReq
 		// A recovered batch may finish before the worker reads a fresh snapshot.
 		// Retired tools can leave the next model loadout only after that batch
 		// settles; current tools and all new calls retain normal disclosure checks.
-		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && previous == "read"
-		if state.CallIndex >= len(state.Calls) && !nativeRead && !cloudAgentToolAllowed(state.Request, previous) {
+		nativeRead := state.Capabilities == nil && state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && previous == "read"
+		if state.CallIndex >= len(state.Calls) && !nativeRead && !cloudAgentRunAllowsTool(state, previous) {
 			continue
 		}
 		if !cloudAgentContainsString(requestedNames, previous) {
@@ -204,8 +207,8 @@ func piModelStepRequestedToolsDisclosed(state *cloudAgentRuntime, request PiMode
 	for _, tool := range request.Canonical.Tools {
 		function, _ := tool["function"].(map[string]any)
 		name := stringField(function, "name")
-		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
-		if !allowed[name] || (!nativeRead && !cloudAgentToolAllowed(state.Request, name)) {
+		nativeRead := state.Capabilities == nil && state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
+		if !allowed[name] || (!nativeRead && !cloudAgentRunAllowsTool(state, name)) {
 			return kernel.Forbidden("Pi 模型请求包含未披露工具")
 		}
 	}
@@ -236,7 +239,7 @@ func (s *Service) piModelStepTaskInput(run *model.CloudAgentExecution, state *cl
 		}
 	}
 	request.Canonical, _ = projectCloudAgentVisionRequest(request.Canonical, visionBudget, state.DeliveredImageSHAs, state.DeliveredImageComparisons)
-	references, refErr := s.cloudAgentImageReferences(run.UserID, state.Request, &request.Canonical)
+	references, refErr := s.cloudAgentImageReferences(run.UserID, state.Request, &request.Canonical, state.Context != nil)
 	if refErr != nil {
 		// 水合失败按安全文案转成可见错误，由 worker 上报为运行失败，
 		// 不把资源 ID 或上游地址写进失败原因。
@@ -320,7 +323,7 @@ func piModelStepVerifyContract(state *cloudAgentRuntime, request PiModelStepRequ
 
 // piModelStepEnqueue admits the model task and returns the view of the persisted task.
 func (s *Service) piModelStepEnqueue(userID, runID, owner string, run *model.CloudAgentExecution, state *cloudAgentRuntime, input map[string]any) (*PiModelStepView, error) {
-	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: cloudAgentStepOperation, Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
+	req := CreateTaskRequest{ProjectID: agentTaskProjectID(state.Request), Type: "canvas_text", Operation: cloudAgentStepOperation, Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
 	firstStep := cloudAgentAwaitingFirstStep(state)
 	// The recovery user entry is already durable in the Pi message tree when a
 	// retry is admitted. Clear one-shot nudges so later steps and restarts do not

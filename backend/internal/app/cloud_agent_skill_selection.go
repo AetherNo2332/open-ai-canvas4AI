@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"yingce/backend/internal/kernel"
 	"yingce/backend/internal/model"
@@ -10,6 +11,41 @@ import (
 
 	"gorm.io/gorm"
 )
+
+func (s *Service) isolatedAgentSkillSelection(draft *cloudAgentRunDraft) ([]skills.SkillSelectionItem, error) {
+	selected, err := s.existingConversationSkillSelection(draft.userID, draft.conversationID, draft.req.SkillIDs)
+	if err != nil {
+		return nil, err
+	}
+	selected = slices.DeleteFunc(selected, func(item skills.SkillSelectionItem) bool {
+		if item.Source == skills.SkillSourceUser {
+			return !draft.definition.AllowUserSkills
+		}
+		return !slices.Contains(draft.definition.SkillIDs, item.SkillID)
+	})
+	if len(draft.definition.SkillIDs) == 0 {
+		return selected, nil
+	}
+	defaults, err := s.repo.EnabledAgentSkillDefaults()
+	if err != nil {
+		return nil, err
+	}
+	for _, skillID := range draft.definition.SkillIDs {
+		if slices.ContainsFunc(selected, func(item skills.SkillSelectionItem) bool { return item.SkillID == skillID }) {
+			continue
+		}
+		index := slices.IndexFunc(defaults, func(item model.AgentSkillDefault) bool { return item.SkillID == skillID })
+		if index == -1 {
+			return nil, kernel.BadAuthRequest("注册的 Agent 技能未启用：" + skillID)
+		}
+		item, err := s.cloudAgentSkillDefaultItem(defaults[index])
+		if err != nil {
+			return nil, err
+		}
+		selected = append(selected, item)
+	}
+	return selected, nil
+}
 
 // cloudAgentConversationIDFor 在创建运行前解析会话归属：新会话（parentID 为空）的
 // 会话 ID 就是本轮运行 ID；续聊沿用父轮的会话 ID（父轮查不到时回退 parentID）。

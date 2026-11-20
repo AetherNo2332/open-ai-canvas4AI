@@ -27,7 +27,7 @@ import { compactionSettings, serializePreparation, runNativeCompaction, prepareN
 import { FatalWorkerError } from "./tool-disclosure.js";
 import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
-import { createStableSkillPromptExtension, materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected } from "./native-skills.js";
+import { createStableSkillPromptExtension, materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected, isBusinessRead } from "./native-skills.js";
 import { Unsafe, type TSchema } from "typebox";
 import { createImageContextExtension, createTerminalHistoryExtension, missingImageContent } from "./session-history.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
@@ -326,19 +326,19 @@ async function recoverToolResults(
   // an interrupted v1 selector locally so the restored Pi transcript has a
   // paired result; do not submit a synthetic call to Go or execute any tool.
   const executableCalls = calls.filter((call) => !call.function.name.startsWith("agent_tools_") &&
-    !(recoverNativeRead && call.function.name === "read"));
+    !(recoverNativeRead && call.function.name === "read" && !isBusinessRead(call)));
   const taskId = snapshot.lastTaskId || "";
   const persisted = snapshot.pendingToolBatch;
   // Recovery submits only the persisted call identity. Go owns its arguments,
   // admission and receipt; today's disclosure still gates every new batch.
   const recovering = persisted?.taskId === taskId && executableCalls.length > 0 &&
     executableCalls.every(call => persisted.calls.some(saved => saved.id === call.id && saved.function.name === call.function.name));
-  const admissionError = recovering ? null : batchAdmissionError(disclosure, executableCalls);
+  const admissionError = recovering ? null : batchAdmissionError(disclosure, executableCalls, Boolean(recoverNativeRead));
   if (!recovering && !admissionError && executableCalls.length > 0) await bridge.startToolBatch(snapshot, taskId, executableCalls, signal);
   for (const call of calls) {
     if (completed.has(call.id)) continue;
     const legacyCategory = call.function.name.startsWith("agent_tools_");
-    const receipt = recoverNativeRead && call.function.name === "read"
+    const receipt = recoverNativeRead && call.function.name === "read" && !isBusinessRead(call)
       ? await recoverNativeRead(call)
       : legacyCategory
       ? { result: "旧版工具分类入口已完成兼容，不执行业务操作。请直接使用当前工具表中的具体工具。" }
@@ -828,8 +828,7 @@ export async function runCanvasAgent(
     }
   };
 
-  const disclosure = new SessionToolDisclosure(snapshot.tools.filter((tool) =>
-    !(snapshot.skillRuntimeMode === "pi-native" && tool.name === "read")), async (_name, _args, callId, signal) => {
+  const executeBusinessTool = async (_name: string, _args: Record<string, unknown>, callId: string, signal?: AbortSignal) => {
     // 屏障：assistant 消息（含 tool_calls）必须先落库，Go 才会接受这一批工具调用。
     await queue.drain();
     if (listenerFailure !== undefined) throw listenerFailure;
@@ -867,10 +866,12 @@ export async function runCanvasAgent(
       abortSession();
       throw error;
     }
-  });
+  };
+  const disclosure = new SessionToolDisclosure(snapshot.tools.filter((tool) =>
+    !(snapshot.skillRuntimeMode === "pi-native" && tool.name === "read")), executeBusinessTool);
   const nativeMode = snapshot.skillRuntimeMode === "pi-native";
   const nativeReadSpec = nativeMode ? snapshot.tools.find((tool) => tool.name === "read" && tool.allowed) : undefined;
-  if (nativeMode && !nativeReadSpec) throw new FatalWorkerError("Go did not disclose native Skill read");
+  if (nativeMode && snapshot.skills?.length && !nativeReadSpec) throw new FatalWorkerError("Go did not disclose native Skill read");
   // Categories remain metadata; only advertised concrete tools enter Pi.
 
   // Provider：Pi 的每次模型请求都翻成 Go 的模型步骤（带上提示合同身份）。
@@ -996,6 +997,12 @@ export async function runCanvasAgent(
       await queue.drain();
       if (listenerFailure !== undefined) throw listenerFailure;
       try {
+        if (isBusinessRead({ id: callId, type: "function", function: { name: "read", arguments: JSON.stringify(params) } })) {
+          const receipt = await executeBusinessTool("read", params, callId, signal);
+          if (receipt.isError) throw new NativeSkillReadRejected(typeof receipt.result === "string" ? receipt.result : JSON.stringify(receipt.result));
+          return { content: [{ type: "text" as const, text: JSON.stringify(receipt.result) }], details: receipt.result,
+            ...(receipt.terminate ? { terminate: true } : {}) };
+        }
         if (typeof params.path !== "string") throw new NativeSkillReadRejected("Native Skill read requires a path");
         const path = resumedNativeCallIds.has(callId)
           ? rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path) : params.path;
@@ -1101,7 +1108,7 @@ export async function runCanvasAgent(
         batchRejection = calls.length ? batchAdmissionError(disclosure, calls, nativeMode) || "" : "";
         admittedCallIds = new Set(batchRejection ? [] : calls.map((call) => call.id));
         if (admittedCallIds.size > 0) {
-          const batch = calls.filter((call) => admittedCallIds.has(call.id) && !(nativeMode && call.function.name === "read"));
+          const batch = calls.filter((call) => admittedCallIds.has(call.id) && !(nativeMode && call.function.name === "read" && !isBusinessRead(call)));
           // 顺序是跨进程合同，不是实现细节：Go 的 `PiToolBatch` 在 `ActiveTaskID` 非空时
           // 拒绝整个批次（"Agent 尚有未完成的模型或工具步骤"），而清掉它的正是这条带 taskId
           // 的 assistant 检查点（`PiCheckpointMessage` 在同一事务里写消息 + 确认模型任务）。

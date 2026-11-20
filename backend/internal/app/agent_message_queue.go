@@ -125,10 +125,18 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 	if err != nil {
 		return nil, err
 	}
-	if _, err = s.repo.CanvasProjectForUser(userID, input.Request.CanvasID); err != nil {
+	definition, err := s.ResolveAgentDefinition(agentBusinessScope(input.Request).Type, input.Request.AgentDefinitionID)
+	if err != nil {
 		return nil, agentMessageError(err)
 	}
-	raw, err := json.Marshal(input)
+	if _, err = s.authorizeAgentDefinition(definition, userID, input.Request); err != nil {
+		return nil, agentMessageError(err)
+	}
+	fingerprintInput := input
+	if agentBusinessScope(input.Request).Type == "canvas" {
+		fingerprintInput.Request.Scope = nil
+	}
+	raw, err := json.Marshal(fingerprintInput)
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +147,9 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 	}
 	row := &model.AgentQueuedMessage{ID: "am" + strings.TrimPrefix(cloudAgentID(userID, input.Request.IdempotencyKey), "ag"), UserID: userID, CanvasID: input.Request.CanvasID, ConversationID: conversationID, IdempotencyKey: input.Request.IdempotencyKey, Fingerprint: hex.EncodeToString(digest[:]), Mode: input.Mode, RequestJSON: string(requestJSON), Prompt: input.Request.Prompt, ReplyToQuestionID: input.ReplyToQuestionID}
 	err = s.repo.WithAgentConversation(userID, conversationID, func(tx *repository.Repository, q *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+		if latest.AgentDefinitionID != "" && latest.AgentDefinitionID != definition.ID {
+			return kernel.Forbidden("Agent 配置与会话归属不一致")
+		}
 		return enqueueAgentConversationMessage(tx, userID, conversationID, input, policy, row, q, latest)
 	})
 	if err != nil {
@@ -210,8 +221,20 @@ func checkAgentMessageQuestion(tx *repository.Repository, userID, conversationID
 	if latest.ID != input.ExpectedRunID {
 		return repository.ErrCloudAgentStaleParent
 	}
-	if latest.CanvasID != input.Request.CanvasID {
-		return kernel.Forbidden("不能跨画布追加 Agent 消息")
+	if latest.ScopeType != "" &&
+		(AgentBusinessScope{Type: latest.ScopeType, ID: latest.ScopeID}) != agentBusinessScope(input.Request) {
+		return kernel.Forbidden("不能跨业务对象追加 Agent 消息")
+	}
+	// Queue locking loads the bounded execution row without its transcript.
+	// Only the persisted request is needed to check the immutable business ID.
+	var state struct {
+		Request CloudAgentRequest `json:"request"`
+	}
+	if err := json.Unmarshal([]byte(latest.StateJSON), &state); err != nil {
+		return kernel.BadAuthRequest("Agent 会话业务范围无法读取")
+	}
+	if agentBusinessScope(state.Request) != agentBusinessScope(input.Request) {
+		return kernel.Forbidden("不能跨业务对象追加 Agent 消息")
 	}
 	if q.AwaitingQuestionID != "" && input.Mode == "interject" && (input.ReplyToQuestionID != q.AwaitingQuestionID || q.QuestionRunID != latest.ID) {
 		return repository.ErrAgentMessageQuestionPending

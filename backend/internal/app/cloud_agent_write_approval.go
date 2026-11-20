@@ -197,7 +197,7 @@ func cloudAgentWriteApprovalPreview(repo *repository.Repository, run *model.Clou
 	case "canvas_build_board":
 		return cloudAgentPreviewBuildBoard(repo, run.UserID, canvasID, call)
 	case "canvas_bind_asset":
-		plan, err := prepareCloudAgentAssetBinding(repo, run.UserID, canvasID, call)
+		plan, err := prepareCloudAgentAssetBinding(repo, run.UserID, canvasID, call, state.Context != nil)
 		if err != nil {
 			return cloudAgentApprovalPreview{}, err
 		}

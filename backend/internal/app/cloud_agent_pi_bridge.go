@@ -258,6 +258,11 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 	if err != nil {
 		return nil, err
 	}
+	if !cloudAgentRunTerminal(run.Status) {
+		if err := s.authorizeRegisteredAgentRun(run, &state); err != nil {
+			return nil, err
+		}
+	}
 	budget := s.cloudAgentContextBudgetForRequest(state.Request)
 	// Recovery may impose a smaller request ceiling even when the policy is unlimited.
 	if limits, limitErr := s.cloudAgentStepLimits(); limitErr == nil {
@@ -269,6 +274,9 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 	session, sessionEntries, err := s.repo.CloudAgentPiSession(run.UserID, firstNonEmpty(run.ConversationID, run.ID))
 	if err != nil {
 		return nil, err
+	}
+	if session.AgentConversationBinding != run.AgentConversationBinding {
+		return nil, kernel.Forbidden("Pi 会话与运行的业务归属不一致")
 	}
 	entryViews := make([]PiAgentSessionEntry, 0, len(sessionEntries))
 	for _, entry := range sessionEntries {

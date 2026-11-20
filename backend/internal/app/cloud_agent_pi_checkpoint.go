@@ -308,6 +308,11 @@ func (s *Service) piCheckpointNativeSkillRead(repo *repository.Repository, curre
 	if result.ToolName != "read" {
 		return nil
 	}
+	for _, call := range state.Calls {
+		if call.ID == result.ToolCallID && agentBusinessRead(call) {
+			return nil // Durable business receipt is validated by the tool batch.
+		}
+	}
 	if err := s.validatePiNativeRawRead(repo, commit.userID, state, current.Transcript, result.ToolCallID, result.IsError); err != nil {
 		return err
 	}
