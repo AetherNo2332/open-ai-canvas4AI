@@ -60,6 +60,9 @@ const CanvasPage = workspaceRoutePages.canvas;
 const CanvasProjectPage = workspaceRoutePages.canvasProject;
 const SharedCanvasPage = lazy(() => import("@/pages/canvas/shared"));
 const ArkPortraitResultPage = lazy(() => import("@/pages/ark-portrait-result"));
+// 互动剧试运行页面：独立于自由画布，数据先走本地示例，不依赖登录与后端。
+const InteractiveStoryListPage = lazy(() => import("@/pages/interactive/list-page"));
+const InteractiveStoryPage = lazy(() => import("@/pages/interactive"));
 const CreatePage = workspaceRoutePages.create;
 const EcommercePage = workspaceRoutePages.ecommerce;
 const ImageWorkbenchPage = workspaceRoutePages.imageWorkbench;
@@ -132,6 +135,9 @@ export const router = createBrowserRouter([
     { path: "/share/canvas/:token", element: fullScreenDeferred(<SharedCanvasPage />), errorElement: <RouteErrorPage /> },
     // H5 真人认证回跳页：多在未登录的手机上打开，不进入工作区登录守卫。
     { path: "/ark-portrait/result", element: fullScreenDeferred(<ArkPortraitResultPage />), errorElement: <RouteErrorPage /> },
+    // 互动剧：列表页 + 编辑器，都在登录守卫之外，数据存本机 localStorage。
+    { path: "/interactive", element: fullScreenDeferred(<InteractiveStoryListPage />), errorElement: <RouteErrorPage /> },
+    { path: "/interactive/:storyId", element: fullScreenDeferred(<InteractiveStoryPage />), errorElement: <RouteErrorPage /> },
     ...(import.meta.env.DEV ? devRoutes() : []),
     {
         element: <AuthenticatedWorkspaceLayout />,
