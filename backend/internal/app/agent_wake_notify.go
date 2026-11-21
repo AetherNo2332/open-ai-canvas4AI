@@ -35,7 +35,7 @@ type agentWakeHub struct {
 
 func (s *Service) StartAgentWakeListener() {
 	mode := os.Getenv("CANVAS_AGENT_WAKE_MODE")
-	if s.repo.Dialect() != "postgres" || (mode != "" && mode != "notify") {
+	if s.repo == nil || s.repo.Dialect() != "postgres" || (mode != "" && mode != "notify") {
 		slog.Info("agent wake reader ready", "mode", "poll", "listeners", 0)
 		return
 	}
