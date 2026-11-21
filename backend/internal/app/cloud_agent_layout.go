@@ -33,7 +33,6 @@ const (
 	cloudAgentArrangeMaxNodes  = 50
 	cloudAgentArrangeMaxGroups = 12
 	cloudAgentArrangeMaxGap    = 400
-	cloudAgentArrangeCoordCap  = 1e6
 )
 
 type cloudAgentArrangeGroup struct {
@@ -75,155 +74,33 @@ type cloudAgentArrangePlan struct {
 // cloudAgentLayoutLane 把节点类型映射到整理泳道（与前端 canvasLayoutLane 的语义一致：
 // 视频 / 音频 / 图片 / 文本，其余类型归文本泳道）。第二个返回值表示该类型是否参与整理。
 func cloudAgentLayoutLane(nodeType string) (string, bool) {
-	switch nodeType {
-	case "video":
-		return "video", true
-	case "audio":
-		return "audio", true
-	case "image":
-		return "image", true
-	case "text", "markdown", "script", "batch-table":
-		return "text", true
-	default:
-		// 背板 / 文件夹是容器，插件节点也不参与几何整理。
-		return "", false
-	}
+	return layout.Lane(nodeType)
 }
 
 // cloudAgentLayoutNodes 把画布文档投影成排布输入。parentID 用于判断顶层节点。
 func cloudAgentLayoutNodes(doc map[string]any) []layout.Node {
-	raw := creationMaps(doc["nodes"])
-	nodes := make([]layout.Node, 0, len(raw))
-	for _, node := range raw {
-		id := stringValue(node["id"])
-		if id == "" {
-			continue
-		}
-		lane, supported := cloudAgentLayoutLane(stringValue(node["type"]))
-		item := layout.Node{ID: id, Type: stringValue(node["type"]), Lane: lane, NoMove: !supported}
-		if position, ok := node["position"].(map[string]any); ok {
-			if value, ok := cloudAgentSafeNumber(position["x"]); ok {
-				item.X, _ = value.(float64)
-			}
-			if value, ok := cloudAgentSafeNumber(position["y"]); ok {
-				item.Y, _ = value.(float64)
-			}
-		}
-		if value, ok := cloudAgentSafeNumber(node["width"]); ok {
-			item.Width, _ = value.(float64)
-		}
-		if value, ok := cloudAgentSafeNumber(node["height"]); ok {
-			item.Height, _ = value.(float64)
-		}
-		if meta, ok := node["metadata"].(map[string]any); ok {
-			item.Locked = meta["locked"] == true
-		}
-		nodes = append(nodes, item)
-	}
-	return nodes
-}
-
-// cloudAgentLayoutEdges 只取两端都在画布上的引用连线，用于依赖方向分层。
-func cloudAgentLayoutEdges(doc map[string]any) []layout.Edge {
-	edges := make([]layout.Edge, 0)
-	for _, edge := range creationMaps(doc["connections"]) {
-		from, to := stringValue(edge["fromNodeId"]), stringValue(edge["toNodeId"])
-		if from == "" || to == "" {
-			continue
-		}
-		edges = append(edges, layout.Edge{From: from, To: to})
-	}
-	return edges
-}
-
-// cloudAgentLayoutMovable 判断节点能否被 Agent 移动：锁定、容器节点、隐藏批次子节点、
-// 以及已经归属某个背板的子节点都不动——用户手工摆过的位置和容器层级不是 Agent 的编排对象。
-func cloudAgentLayoutMovable(node map[string]any) bool {
-	meta, _ := node["metadata"].(map[string]any)
-	if meta["locked"] == true {
-		return false
-	}
-	if _, supported := cloudAgentLayoutLane(stringValue(node["type"])); !supported {
-		return false
-	}
-	if strings.TrimSpace(stringValue(node["parentId"])) != "" {
-		return false
-	}
-	if rootID := strings.TrimSpace(stringValue(meta["batchRootId"])); rootID != "" {
-		return false
-	}
-	return true
-}
-
-func cloudAgentLayoutNodesByID(doc map[string]any) map[string]map[string]any {
-	index := map[string]map[string]any{}
-	for _, node := range creationMaps(doc["nodes"]) {
-		if id := stringValue(node["id"]); id != "" {
-			index[id] = node
-		}
-	}
-	return index
+	return layout.ParseDocument(doc).Nodes()
 }
 
 // cloudAgentArrangeNodes 按 args 选出的节点集合。显式 nodeIds 会逐个校验：
 // 不存在、被锁定或属于容器/隐藏批次的节点会被跳过并在回执里说明，而不是让整轮失败。
 func cloudAgentArrangeScope(doc map[string]any, args cloudAgentArrangeArgs) ([]layout.Node, []string, error) {
-	index := cloudAgentLayoutNodesByID(doc)
-	all := cloudAgentLayoutNodes(doc)
-	byID := map[string]layout.Node{}
-	for _, node := range all {
-		byID[node.ID] = node
+	groups := make([][]string, 0, len(args.Groups))
+	for _, group := range args.Groups {
+		groups = append(groups, group.NodeIDs)
 	}
-
-	requested := args.NodeIDs
-	if len(args.Groups) > 0 {
-		requested = nil
-		seen := map[string]bool{}
-		for _, group := range args.Groups {
-			for _, id := range group.NodeIDs {
-				id = strings.TrimSpace(id)
-				if id == "" || seen[id] {
-					continue
-				}
-				seen[id] = true
-				requested = append(requested, id)
-			}
+	selected, skipped, err := layout.ParseDocument(doc).Select(args.NodeIDs, groups)
+	if err != nil {
+		var missing *layout.NodeNotFoundError
+		if errors.As(err, &missing) {
+			return nil, nil, cloudAgentFieldError("nodeIds", "invalid_value", err.Error())
 		}
-	}
-
-	selected := make([]layout.Node, 0, len(requested))
-	skipped := make([]string, 0)
-	if len(requested) == 0 {
-		for _, node := range all {
-			if node.NoMove {
-				continue
-			}
-			if !cloudAgentLayoutMovable(index[node.ID]) {
-				continue
-			}
-			selected = append(selected, node)
-		}
-		return selected, skipped, nil
-	}
-	for _, id := range requested {
-		node, ok := byID[id]
-		if !ok {
-			return nil, nil, cloudAgentFieldError("nodeIds", "invalid_value", fmt.Sprintf("要整理的节点 %s 不在当前画布，请重新读取画布", id))
-		}
-		if node.NoMove || !cloudAgentLayoutMovable(index[id]) {
-			skipped = append(skipped, id)
-			continue
-		}
-		selected = append(selected, node)
+		return nil, nil, err
 	}
 	return selected, skipped, nil
 }
 
 func cloudAgentArrangePositions(doc map[string]any, args cloudAgentArrangeArgs, selected []layout.Node) (map[string]layout.Position, []string, layout.Mode, error) {
-	index := map[string]layout.Node{}
-	for _, node := range selected {
-		index[node.ID] = node
-	}
 	mode, err := cloudAgentArrangeMode(args.Mode)
 	if err != nil {
 		return nil, nil, "", err
@@ -232,100 +109,39 @@ func cloudAgentArrangePositions(doc map[string]any, args cloudAgentArrangeArgs, 
 	if err != nil {
 		return nil, nil, "", err
 	}
-	edges := cloudAgentLayoutEdges(doc)
-
-	positions := map[string]layout.Position{}
-	labels := make([]string, 0, len(args.Groups))
-	if len(args.Groups) > 0 {
-		bands := make([]layout.Band, 0, len(args.Groups))
-		for _, group := range args.Groups {
-			members := make([]layout.Node, 0, len(group.NodeIDs))
-			for _, id := range group.NodeIDs {
-				if node, ok := index[strings.TrimSpace(id)]; ok {
-					members = append(members, node)
-				}
+	groups := make([]layout.ArrangeGroup, 0, len(args.Groups))
+	selectedIDs := make(map[string]bool, len(selected))
+	for _, node := range selected {
+		selectedIDs[node.ID] = true
+	}
+	for _, group := range args.Groups {
+		hasMember := false
+		for _, id := range group.NodeIDs {
+			if selectedIDs[strings.TrimSpace(id)] {
+				hasMember = true
+				break
 			}
-			if len(members) == 0 {
-				continue
-			}
-			groupMode, err := cloudAgentArrangeMode(group.Mode)
-			if err != nil {
-				return nil, nil, "", err
-			}
-			if groupMode == layout.ModeAuto {
-				groupMode = layout.ModeByLane
-			}
-			label := strings.TrimSpace(group.Label)
-			if label == "" {
-				label = fmt.Sprintf("第 %d 组", len(bands)+1)
-			}
-			labels = append(labels, label)
-			if align != "" {
-				// 分组 + 对齐：先在带内对齐，再把整带交给 Bands 排位置。
-				members = applyLayout(members, layout.Align(members, align))
-			}
-			bands = append(bands, layout.Band{Label: label, Nodes: members, Mode: groupMode})
 		}
-		if len(bands) == 0 {
-			return nil, nil, "", cloudAgentFieldError("groups", "invalid_value", "分组里没有可整理的节点")
+		if !hasMember {
+			continue
 		}
-		positions = layout.Bands(bands, args.Gap)
-	} else {
-		switch mode {
-		case layout.ModeAuto:
-			positions = layout.Auto(selected, edges)
-		case layout.ModeFlow:
-			positions = layout.Flow(selected, edges)
-		case layout.ModeByLane:
-			positions = layout.ByLane(selected)
-		default:
-			positions = layout.Linear(selected, mode)
+		groupMode, err := cloudAgentArrangeMode(group.Mode)
+		if err != nil {
+			return nil, nil, "", err
 		}
-		if align != "" {
-			positions = mergeLayoutPositions(positions, layout.Align(applyLayout(selected, positions), align))
+		groups = append(groups, layout.ArrangeGroup{Label: group.Label, NodeIDs: group.NodeIDs, Mode: groupMode})
+	}
+	if len(args.Groups) > 0 && len(groups) == 0 {
+		return nil, nil, "", cloudAgentFieldError("groups", "invalid_value", "分组里没有可整理的节点")
+	}
+	result, err := layout.ParseDocument(doc).Arrange(selected, layout.ArrangeOptions{Groups: groups, Mode: mode, Align: align, Gap: args.Gap})
+	if err != nil {
+		if errors.Is(err, layout.ErrEmptyGroups) {
+			return nil, nil, "", cloudAgentFieldError("groups", "invalid_value", err.Error())
 		}
+		return nil, nil, "", err
 	}
-	// 坐标收敛：四舍五入到两位小数并夹到安全范围，避免浮点噪声进入画布文档。
-	for id, position := range positions {
-		positions[id] = layout.Position{X: clampCoord(position.X), Y: clampCoord(position.Y)}
-	}
-	return positions, labels, mode, nil
-}
-
-func clampCoord(value float64) float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-	value = math.Round(value*100) / 100
-	if value > cloudAgentArrangeCoordCap {
-		return cloudAgentArrangeCoordCap
-	}
-	if value < -cloudAgentArrangeCoordCap {
-		return -cloudAgentArrangeCoordCap
-	}
-	return value
-}
-
-func applyLayout(nodes []layout.Node, positions map[string]layout.Position) []layout.Node {
-	applied := make([]layout.Node, 0, len(nodes))
-	for _, node := range nodes {
-		if position, ok := positions[node.ID]; ok {
-			node.X, node.Y = position.X, position.Y
-		}
-		applied = append(applied, node)
-	}
-	return applied
-}
-
-func mergeLayoutPositions(base, override map[string]layout.Position) map[string]layout.Position {
-	merged := make(map[string]layout.Position, len(base))
-	for id, position := range base {
-		merged[id] = position
-	}
-	for id, position := range override {
-		merged[id] = position
-	}
-	return merged
+	return result.Positions, result.Labels, mode, nil
 }
 
 // prepareCloudAgentArrangeNodes 复刻 canvas_apply_ops 的准备流程：校验快照、算出新坐标、生成审批预览。
@@ -509,22 +325,7 @@ func applyCloudAgentArrangeNodes(repo *repository.Repository, userID, canvasID s
 }
 
 func cloudAgentApplyArrangePositions(plan *cloudAgentArrangePlan) error {
-	nodes := creationMaps(plan.Document["nodes"])
-	for index, node := range nodes {
-		position, ok := plan.Positions[stringValue(node["id"])]
-		if !ok {
-			continue
-		}
-		current, _ := node["position"].(map[string]any)
-		if current == nil {
-			current = map[string]any{}
-		}
-		current["x"] = position.X
-		current["y"] = position.Y
-		node["position"] = current
-		nodes[index] = node
-	}
-	plan.Document["nodes"] = nodes
+	layout.ParseDocument(plan.Document).ApplyPositions(plan.Positions)
 	return nil
 }
 
@@ -532,23 +333,12 @@ func cloudAgentApplyArrangePositions(plan *cloudAgentArrangePlan) error {
 // 模型显式给出的单个坐标轴，否则按泳道追加到同类节点之后。连线不再由 Agent 创建，
 // 因此这里不再按同批连线推断相对位置。
 func cloudAgentArrangeAddNodePosition(doc map[string]any, pending []layout.Node, op agentCanvasOp, hint *layout.Position) (layout.Position, bool) {
-	lane, supported := cloudAgentLayoutLane(op.NodeType)
-	if !supported {
-		return layout.Position{}, false
-	}
 	width, height := cloudAgentAddedNodeSize(op.NodeType)
-	occupied := append([]layout.Node{}, cloudAgentLayoutNodes(doc)...)
-	occupied = append(occupied, pending...)
-	return layout.FreeSlot(width, height, lane, occupied, hint, layout.PlacementGap), true
+	return layout.ParseDocument(doc).PlaceNode(pending, op.NodeType, width, height, hint)
 }
 
 func findLayoutNode(nodes []layout.Node, id string) (layout.Node, bool) {
-	for _, node := range nodes {
-		if node.ID == id {
-			return node, true
-		}
-	}
-	return layout.Node{}, false
+	return layout.FindNode(nodes, id)
 }
 
 func cloudAgentAddedNodeSize(nodeType string) (float64, float64) {

@@ -1,9 +1,12 @@
 package app
 
 import (
+	"context"
+	"io"
 	"testing"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/protocol"
 )
 
 func TestProtocolRequestFromInputUsesConfiguredBase64ForOpenAIImage(t *testing.T) {
@@ -53,5 +56,31 @@ func TestProtocolRequestFromInputKeepsURLForUnsupportedOpenAIImageFormat(t *test
 
 	if _, ok := request.ProviderOptions[string(model.ChannelInterfaceOpenAIImage)]["response_format"]; ok {
 		t.Fatal("response_format should be omitted when the capability is unsupported")
+	}
+}
+
+func TestProtocolRequestFromInputUsesDomainRequestBodyEncoding(t *testing.T) {
+	request := protocolRequestFromInput(canvasGenerationInput{
+		Mode:   "text",
+		Prompt: "hello",
+		Config: providerConfig{Model: "future-model"},
+	})
+	reader, contentType, err := protocolRequestBody(context.Background(), providerConfig{}, protocol.RequestSpec{
+		ContentType: "application/x-www-form-urlencoded",
+		Body: map[string]any{
+			"z":     "last",
+			"model": request.Model,
+			"a":     []any{"first", "second"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "application/x-www-form-urlencoded" || string(data) != "a=first&a=second&model=future-model&z=last" {
+		t.Fatalf("request body = %q, %q", contentType, data)
 	}
 }

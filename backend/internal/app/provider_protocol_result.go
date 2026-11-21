@@ -6,8 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"strings"
 	"time"
 
@@ -16,21 +14,7 @@ import (
 )
 
 func appendProtocolQuery(rawURL string, values map[string][]string) (string, error) {
-	if len(values) == 0 {
-		return rawURL, nil
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-	query := parsed.Query()
-	for key, items := range values {
-		for _, item := range items {
-			query.Add(key, item)
-		}
-	}
-	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
+	return protocol.AppendQuery(rawURL, values)
 }
 
 func finishProtocolResult(ctx context.Context, config providerConfig, mode string, taskID string, result *protocol.Result, pollPolicy videoPollPolicy) (map[string]interface{}, error) {
@@ -38,80 +22,46 @@ func finishProtocolResult(ctx context.Context, config providerConfig, mode strin
 		return nil, errors.New("声明式协议已完成但没有返回结果")
 	}
 	if mode == "text" {
-		output := map[string]interface{}{"mode": "text", "text": result.Text}
-		if strings.TrimSpace(result.Reasoning) != "" {
-			output["reasoning"] = result.Reasoning
-		}
-		return output, nil
+		return protocol.TextResultOutput(result), nil
 	}
-	var references []protocol.MediaReference
-	switch mode {
-	case "image":
-		references = result.Images
-	case "video":
-		references = result.Videos
-	case "audio":
-		references = result.Audios
-	default:
-		return nil, fmt.Errorf("声明式协议不支持生成模式 %s", mode)
-	}
-	if len(references) == 0 {
-		return nil, errors.New("声明式协议已完成但没有返回媒体地址")
+	references, err := protocol.ResultMediaReferences(mode, result)
+	if err != nil {
+		return nil, err
 	}
 	if output, handled, err := recoverProtocolMedia(ctx, config, mode, references); handled {
 		if err == nil {
-			attachProtocolUsage(output, mode, result)
+			protocol.AttachResultUsage(output, mode, result)
 		}
 		return output, err
 	}
-	items := make([]interface{}, 0, len(references))
+	items := make([]protocol.DownloadedMedia, 0, len(references))
 	for _, reference := range references {
 		var data []byte
 		var mimeType string
-		var err error
+		var downloadErr error
 		if mode == "video" {
-			data, mimeType, err = runVideoDownload(ctx, taskID, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
+			data, mimeType, downloadErr = runVideoDownload(ctx, taskID, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
 				return protocolMediaBytesOnce(ctx, config, reference)
 			})
 		} else {
-			data, mimeType, err = protocolMediaBytes(ctx, config, reference)
+			data, mimeType, downloadErr = protocolMediaBytes(ctx, config, reference)
 		}
-		if err != nil {
-			return nil, err
+		if downloadErr != nil {
+			return nil, downloadErr
 		}
-		item := map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType}
-		items = append(items, item)
+		items = append(items, protocol.DownloadedMedia{Data: data, MIMEType: mimeType})
 	}
-	var output map[string]interface{}
-	switch mode {
-	case "image":
-		output = map[string]interface{}{"mode": "image", "images": items}
-	case "video":
-		output = map[string]interface{}{"mode": "video", "video": items[0]}
-	default:
-		output = map[string]interface{}{"mode": "audio", "audio": items[0]}
-	}
-	attachProtocolUsage(output, mode, result)
-	return output, nil
-}
-
-// attachProtocolUsage 把视频结果的上游 usage（如输出时长、帧率）写入任务结果，
-// 供按实际输出时长结算时在资源未探测到时长时兜底。
-func attachProtocolUsage(output map[string]interface{}, mode string, result *protocol.Result) {
-	if output == nil || result == nil || mode != "video" || len(result.Usage) == 0 {
-		return
-	}
-	output["usage"] = result.Usage
+	return protocol.MediaResultOutput(mode, result, items)
 }
 
 // finishProtocolAdapterResult 优先消费 create/poll 已返回的内联或 URL 结果，只有插件明确声明独立结果端点时才下载。
 // 空响应或下载失败必须向上失败，不能生成伪素材；application/octet-stream 仅表示传输层未知类型，
 // 不会把未知内容伪装成具体图片、视频或音频 MIME。
 func finishProtocolAdapterResult(ctx context.Context, input canvasGenerationInput, adapter protocol.Adapter, request protocol.GenerationRequest, taskID string, result *protocol.Result, pollPolicy videoPollPolicy) (map[string]interface{}, error) {
-	if protocolResultHasOutput(input.Mode, result) {
+	if protocol.ResultHasOutput(input.Mode, result) {
 		return finishProtocolResult(ctx, input.Config, input.Mode, taskID, result, pollPolicy)
 	}
-	resultAdapter, ok := protocolResultEndpoint(adapter)
+	resultAdapter, ok := protocol.ResultEndpoint(adapter)
 	if !ok {
 		return finishProtocolResult(ctx, input.Config, input.Mode, taskID, result, pollPolicy)
 	}
@@ -144,7 +94,7 @@ func finishProtocolAdapterResult(ctx context.Context, input canvasGenerationInpu
 		if state.Status == protocol.StatusFailed || state.Status == protocol.StatusCancelled {
 			return nil, protocolTaskFailure(ctx, state.Status, state.Message, taskID)
 		}
-		if !protocolResultHasOutput(input.Mode, state.Result) {
+		if !protocol.ResultHasOutput(input.Mode, state.Result) {
 			return nil, errProtocolResultNotReady
 		}
 		if err := resolveProtocolResultMediaURLs(input.Config.BaseURL, spec, state.Result); err != nil {
@@ -178,60 +128,23 @@ var errProtocolResultNotReady = errors.New("声明式协议结果清单没有返
 // 视频每 30 秒查一次约等 2 分钟，图片每 2.5 秒查一次约等 1 分钟；超过后按“没有媒体地址”失败，
 // 不等到轮询总时限（视频 1 小时、分离式 48 小时）。
 const (
-	protocolLateResultGrace    = 2 * time.Minute
-	protocolLateResultMaxPolls = 24
-	protocolLateResultStage    = "上游已完成，等待结果地址"
+	protocolLateResultGrace    = protocol.LateResultGrace
+	protocolLateResultMaxPolls = protocol.LateResultMaxPolls
+	protocolLateResultStage    = protocol.LateResultStage
 )
 
 type protocolLateResultWait struct {
-	since time.Time
-	polls int
+	protocol.LateResultWait
 }
 
 // keepWaiting 记录一次“已完成但没有媒体”的查询，返回是否仍在宽限期内。
 func (w *protocolLateResultWait) keepWaiting(now time.Time) bool {
-	if w.since.IsZero() {
-		w.since = now
-	}
-	w.polls++
-	return w.polls <= protocolLateResultMaxPolls && now.Sub(w.since) < protocolLateResultGrace
-}
-
-// protocolResultEndpoint 返回插件声明的独立结果接口；下载与就绪判断共用同一条件。
-func protocolResultEndpoint(adapter protocol.Adapter) (protocol.ResultAdapter, bool) {
-	resultAdapter, ok := adapter.(protocol.ResultAdapter)
-	capability, hasCapability := adapter.(protocol.ResultCapability)
-	return resultAdapter, ok && hasCapability && capability.ResultAvailable()
+	return w.LateResultWait.KeepWaiting(now)
 }
 
 // protocolResultReady 判断“已完成”的结果能否收尾：媒体任务要么已带媒体，要么有独立结果接口可下载。
 func protocolResultReady(mode string, result *protocol.Result, adapter protocol.Adapter) bool {
-	if mode != "video" && mode != "audio" && mode != "image" {
-		return true
-	}
-	if protocolResultHasOutput(mode, result) {
-		return true
-	}
-	_, ok := protocolResultEndpoint(adapter)
-	return ok
-}
-
-func protocolResultHasOutput(mode string, result *protocol.Result) bool {
-	if result == nil {
-		return false
-	}
-	switch mode {
-	case "text":
-		return strings.TrimSpace(result.Text) != ""
-	case "image":
-		return len(result.Images) > 0
-	case "video":
-		return len(result.Videos) > 0
-	case "audio":
-		return len(result.Audios) > 0
-	default:
-		return false
-	}
+	return protocol.ResultReady(mode, result, adapter)
 }
 
 func protocolMediaBytes(ctx context.Context, config providerConfig, reference protocol.MediaReference) ([]byte, string, error) {
@@ -267,20 +180,7 @@ func protocolMediaBytesOnce(ctx context.Context, config providerConfig, referenc
 }
 
 func retryableProtocolMediaDownload(err error) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	var networkError net.Error
-	if errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary()) {
-		return true
-	}
-	message := strings.ToLower(err.Error())
-	for _, marker := range []string{"tls handshake timeout", "connection reset", "unexpected eof", "broken pipe"} {
-		if strings.Contains(message, marker) {
-			return true
-		}
-	}
-	return false
+	return protocol.RetryableMediaDownload(err)
 }
 
 // providerTaskTerminalError 表示协议适配器已从上游响应解析出明确的失败或取消终态。
@@ -306,21 +206,5 @@ func resolveProtocolResultMediaURLs(baseURL string, spec protocol.RequestSpec, r
 	if parseErr != nil {
 		return parseErr
 	}
-	base, parseErr := url.Parse(manifestURL)
-	if parseErr != nil {
-		return parseErr
-	}
-	for _, media := range [][]protocol.MediaReference{result.Images, result.Videos, result.Audios} {
-		for index := range media {
-			if media[index].URL == "" {
-				continue
-			}
-			reference, err := url.Parse(media[index].URL)
-			if err != nil {
-				return err
-			}
-			media[index].URL = base.ResolveReference(reference).String()
-		}
-	}
-	return nil
+	return protocol.ResolveResultMediaURLs(manifestURL, result)
 }

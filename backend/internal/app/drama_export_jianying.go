@@ -1,18 +1,14 @@
 package app
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
-	"image"
-	"image/jpeg"
-	_ "image/png"
-	"io"
 	"strings"
 	"time"
 	"yingce/backend/internal/jianying"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/production"
 )
 
 type DramaJianyingDraftRequest struct {
@@ -86,7 +82,7 @@ func (s *Service) PrepareDramaJianyingDraft(userID, projectID, episodeID string,
 		durationUs := durationMs * 1000
 		draft.Clips = append(draft.Clips, jianying.Clip{FileName: fileName, Name: fileName, DurationUs: durationUs, Width: resource.Width, Height: resource.Height})
 		if req.Captions {
-			draft.Captions = append(draft.Captions, dramaSegmentCaptions(segmentShots, cursor, durationUs)...)
+			draft.Captions = append(draft.Captions, jianyingSegmentCaptions(segmentShots, cursor, durationUs)...)
 		}
 		if coverResourceID == "" {
 			coverResourceID = segment.TailFrameResourceID
@@ -96,30 +92,16 @@ func (s *Service) PrepareDramaJianyingDraft(userID, projectID, episodeID string,
 	return s.finishDramaJianyingArchive(userID, name, coverResourceID, draft, archive, skipped)
 }
 
-// dramaSegmentCaptions 按镜头时长在段内的占比分配台词时间，并按段视频实际时长等比缩放；
-// 边界用整数换算，相邻字幕不会重叠。只是估算，精确对齐建议在剪映里用「识别字幕」。
-func dramaSegmentCaptions(shots []model.DramaShot, startUs int64, durationUs int64) []jianying.Caption {
-	var total int64
-	for _, shot := range shots {
-		total += max(shot.DurationMs, 0)
+// jianyingSegmentCaptions 把短剧镜头和剪映字幕类型适配到 production 的字幕时间窗口规则。
+func jianyingSegmentCaptions(shots []model.DramaShot, startUs int64, durationUs int64) []jianying.Caption {
+	dialogues := make([]production.SegmentDialogue, len(shots))
+	for index, shot := range shots {
+		dialogues[index] = production.SegmentDialogue{Text: shot.Dialogue, DurationMs: shot.DurationMs}
 	}
-	equal := total <= 0
-	if equal {
-		total = int64(len(shots))
-	}
-	var captions []jianying.Caption
-	var elapsed int64
-	for _, shot := range shots {
-		weight := max(shot.DurationMs, 0)
-		if equal {
-			weight = 1
-		}
-		begin := startUs + durationUs*elapsed/total
-		elapsed += weight
-		end := startUs + durationUs*elapsed/total
-		if text := strings.TrimSpace(shot.Dialogue); text != "" && end > begin {
-			captions = append(captions, jianying.Caption{Text: text, StartUs: begin, DurationUs: end - begin})
-		}
+	windows := production.SegmentCaptions(dialogues, startUs, durationUs)
+	captions := make([]jianying.Caption, len(windows))
+	for index, window := range windows {
+		captions[index] = jianying.Caption{Text: window.Text, StartUs: window.StartUs, DurationUs: window.DurationUs}
 	}
 	return captions
 }
@@ -135,36 +117,11 @@ func (s *Service) dramaDraftCover(userID string, resourceID string) []byte {
 		return nil
 	}
 	defer body.Close()
-	decoded, _, err := image.Decode(io.LimitReader(body, dramaCoverMaxBytes))
+	cover, err := jianying.CoverJPEG(body, dramaCoverMaxBytes)
 	if err != nil {
 		return nil
 	}
-	var buffer bytes.Buffer
-	if err := jpeg.Encode(&buffer, decoded, &jpeg.Options{Quality: 85}); err != nil {
-		return nil
-	}
-	return buffer.Bytes()
-}
-
-func dramaJianyingReadme(draft jianying.Draft, skipped []string) string {
-	var builder strings.Builder
-	builder.WriteString("影策短剧 · 剪映草稿\n\n")
-	builder.WriteString("使用方法：\n")
-	builder.WriteString("1. 关闭剪映专业版。\n")
-	fmt.Fprintf(&builder, "2. 把压缩包解压到剪映草稿目录，确保文件夹「%s」直接位于：\n   %s\n", draft.Name, draft.Root)
-	fmt.Fprintf(&builder, "   解压后的完整路径应为：%s\n", draft.FolderPath())
-	builder.WriteString("3. 打开剪映，在首页草稿列表里找到同名草稿。\n\n")
-	builder.WriteString("注意：素材按上面的完整路径写入草稿；解压到别处或改了文件夹名，剪映会提示素材丢失，可在剪映里重新链接 materials 目录下的视频。\n")
-	if len(draft.Captions) > 0 {
-		builder.WriteString("台词字幕按分镜时长估算，与配音可能有偏差；需要精确对齐时可删除字幕轨，用剪映「识别字幕」重新生成。台词字幕.srt 可单独导入。\n")
-	}
-	if len(skipped) > 0 {
-		builder.WriteString("\n以下剧情段没有导出：\n")
-		for _, item := range skipped {
-			builder.WriteString("- " + item + "\n")
-		}
-	}
-	return builder.String()
+	return cover
 }
 
 // ===== 资产包 =====
@@ -190,6 +147,6 @@ func (s *Service) finishDramaJianyingArchive(userID, name, coverResourceID strin
 	if len(draft.Captions) > 0 {
 		archive.addData(name+"/台词字幕.srt", []byte(jianying.SRT(draft.Captions)))
 	}
-	archive.addData(name+"/导入说明.txt", []byte(dramaJianyingReadme(draft, skipped)))
+	archive.addData(name+"/导入说明.txt", []byte(jianying.Readme(draft, skipped)))
 	return archive, nil
 }
