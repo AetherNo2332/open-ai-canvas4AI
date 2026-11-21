@@ -1,13 +1,24 @@
 package repository
 
 import (
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"context"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"yingce/backend/internal/database"
 	"yingce/backend/internal/database/agentwake"
 	"yingce/backend/internal/model"
 )
+
+const agentWakeBroadcastPredicate = "user_id = ? AND run_id = ? AND task_id = ?"
+
+type AgentWakeDelivery struct {
+	model.AgentWakeEvent `gorm:"embedded"`
+	Broadcast            bool
+}
 
 func (r *Repository) AgentWakeEvents(after int64, limit int, userScope ...string) ([]model.AgentWakeEvent, error) {
 	if limit < 1 || limit > 256 {
@@ -18,10 +29,32 @@ func (r *Repository) AgentWakeEvents(after int64, limit int, userScope ...string
 	if len(userScope) > 0 && userScope[0] != "" {
 		// Unscoped scheduler notifications have no run or task identifiers.
 		// Other empty-user events can carry task IDs from unrelated users.
-		query = query.Where("user_id = ? OR (user_id = ? AND run_id = ? AND task_id = ?)", userScope[0], "", "", "")
+		query = query.Where("user_id = ? OR ("+agentWakeBroadcastPredicate+")", userScope[0], "", "", "")
 	}
 	err := query.Order("sequence").Limit(limit).Find(&events).Error
 	return events, err
+}
+
+func (r *Repository) AgentWakeDeliveries(ctx context.Context, after int64) ([]AgentWakeDelivery, error) {
+	var events []AgentWakeDelivery
+	err := r.db.WithContext(ctx).Model(&model.AgentWakeEvent{}).
+		Select("agent_wake_events.*, coalesce(("+agentWakeBroadcastPredicate+"), false) AS broadcast", "", "", "").
+		Where("sequence > ?", after).Order("sequence").Limit(128).Find(&events).Error
+	return events, err
+}
+
+func (r *Repository) AgentWakeHighWater(ctx context.Context) (int64, error) {
+	var sequence int64
+	err := r.db.WithContext(ctx).Model(&model.AgentWakeEvent{}).Select("coalesce(max(sequence), 0)").Scan(&sequence).Error
+	return sequence, err
+}
+
+func (r *Repository) OpenAgentWakeListener(ctx context.Context) (*pgx.Conn, error) {
+	pool, err := r.db.DB()
+	if err != nil {
+		return nil, err
+	}
+	return database.OpenAgentWakeListener(ctx, pool)
 }
 
 func (r *Repository) CloudAgentControlRow(userID, runID string) (*model.CloudAgentExecution, error) {

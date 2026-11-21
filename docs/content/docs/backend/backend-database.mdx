@@ -107,7 +107,7 @@ description: 影策后端核心持久化表与状态边界
 
 调用日志把各协议 usage 归一为同一口径：`input_tokens` 含缓存命中和缓存写入。Anthropic 原生 usage 的 `input_tokens` 不含 `cache_read_input_tokens` 与 `cache_creation_input_tokens`，写日志时补齐为总输入；百炼与 OpenRouter 的缓存写入分别读 `prompt_tokens_details.cache_creation_input_tokens` 和 `cache_write_tokens`。Token 预授权按输入价与缓存写入价中较高者估算全部输入 Token。
 
-## Agent 共享偏好与业务会话（Schema 108–109）
+## Agent 共享偏好、业务会话与唤醒（Schema 108–110）
 
 版本 108 `agent_shared_preferences_scope_memory` 为隔离 Agent 运行增加三张表。SQLite 与 PostgreSQL 均按同一迁移记录执行，保留旧账户提示词和记忆，旧正文无需回填。
 
@@ -120,6 +120,8 @@ description: 影策后端核心持久化表与状态边界
 隔离快照由现有 Run 状态保存。升级先使用匹配后端版本的迁移命令再启动后端。旧后端按自身 schema 版本检查数据库，发布前需演练关闭准入并保留新版本的读取、取消和排空路径。
 
 版本 109 `agent_conversation_scope` 为 `cloud_agent_executions` 和 `cloud_agent_pi_sessions` 增加 `scope_type`、`scope_id`、`agent_definition_id`、`agent_context_version`。会话目录索引 `idx_cloud_agent_scope_directory` 按用户、业务、配置及时间分页。迁移根据持久化请求核对归属。矛盾或缺失的记录保留供账户历史查看，旧上下文标记为不可续聊。
+
+版本 110 `agent_wake_notification` 在 PostgreSQL 的 `agent_wake_events` 上安装语句级 INSERT 触发器，提交时发送空载荷通知。SQLite 只登记迁移，不创建触发器。通知不是事件存储；事件表、游标、计数器锁和生产者事务均保持不变。
 
 ## Agent 记忆文件列补齐（Schema 77）
 

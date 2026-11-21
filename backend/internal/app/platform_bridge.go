@@ -159,6 +159,10 @@ func (s *Service) Close() error {
 		return nil
 	}
 	s.closeCloudAgentMediaBatches()
+	if s.agentWake != nil {
+		s.agentWake.cancel()
+		<-s.agentWake.done
+	}
 	if s.coordinator == nil {
 		return nil
 	}
