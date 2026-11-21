@@ -15,6 +15,14 @@ backend 使用至少32字符的 `CANVAS_AGENT_INTERNAL_TOKEN` 作为运行授权
 
 Agent 使用 `http://backend:8080` 和 Worker 凭据访问 config、claim、capacity、events，领取后用五分钟短期授权访问对应运行。授权绑定 Worker、用户、run、lease owner 与 epoch，并再次校验数据库有效租约；续租返回新授权，撤销、终态和接管使旧授权失效。它没有数据库凭据和公网端口。
 
+### Worker 唤醒事件
+
+未设置 `CANVAS_AGENT_WAKE_MODE` 或留空时，PostgreSQL 使用 `notify`，SQLite 使用 `poll`。PostgreSQL 的通知触发器由 Schema 110 安装，无需手工执行 SQL。已有环境显式配置的 `poll` 仍然生效，每 250 ms 读一次事件表。
+
+每个 Go 实例使用一条会话绑定的 PostgreSQL 连接监听固定频道，数据库连接地址须支持会话绑定。触发器在事件写入事务中发送空载荷通知。后端从事件表读取，沿用 Worker 授权与 `Last-Event-ID`。监听失败时现有流回到轮询，重新监听后先补读再切换。静默时每 5 秒检查事件表。
+
+回退只需把 backend 配置为 `CANVAS_AGENT_WAKE_MODE=poll` 并重启，触发器可以保留。不需要清表或重置游标。通过日志 `agent wake listener ready`、`agent wake listener fallback` 与 `pg_stat_activity` 的 `application_name=canvas-agent-wake-listener` 核对读侧状态。若因故手工移除了触发器，在重新启用 `notify` 前通过 `scripts/agent-wake-notify-up.sql` 恢复；迁移不会重复运行。手工执行前用 `\conninfo` 核对目标库和 schema。
+
 Worker 等待 backend 健康后启动；本机健康探针独立检查配置、领取与容量通道的时效，状态区分 starting、ready、degraded、draining。backend 的全局 ready 不依赖 Agent，避免 Compose 依赖循环。协议、凭据等连状态通道都无法通过的失败仅能从容器健康与日志判断，后台在心跳过期后显示离线。Agent 能力接口单独区分未配置、离线、未就绪和满载；缺配置立即拒绝新运行，暂时离线保留有期限的耐久排队，健康满载继续排队。
 
 通道恢复后，本机探针状态与后台容量心跳按周期收敛，后台显示可能延迟一个心跳周期（当前15秒）；不能把短暂未就绪显示解释为进程已退出。

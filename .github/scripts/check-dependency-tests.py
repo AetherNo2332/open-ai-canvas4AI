@@ -9,6 +9,11 @@ REQUIRED = {
     ("repository", "TestCanvasRevision/postgres"),
     ("platform", "TestRuntimeCoordinatorRedisLeasePreservesLongestTTL"),
     ("app", "TestClearAdminRuntimeCacheUsesRedisWhitelist"),
+    ("handler", "TestAgentWakeSQLiteDefaultPoll"),
+    ("handler", "TestAgentWakePostgresDefaultNotify"),
+    ("handler", "TestAgentWakeNotifyUsesOneListenerPostgres"),
+    ("handler", "TestAgentWakeClaimRacePostgres/poll"),
+    ("handler", "TestAgentWakeClaimRacePostgres/notify"),
     # v80 媒体版本与 v82 经验并入记忆会改写用户数据，PostgreSQL 版必须实际运行。
     ("database", "TestMigrateMediaVersionsPostgresToMetadata"),
     ("database", "TestMigrateMediaVersionsPostgresMergesWithExisting"),
