@@ -119,11 +119,15 @@ func TestCloudAgentArrangeNodesLaysOutByLane(t *testing.T) {
 }
 
 func TestCloudAgentArrangeNodesKeepsLockedAndContainers(t *testing.T) {
+	child := layoutNode("child-1", "text", 600, 600)
+	child["parentId"] = "frame-1"
 	nodes := []map[string]any{
 		layoutNode("text-1", "text", 0, 0),
 		layoutNode("text-2", "text", 5, 5),
 		layoutNode("locked-1", "text", 400, 400, map[string]any{"locked": true}),
 		layoutNode("frame-1", "frame", 800, 800),
+		child,
+		layoutNode("hidden-1", "text", 1000, 1000, map[string]any{"batchRootId": "batch-1"}),
 	}
 	s, doc := layoutFixture(t, nodes)
 	policy := mustRuntimePolicy(t, s)
@@ -141,6 +145,12 @@ func TestCloudAgentArrangeNodesKeepsLockedAndContainers(t *testing.T) {
 	}
 	if positions["frame-1"] != (layout.Position{X: 800, Y: 800}) {
 		t.Fatalf("背板被移动：%+v", positions["frame-1"])
+	}
+	if positions["child-1"] != (layout.Position{X: 600, Y: 600}) {
+		t.Fatalf("背板子节点被移动：%+v", positions["child-1"])
+	}
+	if positions["hidden-1"] != (layout.Position{X: 1000, Y: 1000}) {
+		t.Fatalf("隐藏批次节点被移动：%+v", positions["hidden-1"])
 	}
 	if positions["text-2"].Y == 5 && positions["text-2"].X == 5 {
 		t.Fatalf("可整理节点没有移动：%+v", positions)
@@ -181,6 +191,30 @@ func TestCloudAgentArrangeNodesGroupsMakeBands(t *testing.T) {
 	}
 	if positions["left-out"] != (layout.Position{X: 900, Y: 900}) {
 		t.Fatalf("未参与分组的节点被移动：%+v", positions["left-out"])
+	}
+}
+
+func TestCloudAgentArrangeNodesIgnoresInvalidModeOnEmptyGroup(t *testing.T) {
+	nodes := []map[string]any{
+		layoutNode("text-1", "text", 0, 0),
+		layoutNode("text-2", "text", 10, 10),
+		layoutNode("locked-1", "text", 400, 400, map[string]any{"locked": true}),
+	}
+	s, doc := layoutFixture(t, nodes)
+	result, err := applyCloudAgentArrangeNodes(s.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
+		"snapshotHash": creationHash(doc),
+		"groups": []any{
+			map[string]any{"label": "有效组", "nodeIds": []any{"text-1", "text-2"}, "mode": "row"},
+			map[string]any{"label": "空组", "nodeIds": []any{"locked-1"}, "mode": "unknown"},
+		},
+	}), mustRuntimePolicy(t, s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, _ := result.(map[string]any)
+	groups, _ := receipt["groups"].([]string)
+	if len(groups) != 1 || groups[0] != "有效组" {
+		t.Fatalf("空组不应校验模式或出现在结果中：%+v", receipt["groups"])
 	}
 }
 
@@ -241,6 +275,47 @@ func TestCloudAgentArrangeNodesRejectsStaleSnapshotAndTooManyNodes(t *testing.T)
 	}), mustRuntimePolicy(t, s2)); err == nil || !strings.Contains(err.Error(), "最多整理") ||
 		!errors.As(err, &countErr) || countErr.Field != "nodeIds" || countErr.Issue != "item_count" {
 		t.Fatalf("超限应按 nodeIds/item_count 归类：%v", err)
+	}
+}
+
+func TestCloudAgentArrangeNodesRejectsUnknownNodeReference(t *testing.T) {
+	nodes := []map[string]any{layoutNode("text-1", "text", 0, 0), layoutNode("text-2", "text", 5, 5)}
+	s, doc := layoutFixture(t, nodes)
+
+	var fieldErr *cloudAgentFieldArgumentError
+	_, err := applyCloudAgentArrangeNodes(s.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
+		"snapshotHash": creationHash(doc),
+		"nodeIds":      []any{"text-1", "missing"},
+	}), mustRuntimePolicy(t, s))
+	if err == nil || !errors.As(err, &fieldErr) || fieldErr.Field != "nodeIds" || fieldErr.Issue != "invalid_value" {
+		t.Fatalf("未知节点应按 nodeIds/invalid_value 归类：%v", err)
+	}
+}
+
+func TestCloudAgentArrangeNodesRejectsEmptyGroupsAndHandlesNoConnections(t *testing.T) {
+	nodes := []map[string]any{layoutNode("text-1", "text", 0, 0), layoutNode("image-1", "image", 10, 10)}
+	s, doc := layoutFixture(t, nodes)
+	policy := mustRuntimePolicy(t, s)
+
+	var fieldErr *cloudAgentFieldArgumentError
+	_, err := applyCloudAgentArrangeNodes(s.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
+		"snapshotHash": creationHash(doc),
+		"groups":       []any{map[string]any{"label": "空组", "nodeIds": []any{}}},
+	}), policy)
+	if err == nil || !errors.As(err, &fieldErr) || fieldErr.Field != "groups" || fieldErr.Issue != "invalid_value" {
+		t.Fatalf("空分组应按 groups/invalid_value 归类：%v", err)
+	}
+
+	result, err := applyCloudAgentArrangeNodes(s.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
+		"snapshotHash": creationHash(doc),
+		"mode":         "auto",
+	}), policy)
+	if err != nil {
+		t.Fatalf("无连线时 auto 应回退到泳道布局：%v", err)
+	}
+	receipt, _ := result.(map[string]any)
+	if moved, _ := receipt["moved"].(int); moved < 1 {
+		t.Fatalf("无连线布局未移动节点：%+v", receipt)
 	}
 }
 

@@ -165,14 +165,5 @@ func ecommerceManagedImageRules(metadata map[string]any) string {
 	if json.Unmarshal(raw, &calls) != nil {
 		return ""
 	}
-	var rules []string
-	for _, call := range calls {
-		if call.ImageRule != "" {
-			rules = append(rules, call.Name+"："+call.ImageRule)
-		}
-	}
-	if len(rules) == 0 {
-		return ""
-	}
-	return "【本轮已选Skills图片执行约束；仅对适用页面执行】\n" + strings.Join(rules, "\n")
+	return ecommerceskills.ImageExecutionRules(calls)
 }

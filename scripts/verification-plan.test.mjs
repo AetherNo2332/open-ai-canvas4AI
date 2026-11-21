@@ -9,6 +9,7 @@ import {
   collectChanges,
   collectPlan,
 } from "./verification-plan.mjs";
+import { policy } from "./verification-policy.mjs";
 
 const graph = [
   { importPath: "yingce/backend/internal/generation/polling", imports: [] },
@@ -85,6 +86,66 @@ test("mapped package includes reverse callers and integration group", () => {
   );
   assert.ok(ids(p).includes("backend:app:polling"));
   assert.ok(!ids(p).includes("backend:full"));
+});
+test("batch 2 domain migrations retain package and app integration checks", () => {
+  const domains = [
+    [
+      "backend/internal/canvas/connection",
+      "canvas-agent",
+      "TestAgentGraphRejectsInvalidReferences",
+    ],
+    [
+      "backend/internal/canvas/layout",
+      "canvas-agent",
+      "TestCloudAgentArrangeNodesIgnoresInvalidModeOnEmptyGroup",
+    ],
+    [
+      "backend/internal/production",
+      "drama-export",
+      "TestDramaJianyingExportUsesDomainRulesAndSkipsMissingVideo",
+    ],
+    [
+      "backend/internal/jianying",
+      "drama-export",
+      "TestDramaJianyingExportRejectsInvalidInputs",
+    ],
+    [
+      "backend/internal/ecommercecatalog",
+      "ecommerce",
+      "TestIndustryDictionaryInstallsOnceAndPreservesAdministratorChoices",
+    ],
+    [
+      "backend/internal/ecommerceskills",
+      "ecommerce",
+      "TestEcommerceManagedSkillSwitchPersistsAndControlsPromptAndKnowledge",
+    ],
+    [
+      "backend/internal/protocol",
+      "protocol",
+      "TestStreamingAgentParserKeepsHostErrorClassificationAndReasoningCallback",
+    ],
+  ];
+  const packages = domains.map(([dir]) =>
+    dir.replace("backend/", "yingce/backend/"),
+  );
+  const batchGraph = [
+    ...packages.map((importPath) => ({ importPath, imports: [] })),
+    { importPath: "yingce/backend/internal/app", imports: packages },
+  ];
+  for (const [dir, group, appTest] of domains) {
+    const mapped = policy.packages.find((item) => item.directory === dir);
+    assert.ok(mapped, dir + " missing verification policy");
+    assert.match(appTest, new RegExp(mapped.pattern), dir + " app test is not selected");
+    const selected = ids(plan([dir + "/migrated.go"], { goPackages: batchGraph }));
+    assert.ok(
+      selected.includes(
+        "backend:package:" + dir.replace("backend/", "yingce/backend/"),
+      ),
+      dir + " missing package check",
+    );
+    assert.ok(selected.includes("backend:app:" + group), dir + " missing app check");
+    assert.ok(!selected.includes("backend:full"), dir + " unexpectedly expanded");
+  }
 });
 test("shared, workflow, unknown app, mixed stacks", () => {
   for (const file of [

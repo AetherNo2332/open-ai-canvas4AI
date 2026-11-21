@@ -50,7 +50,13 @@ func TestAgentScopeMatchesForkLayout(t *testing.T) {
 		{"internal/agentcontext/checkpoint.go", true},
 		{"internal/agentmemory/document.go", true},
 		{"internal/agentmemoryx/x.go", false},
+		{"internal/canvas/connection/manual.go", true},
+		{"internal/canvas/connection/policy.go", false},
+		{"internal/canvas/layout/document.go", true},
+		{"internal/canvas/layout/layout.go", false},
 		{"internal/canvas/commands/service.go", false},
+		{"internal/protocol/text_agent_stream_parser.go", true},
+		{"internal/protocol/request_body.go", false},
 	} {
 		if got := InAgentScope(tc.path); got != tc.want {
 			t.Errorf("InAgentScope(%q) = %v, want %v", tc.path, got, tc.want)

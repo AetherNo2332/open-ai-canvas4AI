@@ -29,6 +29,51 @@ export const policy = {
       pattern:
         "^(TestVideoPoll|TestVideoDownload|TestAsyncImagePoll|TestDeclarative)",
     },
+    {
+      directory: "backend/internal/canvas/connection",
+      importPath: "yingce/backend/internal/canvas/connection",
+      group: "canvas-agent",
+      pattern:
+        "^(TestAgentParityGraphMatchesManualGenericAssociations|TestAgentGraphRejectsInvalidReferences|TestCloudAgentArrangeNodes|TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered|TestCloudAgentUpdateNodePositionPatch)",
+    },
+    {
+      directory: "backend/internal/canvas/layout",
+      importPath: "yingce/backend/internal/canvas/layout",
+      group: "canvas-agent",
+      pattern:
+        "^(TestAgentParityGraphMatchesManualGenericAssociations|TestAgentGraphRejectsInvalidReferences|TestCloudAgentArrangeNodes|TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered|TestCloudAgentUpdateNodePositionPatch)",
+    },
+    {
+      directory: "backend/internal/production",
+      importPath: "yingce/backend/internal/production",
+      group: "drama-export",
+      pattern: "^TestDramaJianyingExport",
+    },
+    {
+      directory: "backend/internal/jianying",
+      importPath: "yingce/backend/internal/jianying",
+      group: "drama-export",
+      pattern: "^TestDramaJianyingExport",
+    },
+    {
+      directory: "backend/internal/ecommercecatalog",
+      importPath: "yingce/backend/internal/ecommercecatalog",
+      group: "ecommerce",
+      pattern: "^(TestEcommerceManagedSkill|TestIndustryDictionary)",
+    },
+    {
+      directory: "backend/internal/ecommerceskills",
+      importPath: "yingce/backend/internal/ecommerceskills",
+      group: "ecommerce",
+      pattern: "^(TestEcommerceManagedSkill|TestIndustryDictionary)",
+    },
+    {
+      directory: "backend/internal/protocol",
+      importPath: "yingce/backend/internal/protocol",
+      group: "protocol",
+      pattern:
+        "^(TestProtocolRequestFromInput|TestProtocolResultManifest|TestDeclarativeProtocol|TestProviderTaskNotReadyStrictClassification|TestStreamingAgentParser)",
+    },
   ],
   appFiles: {}, // Add only audited exact file -> integration group mappings.
   globalPrefixes: [

@@ -105,6 +105,12 @@ func InAgentScope(rel string) bool {
 		return base == "cloud_agent.go" || match("cloud_agent_*.go") || match("agent_*.go")
 	case "internal/handler":
 		return match("agent*.go") || base == "internal_agent.go"
+	case "internal/canvas/connection":
+		return base == "manual.go"
+	case "internal/canvas/layout":
+		return base == "document.go"
+	case "internal/protocol":
+		return base == "text_agent_stream_parser.go"
 	}
 	for _, domain := range []string{"internal/agentcontext", "internal/agentmemory", "internal/identity/worker"} {
 		if dir == domain || strings.HasPrefix(dir, domain+"/") {

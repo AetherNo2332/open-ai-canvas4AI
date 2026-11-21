@@ -178,7 +178,6 @@
     {"id":"internal/app/provider_image.go:func:normalizeGrokImageAspectRatio:complexity","max":37,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/provider_image.go:func:runImageTask:complexity","max":37,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/provider_media_hydration.go:func:Service.hydrateProviderMedia:complexity","max":23,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/provider_protocol_request.go:func:protocolRequestBody:complexity","max":24,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/provider_protocol_request.go:func:protocolRequestFromInput:complexity","max":30,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/provider_task_recovery.go:func:Service.AdminRecoverVideoByURL:complexity","max":22,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/provider_task_recovery.go:func:Service.queryFailedVideoTask:complexity","max":27,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
