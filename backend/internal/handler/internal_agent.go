@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"yingce/backend/internal/kernel"
@@ -33,6 +32,7 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 	if err := svc.SeedAgentWorker(); err != nil {
 		panic("agent worker bootstrap failed: " + err.Error())
 	}
+	svc.StartAgentWakeListener()
 	group := r.Group("/internal-agent")
 	group.Use(internalAgentAuth(svc))
 	registerInternalAgentWorkerRoutes(group, svc)
@@ -86,51 +86,7 @@ func internalAgentAuth(svc *service.Service) gin.HandlerFunc {
 
 // registerInternalAgentWorkerRoutes Worker 级接口：事件流、配置与容量上报。
 func registerInternalAgentWorkerRoutes(group *gin.RouterGroup, svc *service.Service) {
-	group.GET("/events", func(c *gin.Context) {
-		after, err := strconv.ParseInt(firstAgentCursor(c), 10, 64)
-		if err != nil || after < 0 {
-			c.AbortWithStatus(http.StatusBadRequest)
-			return
-		}
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("X-Accel-Buffering", "no")
-		c.Writer.WriteHeader(http.StatusOK)
-		c.Writer.Flush()
-		ticker := time.NewTicker(250 * time.Millisecond)
-		defer ticker.Stop()
-		heartbeat := time.NewTicker(25 * time.Second)
-		defer heartbeat.Stop()
-		for {
-			events, err := svc.PiWakeEventsForWorker(after, c.GetString("agentWorkerUserID"))
-			if err != nil {
-				return
-			}
-			for _, event := range events {
-				body, err := json.Marshal(event)
-				if err != nil {
-					return
-				}
-				if _, err = c.Writer.Write([]byte("id: " + strconv.FormatInt(event.Sequence, 10) + "\ndata: " + string(body) + "\n\n")); err != nil {
-					return
-				}
-				after = event.Sequence
-			}
-			if len(events) > 0 {
-				c.Writer.Flush()
-			}
-			select {
-			case <-c.Request.Context().Done():
-				return
-			case <-ticker.C:
-			case <-heartbeat.C:
-				if _, err := c.Writer.Write([]byte(": heartbeat\n\n")); err != nil {
-					return
-				}
-				c.Writer.Flush()
-			}
-		}
-	})
+	group.GET("/events", agentWakeStream(svc))
 	group.GET("/config", func(c *gin.Context) {
 		setting, err := svc.AgentSchedulerConfig()
 		if err != nil {

@@ -94,6 +94,8 @@ type Service struct {
 	// 画布命令、工具操作与消息队列。
 	agentSkillDefaultsMu     sync.Mutex
 	agentToolWake            chan struct{}
+	agentWakeOnce            sync.Once
+	agentWake                *agentWakeHub
 	agentMessageWake         chan struct{}
 	agentEventPurgeAt        time.Time
 	agentWebSearchHTTPClient *http.Client
