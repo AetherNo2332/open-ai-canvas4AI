@@ -1017,3 +1017,113 @@
         opacity: 1;
     }
 }
+
+/* AI 拆分：弹窗、校对表与问题清单 */
+.split-dialog {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px;
+}
+
+.split-dialog__hint {
+    margin: 0;
+    color: #6b6577;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.split-dialog__script {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+}
+
+.split-dialog__model {
+    min-width: 260px;
+}
+
+.split-dialog__stats {
+    gap: 6px;
+}
+
+.split-table-wrap {
+    max-height: 46vh;
+    overflow: auto;
+    border: 1px solid #e6e2ea;
+    border-radius: 10px;
+}
+
+.split-table {
+    width: 100%;
+    min-width: 1080px;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.split-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 8px;
+    background: #faf8fc;
+    border-bottom: 1px solid #e6e2ea;
+    color: #6b6577;
+    font-weight: 600;
+    text-align: left;
+}
+
+.split-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #f1eef4;
+    vertical-align: top;
+}
+
+.split-table tr.is-error td {
+    background: #fff6f5;
+}
+
+.split-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 240px;
+}
+
+.split-choice {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.split-choice__target {
+    width: 96px;
+    flex: none;
+}
+
+.split-choice__next {
+    width: 100%;
+}
+
+.split-issues ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+}
+
+.split-issues li {
+    margin-bottom: 4px;
+}
+
+.split-issue-link {
+    margin-right: 6px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: #7a5af8;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.split-issue-link:disabled {
+    color: #6b6577;
+    cursor: default;
+}

@@ -43,6 +43,7 @@ export type FeatureAvailability = {
     inspirationSourcesVisible: boolean;
     imageWorkbenchEnabled: boolean;
     videoWorkbenchEnabled: boolean;
+    interactiveDramaEnabled: boolean;
     // 云端 Agent 动态子代理平台开关，默认关闭。
     agentSubagentsEnabled: boolean;
     ecommerceEnabled: boolean;
@@ -64,6 +65,7 @@ export const defaultFeatureAvailability: FeatureAvailability = {
     inspirationSourcesVisible: true,
     imageWorkbenchEnabled: false,
     videoWorkbenchEnabled: false,
+    interactiveDramaEnabled: false,
     agentSubagentsEnabled: false,
     ecommerceEnabled: false,
     ecommerceVideoEnabled: false,

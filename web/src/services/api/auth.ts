@@ -515,6 +515,7 @@ export function updateAdminFeatureAvailability(
             | "inspirationSourcesVisible"
             | "imageWorkbenchEnabled"
             | "videoWorkbenchEnabled"
+            | "interactiveDramaEnabled"
             | "ecommerceEnabled"
             | "ecommerceVideoEnabled"
             | "agentSubagentsEnabled"

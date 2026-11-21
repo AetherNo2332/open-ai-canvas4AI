@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { App, Button, Skeleton } from "antd";
 import { Switch } from "@/pages/admin/ui/controls";
-import { AlertTriangle, ArrowUpRight, Boxes, Clapperboard, Coins, CornerDownRight, History, ImageIcon, MonitorCog, PlugZap, Quote, RadioTower, RefreshCw, ShieldCheck, ShoppingBag, SlidersHorizontal, Video, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Boxes, Clapperboard, Coins, CornerDownRight, GitBranch, History, ImageIcon, MonitorCog, PlugZap, Quote, RadioTower, RefreshCw, ShieldCheck, ShoppingBag, SlidersHorizontal, Video, Wallet } from "lucide-react";
 
 import { Link } from "react-router";
 
@@ -23,6 +23,7 @@ type FeatureKey =
     | "systemPluginsVisibleToUsers"
     | "imageWorkbenchEnabled"
     | "videoWorkbenchEnabled"
+    | "interactiveDramaEnabled"
     | "ecommerceEnabled"
     | "ecommerceVideoEnabled";
 
@@ -52,6 +53,7 @@ type FeatureGroup = {
 
 const editableFeatureKeys: FeatureKey[] = [
     "shortDramaEnabled",
+    "interactiveDramaEnabled",
     "taskCenterEnabled",
     "creditsEnabled",
     "customChannelsEnabled",
@@ -78,6 +80,13 @@ const featureGroups: FeatureGroup[] = [
                 location: "侧栏 · 短剧制作",
                 description: "关闭后隐藏入口，已有项目保留。",
                 icon: <Clapperboard className="size-4" aria-hidden="true" />,
+            },
+            {
+                key: "interactiveDramaEnabled",
+                title: "互动剧",
+                location: "侧栏 · 互动剧",
+                description: "关闭后隐藏入口，浏览器本地已有的互动剧项目保留。",
+                icon: <GitBranch className="size-4" aria-hidden="true" />,
             },
             {
                 key: "imageWorkbenchEnabled",
@@ -524,6 +533,7 @@ function ModelSourceRow({ draft, saving, onChange }: { draft: FeatureAvailabilit
 function toEditablePayload(features: FeatureAvailability) {
     return {
         shortDramaEnabled: features.shortDramaEnabled,
+        interactiveDramaEnabled: features.interactiveDramaEnabled,
         taskCenterEnabled: features.taskCenterEnabled,
         creditsEnabled: features.creditsEnabled,
         customChannelsEnabled: features.customChannelsEnabled,
@@ -551,6 +561,7 @@ function parseFeatureAvailability(value: unknown): FeatureAvailability {
     return {
         welcomeEnabled: record.welcomeEnabled as boolean,
         shortDramaEnabled: record.shortDramaEnabled as boolean,
+        interactiveDramaEnabled: record.interactiveDramaEnabled as boolean,
         taskCenterEnabled: record.taskCenterEnabled as boolean,
         creditsEnabled: record.creditsEnabled as boolean,
         customChannelsEnabled: record.customChannelsEnabled as boolean,

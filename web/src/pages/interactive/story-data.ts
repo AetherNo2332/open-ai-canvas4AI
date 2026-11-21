@@ -6,6 +6,10 @@ export interface StoryOption {
     id: string;
     label: string;
     to: string;
+    /** 线性后继：只画连线，不渲染成玩家可点的选择。 */
+    linear?: boolean;
+    /** AI 拆分新增、待编剧确认的建议选项。 */
+    suggested?: boolean;
 }
 
 export interface StoryNode {
@@ -18,6 +22,11 @@ export interface StoryNode {
     isEnding?: boolean;
     x: number;
     y: number;
+    /** 拆分表行键，仅用于回看来源，不是持久 ID。 */
+    rowKey?: string;
+    characters?: string[];
+    scenes?: string[];
+    suggested?: boolean;
 }
 
 export interface StoryEdge {

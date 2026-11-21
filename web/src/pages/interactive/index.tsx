@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowLeft, Check, ChevronRight, Crosshair, GitBranch, Maximize, Minus, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Crosshair, GitBranch, Maximize, Minus, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 
 import { deriveEdges, type StoryNode, type StoryNodeKind, type StoryNodeStatus } from "./story-data";
 import { getProject, saveProject } from "./storage";
+import { SplitDialog } from "./split-dialog";
 import "./interactive.css";
 
 const CARD_WIDTH = 288;
@@ -58,6 +59,7 @@ export default function InteractiveStoryPage() {
     const [viewport, setViewport] = useState<Viewport>({ x: 72, y: 96, scale: 0.92 });
     const [heights, setHeights] = useState<Record<string, number>>({});
     const [savedAt, setSavedAt] = useState<number | null>(null);
+    const [splitOpen, setSplitOpen] = useState(false);
 
     const surfaceRef = useRef<HTMLDivElement | null>(null);
     const nodeRefs = useRef(new Map<string, HTMLElement>());
@@ -68,6 +70,9 @@ export default function InteractiveStoryPage() {
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
     const edges = useMemo(() => deriveEdges(nodes), [nodes]);
+    // 只有「新建后未动过」的种子节点允许原地导入，避免覆盖已有制作成果。
+    const pristine = nodes.length === 1 && nodes[0].id === "E1" && nodes[0].title === "开场" && nodes[0].options.length === 0;
+    const hasNodes = nodes.length > 0 && !pristine;
     const editingNode = editingId ? (nodeById.get(editingId) ?? null) : null;
 
     const updateNode = useCallback((id: string, patch: Partial<StoryNode>) => {
@@ -335,6 +340,10 @@ export default function InteractiveStoryPage() {
                     </span>
                 </div>
                 <div className="story-topbar__right">
+                    <button type="button" className="story-button" onClick={() => setSplitOpen(true)}>
+                        <Sparkles className="size-3.5" />
+                        AI 拆分
+                    </button>
                     <button type="button" className="story-button is-primary" onClick={() => addNode("story")}>
                         <Plus className="size-3.5" />
                         添加剧情
@@ -419,17 +428,19 @@ export default function InteractiveStoryPage() {
                                 <h3 className="story-node__title">{node.title}</h3>
                                 <StoryBody body={node.body} />
 
-                                {node.options.length > 0 ? (
+                                {node.options.some((option) => !option.linear) ? (
                                     <div className="story-options">
-                                        {node.options.map((option) => (
-                                            <button key={option.id} type="button" className="story-option" onPointerDown={(event) => event.stopPropagation()} onClick={() => jumpTo(option.to)} title={`跳转到 ${option.to}`}>
-                                                <span className="story-option__label">{option.label}</span>
-                                                <span className="story-option__to">
-                                                    › {option.to}
-                                                    <ChevronRight className="size-3" />
-                                                </span>
-                                            </button>
-                                        ))}
+                                        {node.options
+                                            .filter((option) => !option.linear)
+                                            .map((option) => (
+                                                <button key={option.id} type="button" className="story-option" onPointerDown={(event) => event.stopPropagation()} onClick={() => jumpTo(option.to)} title={`跳转到 ${option.to}`}>
+                                                    <span className="story-option__label">{option.label}</span>
+                                                    <span className="story-option__to">
+                                                        › {option.to}
+                                                        <ChevronRight className="size-3" />
+                                                    </span>
+                                                </button>
+                                            ))}
                                     </div>
                                 ) : null}
 
@@ -617,6 +628,18 @@ export default function InteractiveStoryPage() {
                     已选中 <strong>{selectedNode.id}</strong> · {selectedNode.title}
                 </div>
             ) : null}
+
+            <SplitDialog
+                open={splitOpen}
+                projectId={project?.id ?? ""}
+                projectTitle={storyTitle || project?.title || "互动剧"}
+                hasNodes={hasNodes}
+                onClose={() => setSplitOpen(false)}
+                onImport={(next) => {
+                    setNodes(next);
+                    setSelectedId(next[0]?.id ?? "");
+                }}
+            />
         </div>
     );
 }
