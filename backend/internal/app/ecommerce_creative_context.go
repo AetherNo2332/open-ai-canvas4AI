@@ -8,6 +8,7 @@ import (
 
 	"yingce/backend/internal/ecommerceagent"
 	"yingce/backend/internal/ecommercecatalog"
+	"yingce/backend/internal/ecommerceknowledge"
 	"yingce/backend/internal/model"
 )
 
@@ -93,7 +94,7 @@ func (s *Service) retrieveEcommerceKnowledge(req EcommerceCreativeDirectionsRequ
 	lowered := strings.ToLower(query)
 	scores := make(map[string]int, len(matched))
 	for _, entry := range matched {
-		scores[entry.ID] = commerceRelevance(entry, category, lowered)
+		scores[entry.ID] = ecommerceknowledge.Relevance(entry, category, lowered)
 		if entry.ID == "industry-taxonomy-"+match.Node.ID {
 			scores[entry.ID] += 100
 		}
