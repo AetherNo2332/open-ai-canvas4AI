@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +40,8 @@ func catalogTestBody(baseURL string) string {
 func newProviderCatalogTestService(t *testing.T) (*Service, func()) {
 	t.Helper()
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	t.Setenv("CANVAS_PROVIDER_CATALOG_DISABLED", "")
+	t.Setenv("ENABLE_PROVIDER_PLUGINS", "false")
 	upstream := httptest.NewTLSServer(http.NotFoundHandler())
 	catalogServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -66,11 +69,53 @@ func TestAdminProviderCatalogFiltersExpiredAndMarksUnsupported(t *testing.T) {
 		t.Fatalf("view = %#v", view)
 	}
 	models := view.Providers[0].Models
-	if len(models) != 3 || !models[0].Supported || !models[1].Supported || models[2].Supported || models[2].UnsupportedReason == "" {
+	if len(models) != 3 || !models[0].Supported || !models[1].Supported || models[2].Supported || models[2].Protocol != "no-such-protocol" || models[2].UnsupportedReason != "当前版本不支持该模型协议" {
 		t.Fatalf("models = %#v", models)
 	}
 	if models[1].PriceTiers[0].CostUnitMicrocredits != 1_200_000 {
 		t.Fatalf("video cost = %#v", models[1].PriceTiers[0])
+	}
+}
+
+func TestAdminProviderCatalogUsesPersistedCacheAfterRefreshFailure(t *testing.T) {
+	svc, _ := newChannelModelTestService(t)
+	var fail atomic.Bool
+	upstream := httptest.NewTLSServer(http.NotFoundHandler())
+	defer upstream.Close()
+	catalogServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if fail.Load() {
+			http.Error(w, "catalog unavailable", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(catalogTestBody(upstream.URL + "/v1")))
+	}))
+	defer catalogServer.Close()
+
+	t.Setenv("CANVAS_PROVIDER_CATALOG_DISABLED", "")
+	t.Setenv("ENABLE_PROVIDER_PLUGINS", "false")
+	path := filepath.Join(t.TempDir(), "provider-catalog", "catalog.json")
+	now := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	live := providercatalog.NewSourceForTest(catalogServer.URL, "", catalogServer.Client(), path, clock)
+	if snapshot := live.Refresh(context.Background()); snapshot.State != providercatalog.SourceLive {
+		t.Fatalf("seed snapshot = %#v", snapshot)
+	}
+
+	fail.Store(true)
+	svc.providerCatalog = providercatalog.NewSourceForTest(catalogServer.URL, "", catalogServer.Client(), path, clock)
+	view, err := svc.AdminProviderCatalog(context.Background(), &model.User{ID: "admin", Role: model.UserRoleAdmin}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Source != providercatalog.SourceCache || !strings.Contains(view.Notice, "本地缓存") {
+		t.Fatalf("view = %#v", view)
+	}
+	if len(view.Providers) != 1 || view.Providers[0].ID != "acme" || len(view.Providers[0].Models) != 3 {
+		t.Fatalf("cached providers = %#v", view.Providers)
+	}
+	if view.FetchedAt == nil || !view.FetchedAt.Equal(now) {
+		t.Fatalf("fetchedAt = %#v, want %s", view.FetchedAt, now)
 	}
 }
 

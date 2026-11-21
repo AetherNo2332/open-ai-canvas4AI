@@ -1,7 +1,10 @@
 package app
 
 import (
+	"errors"
+
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/workbench"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -148,13 +151,13 @@ func (s *Service) ProjectOverview(userID string, projectID string) (ProjectOverv
 		if err != nil {
 			return err
 		}
-		metrics = ProjectOverviewMetrics{
+		metrics = projectOverviewMetricsForOutput(workbench.BuildOverviewMetrics(workbench.OverviewMetricRow{
 			UnitCount: row.UnitCount, CompletedUnitCount: row.CompletedUnitCount, TotalWordCount: row.TotalWordCount,
 			UnitsWithoutText: row.UnitsWithoutText, UnitsWithoutShots: row.UnitsWithoutShots, CanvasCount: row.CanvasCount,
 			AssetCount: row.AssetCount, ShotCount: row.ShotCount, PendingCandidateCount: row.PendingCandidateCount,
 			ReadyStoryboardCount: row.ReadyStoryboardCount, ReadyPrevizCount: row.ReadyPrevizCount, ReadyVideoCount: row.ReadyVideoCount,
-			RenderSucceededCount: row.TimelineRenderSucceededCount, StaleArtifactCount: row.StaleArtifactCount,
-		}
+			TimelineRenderSucceededCount: row.TimelineRenderSucceededCount, StaleArtifactCount: row.StaleArtifactCount,
+		}))
 		return nil
 	})
 	group.Go(func() error {
@@ -162,10 +165,13 @@ func (s *Service) ProjectOverview(userID string, projectID string) (ProjectOverv
 		if err != nil {
 			return err
 		}
-		units = make([]ProjectOverviewUnit, 0, len(rows))
-		for _, row := range rows {
-			units = append(units, ProjectOverviewUnit{Unit: row.ProjectUnit, ShotCount: row.ShotCount, CandidateCount: row.CandidateCount, CanvasCount: row.CanvasCount})
+		projectionRows := make([]workbench.OverviewUnitRow, len(rows))
+		for index, row := range rows {
+			projectionRows[index] = workbench.OverviewUnitRow{
+				Unit: row.ProjectUnit, ShotCount: row.ShotCount, CandidateCount: row.CandidateCount, CanvasCount: row.CanvasCount,
+			}
 		}
+		units = projectOverviewUnitsForOutput(workbench.BuildOverviewUnits(projectionRows))
 		return nil
 	})
 	if err := group.Wait(); err != nil {
@@ -273,10 +279,7 @@ func (s *Service) ProjectUnitWorkspace(userID string, projectID string, unitID s
 	for _, asset := range result.Assets {
 		assetByID[asset.ID] = asset
 	}
-	versionIDs := make([]string, 0, len(shotReferences))
-	for _, reference := range shotReferences {
-		versionIDs = append(versionIDs, reference.AssetVersionID)
-	}
+	versionIDs := workbench.ShotReferenceVersionIDs(shotReferences)
 	versions, err := s.repo.ProjectAssetVersionsByIDs(projectID, versionIDs)
 	if err != nil {
 		return ProjectUnitWorkspace{}, err
@@ -285,53 +288,33 @@ func (s *Service) ProjectUnitWorkspace(userID string, projectID string, unitID s
 	if err != nil {
 		return ProjectUnitWorkspace{}, err
 	}
-	versionByID := make(map[string]model.AssetVersion, len(versions))
-	for _, version := range versions {
-		versionByID[version.ID] = version
+	assembledReferences, err := workbench.AssembleShotReferences(shotReferences, versions, storedRepresentations, assetByID)
+	if err != nil {
+		return ProjectUnitWorkspace{}, projectShotReferenceError(err)
 	}
-	representationsByVersionID := make(map[string][]CharacterRepresentationSummary, len(versionIDs))
-	for _, representation := range storedRepresentations {
-		representationsByVersionID[representation.AssetVersionID] = append(representationsByVersionID[representation.AssetVersionID], CharacterRepresentationSummary{
-			ID: representation.ID, ResourceID: representation.ResourceID, MediaType: representation.MediaType, Role: representation.Role,
-		})
-	}
-	result.ShotReferences = make([]ProjectShotAssetReference, 0, len(shotReferences))
-	for _, reference := range shotReferences {
-		version, exists := versionByID[reference.AssetVersionID]
-		if !exists {
-			return ProjectUnitWorkspace{}, BadAuthRequest("镜头引用的资产版本不可用")
+	result.ShotReferences = make([]ProjectShotAssetReference, len(assembledReferences))
+	for index, reference := range assembledReferences {
+		representations := make([]CharacterRepresentationSummary, len(reference.ReferencedVersion.Representations))
+		for representationIndex, representation := range reference.ReferencedVersion.Representations {
+			representations[representationIndex] = CharacterRepresentationSummary{
+				ID: representation.ID, ResourceID: representation.ResourceID, MediaType: representation.MediaType, Role: representation.Role,
+			}
 		}
-		asset, exists := assetByID[version.AssetID]
-		if !exists {
-			return ProjectUnitWorkspace{}, BadAuthRequest("镜头引用的项目资产不可用")
-		}
-		representations := representationsByVersionID[version.ID]
-		if representations == nil {
-			representations = []CharacterRepresentationSummary{}
-		}
-		result.ShotReferences = append(result.ShotReferences, ProjectShotAssetReference{
-			ShotAssetReference: reference,
-			Asset:              asset,
+		result.ShotReferences[index] = ProjectShotAssetReference{
+			ShotAssetReference: reference.Reference,
+			Asset:              reference.Asset,
 			ReferencedVersion: ProjectShotAssetReferenceVersion{
-				ID: version.ID, AssetID: version.AssetID, Version: version.Version, Representations: representations,
+				ID: reference.ReferencedVersion.ID, AssetID: reference.ReferencedVersion.AssetID,
+				Version: reference.ReferencedVersion.Version, Representations: representations,
 			},
-		})
-	}
-	shotIDs := make(map[string]struct{}, len(result.Shots))
-	for _, shot := range result.Shots {
-		shotIDs[shot.ID] = struct{}{}
-	}
-	result.Tasks = make([]TaskSummary, 0, len(projectTasks))
-	for _, task := range projectTasks {
-		context := task.ClientContext
-		if context == nil {
-			continue
-		}
-		_, belongsToShot := shotIDs[context.ShotID]
-		if context.ChapterID == unitID || belongsToShot {
-			result.Tasks = append(result.Tasks, task)
 		}
 	}
+	result.Tasks = workbench.FilterTasksByUnit(projectTasks, unitID, workbench.ShotIDs(result.Shots), func(task TaskSummary) (workbench.UnitTaskContext, bool) {
+		if task.ClientContext == nil {
+			return workbench.UnitTaskContext{}, false
+		}
+		return workbench.UnitTaskContext{ChapterID: task.ClientContext.ChapterID, ShotID: task.ClientContext.ShotID}, true
+	})
 	return result, nil
 }
 
@@ -339,7 +322,7 @@ func (s *Service) ProjectCanvasesPage(userID string, projectID string, page int,
 	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
 		return ProjectCanvasPage{}, err
 	}
-	page, pageSize = normalizeProjectPage(page, pageSize, 100)
+	page, pageSize = workbench.NormalizePage(page, pageSize, 100)
 	canvases, total, err := s.repo.ProjectCanvasSummariesPage(userID, projectID, page, pageSize)
 	if err != nil {
 		return ProjectCanvasPage{}, err
@@ -352,26 +335,28 @@ func (s *Service) ProjectCanvasesPage(userID string, projectID string, page int,
 	if err != nil {
 		return ProjectCanvasPage{}, err
 	}
-	return ProjectCanvasPage{Canvases: canvases, CanvasUnitLinks: links, Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total}, nil
+	state := workbench.NewPageState(page, pageSize, total)
+	return ProjectCanvasPage{Canvases: canvases, CanvasUnitLinks: links, Page: state.Page, PageSize: state.PageSize, Total: state.Total, HasMore: state.HasMore}, nil
 }
 
 func (s *Service) ProjectAssetCandidatesPage(userID string, projectID string, page int, pageSize int, unitID string, status string, category string, query string) (ProjectAssetCandidatePage, error) {
 	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
 		return ProjectAssetCandidatePage{}, err
 	}
-	page, pageSize = normalizeProjectPage(page, pageSize, 200)
+	page, pageSize = workbench.NormalizePage(page, pageSize, 200)
 	candidates, total, err := s.repo.ProjectAssetCandidatesPage(projectID, page, pageSize, unitID, status, category, query)
 	if err != nil {
 		return ProjectAssetCandidatePage{}, err
 	}
-	return ProjectAssetCandidatePage{Candidates: candidates, Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total}, nil
+	state := workbench.NewPageState(page, pageSize, total)
+	return ProjectAssetCandidatePage{Candidates: candidates, Page: state.Page, PageSize: state.PageSize, Total: state.Total, HasMore: state.HasMore}, nil
 }
 
 func (s *Service) ProjectAssetsPage(userID string, projectID string, page int, pageSize int, category string, mediaType string, status string, folderID *string, query string) (ProjectAssetPage, error) {
 	if _, err := s.repo.ProjectForUser(userID, projectID); err != nil {
 		return ProjectAssetPage{}, err
 	}
-	page, pageSize = normalizeProjectPage(page, pageSize, 80)
+	page, pageSize = workbench.NormalizePage(page, pageSize, 80)
 	assets, total, err := s.repo.ProjectAssetsPage(userID, projectID, page, pageSize, category, mediaType, status, folderID, query)
 	if err != nil {
 		return ProjectAssetPage{}, err
@@ -397,26 +382,44 @@ func (s *Service) ProjectAssetsPage(userID string, projectID string, page int, p
 	if err != nil {
 		return ProjectAssetPage{}, err
 	}
-	categoryCounts := make(map[string]int64, len(categoryRows))
-	for _, row := range categoryRows {
-		categoryCounts[row.Key] = row.Count
+	categoryInputs := make([]workbench.AssetCountRow, len(categoryRows))
+	for index, row := range categoryRows {
+		categoryInputs[index] = workbench.AssetCountRow{Key: row.Key, Count: row.Count}
 	}
-	folderCounts := make(map[string]int64, len(folderRows))
-	for _, row := range folderRows {
-		folderCounts[row.Key] = row.Count
+	folderInputs := make([]workbench.AssetCountRow, len(folderRows))
+	for index, row := range folderRows {
+		folderInputs[index] = workbench.AssetCountRow{Key: row.Key, Count: row.Count}
 	}
-	return ProjectAssetPage{Assets: summaries, CategoryCounts: categoryCounts, FolderCounts: folderCounts, Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total}, nil
+	categoryCounts, folderCounts := workbench.BuildAssetFacetCounts(categoryInputs, folderInputs)
+	state := workbench.NewPageState(page, pageSize, total)
+	return ProjectAssetPage{Assets: summaries, CategoryCounts: categoryCounts, FolderCounts: folderCounts, Page: state.Page, PageSize: state.PageSize, Total: state.Total, HasMore: state.HasMore}, nil
 }
 
 func normalizeProjectPage(page int, pageSize int, maximum int) (int, int) {
-	if page < 1 {
-		page = 1
+	return workbench.NormalizePage(page, pageSize, maximum)
+}
+
+func projectOverviewMetricsForOutput(values workbench.OverviewMetrics) ProjectOverviewMetrics {
+	return ProjectOverviewMetrics{
+		UnitCount: values.UnitCount, CompletedUnitCount: values.CompletedUnitCount, TotalWordCount: values.TotalWordCount,
+		UnitsWithoutText: values.UnitsWithoutText, UnitsWithoutShots: values.UnitsWithoutShots, CanvasCount: values.CanvasCount,
+		AssetCount: values.AssetCount, ShotCount: values.ShotCount, PendingCandidateCount: values.PendingCandidateCount,
+		ReadyStoryboardCount: values.ReadyStoryboardCount, ReadyPrevizCount: values.ReadyPrevizCount, ReadyVideoCount: values.ReadyVideoCount,
+		RenderSucceededCount: values.RenderSucceededCount, StaleArtifactCount: values.StaleArtifactCount,
 	}
-	if pageSize < 1 {
-		pageSize = 40
+}
+
+func projectOverviewUnitsForOutput(units []workbench.OverviewUnit) []ProjectOverviewUnit {
+	result := make([]ProjectOverviewUnit, len(units))
+	for index, unit := range units {
+		result[index] = ProjectOverviewUnit{Unit: unit.Unit, ShotCount: unit.ShotCount, CandidateCount: unit.CandidateCount, CanvasCount: unit.CanvasCount}
 	}
-	if pageSize > maximum {
-		pageSize = maximum
+	return result
+}
+
+func projectShotReferenceError(err error) error {
+	if errors.Is(err, workbench.ErrShotAssetVersionUnavailable) || errors.Is(err, workbench.ErrShotProjectAssetUnavailable) {
+		return BadAuthRequest(err.Error())
 	}
-	return page, pageSize
+	return err
 }

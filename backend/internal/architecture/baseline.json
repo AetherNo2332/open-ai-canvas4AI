@@ -153,7 +153,7 @@
     {"id":"internal/app/project_asset_image.go:func:Service.bindProjectAssetImage:complexity","max":36,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/project_character.go:file_lines","max":859,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
     {"id":"internal/app/project_character.go:func:Service.finalizeCharacterTurnaroundTask:complexity","max":22,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
-    {"id":"internal/app/project_workbench_read.go:func:Service.ProjectUnitWorkspace:lines","max":160,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
+    {"id":"internal/app/project_workbench_read.go:func:Service.ProjectUnitWorkspace:lines","max":137,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/app/project_workflow.go:file_lines","max":676,"reason":"存量超大文件：按职责拆分，行数下降后同步下调或删除本条"},
     {"id":"internal/app/project_workflow.go:func:Service.RegisterTaskOutput:complexity","max":47,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/app/project_workflow.go:func:Service.RegisterTaskOutput:lines","max":142,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},

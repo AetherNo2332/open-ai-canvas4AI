@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/observability"
 
 	"gorm.io/gorm"
 )
@@ -19,7 +20,7 @@ const (
 	diagnosticSchemaVersion    = 1
 	diagnosticRedactionVersion = 1
 	diagnosticMaxWindow        = 24 * time.Hour
-	diagnosticMaxClientEvents  = 500
+	diagnosticMaxClientEvents  = observability.DiagnosticMaxClientEvents
 	diagnosticMaxBundleBytes   = 10 << 20
 	diagnosticMaxDescription   = 1000
 	diagnosticMaxEventText     = 4000
@@ -211,11 +212,14 @@ func (s *Service) PreviewDiagnosticBundle(userID string, req DiagnosticExportReq
 	if err != nil {
 		return nil, err
 	}
+	estimate := observability.EstimateDiagnosticPreview(len(collection.ClientEvents), len(collection.Tasks), len(collection.TaskLogs), len(collection.APICalls), collection.Truncated)
 	return &DiagnosticPreview{
-		ClientEventLimit: diagnosticMaxClientEvents,
-		TaskCount:        len(collection.Tasks), TaskLogCount: len(collection.TaskLogs), APICallCount: len(collection.APICalls),
-		EstimatedBytes: int64(2048 + len(collection.ClientEvents)*420 + len(collection.Tasks)*620 + len(collection.TaskLogs)*700 + len(collection.APICalls)*520),
-		WillTruncate:   collection.Truncated,
+		ClientEventLimit: estimate.ClientEventLimit,
+		TaskCount:        estimate.TaskCount,
+		TaskLogCount:     estimate.TaskLogCount,
+		APICallCount:     estimate.APICallCount,
+		EstimatedBytes:   estimate.EstimatedBytes,
+		WillTruncate:     estimate.WillTruncate,
 	}, nil
 }
 
@@ -282,12 +286,7 @@ func (s *Service) collectDiagnosticData(userID string, req DiagnosticExportReque
 	if err != nil {
 		return nil, err
 	}
-	clientEvents := req.ClientEvents
-	truncated := false
-	if len(clientEvents) > diagnosticMaxClientEvents {
-		clientEvents = clientEvents[len(clientEvents)-diagnosticMaxClientEvents:]
-		truncated = true
-	}
+	clientEvents, truncated := observability.TailWithinLimit(req.ClientEvents, diagnosticMaxClientEvents)
 	collection := &diagnosticCollection{
 		Window: window, Description: redactDiagnosticText(req.Description, diagnosticMaxDescription), TaskID: taskID, ProjectID: projectID, Truncated: truncated,
 		Runtime: diagnosticRuntimeRecord{

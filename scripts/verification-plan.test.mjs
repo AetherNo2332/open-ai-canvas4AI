@@ -9,6 +9,7 @@ import {
   collectChanges,
   collectPlan,
 } from "./verification-plan.mjs";
+import { policy as verificationPolicy } from "./verification-policy.mjs";
 
 const graph = [
   { importPath: "yingce/backend/internal/generation/polling", imports: [] },
@@ -85,6 +86,75 @@ test("mapped package includes reverse callers and integration group", () => {
   );
   assert.ok(ids(p).includes("backend:app:polling"));
   assert.ok(!ids(p).includes("backend:full"));
+});
+test("batch 3 domain packages select their app contract groups", () => {
+  const batch3Graph = [
+    {
+      importPath: "yingce/backend/internal/providercatalog",
+      imports: [],
+    },
+    {
+      importPath: "yingce/backend/internal/workbench",
+      imports: [],
+    },
+    {
+      importPath: "yingce/backend/internal/observability",
+      imports: [],
+    },
+    {
+      importPath: "yingce/backend/internal/app",
+      imports: [
+        "yingce/backend/internal/providercatalog",
+        "yingce/backend/internal/workbench",
+        "yingce/backend/internal/observability",
+      ],
+    },
+  ];
+  const cases = [
+    {
+      file: "backend/internal/providercatalog/model_catalog.go",
+      packageID: "backend:package:yingce/backend/internal/providercatalog",
+      appID: "backend:app:provider-catalog",
+      tests: [
+        "TestAdminProviderCatalogFiltersExpiredAndMarksUnsupported",
+        "TestFetchChannelModelCatalogSortsDeduplicatesAndNormalizes",
+      ],
+    },
+    {
+      file: "backend/internal/workbench/project_views.go",
+      packageID: "backend:package:yingce/backend/internal/workbench",
+      appID: "backend:app:project-workbench-read",
+      tests: [
+        "TestProjectWorkbenchReadEmptyProjectKeepsEmptyCollections",
+        "TestProjectUnitWorkspaceFiltersTasksByChapterAndShot",
+      ],
+    },
+    {
+      file: "backend/internal/observability/system_performance.go",
+      packageID: "backend:package:yingce/backend/internal/observability",
+      appID: "backend:app:observability",
+      tests: [
+        "TestAdminSystemPerformanceResponseContract",
+        "TestPreviewDiagnosticBundleContract",
+      ],
+    },
+  ];
+  for (const current of cases) {
+    const mapped = buildVerificationPlan({
+      mode: "affected",
+      base: "base",
+      head: "head",
+      changes: [{ status: "M", path: current.file }],
+      goPackages: batch3Graph,
+      policy: verificationPolicy,
+    });
+    const selected = mapped.selectedChecks;
+    assert.ok(selected.some((check) => check.id === current.packageID));
+    const appCheck = selected.find((check) => check.id === current.appID);
+    assert.ok(appCheck, current.file + " missing " + current.appID);
+    const pattern = new RegExp(appCheck.args[appCheck.args.indexOf("-run") + 1]);
+    for (const name of current.tests) assert.match(name, pattern);
+  }
 });
 test("shared, workflow, unknown app, mixed stacks", () => {
   for (const file of [

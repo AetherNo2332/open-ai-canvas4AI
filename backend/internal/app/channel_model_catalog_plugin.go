@@ -9,6 +9,7 @@ import (
 
 	"yingce/backend/internal/provider"
 	"yingce/backend/internal/provider/bailian"
+	"yingce/backend/internal/providercatalog"
 )
 
 var pluginsInitOnce sync.Once
@@ -62,16 +63,16 @@ func extendChannelModelCatalog(baseURL string, apiFormat string, headers []Outbo
 func providerCatalogItem(item provider.Model) ChannelModelCatalogItem {
 	modelType := ""
 	for _, capability := range item.Capability {
-		if normalized := normalizeCatalogModelType(capability); normalized != "" {
+		if normalized := providercatalog.NormalizeModelType(capability); normalized != "" {
 			modelType = normalized
 			break
 		}
 	}
 	return ChannelModelCatalogItem{
-		ID:                     strings.TrimPrefix(strings.TrimSpace(item.ID), "models/"),
+		ID:                     providercatalog.NormalizeModelID(item.ID),
 		DisplayName:            strings.TrimSpace(item.DisplayName),
 		ModelType:              modelType,
-		SupportedEndpointTypes: normalizeCatalogEndpointTypes(item.SupportedEndpointTypes),
+		SupportedEndpointTypes: providercatalog.NormalizeEndpointTypes(item.SupportedEndpointTypes),
 	}
 }
 
