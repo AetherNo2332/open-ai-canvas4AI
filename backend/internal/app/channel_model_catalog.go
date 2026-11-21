@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/providercatalog"
 )
 
 type ChannelModelsRequest struct {
@@ -169,7 +170,7 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 	seen := make(map[string]bool, len(items))
 	catalog := make([]ChannelModelCatalogItem, 0, len(items))
 	for _, item := range items {
-		name := strings.TrimPrefix(strings.TrimSpace(firstNonEmpty(item.ID, item.Name)), "models/")
+		name := providercatalog.NormalizeModelID(firstNonEmpty(item.ID, item.Name))
 		if name == "" || seen[name] {
 			continue
 		}
@@ -177,17 +178,17 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 		catalog = append(catalog, ChannelModelCatalogItem{
 			ID:                     name,
 			DisplayName:            strings.TrimSpace(item.DisplayName),
-			ModelType:              normalizeCatalogModelType(item.ModelType),
-			SupportedEndpointTypes: normalizeCatalogEndpointTypes(item.SupportedEndpointTypes),
+			ModelType:              providercatalog.NormalizeModelType(item.ModelType),
+			SupportedEndpointTypes: providercatalog.NormalizeEndpointTypes(item.SupportedEndpointTypes),
 			DefaultParameters: ChannelModelCatalogDefaultParameters{
 				AspectRatio:     strings.TrimSpace(item.DefaultParameters.AspectRatio),
 				DurationSeconds: strings.TrimSpace(item.DefaultParameters.DurationSeconds),
 				Resolution:      strings.TrimSpace(item.DefaultParameters.Resolution),
 			},
 			Options: ChannelModelCatalogOptions{
-				AspectRatio:     normalizeCatalogOptions(item.Options.AspectRatio),
-				DurationSeconds: normalizeCatalogOptions(item.Options.DurationSeconds),
-				Resolution:      normalizeCatalogOptions(item.Options.Resolution),
+				AspectRatio:     normalizeChannelModelCatalogOptions(item.Options.AspectRatio),
+				DurationSeconds: normalizeChannelModelCatalogOptions(item.Options.DurationSeconds),
+				Resolution:      normalizeChannelModelCatalogOptions(item.Options.Resolution),
 			},
 			SupportsImages: item.SupportsImages,
 			MinImages:      item.MinImages,
@@ -203,42 +204,17 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 	return catalog, nil
 }
 
-func normalizeCatalogModelType(value string) string {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	switch normalized {
-	case "text", "image", "video", "audio":
-		return normalized
-	default:
-		return ""
+func normalizeChannelModelCatalogOptions(options []ChannelModelCatalogOption) []ChannelModelCatalogOption {
+	domainOptions := make([]providercatalog.ModelOption, len(options))
+	for index, option := range options {
+		domainOptions[index] = providercatalog.ModelOption{Value: option.Value, Label: option.Label}
 	}
-}
-
-func normalizeCatalogOptions(options []ChannelModelCatalogOption) []ChannelModelCatalogOption {
-	seen := make(map[string]bool, len(options))
-	normalized := make([]ChannelModelCatalogOption, 0, len(options))
-	for _, option := range options {
-		value := strings.TrimSpace(option.Value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		normalized = append(normalized, ChannelModelCatalogOption{Value: value, Label: strings.TrimSpace(option.Label)})
+	normalized := providercatalog.NormalizeModelOptions(domainOptions)
+	result := make([]ChannelModelCatalogOption, len(normalized))
+	for index, option := range normalized {
+		result[index] = ChannelModelCatalogOption{Value: option.Value, Label: option.Label}
 	}
-	return normalized
-}
-
-func normalizeCatalogEndpointTypes(values []string) []string {
-	seen := make(map[string]bool, len(values))
-	normalized := make([]string, 0, len(values))
-	for _, value := range values {
-		item := strings.TrimSpace(value)
-		if item == "" || seen[item] {
-			continue
-		}
-		seen[item] = true
-		normalized = append(normalized, item)
-	}
-	return normalized
+	return result
 }
 
 func channelModelsUpstreamError(err error) error {

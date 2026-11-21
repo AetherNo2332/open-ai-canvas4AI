@@ -74,6 +74,27 @@ export const policy = {
       pattern:
         "^(TestProtocolRequestFromInput|TestProtocolResultManifest|TestDeclarativeProtocol|TestProviderTaskNotReadyStrictClassification|TestStreamingAgentParser)",
     },
+    {
+      directory: "backend/internal/providercatalog",
+      importPath: "yingce/backend/internal/providercatalog",
+      group: "provider-catalog",
+      pattern:
+        "^(TestAdminProviderCatalog|TestFetchChannelModelCatalog|TestChannelModelCatalogOption|TestInstallProviderCatalog|TestMetasoCatalogBuild)",
+    },
+    {
+      directory: "backend/internal/workbench",
+      importPath: "yingce/backend/internal/workbench",
+      group: "project-workbench-read",
+      pattern:
+        "^(TestProjectWorkbenchRead|TestProjectUnitWorkspace|TestProjectOverview|TestProjectCanvasesPage|TestProjectAssetsPage|TestProjectAssetCandidatesPage)",
+    },
+    {
+      directory: "backend/internal/observability",
+      importPath: "yingce/backend/internal/observability",
+      group: "observability",
+      pattern:
+        "^(TestAdminSystemPerformance|TestClearAdminRuntimeCache|TestPreviewDiagnosticBundle|TestExportDiagnosticBundle)",
+    },
   ],
   appFiles: {}, // Add only audited exact file -> integration group mappings.
   globalPrefixes: [

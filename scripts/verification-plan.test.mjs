@@ -9,7 +9,7 @@ import {
   collectChanges,
   collectPlan,
 } from "./verification-plan.mjs";
-import { policy } from "./verification-policy.mjs";
+import { policy as verificationPolicy } from "./verification-policy.mjs";
 
 const graph = [
   { importPath: "yingce/backend/internal/generation/polling", imports: [] },
@@ -133,7 +133,9 @@ test("batch 2 domain migrations retain package and app integration checks", () =
     { importPath: "yingce/backend/internal/app", imports: packages },
   ];
   for (const [dir, group, appTest] of domains) {
-    const mapped = policy.packages.find((item) => item.directory === dir);
+    const mapped = verificationPolicy.packages.find(
+      (item) => item.directory === dir,
+    );
     assert.ok(mapped, dir + " missing verification policy");
     assert.match(appTest, new RegExp(mapped.pattern), dir + " app test is not selected");
     const selected = ids(plan([dir + "/migrated.go"], { goPackages: batchGraph }));
@@ -145,6 +147,75 @@ test("batch 2 domain migrations retain package and app integration checks", () =
     );
     assert.ok(selected.includes("backend:app:" + group), dir + " missing app check");
     assert.ok(!selected.includes("backend:full"), dir + " unexpectedly expanded");
+  }
+});
+test("batch 3 domain packages select their app contract groups", () => {
+  const batch3Graph = [
+    {
+      importPath: "yingce/backend/internal/providercatalog",
+      imports: [],
+    },
+    {
+      importPath: "yingce/backend/internal/workbench",
+      imports: [],
+    },
+    {
+      importPath: "yingce/backend/internal/observability",
+      imports: [],
+    },
+    {
+      importPath: "yingce/backend/internal/app",
+      imports: [
+        "yingce/backend/internal/providercatalog",
+        "yingce/backend/internal/workbench",
+        "yingce/backend/internal/observability",
+      ],
+    },
+  ];
+  const cases = [
+    {
+      file: "backend/internal/providercatalog/model_catalog.go",
+      packageID: "backend:package:yingce/backend/internal/providercatalog",
+      appID: "backend:app:provider-catalog",
+      tests: [
+        "TestAdminProviderCatalogFiltersExpiredAndMarksUnsupported",
+        "TestFetchChannelModelCatalogSortsDeduplicatesAndNormalizes",
+      ],
+    },
+    {
+      file: "backend/internal/workbench/project_views.go",
+      packageID: "backend:package:yingce/backend/internal/workbench",
+      appID: "backend:app:project-workbench-read",
+      tests: [
+        "TestProjectWorkbenchReadEmptyProjectKeepsEmptyCollections",
+        "TestProjectUnitWorkspaceFiltersTasksByChapterAndShot",
+      ],
+    },
+    {
+      file: "backend/internal/observability/system_performance.go",
+      packageID: "backend:package:yingce/backend/internal/observability",
+      appID: "backend:app:observability",
+      tests: [
+        "TestAdminSystemPerformanceResponseContract",
+        "TestPreviewDiagnosticBundleContract",
+      ],
+    },
+  ];
+  for (const current of cases) {
+    const mapped = buildVerificationPlan({
+      mode: "affected",
+      base: "base",
+      head: "head",
+      changes: [{ status: "M", path: current.file }],
+      goPackages: batch3Graph,
+      policy: verificationPolicy,
+    });
+    const selected = mapped.selectedChecks;
+    assert.ok(selected.some((check) => check.id === current.packageID));
+    const appCheck = selected.find((check) => check.id === current.appID);
+    assert.ok(appCheck, current.file + " missing " + current.appID);
+    const pattern = new RegExp(appCheck.args[appCheck.args.indexOf("-run") + 1]);
+    for (const name of current.tests) assert.match(name, pattern);
   }
 });
 test("shared, workflow, unknown app, mixed stacks", () => {

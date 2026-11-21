@@ -5,12 +5,12 @@ import (
 	"errors"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
 	"yingce/backend/internal/buildinfo"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/observability"
 	"yingce/backend/internal/repository"
 
 	"github.com/redis/go-redis/v9"
@@ -149,10 +149,18 @@ func (s *Service) AdminSystemPerformance(ctx context.Context, actor *model.User)
 	disk := collectSystemDisk(s.dataDir)
 	databaseStats, databaseErr := s.repo.DatabaseRuntimeStats(ctx)
 	redisStats := s.collectRedisPerformance(ctx)
-	status := "healthy"
-	if databaseErr != nil || !databaseStats.Connected || !disk.Available || !disk.Writable || s.ValidateRuntime() != nil || (redisStats.Configured && !redisStats.Connected) {
-		status = "degraded"
+	statusInputs := observability.HealthSignals{
+		DatabaseError:     databaseErr != nil,
+		DatabaseConnected: databaseStats.Connected,
+		DiskAvailable:     disk.Available,
+		DiskWritable:      disk.Writable,
+		RedisConfigured:   redisStats.Configured,
+		RedisConnected:    redisStats.Connected,
 	}
+	if !statusInputs.DatabaseError && statusInputs.DatabaseConnected && statusInputs.DiskAvailable && statusInputs.DiskWritable {
+		statusInputs.RuntimeValid = s.ValidateRuntime() == nil
+	}
+	status := observability.OverallStatus(statusInputs)
 	return &AdminSystemPerformance{
 		CollectedAt: time.Now(), Status: status,
 		Host:   SystemPerformanceHost{Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, CPUCores: runtime.NumCPU(), GOMAXPROCS: runtime.GOMAXPROCS(0), ProcessID: os.Getpid(), UptimeSeconds: int64(time.Since(systemProcessStartedAt).Seconds()), Goroutines: runtime.NumGoroutine(), ActiveWorkerTasks: s.ActiveWorkerTasks(), LoadAverage: load, LoadAverageAvailable: loadAvailable},
@@ -164,20 +172,20 @@ func collectSystemMemory() SystemPerformanceMemory {
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	total, available, ok := platformMemory()
-	used := uint64(0)
-	percentage := float64(0)
-	if ok && total >= available {
-		used = total - available
-		if total > 0 {
-			percentage = float64(used) / float64(total) * 100
-		}
+	snapshot := observability.ProjectMemory(stats, total, available, ok)
+	return SystemPerformanceMemory{
+		SystemAvailable: snapshot.SystemAvailable,
+		TotalBytes:      snapshot.TotalBytes,
+		UsedBytes:       snapshot.UsedBytes,
+		AvailableBytes:  snapshot.AvailableBytes,
+		UsagePercent:    snapshot.UsagePercent,
+		HeapAllocBytes:  snapshot.HeapAllocBytes,
+		HeapSysBytes:    snapshot.HeapSysBytes,
+		SysBytes:        snapshot.SysBytes,
+		HeapObjects:     snapshot.HeapObjects,
+		GCCount:         snapshot.GCCount,
+		LastGCAt:        snapshot.LastGCAt,
 	}
-	result := SystemPerformanceMemory{SystemAvailable: ok, TotalBytes: total, UsedBytes: used, AvailableBytes: available, UsagePercent: percentage, HeapAllocBytes: stats.HeapAlloc, HeapSysBytes: stats.HeapSys, SysBytes: stats.Sys, HeapObjects: stats.HeapObjects, GCCount: stats.NumGC}
-	if stats.LastGC > 0 {
-		last := time.Unix(0, int64(stats.LastGC))
-		result.LastGCAt = &last
-	}
-	return result
 }
 
 func (s *Service) collectRedisPerformance(ctx context.Context) SystemPerformanceRedis {
@@ -204,22 +212,20 @@ func (s *Service) collectRedisPerformance(ctx context.Context) SystemPerformance
 		result.Keys = size
 	}
 	if info, err := s.coordinator.Redis().Info(ctx, "server", "clients", "memory", "stats").Result(); err == nil {
-		values := parseRedisInfo(info)
+		values := observability.ParseRedisInfo(info)
 		result.Version = values["redis_version"]
-		result.UptimeSeconds = redisInfoInt(values, "uptime_in_seconds")
-		result.UsedMemoryBytes = redisInfoInt(values, "used_memory")
-		result.PeakMemoryBytes = redisInfoInt(values, "used_memory_peak")
-		result.MaxMemoryBytes = redisInfoInt(values, "maxmemory")
+		result.UptimeSeconds = observability.RedisInfoInt(values, "uptime_in_seconds")
+		result.UsedMemoryBytes = observability.RedisInfoInt(values, "used_memory")
+		result.PeakMemoryBytes = observability.RedisInfoInt(values, "used_memory_peak")
+		result.MaxMemoryBytes = observability.RedisInfoInt(values, "maxmemory")
 		result.MaxMemoryPolicy = values["maxmemory_policy"]
-		result.Clients = redisInfoInt(values, "connected_clients")
-		result.BlockedClients = redisInfoInt(values, "blocked_clients")
-		result.OpsPerSecond = redisInfoInt(values, "instantaneous_ops_per_sec")
-		result.ExpiredKeys = redisInfoInt(values, "expired_keys")
-		result.EvictedKeys = redisInfoInt(values, "evicted_keys")
-		hits, misses := redisInfoInt(values, "keyspace_hits"), redisInfoInt(values, "keyspace_misses")
-		if hits+misses > 0 {
-			result.HitRate = float64(hits) / float64(hits+misses) * 100
-		}
+		result.Clients = observability.RedisInfoInt(values, "connected_clients")
+		result.BlockedClients = observability.RedisInfoInt(values, "blocked_clients")
+		result.OpsPerSecond = observability.RedisInfoInt(values, "instantaneous_ops_per_sec")
+		result.ExpiredKeys = observability.RedisInfoInt(values, "expired_keys")
+		result.EvictedKeys = observability.RedisInfoInt(values, "evicted_keys")
+		hits, misses := observability.RedisInfoInt(values, "keyspace_hits"), observability.RedisInfoInt(values, "keyspace_misses")
+		result.HitRate = observability.RedisCacheHitRate(hits, misses)
 	}
 	pool := s.coordinator.Redis().PoolStats()
 	result.Pool = SystemPerformanceRedisPool{Hits: pool.Hits, Misses: pool.Misses, Timeouts: pool.Timeouts, TotalConnections: pool.TotalConns, IdleConnections: pool.IdleConns, StaleConnections: pool.StaleConns, PendingRequests: pool.PendingRequests}
@@ -280,26 +286,6 @@ func (s *Service) ClearAdminRuntimeCache(ctx context.Context, actor *model.User,
 		return nil, err
 	}
 	return result, nil
-}
-
-func parseRedisInfo(info string) map[string]string {
-	values := make(map[string]string)
-	for _, line := range strings.Split(info, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, found := strings.Cut(line, ":")
-		if found {
-			values[key] = strings.TrimSpace(value)
-		}
-	}
-	return values
-}
-
-func redisInfoInt(values map[string]string, key string) int64 {
-	value, _ := strconv.ParseInt(values[key], 10, 64)
-	return value
 }
 
 func scanRedisKeyCount(ctx context.Context, client *redis.Client, pattern string) (int64, error) {
