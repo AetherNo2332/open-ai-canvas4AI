@@ -108,9 +108,13 @@ jobs:
         working-directory: docs
         run: bun install --frozen-lockfile
       - name: Install Agent dependencies
-        if: matrix.active && matrix.partition == 'agent'
+        if: matrix.active && (matrix.partition == 'agent' || matrix.partition == 'backend-rest')
         working-directory: agent
         run: npm ci --ignore-scripts
+      - name: Build Agent for PostgreSQL Worker recovery tests
+        if: matrix.active && matrix.partition == 'backend-rest'
+        working-directory: agent
+        run: npm run build
       - uses: docker/setup-qemu-action@v3
         if: matrix.active && matrix.partition == 'payment'
       - uses: docker/setup-buildx-action@v3

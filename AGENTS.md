@@ -146,7 +146,7 @@
 - 前端：`cd web && bun run build`；专项测试用 `bun test ...`。UI 退场规则用 `bun run lint`（只禁 antd Empty 和静态 `Modal.confirm`，不是风格检查）。
 - 后端：`cd backend && go test ./...`；涉及 PostgreSQL、资源、任务或权限时补对应集成/冒烟路径。
 - 后端架构守卫：`cd backend && go test -count=1 ./internal/architecture`；拆分或简化后端代码后按失败信息下调或删除 `baseline.json` 对应条目，不新增条目。
-- Agent Worker：`cd agent && npm ci --ignore-scripts && npm test`；改工具合同时补 `go test ./internal/app -run 'TestAgentToolSchemaArtifactMatchesRuntime' -count=1`。
+- Agent Worker：`cd agent && npm ci --ignore-scripts && npm test`；改工具合同时补 `go test ./internal/app -run 'TestAgentToolSchemaArtifactMatchesRuntime' -count=1`。CI 的 backend-rest 分区也构建同版本 Worker，Wake Event 的 SQLite、真实 PostgreSQL 默认通知、单 listener 和 poll/notify 恢复测试必须实际通过，不得以缺 DSN 或 Worker 构建产物跳过。
 - 部署脚本：`python -B -m unittest scripts.test_production_deployment scripts.test_agent_parity_container_commands scripts.test_production_agent_smoke scripts.test_install_agent_worker_id` 只检查隔离命令、配置和身份边界；真实跨进程入口是 `scripts/verify-production-agent-smoke.py`。运行容器前检查项目、挂载、端口和数据范围，不能把静态检查当成生产验收。
 - 云端 Agent：前端事件流和审批路径依赖后端 `/api/agent` 与 `/internal-agent`；改动后补充后端冒烟、Worker 运行和 SSE 断线重连验证。
 - 版本与更新日志：`node scripts/changelog.mjs --check`（与 CI 的 `Changelog entry` 任务同款）；打 tag 前确认根 `VERSION` 与 `CHANGELOG.md` 里的 `## <VERSION>` 行完全一致。
