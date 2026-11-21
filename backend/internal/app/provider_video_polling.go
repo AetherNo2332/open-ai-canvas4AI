@@ -6,9 +6,7 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"yingce/backend/internal/generation/polling"
@@ -110,21 +108,7 @@ func notifyTaskVideoPollEvent(ctx context.Context, _ string, event videoPollEven
 }
 
 // isProviderTaskNotReadyError 供 HTTP 客户端层判断响应是否代表任务尚未就绪；
-// 协议 body 的判定事实已同步到 polling.taskNotReady，这里的实现保持原语义。
+// 状态码与响应体判定统一由 polling 提供，这里只保留现有错误类型的适配。
 func isProviderTaskNotReadyError(httpErr providerHTTPError) bool {
-	if httpErr.StatusCode != 400 && httpErr.StatusCode != 404 {
-		return false
-	}
-	var payload map[string]any
-	if json.Unmarshal([]byte(httpErr.Body), &payload) != nil {
-		return false
-	}
-	code, message := providerFailureDetails(payload)
-	for _, value := range []string{code, message} {
-		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "task_not_exist", "task_not_found", "task not exist", "task not found":
-			return true
-		}
-	}
-	return false
+	return polling.TaskNotReady(httpErr.StatusCode, httpErr.Body)
 }

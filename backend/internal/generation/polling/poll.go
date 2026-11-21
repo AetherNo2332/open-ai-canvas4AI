@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -229,7 +228,7 @@ func Retryable(ctx context.Context, err error) (retry bool, notFound bool) {
 	}
 	var httpErr *HTTPStatusError
 	if errors.As(err, &httpErr) {
-		if (httpErr.StatusCode == 400 || httpErr.StatusCode == 404) && taskNotReady(httpErr.Body) {
+		if TaskNotReady(httpErr.StatusCode, httpErr.Body) {
 			return true, true
 		}
 		if httpErr.StatusCode == http.StatusNotFound {
@@ -267,6 +266,15 @@ func retryAfterOf(err error) time.Duration {
 		return httpErr.RetryAfter
 	}
 	return 0
+}
+
+// TaskNotReady 识别以 400/404 返回、但响应体明确表示任务尚未创建的错误。
+// 其他状态码或不可解析的响应仍按原错误处理，避免把鉴权、限流或网关故障当成任务未就绪。
+func TaskNotReady(statusCode int, body string) bool {
+	if statusCode != http.StatusBadRequest && statusCode != http.StatusNotFound {
+		return false
+	}
+	return taskNotReady(body)
 }
 
 // taskNotReady 识别协议 body 中的任务不存在类错误码；这类响应按未命中计数而不是失败。
@@ -346,16 +354,12 @@ func protocolErrorCode(value any) string {
 
 // IsTransientTransport 识别读写阶段的连接中断。Go 对读写阶段的 ECONNRESET 等错误
 // 返回 Temporary()=false，只看 net.Error 会把已提交任务的一次网络抖动当成永久失败。
+// Windows 原生套接字错误使用 WSA 常量，与通用 POSIX 常量数值不同，详见平台适配文件。
 func IsTransientTransport(err error) bool {
 	var urlError *url.Error
 	var opError *net.OpError
 	if !errors.As(err, &urlError) && !errors.As(err, &opError) {
 		return false
 	}
-	for _, target := range []error{io.EOF, syscall.ECONNRESET, syscall.ECONNABORTED, syscall.EPIPE} {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	return false
+	return errors.Is(err, io.EOF) || isTransientSocketError(err)
 }
