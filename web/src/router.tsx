@@ -135,15 +135,28 @@ export const router = createBrowserRouter([
     { path: "/share/canvas/:token", element: fullScreenDeferred(<SharedCanvasPage />), errorElement: <RouteErrorPage /> },
     // H5 真人认证回跳页：多在未登录的手机上打开，不进入工作区登录守卫。
     { path: "/ark-portrait/result", element: fullScreenDeferred(<ArkPortraitResultPage />), errorElement: <RouteErrorPage /> },
-    // 互动剧：列表页 + 编辑器，都在登录守卫之外，数据存本机 localStorage。
-    { path: "/interactive", element: fullScreenDeferred(<InteractiveStoryListPage />), errorElement: <RouteErrorPage /> },
-    { path: "/interactive/:storyId", element: fullScreenDeferred(<InteractiveStoryPage />), errorElement: <RouteErrorPage /> },
     ...(import.meta.env.DEV ? devRoutes() : []),
     {
         element: <AuthenticatedWorkspaceLayout />,
         errorElement: <RouteErrorPage />,
         children: [
             { path: "/", element: deferred(<CreatePage />) },
+            {
+                path: "/interactive",
+                element: (
+                    <RequireAuth>
+                        <RequireFeature feature="interactiveDramaEnabled">{deferred(<InteractiveStoryListPage />)}</RequireFeature>
+                    </RequireAuth>
+                ),
+            },
+            {
+                path: "/interactive/:storyId",
+                element: (
+                    <RequireAuth>
+                        <RequireFeature feature="interactiveDramaEnabled">{deferred(<InteractiveStoryPage />)}</RequireFeature>
+                    </RequireAuth>
+                ),
+            },
             { path: "/create", element: deferred(<CreatePage />) },
             { path: "/ecommerce", element: <RequireAuth>{deferred(<EcommercePage />)}</RequireAuth> },
             {

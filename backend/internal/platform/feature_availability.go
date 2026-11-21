@@ -29,6 +29,7 @@ const (
 	FeatureAgentSubagents        = "agentSubagents"
 	FeatureEcommerce             = "ecommerce"
 	FeatureEcommerceVideo        = "ecommerceVideo"
+	FeatureInteractiveDrama      = "interactiveDrama"
 )
 
 type FeatureAvailability struct {
@@ -48,6 +49,8 @@ type FeatureAvailability struct {
 	AgentSubagentsEnabled bool `json:"agentSubagentsEnabled"`
 	EcommerceEnabled      bool `json:"ecommerceEnabled"`
 	EcommerceVideoEnabled bool `json:"ecommerceVideoEnabled"`
+	// 互动剧是独立业务：入口与路由单独开关，默认关闭。
+	InteractiveDramaEnabled bool `json:"interactiveDramaEnabled"`
 }
 
 type PublicFeatureAvailability struct {
@@ -74,6 +77,7 @@ func DefaultFeatureAvailability() FeatureAvailability {
 		VideoWorkbenchEnabled:        false,
 		EcommerceEnabled:             false,
 		EcommerceVideoEnabled:        false,
+		InteractiveDramaEnabled:      false,
 	}
 }
 
@@ -151,6 +155,8 @@ func (s *Service) FeatureEnabled(feature string) (bool, error) {
 		return value.EcommerceEnabled, nil
 	case FeatureEcommerceVideo:
 		return value.EcommerceVideoEnabled, nil
+	case FeatureInteractiveDrama:
+		return value.InteractiveDramaEnabled, nil
 	default:
 		return false, errors.New("未知功能开放配置")
 	}
