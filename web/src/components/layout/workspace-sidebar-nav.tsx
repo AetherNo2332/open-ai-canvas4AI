@@ -1,6 +1,6 @@
 import { Popover } from "antd";
 import { ShoppingBag } from "lucide-react";
-import { ChevronDown, ChevronRight, CircleUserRound, History as HistoryIcon, Image as ImageIcon, PanelLeftClose, PanelLeftOpen, Plus, Video } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleUserRound, GitBranch, History as HistoryIcon, Image as ImageIcon, PanelLeftClose, PanelLeftOpen, Plus, Video } from "lucide-react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
@@ -46,6 +46,7 @@ const COLLAPSED_TITLE_KEYS: Record<string, string> = {
     home: "nav.collapsed.home",
     projects: "nav.collapsed.projects",
     canvas: "nav.collapsed.canvas",
+    interactive: "nav.collapsed.interactive",
     assets: "nav.collapsed.assets",
     skills: "nav.collapsed.skills",
     plugins: "nav.collapsed.plugins",
@@ -65,6 +66,7 @@ function buildNav(features: FeatureAvailability, t: TFunction): { groups: Worksp
                 ...(features.shortDramaEnabled ? [{ ...toolItem("projects", "/projects", t), title: t("nav.sidebar.projects") }] : []),
                 ...(features.ecommerceEnabled ? [{ id: "ecommerce", title: t("nav.sidebar.ecommerce"), icon: ShoppingBag, to: "/ecommerce" }] : []),
                 { ...toolItem("canvas", "/canvas", t), title: t("nav.sidebar.canvas") },
+                { id: "interactive", title: t("nav.sidebar.interactive"), icon: GitBranch, to: "/interactive" },
             ],
         },
         {
