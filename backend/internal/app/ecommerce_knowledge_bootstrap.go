@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"yingce/backend/internal/ecommerceknowledge"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
 )
@@ -21,7 +22,7 @@ import (
 // database so administrators can disable a domain source or reject one entry.
 // Each entry keeps a stable ID; DedupHash is the hash of the content as last
 // written by the bootstrap, which lets an upgrade detect local edits.
-const ecommerceBuiltinKnowledgePrefix = "meiye-kb"
+const ecommerceBuiltinKnowledgePrefix = ecommerceknowledge.BuiltinSourcePrefix
 
 type ecommerceBuiltinSourceSpec struct {
 	Domain, Name, URL string
