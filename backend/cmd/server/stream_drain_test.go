@@ -269,6 +269,7 @@ func TestServerDrainClosesRealSSERoutesAndFinishesOrdinaryWrite(t *testing.T) {
 		}
 	}
 
+	client.CloseIdleConnections()
 	shutdown, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := server.Config.Shutdown(shutdown); err != nil {
