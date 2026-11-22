@@ -2905,7 +2905,9 @@
                       "media-conversion",
                       "panorama",
                       "script",
+                      "shortplay-asset",
                       "skill",
+                      "submap",
                       "svg",
                       "text",
                       "video"
