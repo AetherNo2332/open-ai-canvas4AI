@@ -4,7 +4,7 @@
 
 2026-11-22 从远端核实 4AI `main`，fetch 后以同一提交建立分支 `codex/shortplay-canvas-port`。目标基线 `036b9190e56158e8fbe12912469bf59c2a8e2226`，供体固定为 `13731aae6c4cefadc2a1719e3e7e59b22e249f94`。[4AI 源码](https://github.com/AetherNo2332/open-ai-canvas4AI/tree/036b9190e56158e8fbe12912469bf59c2a8e2226) · [shortplay 源码](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6c4cefadc2a1719e3e7e59b22e249f94)
 
-当前已通过 S01–S13，覆盖行为基线、文档与关系、项目存储、子画布编辑器、内置镜头、同步与历史、用户预设、分享与 ZIP 往返、Agent 画布命令与审批、生成任务与逐节点回写、旧档只读预演、短剧/电商/批量/预演业务入口、历史项目切换与回退。实施验收 **13/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
+当前已通过 S01–S14，覆盖行为基线、文档与关系、项目存储、子画布编辑器、内置镜头、同步与历史、用户预设、分享与 ZIP 往返、Agent 画布命令与审批、生成任务与逐节点回写、旧档只读预演、短剧/电商/批量/预演业务入口、历史项目切换与回退、集成验收与旧写入器审计。实施验收 **14/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
 
 | 片号 | 交付 | 前置 | 状态 | 实现提交与验证证据 |
 |---|---|---|---|---|
@@ -21,7 +21,7 @@
 | S11 | 旧档只读预演与转换器 | S01、S02 | 通过 | 实现 `010852610`。DB `PayloadJSON` 与 ZIP `projects.json` 共用转换规则，输出身份映射、候选文档、字段差异、资源清单、阻断/警告和引用冲突；原件保持不变。详见下方「S11 实测记录」。 |
 | S12 | 分镜、批量、预演、短剧和电商入口 | S05、S10、S11 | 通过 | 实现 `743afa91b`。短剧投送引用物化、批量表字段重开保护、Agent 批量文字/分镜素材绑定、旧分镜行→镜头 submap 只读映射，以及电商/批量正式保存重开测试落地。详见下方「S12 实测记录」。 |
 | S13 | 旧项目切换与恢复 | S06、S08、S11、S12 | 通过 | 实现 `be492e89d`。新增分镜迁移预览/执行/回退接口，复用引用规范化、revision CAS、事务、历史前像和画布变更通知；在途任务阻断，切换后无新编辑可还原前像，有新编辑时生成迁移前副本。详见下方「S13 实测记录」。 |
-| S14 | 集成验收、灰度及旧写入器退役 | S07、S13 | 待施工 | 待记录 |
+| S14 | 集成验收、灰度及旧写入器退役 | S07、S13 | 通过 | 实现 `67c880f16`。修复迁移前像被 5 分钟节流吞掉的问题；SQLite/PostgreSQL 迁移专项、正式页面升级/恢复/副本回退、陈旧写入冲突与统一升级提示通过。详见下方「S14 实测记录」。 |
 
 ## 源码决定的施工边界
 
@@ -222,6 +222,19 @@
 
 在隔离环境按 S01 功能矩阵逐项复验，比较相同规模文档的打开、保存与重放耗时。覆盖 4AI 支持的数据库与项目 CI。内部新项目先行，存量按 S13 结果分批启用。跟踪保存失败、冲突、孤立引用、晚到任务和重复扣费。越权、丢数据或错误扣费时暂停切换并按 S13 恢复。全部活动写入口、旧草稿和历史档案均有明确归属后退役旧写入器，保留历史快照的读取与转换能力。涉及生产操作时单列影响项目、备份、恢复演练结果与操作窗口。
 
+### S14 实测记录
+
+- **实现** `67c880f16`。补齐迁移回退的页面入口、回退预览元数据和统一升级提示；修复 `before_shot_migration` 被自动快照 5 分钟节流吞掉的问题，并增加 SQLite/PostgreSQL 回归用例。
+- **迁移前像修复**：`SaveDocumentWithHistory` 与 `CaptureDocumentHistory` 共用 `canvasHistoryForceCapture`，把 `before_restore`、`before_resource_repair`、`before_shot_migration` 都作为不可重建的强制快照原因。回归用例先产生一条 `automatic` 快照，再在 5 分钟内执行迁移；移除修复时用例稳定失败（`before_shot_migration` 记录不存在），恢复修复后通过。修复前的历史画布 `s14-legacy-3661ac175e01` 只保留缺陷样本，没有回填快照；新画布复验从迁移开始重新取证。
+- **正式页面升级**：画布 `s14-verify-24c404acf7a4` 先产生 `automatic` 快照 r1，再在 r4 执行升级；数据库出现 `revision=4, reason=before_shot_migration, node_count=5`，迁移后 r5 为 17 节点、5 条投影连线、2 个镜头 submap。`submap-1__video-1.videoStartFrameNodeId = submap-1__image-1`，`old-image` / `old-video` 保持外层 scope。页面首次执行升级时因本地自动保存把 r3 推进到 r4，返回 `canvas_concurrent_write`；预览重新拉取后第二次成功，未丢数据，但这是一条需要保留的用户可见冲突与重试路径。
+- **恢复与副本**：无新编辑时页面菜单出现「分镜升级回退」，面板显示 r4→r5 并执行 `restore`，数据库写入 `revision=5, reason=before_restore, node_count=17`，恢复后 r6 回到 5 节点、旧分镜行 2 条。再次升级得到 r7 的 `before_shot_migration` 前像；随后在页面编辑 `submap-2` 图片提示词为「走廊逆光，霓虹反光」，多次自动保存推进到 r11。打开回退面板时重新拉取预览，显示 r6→r10 且只提供「保留当前并生成迁移前副本」；执行后跳转到新画布 `62893bbea0332cd0087a484b149cbc29`，副本 r1 为 5 节点、0 连线、2 条旧分镜行，原画布 r11 的提示词编辑与新结构保持不变。
+- **冲突语义**：正式迁移/整份保存使用 revision CAS；操作接口按最新文档合并，并用字段 `before` 值做冲突检查，`baseRevision` 不是文档级 CAS。实测一次陈旧但字段不冲突的标题写入被合并，较新的提示词编辑保留；一次 `submap-2__text-1.metadata.content` 的陈旧覆盖返回 HTTP 409 `canvas_field_conflict`，revision 保持 r11 且「走廊逆光，霓虹反光」未被覆盖。S13 中“旧标签页靠 revision CAS 拒绝所有过期写入”的表述应收窄为整份保存/迁移路径，操作路径以字段基线冲突为准。
+- **统一升级提示**：原两个独立横幅位于绝对定位顶栏下方，会与顶部视图切换控件重叠。新增 `CanvasMigrationNotice` 把「素材引用待迁移」和「旧分镜可升级」合并为一张卡，固定在 `--canvas-topbar-offset` 下方，按引用迁移优先排序并提示依赖关系；窄屏换行，按钮仍可见，专注模式和资产视图不渲染。页面实测两个按钮分别打开「确认画布的素材关联」和「把旧分镜行切换为镜头子画布」，提示卡不再遮挡顶部控件。
+- **耗时基线**：同一 200 节点、79,382 字节文档、10 轮、隔离 SQLite。S01 施工前样本 `open_avg=209.35µs`、`save_avg=3.05581ms`；S14 单独运行 `open_avg=281.7–389.84µs`、`open_max≈1.0–1.2ms`、`save_avg=3.41692–3.93453ms`、`save_max=4.5–5.2ms`。一次并行负载下的冷样本为 `open_avg=634.9µs`、`save_avg=4.7782ms`。均为 Windows 本机单机样本，不作为 SLA；PostgreSQL 同规模耗时未测。
+- **旧写入器审计**：活动文档写入仍统一落到 `UpsertCanvasProject` / `DeleteCanvasProject`（整份保存、operations、历史恢复、分镜/引用迁移），或由 Agent 命令服务维护版本与事件；项目归属写入和 v80 迁移投影也调用 `syncLegacyCanvasWrite`，不是另一套旧文档存储。字段引用文档拒绝连接写操作，旧 `connections` 只作渲染缓存。保留的旧读路径是 `legacy.PayloadJSON`/`projects.json` 预演、历史快照恢复和未升级旧文档读取；没有可安全删除的独立旧写入实现，按事实登记为“保留旧读、无活动旧写”。
+- **验证命令与结果**：`go test -count=1 ./internal/canvas/... ./internal/architecture` → PASS；`go test -count=1 ./internal/canvas -run 'TestShotMigration' -v` → SQLite 3 PASS、无 DSN 时 PostgreSQL 3 SKIP；PostgreSQL 17.12 隔离 schema 专用 `TestShotMigrationPostgres` → 3 PASS（4.88s / 4.44s / 4.98s）；`go test -count=1 ./internal/handler -skip 'TestAgentSDK'` → PASS（162.468s）；`bun test test/canvas-shot-migration.test.ts` → 2 PASS；`bun run typecheck`、`bun run lint`、`bun run build` → PASS。正式页面证据来自 `127.0.0.1:13001` + 重建后的 `127.0.0.1:18080` 后端，隔离 PostgreSQL 为 `canvas_s14`。
+- **未覆盖项**：没有真实模型渠道、审批卡、费用流水、对象存储和晚到任务回调，不能宣称真实扣费对账或跨进程竞态通过；没有真实生产历史数据库或 ZIP，旧档样本仍是按 schema 重建；ZIP 导入入口已能导入 v3/v4 项目，导入后可在正式画布执行分镜升级，但 `legacymigrate.PreviewZipProjects` 的逐字段预演仍是库级能力，没有独立 HTTP/UI 预演入口；PostgreSQL 只覆盖迁移专项，未做同规模耗时；没有执行任何生产/SSH/灰度操作，也未 push 或声称 CI 通过。真实账号权限矩阵、资源隔离和计费沿用 4AI 既有服务与处理器测试，未做生产多租户演练。
+
 ## 验证与接手
 
 Go 在 `backend` 下运行 `go test ./internal/canvas/...`，按分片追加实际涉及的 app、handler、database 与 repository 专项。Web 在 `web` 下运行 `bun run typecheck`，迁入后显式执行 `bun test test/canvas-relation-persistence.test.ts test/canvas-sync-rebase.test.ts test/canvas-submap.test.ts test/canvas-submap-snapshots.test.ts`。S04 至 S10 附对应正式页面或真实接口证据。集成按根目录 `bun scripts/verify-before-push.mjs --base 036b9190e56158e8fbe12912469bf59c2a8e2226 --mode full` 运行；记录实际退出状态、失败样本和与基线的差异。
@@ -244,3 +257,4 @@ Go 在 `backend` 下运行 `go test ./internal/canvas/...`，按分片追加实�
 | 2026-11-23 | S11 通过。提交 `010852610`。新增旧档只读预演包，DB `PayloadJSON` 与 ZIP `projects.json` 共用身份映射、旧句柄解释、候选文档、差异、资源清单和冲突选择；专项 5 PASS，画布/架构门禁通过。真实历史档案、绘图快照字节和写入切换待 S13/S14 | S12 迁移短剧、电商、批量与预演业务入口，逐入口创建项目并读回结果 |
 | 2026-11-23 | S12 通过。提交 `743afa91b`。短剧投送引用同时落字段与生成合同，批量表字段重开不再清空行输入，Agent 批量文字/分镜素材连线同步写行字段，旧分镜行只读映射输出镜头 submap 计划；电商与批量正式保存重开、短剧投影专项通过。服务/HTTP 入口通过，四个业务页面逐入口操作留 S14 | S13 以 S11 候选、源 revision 和 S12 规则切换历史项目，验收在途任务、重复切换、历史恢复与三种回退 |
 | 2026-11-23 | S13 通过。提交 `be492e89d`。分镜迁移预览/执行/回退接口、引用规范化、行转镜头 submap、在途任务门禁、revision CAS、历史前像、重复切换和资源复用通过；无新编辑可还原前像，有新编辑用新画布保全。处理器除两条既有 Agent SDK 外部进程用例外通过，Web 专项/类型检查/lint/build 通过。真实页面切换与晚到回调竞态留 S14 | S14 集成验收：正式页面逐入口复验、真实 PostgreSQL/对象存储/模型渠道、灰度与旧写入器退役 |
+| 2026-11-23 | S14 通过。提交 `67c880f16`。修复 `before_shot_migration` 被 5 分钟节流吞掉的真实回归并补 SQLite/PostgreSQL 用例；正式页面完成升级、恢复、再次升级、编辑后生成迁移前副本和新画布跳转。陈旧整份迁移返回 `canvas_concurrent_write`，陈旧字段覆盖返回 `canvas_field_conflict` 且不覆盖新编辑。两个迁移横幅合并为顶栏下方统一通知卡，消除与视图切换控件的重叠。画布/架构/处理器（跳过既有 AgentSDK 进程用例）、Web 专项、typecheck/lint/build 通过。真实渠道、扣费、对象存储、生产档案和灰度未执行 | S01–S14 全部通过；后续按推送前门禁验证并另行安排真实渠道/生产灰度演练 |
