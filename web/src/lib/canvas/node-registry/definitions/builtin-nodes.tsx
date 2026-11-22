@@ -51,8 +51,7 @@ const BUILTIN_NODE_TRAITS = {
         label: "子画布",
         icon: <PanelTop />,
         minSize: { width: 640, height: 260 },
-        // 编辑器接入（S04）前不暴露创建入口；关系与字段契约先进入注册表。
-        showInCreateMenu: false,
+        showInCreateMenu: true,
         showOutputConnection: false,
     },
     [CanvasNodeType.Script]: {

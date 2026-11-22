@@ -528,5 +528,13 @@ export const jaJP: DeepStringRecord<typeof zhCN> = {
         switchedVersion: "V{{number}} に切り替えました",
         cannotDeleteCurrent: "現在のバージョンは削除できません",
         savedAsNewNode: "新しいノード「{{title}}」として保存しました",
+        submapCopied: "サブキャンバスと全子ノードをコピーしました",
+        submapCopiedWithExternal: "サブキャンバスをコピーしました。外部参照 {{count}} 件はコピーされていません",
+        submapExpand: "サブキャンバスを展開",
+        submapCollapse: "サブキャンバスを折りたたむ",
+        submapResizeHandle: "サブキャンバスのサイズを変更",
+        submapChildCount: "{{count}} 個の子ノード",
+        submapEmptyPreview: "空のサブキャンバス",
+        submapNoNested: "サブキャンバスを入れ子にはできません",
     },
 };

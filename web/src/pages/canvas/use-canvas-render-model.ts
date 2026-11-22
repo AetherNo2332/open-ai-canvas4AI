@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 
 import { buildNodeGenerationInputs, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
+import { isSubmapNode } from "@/lib/canvas/canvas-submap";
 import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
 import { canvasNodeRenderBudget, canvasNodeRenderPadding, CANVAS_MAX_RENDERED_CONNECTIONS } from "@/lib/canvas/canvas-render-budget";
 import { buildCanvasNodeMentionReferenceMap, buildCanvasResourceReferences, buildToolMentionReference, parseToolMentionTokens, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -87,6 +88,7 @@ export function useCanvasRenderModel({
         const collapsedBatchChildIds = new Set<string>();
         const renderHiddenNodeIds = new Set<string>();
         const frameChildrenById = new Map<string, CanvasNodeData[]>();
+        const submapChildrenById = new Map<string, CanvasNodeData[]>();
         const canvasImageNodes: CanvasNodeData[] = [];
         const batchChildNodes: CanvasNodeData[] = [];
         const batchMotionById = new Map<string, { x: number; y: number; index: number }>();
@@ -103,9 +105,7 @@ export function useCanvasRenderModel({
 
             if (rootId && collapsingBatchIds.has(rootId)) renderHiddenNodeIds.delete(node.id);
             if (rootId) batchChildNodes.push(node);
-            const childIndex = root?.metadata?.isBatchRoot
-                ? batchChildIndexByRootId.get(root.id) || new Map((root.metadata.batchChildIds || []).map((childId, index) => [childId, index]))
-                : undefined;
+            const childIndex = root?.metadata?.isBatchRoot ? batchChildIndexByRootId.get(root.id) || new Map((root.metadata.batchChildIds || []).map((childId, index) => [childId, index])) : undefined;
             if (root?.metadata?.isBatchRoot && childIndex && !batchChildIndexByRootId.has(root.id)) batchChildIndexByRootId.set(root.id, childIndex);
             if (root && childIndex?.has(node.id)) batchChildCountById.set(root.id, (batchChildCountById.get(root.id) || 0) + 1);
             const parent = node.parentId ? nodeById.get(node.parentId) : undefined;
@@ -114,6 +114,13 @@ export function useCanvasRenderModel({
                 if (children) children.push(node);
                 else frameChildrenById.set(parent.id, [node]);
                 if (parent.metadata?.frame?.collapsed) renderHiddenNodeIds.add(node.id);
+            }
+            const submap = node.scopeId ? nodeById.get(node.scopeId) : undefined;
+            if (submap && isSubmapNode(submap)) {
+                const children = submapChildrenById.get(submap.id);
+                if (children) children.push(node);
+                else submapChildrenById.set(submap.id, [node]);
+                if (submap.metadata?.collapsed) renderHiddenNodeIds.add(node.id);
             }
 
             if (node.metadata?.isBatchRoot) {
@@ -135,9 +142,9 @@ export function useCanvasRenderModel({
             batchMotionById.set(node.id, { x: stackX - node.position.x, y: stackY - node.position.y, index: Math.max(index, 0) });
         }
 
-        return { batchChildCountById, batchMotionById, canvasImageNodes, collapsedBatchChildIds, frameChildrenById, renderHiddenNodeIds };
+        return { batchChildCountById, batchMotionById, canvasImageNodes, collapsedBatchChildIds, frameChildrenById, submapChildrenById, renderHiddenNodeIds };
     }, [collapsingBatchIds, nodeById, nodes]);
-    const { batchChildCountById, batchMotionById, canvasImageNodes, collapsedBatchChildIds, frameChildrenById, renderHiddenNodeIds } = nodeDerivedData;
+    const { batchChildCountById, batchMotionById, canvasImageNodes, collapsedBatchChildIds, frameChildrenById, submapChildrenById, renderHiddenNodeIds } = nodeDerivedData;
     const connectionLayerBounds = useMemo(() => {
         const padding = 144 / Math.max(viewport.k, 0.05);
         const left = -viewport.x / viewport.k - padding;
@@ -202,7 +209,9 @@ export function useCanvasRenderModel({
     // 这里的派生数据按候选集一次算好，挂载进度不再逐帧重渲染整页并重建引用映射。
     const overviewRef = useRef(false);
     const overview = canvasOverviewMode(viewport.k, overviewRef.current);
-    useEffect(() => { overviewRef.current = overview; }, [overview]);
+    useEffect(() => {
+        overviewRef.current = overview;
+    }, [overview]);
     const nodeRenderLODById = useMemo(() => {
         const result = new Map<string, CanvasNodeRenderLOD>();
         for (const node of candidateNodes) {
@@ -242,7 +251,7 @@ export function useCanvasRenderModel({
     const lightingNode = lightingNodeId ? nodeById.get(lightingNodeId) || null : null;
     const emotionNode = emotionNodeId ? nodeById.get(emotionNodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
-    const contextMenuNode = contextMenu?.type === "node" ? nodeById.get(contextMenu.nodeId) || null : null;
+    const contextMenuNode = contextMenu?.type === "node" ? nodeById.get(contextMenu.nodeId) || null : contextMenu?.type === "canvas" && contextMenu.scopeId ? nodeById.get(contextMenu.scopeId) || null : null;
     // Hover only drives transient affordances (toolbar/handles). Selection is
     // the explicit focus action that raises a node and highlights its graph.
     const activeNodeId = selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null;
@@ -395,6 +404,7 @@ export function useCanvasRenderModel({
         cropNode,
         displayConnections,
         frameChildrenById,
+        submapChildrenById,
         imageAssets,
         infoNode,
         regionEditNode,
@@ -418,4 +428,3 @@ export function useCanvasRenderModel({
         renderViewBounds: renderBounds.view,
     };
 }
-

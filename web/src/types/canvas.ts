@@ -784,6 +784,8 @@ export type ContextMenuState =
           y: number;
           position: Position;
           createOpen?: boolean;
+          /** 右键命中 submap 内容区时，新节点归属到该容器。 */
+          scopeId?: string;
       }
     | {
           type: "node";

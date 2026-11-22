@@ -60,11 +60,7 @@ export function findFrameDropTarget(nodes: CanvasNodeData[], draggedNodeIds: Set
     const dragged = nodes.filter((node) => draggedNodeIds.has(node.id));
     if (!dragged.length) return null;
 
-    return (
-        [...nodes]
-            .reverse()
-            .find((frame) => isValidFrameDropTarget(frame, dragged, draggedNodeIds))?.id || null
-    );
+    return [...nodes].reverse().find((frame) => isValidFrameDropTarget(frame, dragged, draggedNodeIds))?.id || null;
 }
 
 export type CanvasFrameDropIndex = CanvasSpatialIndex<CanvasNodeData>;
@@ -81,9 +77,7 @@ export function findFrameDropTargetFromIndex(index: CanvasFrameDropIndex, dragge
     const top = Math.min(...centers.map((center) => center.y)) - 0.01;
     const right = Math.max(...centers.map((center) => center.x)) + 0.01;
     const bottom = Math.max(...centers.map((center) => center.y)) + 0.01;
-    return [...index.query({ left, top, right, bottom })]
-        .reverse()
-        .find((frame) => isValidFrameDropTarget(frame, draggedNodes, draggedNodeIds, offset))?.id || null;
+    return [...index.query({ left, top, right, bottom })].reverse().find((frame) => isValidFrameDropTarget(frame, draggedNodes, draggedNodeIds, offset))?.id || null;
 }
 
 function isValidFrameDropTarget(frame: CanvasNodeData, dragged: CanvasNodeData[], draggedNodeIds: Set<string>, offset: Position = { x: 0, y: 0 }) {
@@ -106,6 +100,8 @@ export function applyFrameDrop(nodes: CanvasNodeData[], draggedNodeIds: Set<stri
     const canContain = target?.metadata?.folder?.assetFolderId ? canLinkedFolderArchive : target && isCanvasFolderNode(target) ? canFolderContain : canFrameContain;
     const next = nodes.map((node) => {
         if (!draggedNodeIds.has(node.id)) return node;
+        // submap 子节点的容纳键是 scopeId；拖进背板不会改变作用域归属。
+        if (node.scopeId) return node;
         if (!frameId) return node.parentId ? { ...node, parentId: undefined } : node;
         return target && canContain(node) ? { ...node, parentId: frameId } : node;
     });

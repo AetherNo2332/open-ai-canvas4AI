@@ -528,5 +528,13 @@ export const frFR: DeepStringRecord<typeof zhCN> = {
         switchedVersion: "Passage à la V{{number}}",
         cannotDeleteCurrent: "La version actuelle ne peut pas être supprimée",
         savedAsNewNode: "Enregistré comme nouveau nœud « {{title}} »",
+        submapCopied: "Sous-canevas copié avec tous ses nœuds enfants",
+        submapCopiedWithExternal: "Sous-canevas copié ; {{count}} références externes n'ont pas été copiées",
+        submapExpand: "Déplier le sous-canevas",
+        submapCollapse: "Replier le sous-canevas",
+        submapResizeHandle: "Redimensionner le sous-canevas",
+        submapChildCount: "{{count}} nœuds enfants",
+        submapEmptyPreview: "Sous-canevas vide",
+        submapNoNested: "Les sous-canevas ne peuvent pas être imbriqués",
     },
 };

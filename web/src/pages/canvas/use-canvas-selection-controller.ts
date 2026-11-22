@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type MouseEven
 import { applyCanvasNodeDragPreview, applyCanvasNodeSelectionPreview, applyCanvasSelectionPreview } from "@/lib/canvas/canvas-live-viewport";
 import { calculateNodeAlignment, createNodeAlignmentContext, sameStringSet, type NodeAlignmentContext } from "@/lib/canvas/canvas-project-domain";
 import { applyFrameDrop, buildCanvasFrameDropIndex, findFrameDropTargetFromIndex, getFrameChildIds, isFrameNode } from "@/lib/canvas/canvas-frame";
+import { getSubmapChildIds, isSubmapNode } from "@/lib/canvas/canvas-submap";
+import { clampSubmapChildPositions } from "@/lib/canvas/canvas-submap-layout";
 import {
     applyCanvasSelectionStrategy,
     canvasSelectionHitsBounds,
@@ -206,6 +208,7 @@ export function useCanvasSelectionController({
             currentNodes.forEach((node) => {
                 if (nextSelected.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));
                 if (nextSelected.has(node.id) && isFrameNode(node)) getFrameChildIds(node.id, currentNodes).forEach((childId) => dragIds.add(childId));
+                if (nextSelected.has(node.id) && isSubmapNode(node)) getSubmapChildIds(node.id, currentNodes).forEach((childId) => dragIds.add(childId));
             });
             currentNodes.forEach((node) => {
                 if (dragIds.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));
@@ -266,7 +269,8 @@ export function useCanvasSelectionController({
                 const target = targetId ? positioned.find((node) => node.id === targetId) : undefined;
                 const linkedFolder = target?.metadata?.folder?.assetFolderId ? target : undefined;
                 // 素材库文件夹只建立归档关系，不把画布节点变成其本地子节点。
-                setNodes(linkedFolder ? positioned : applyFrameDrop(positioned, draggedNodeIds, targetId));
+                const dropped = linkedFolder ? positioned : applyFrameDrop(positioned, draggedNodeIds, targetId);
+                setNodes(clampSubmapChildPositions(dropped, new Set(dragRef.current.draggedRenderNodeIds)));
                 if (linkedFolder)
                     onLinkedFolderDrop?.(
                         linkedFolder,

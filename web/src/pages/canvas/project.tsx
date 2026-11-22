@@ -1332,6 +1332,7 @@ function CanvasViewportPage() {
         setBatchPrimary,
         toggleBatchExpanded,
         toggleFrameCollapsed,
+        toggleSubmapCollapsed,
         toggleNodeFreeResize,
     } = useCanvasNodeEditor({
         canvasId: projectId,
@@ -1479,6 +1480,7 @@ function CanvasViewportPage() {
         cropNode,
         displayConnections,
         frameChildrenById,
+        submapChildrenById,
         infoNode,
         regionEditNode,
         imageEditNode,
@@ -2000,6 +2002,21 @@ function CanvasViewportPage() {
             setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position: screenToCanvas(event.clientX, event.clientY) });
         },
         [closeConnectionCreateMenu, screenToCanvas],
+    );
+
+    /** submap 内容区右键：发画布同款菜单，但带 scopeId 让新增节点归属该容器。 */
+    const handleSubmapContextMenu = useCallback(
+        (event: ReactMouseEvent, submapId: string) => {
+            event.preventDefault();
+            event.stopPropagation();
+            closeConnectionCreateMenu();
+            const selection = new Set([submapId]);
+            selectedNodeIdsRef.current = selection;
+            setSelectedNodeIds(selection);
+            setSelectedConnectionId(null);
+            setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position: screenToCanvas(event.clientX, event.clientY), scopeId: submapId });
+        },
+        [closeConnectionCreateMenu, screenToCanvas, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds],
     );
 
     const handleNodeContextMenu = useCallback(
@@ -3051,6 +3068,7 @@ function CanvasViewportPage() {
                                                     nodeRenderLODById={nodeRenderLODById}
                                                     nodeStackOrder={nodeStackOrder}
                                                     frameChildrenById={frameChildrenById}
+                                                    submapChildrenById={submapChildrenById}
                                                     linkedFolderPreviewNodesById={linkedFolderPreviewNodesById}
                                                     dragPreview={dragPreview}
                                                     selectedNodeIds={selectedNodeIds}
@@ -3080,10 +3098,12 @@ function CanvasViewportPage() {
                                                     onConnectStart={handleConnectStart}
                                                     onNodeResize={handleNodeResize}
                                                     onToggleFrame={handleFrameToggle}
+                                                    onToggleSubmap={toggleSubmapCollapsed}
                                                     onFolderStyleChange={handleFolderStyleChange}
                                                     onFolderThemeChange={handleFolderThemeChange}
                                                     onNodeTitleChange={handleNodeTitleChange}
                                                     onNodeContextMenu={handleNodeContextMenu}
+                                                    onSubmapContextMenu={handleSubmapContextMenu}
                                                     onNodeContentChange={handleNodeContentChange}
                                                     onToggleBatch={toggleBatchExpanded}
                                                     onSetBatchPrimary={setBatchPrimary}
@@ -3401,7 +3421,7 @@ function CanvasViewportPage() {
                                 selectedCount={selectedNodeIds.size}
                                 screenToCanvas={screenToCanvas}
                                 onClose={() => setContextMenu(null)}
-                                onAddNode={(type, position) => createNode(type, position)}
+                                onAddNode={(type, position, content, scopeId) => createNode(type, position, undefined, content, scopeId)}
                                 onAddFolder={createFolder}
                                 onChooseStyle={() => setStylePickerOpen(true)}
                                 onOpenPrevis={(position) => setPrevisTemplateRequest({ position })}
@@ -3434,10 +3454,11 @@ function CanvasViewportPage() {
                                 onUploadToArkPrivateAsset={confirmUploadNodeImageToArkPrivateAsset}
                                 onSetAssetCategory={(nodeId, assetCategory) => handleConfigNodeChange(nodeId, { assetCategory })}
                                 onToggleFrame={(node) => handleFrameToggle(node.id)}
+                                onToggleSubmap={(node) => toggleSubmapCollapsed(node.id)}
                                 onSpreadSelection={spreadSelectedNodes}
                                 onCopySelection={copySelectedNodes}
                                 onDeleteSelection={() => deleteNodes(selectedNodeIds)}
-                                onSendToAgent={() => sendSelectionToAgent(contextMenu?.type === "node" && selectedNodeIds.size <= 1 ? contextMenu.nodeId : undefined)}
+                                onSendToAgent={() => sendSelectionToAgent(contextMenu?.type === "node" && selectedNodeIds.size <= 1 ? contextMenu.nodeId : contextMenu?.type === "canvas" ? contextMenu.scopeId : undefined)}
                                 downloadableSelectionCount={contextMenu && selectedNodeIds.size > 1 ? nodes.filter((node) => selectedNodeIds.has(node.id) && canDownloadCanvasNodeMedia(node)).length : 0}
                                 onDownloadSelection={() => void downloadNodesMedia(nodesRef.current.filter((node) => selectedNodeIds.has(node.id)))}
                                 onAdoptToDrama={drama.active ? drama.openAdopt : undefined}

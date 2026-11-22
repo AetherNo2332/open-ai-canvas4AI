@@ -15,6 +15,10 @@ import { isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/can
 import { createCanvasImageEditCopy } from "@/lib/canvas/canvas-image-edit-copy";
 import { copyImageLayerSources } from "@/lib/canvas/canvas-image-layers";
 import { adoptMediaVersion, createNodeFromMediaVersion, mediaVersionAdoptBlock, removeMediaVersion } from "@/lib/canvas/canvas-media-versions";
+import { getSubmapChildIds, getSubmapChildren, isSubmapNode } from "@/lib/canvas/canvas-submap";
+import { fitSubmapToChildren, nextSubmapChildPosition } from "@/lib/canvas/canvas-submap-layout";
+import { allocateCopiedCanvasNodeIds, countSubmapExternalReferences, isCopiedSubmapTreeNode, submapCopySources } from "@/lib/canvas/canvas-submap-operations";
+import { useCanvasIdAllocator, useCanvasIdBatcher } from "./use-canvas-id-allocator";
 import { canvasEditLeases } from "@/services/canvas-edit-leases";
 import { CanvasNodeType, type CanvasConnection, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ContextMenuState, type Position } from "@/types/canvas";
 import { cloneCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
@@ -68,6 +72,8 @@ export function useCanvasNodeOperations({
     const effectiveConfig = useEffectiveConfig();
     const tldrawLicenseKey = useUserStore((state) => state.drawingEngine.tldrawLicenseKey);
     const runtimeStatuses = usePluginStore((state) => state.runtimeStatuses);
+    const allocateCanvasId = useCanvasIdAllocator(projectId);
+    const beginIdBatch = useCanvasIdBatcher(projectId);
     const clipboardRef = useRef<CanvasClipboard | null>(null);
     const preferCopiedNodesRef = useRef(false);
     const markerWritePendingRef = useRef(false);
@@ -156,9 +162,15 @@ export function useCanvasNodeOperations({
     );
 
     const createNode = useCallback(
-        (type: CanvasNodeTypeId, position?: Position, workflowProvider?: "runninghub") => {
+        (type: CanvasNodeTypeId, position?: Position, workflowProvider?: "runninghub", initialContent?: string, scopeId?: string) => {
             if (type === CanvasNodeType.Drawing && !isDrawingEngineAvailable(defaultDrawingEngine, tldrawLicenseKey)) {
                 message.error(translate("canvasPage.connection.tldrawLicenseMissing"));
+                return;
+            }
+            const submap = scopeId ? nodesRef.current.find((item) => item.id === scopeId && isSubmapNode(item)) : undefined;
+            if (scopeId && (!submap || submap.metadata?.locked)) return;
+            if (scopeId && type === CanvasNodeType.Submap) {
+                message.warning(translate("canvasPage.nodeOps.submapNoNested"));
                 return;
             }
             const selectedWorkflowProvider = type === CanvasNodeType.Config ? workflowProvider || (workflowProviderPluginEnabled(runtimeStatuses, "runninghub") ? "runninghub" : undefined) : undefined;
@@ -168,10 +180,28 @@ export function useCanvasNodeOperations({
             }
             const workflowTitle = type === CanvasNodeType.Config && selectedWorkflowProvider === "runninghub" ? translate("canvasPage.connection.runningHubWorkflow") : undefined;
             const metadata: CanvasNodeMetadata | undefined =
-                type === CanvasNodeType.Drawing ? { drawingEngine: defaultDrawingEngine } : type === CanvasNodeType.Config ? { generationMode: "image", workflowProvider: selectedWorkflowProvider || "model" } : undefined;
-            const node = createCanvasNode(type, position || getCanvasCenter(), metadata);
+                type === CanvasNodeType.Drawing
+                    ? { drawingEngine: defaultDrawingEngine }
+                    : type === CanvasNodeType.Config
+                      ? { generationMode: "image", workflowProvider: selectedWorkflowProvider || "model" }
+                      : type === CanvasNodeType.Text && initialContent
+                        ? { content: initialContent, status: "idle", fontSize: 14 }
+                        : undefined;
+            const prefix = submap ? `${submap.id}__${type}` : type;
+            const nodeId = allocateCanvasId(
+                prefix,
+                nodesRef.current.map((item) => item.id),
+            );
+            const siblings = submap ? getSubmapChildren(submap.id, nodesRef.current) : [];
+            const anchor = submap ? nextSubmapChildPosition(submap, siblings) : position || getCanvasCenter();
+            const node = createCanvasNode(type, anchor, metadata, nodeId);
             if (workflowTitle) node.title = workflowTitle;
-            commitNodes([...nodesRef.current, node]);
+            if (submap) {
+                node.position = anchor;
+                node.scopeId = submap.id;
+            }
+            const nextNodes = [...nodesRef.current, node];
+            commitNodes(submap ? fitSubmapToChildren(nextNodes, submap.id) : nextNodes);
             selectNodes(new Set([node.id]));
             if (type === CanvasNodeType.Script) setDialogNodeId(null);
             if (
@@ -181,29 +211,38 @@ export function useCanvasNodeOperations({
                 type !== CanvasNodeType.Audio &&
                 type !== CanvasNodeType.Frame &&
                 type !== CanvasNodeType.Drawing &&
-                type !== CanvasNodeType.MediaConversion
+                type !== CanvasNodeType.MediaConversion &&
+                type !== CanvasNodeType.Submap
             )
                 setDialogNodeId(node.id);
         },
-        [commitNodes, defaultDrawingEngine, effectiveConfig.runningHub.enabled, effectiveConfig.runningHub.workflows.length, getCanvasCenter, message, nodesRef, runtimeStatuses, selectNodes, setDialogNodeId, tldrawLicenseKey],
+        [allocateCanvasId, commitNodes, defaultDrawingEngine, effectiveConfig.runningHub.enabled, effectiveConfig.runningHub.workflows.length, getCanvasCenter, message, nodesRef, runtimeStatuses, selectNodes, setDialogNodeId, tldrawLicenseKey],
     );
 
     const createFolder = useCallback(
         (position?: Position, linked?: { id: string; projectId: string; title: string; style: CanvasFolderStyle; theme: CanvasFolderTheme; createdAt: string }) => {
-            const folder = createCanvasNode(CanvasNodeType.Frame, position || getCanvasCenter(), {
-                frame: {
-                    collapsed: true,
-                    expandedWidth: NODE_DEFAULT_SIZE[CanvasNodeType.Frame].width,
-                    expandedHeight: NODE_DEFAULT_SIZE[CanvasNodeType.Frame].height,
+            const folder = createCanvasNode(
+                CanvasNodeType.Frame,
+                position || getCanvasCenter(),
+                {
+                    frame: {
+                        collapsed: true,
+                        expandedWidth: NODE_DEFAULT_SIZE[CanvasNodeType.Frame].width,
+                        expandedHeight: NODE_DEFAULT_SIZE[CanvasNodeType.Frame].height,
+                    },
+                    folder: {
+                        style: linked?.style || "glass",
+                        theme: linked?.theme || "aurora",
+                        createdAt: linked?.createdAt || new Date().toISOString(),
+                        assetFolderId: linked?.id,
+                        projectId: linked?.projectId,
+                    },
                 },
-                folder: {
-                    style: linked?.style || "glass",
-                    theme: linked?.theme || "aurora",
-                    createdAt: linked?.createdAt || new Date().toISOString(),
-                    assetFolderId: linked?.id,
-                    projectId: linked?.projectId,
-                },
-            });
+                allocateCanvasId(
+                    CanvasNodeType.Frame,
+                    nodesRef.current.map((node) => node.id),
+                ),
+            );
             folder.title = linked?.title || translate("canvasPage.nodeOps.myFiles");
             folder.width = FOLDER_COLLAPSED_WIDTH;
             folder.height = FOLDER_COLLAPSED_HEIGHT;
@@ -211,7 +250,7 @@ export function useCanvasNodeOperations({
             selectNodes(new Set([folder.id]));
             message.success(linked ? translate("canvasPage.nodeOps.assetFolderPlaced") : translate("canvasPage.nodeOps.folderCreated"));
         },
-        [commitNodes, getCanvasCenter, message, nodesRef, selectNodes],
+        [allocateCanvasId, commitNodes, getCanvasCenter, message, nodesRef, selectNodes],
     );
 
     const arrangeSelectedNodes = useCallback(
@@ -303,6 +342,10 @@ export function useCanvasNodeOperations({
                 workflowTitle: translate("canvasPage.nodeOps.storyboardGroup"),
                 frame: { collapsed: false, expandedWidth: frameWidth, expandedHeight: frameHeight },
             },
+            allocateCanvasId(
+                CanvasNodeType.Frame,
+                nodesRef.current.map((node) => node.id),
+            ),
         );
         frame.title = translate("canvasPage.nodeOps.storyboardGroupTitle", { count: images.length });
         frame.position = { x: left - padding, y: top - FRAME_HEADER_HEIGHT - padding };
@@ -330,7 +373,7 @@ export function useCanvasNodeOperations({
         commitNodes(nextNodes);
         selectNodes(new Set([frame.id]));
         message.success(translate("canvasPage.nodeOps.storyboardGroupCreated", { count: images.length }));
-    }, [commitNodes, message, nodesRef, selectNodes, selectedNodeIdsRef]);
+    }, [allocateCanvasId, commitNodes, message, nodesRef, selectNodes, selectedNodeIdsRef]);
 
     const createReferenceGroup = useCallback(() => {
         const media = nodesRef.current
@@ -359,6 +402,10 @@ export function useCanvasNodeOperations({
                 referenceAssetNodeIds: media.map((node) => node.id),
                 frame: { collapsed: false, expandedWidth: frameWidth, expandedHeight: frameHeight },
             },
+            allocateCanvasId(
+                CanvasNodeType.Frame,
+                nodesRef.current.map((node) => node.id),
+            ),
         );
         frame.title = translate("canvasPage.nodeOps.referenceGroupTitle", { count: media.length });
         frame.position = { x: left - padding, y: top - FRAME_HEADER_HEIGHT - padding };
@@ -385,7 +432,7 @@ export function useCanvasNodeOperations({
         ]);
         selectNodes(new Set([frame.id]));
         message.success(translate("canvasPage.nodeOps.referenceGroupCreated", { count: media.length }));
-    }, [commitNodes, message, nodesRef, selectNodes, selectedNodeIdsRef]);
+    }, [allocateCanvasId, commitNodes, message, nodesRef, selectNodes, selectedNodeIdsRef]);
 
     const toggleNodeLocked = useCallback(
         (nodeId: string) => {
@@ -445,7 +492,12 @@ export function useCanvasNodeOperations({
             const source = nodesRef.current.find((node) => node.id === nodeId);
             if (!source) return;
             if (duplicateMode === "linked-copy") {
-                const copy = createCanvasImageEditCopy(source, nodesRef.current);
+                const copy = createCanvasImageEditCopy(source, nodesRef.current, {
+                    nodeId: allocateCanvasId(
+                        "image",
+                        nodesRef.current.map((node) => node.id),
+                    ),
+                });
                 if (!copy) return;
                 commitNodes([...nodesRef.current, copy.node]);
                 commitConnections([...connectionsRef.current, copy.connection]);
@@ -453,12 +505,14 @@ export function useCanvasNodeOperations({
                 setDialogNodeId(null);
                 return copy.node.id;
             }
-            const sources = isFrameNode(source) ? [source, ...getFrameChildren(source.id, nodesRef.current)] : copyImageLayerSources(source, nodesRef.current);
-            const idMap = new Map(sources.map((node, index) => [node.id, `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`]));
+            const sourceIsSubmap = isSubmapNode(source);
+            const sources = isFrameNode(source) ? [source, ...getFrameChildren(source.id, nodesRef.current)] : sourceIsSubmap ? submapCopySources(source, nodesRef.current) : copyImageLayerSources(source, nodesRef.current);
+            const idBatch = beginIdBatch([...nodesRef.current.map((node) => node.id), ...connectionsRef.current.map((connection) => connection.id)]);
+            const idMap = allocateCopiedCanvasNodeIds(sources, idBatch.allocate);
             const independentVideoVariant = duplicateMode === "variant" && source.type === CanvasNodeType.Video;
             const sourceParent = source.parentId ? nodesRef.current.find((node) => node.id === source.parentId) : undefined;
             const detachIndependentVideoParent = independentVideoVariant && Boolean(source.metadata?.dramaRef || sourceParent?.metadata?.dramaRef);
-            const versionRootId = duplicateMode === "variant" && !isFrameNode(source) && !independentVideoVariant ? source.metadata?.versionOfNodeId || source.id : undefined;
+            const versionRootId = duplicateMode === "variant" && !isFrameNode(source) && !sourceIsSubmap && !independentVideoVariant ? source.metadata?.versionOfNodeId || source.id : undefined;
             const versionLabel = versionRootId ? nextCanvasVersionLabel(versionRootId, nodesRef.current) : undefined;
             const copyTitle =
                 duplicateMode !== "variant"
@@ -472,6 +526,7 @@ export function useCanvasNodeOperations({
                     clearMediaResult: independentVideoVariant && node.type === CanvasNodeType.Video,
                     preserveExternalReferences: independentVideoVariant && node.type === CanvasNodeType.Video,
                     clearDramaBinding: independentVideoVariant && node.type === CanvasNodeType.Video,
+                    dropExternalReferences: sourceIsSubmap,
                 });
                 if (node.type === CanvasNodeType.Drawing) {
                     metadata.drawingId = `${idMap.get(node.id)}-document`;
@@ -491,6 +546,7 @@ export function useCanvasNodeOperations({
                     title: node.id === source.id ? copyTitle || translate("canvasPage.nodeOps.copyTitle", { title: node.title.replace(/ · [A-Z]$/, ""), label: versionLabel || translate("canvasPage.nodeOps.copy") }) : node.title,
                     position: { x: node.position.x + 36, y: node.position.y + 36 },
                     parentId: node.id === source.id && detachIndependentVideoParent ? undefined : node.parentId ? idMap.get(node.parentId) || node.parentId : undefined,
+                    scopeId: node.scopeId ? idMap.get(node.scopeId) : undefined,
                     metadata,
                 };
             });
@@ -498,7 +554,7 @@ export function useCanvasNodeOperations({
             const copiedConnections = connectionsRef.current
                 .filter((connection) => copiedIds.has(connection.fromNodeId) && copiedIds.has(connection.toNodeId))
                 .map((connection) => ({ ...connection, id: nanoid(), fromNodeId: idMap.get(connection.fromNodeId)!, toNodeId: idMap.get(connection.toNodeId)! }));
-            if (!isFrameNode(source)) {
+            if (!isFrameNode(source) && !sourceIsSubmap) {
                 connectionsRef.current.filter((connection) => connection.toNodeId === source.id && !copiedIds.has(connection.fromNodeId)).forEach((connection) => copiedConnections.push({ ...connection, id: nanoid(), toNodeId: idMap.get(source.id)! }));
             }
             const id = idMap.get(source.id)!;
@@ -510,6 +566,7 @@ export function useCanvasNodeOperations({
                 ),
                 ...copiedNodes,
             ];
+            idBatch.commit();
             commitNodes(nextNodes);
             commitConnections([...connectionsRef.current, ...copiedConnections]);
             selectNodes(new Set([id]));
@@ -520,10 +577,14 @@ export function useCanvasNodeOperations({
                     const sourceNode = sourceByTargetId.get(targetNode.id);
                     if (sourceNode) cloneDrawingForNode(sourceNode, targetNode, translate("canvasPage.nodeOps.drawingCopyFailed"));
                 });
-            if (source.type === CanvasNodeType.Script) setDialogNodeId(null);
+            const droppedReferences = sourceIsSubmap ? countSubmapExternalReferences(sources, copiedIds) : 0;
+            if (sourceIsSubmap) {
+                message.success(droppedReferences ? translate("canvasPage.nodeOps.submapCopiedWithExternal", { count: droppedReferences }) : translate("canvasPage.nodeOps.submapCopied"));
+                setDialogNodeId(null);
+            } else if (source.type === CanvasNodeType.Script) setDialogNodeId(null);
             else if (!isFrameNode(source) && source.type !== CanvasNodeType.Drawing) setDialogNodeId(id);
         },
-        [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, nodesRef, selectNodes, setDialogNodeId],
+        [allocateCanvasId, beginIdBatch, cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, message, nodesRef, selectNodes, setDialogNodeId],
     );
 
     const setPrimaryVersion = useCallback(
@@ -587,7 +648,14 @@ export function useCanvasNodeOperations({
         (nodeId: string, versionId: string) => {
             const target = nodesRef.current.find((node) => node.id === nodeId);
             if (!target) return null;
-            const extracted = createNodeFromMediaVersion(target, versionId, `${target.type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+            const extracted = createNodeFromMediaVersion(
+                target,
+                versionId,
+                allocateCanvasId(
+                    target.type,
+                    nodesRef.current.map((node) => node.id),
+                ),
+            );
             if (!extracted) {
                 message.error(translate("canvasPage.nodeOps.versionMediaUnavailable"));
                 return null;
@@ -597,7 +665,7 @@ export function useCanvasNodeOperations({
             message.success(translate("canvasPage.nodeOps.savedAsNewNode", { title: extracted.title }));
             return extracted.id;
         },
-        [commitNodes, message, nodesRef, selectNodes],
+        [allocateCanvasId, commitNodes, message, nodesRef, selectNodes],
     );
 
     const copyNodesToClipboard = useCallback(
@@ -606,6 +674,7 @@ export function useCanvasNodeOperations({
             const copyIds = new Set(targetIds);
             nodesRef.current.forEach((node) => {
                 if (targetIds.has(node.id) && isFrameNode(node)) getFrameChildIds(node.id, nodesRef.current).forEach((childId) => copyIds.add(childId));
+                if (targetIds.has(node.id) && isSubmapNode(node)) getSubmapChildIds(node.id, nodesRef.current).forEach((childId) => copyIds.add(childId));
                 if (targetIds.has(node.id) && node.metadata?.imageLayerGroup) node.metadata.imageLayerGroup.layers.forEach((layer) => copyIds.add(layer.nodeId));
             });
             const copiedNodes = nodesRef.current
@@ -663,11 +732,14 @@ export function useCanvasNodeOperations({
             );
             const dx = center.x - (bounds.left + bounds.right) / 2;
             const dy = center.y - (bounds.top + bounds.bottom) / 2;
-            const idMap = new Map(clipboard.nodes.map((node, index) => [node.id, `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`]));
+            const idBatch = beginIdBatch([...nodesRef.current.map((node) => node.id), ...connectionsRef.current.map((connection) => connection.id)]);
+            const idMap = allocateCopiedCanvasNodeIds(clipboard.nodes, idBatch.allocate);
+            const copiedSubmapIds = new Set(clipboard.nodes.filter(isSubmapNode).map((node) => node.id));
             const copiedSourceIds = new Set(clipboard.nodes.map((node) => node.id));
             const reservedTitles = new Set(nodesRef.current.map((node) => node.title));
             const nextNodes = clipboard.nodes.map((node) => {
-                const metadata = isolateCopiedNodeMetadata(node, idMap);
+                const copiedIntoSeparateScope = isCopiedSubmapTreeNode(node, copiedSubmapIds);
+                const metadata = isolateCopiedNodeMetadata(node, idMap, { dropExternalReferences: copiedIntoSeparateScope });
                 const title = nextCopiedNodeTitle(node.title, reservedTitles);
                 reservedTitles.add(title);
                 if (node.type === CanvasNodeType.Drawing && metadata) {
@@ -683,6 +755,7 @@ export function useCanvasNodeOperations({
                     title,
                     position: { x: node.position.x + dx, y: node.position.y + dy },
                     parentId: node.parentId ? idMap.get(node.parentId) : undefined,
+                    scopeId: node.scopeId ? idMap.get(node.scopeId) || node.scopeId : undefined,
                     metadata,
                 };
             });
@@ -694,12 +767,15 @@ export function useCanvasNodeOperations({
             });
             connectionsRef.current.forEach((connection) => {
                 if (!copiedSourceIds.has(connection.toNodeId) || copiedSourceIds.has(connection.fromNodeId)) return;
+                const sourceTarget = clipboard.nodes.find((node) => node.id === connection.toNodeId);
+                if (sourceTarget && isCopiedSubmapTreeNode(sourceTarget, copiedSubmapIds)) return;
                 const toNodeId = idMap.get(connection.toNodeId);
                 if (!toNodeId) return;
                 // 参考节点仍在画布上时，粘贴结果应重新挂上同一入边。
                 if (!nodesRef.current.some((node) => node.id === connection.fromNodeId)) return;
                 nextConnections.push({ ...connection, id: nanoid(), toNodeId });
             });
+            idBatch.commit();
             commitNodes([...nodesRef.current, ...nextNodes]);
             commitConnections([...connectionsRef.current, ...nextConnections]);
             const sourceByTargetId = new Map(clipboard.nodes.map((sourceNode) => [idMap.get(sourceNode.id), sourceNode]));
@@ -709,14 +785,14 @@ export function useCanvasNodeOperations({
                     const sourceNode = sourceByTargetId.get(targetNode.id);
                     if (sourceNode) cloneDrawingForNode(sourceNode, targetNode, translate("canvasPage.nodeOps.drawingPasteFailed"));
                 });
-            const topLevelIds = new Set(nextNodes.filter((node) => !node.parentId).map((node) => node.id));
+            const topLevelIds = new Set(nextNodes.filter((node) => !node.parentId && !node.scopeId).map((node) => node.id));
             selectNodes(topLevelIds);
             setContextMenu(null);
-            const primaryNode = nextNodes.find((node) => !node.parentId);
-            setDialogNodeId(primaryNode && !isFrameNode(primaryNode) && primaryNode.type !== CanvasNodeType.Drawing && primaryNode.type !== CanvasNodeType.Script ? primaryNode.id : null);
+            const primaryNode = nextNodes.find((node) => !node.parentId && !node.scopeId);
+            setDialogNodeId(primaryNode && !isFrameNode(primaryNode) && primaryNode.type !== CanvasNodeType.Drawing && primaryNode.type !== CanvasNodeType.Script && primaryNode.type !== CanvasNodeType.Submap ? primaryNode.id : null);
             return true;
         },
-        [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, getCanvasCenter, nodesRef, selectNodes, setContextMenu, setDialogNodeId],
+        [beginIdBatch, cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, getCanvasCenter, nodesRef, selectNodes, setContextMenu, setDialogNodeId],
     );
 
     const restoreCopiedNodesFromText = useCallback((value: string) => {

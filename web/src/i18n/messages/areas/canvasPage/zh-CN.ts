@@ -527,5 +527,13 @@ export const zhCN = {
         switchedVersion: "已切换到 V{{number}}",
         cannotDeleteCurrent: "当前版本不能删除",
         savedAsNewNode: "已另存为新节点「{{title}}」",
+        submapCopied: "已复制子画布及全部子节点",
+        submapCopiedWithExternal: "已复制子画布；{{count}} 个外部引用未复制",
+        submapExpand: "展开子画布",
+        submapCollapse: "折叠子画布",
+        submapResizeHandle: "调整子画布尺寸",
+        submapChildCount: "{{count}} 个子节点",
+        submapEmptyPreview: "空子画布",
+        submapNoNested: "子画布不能再嵌套子画布",
     },
 };

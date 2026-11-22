@@ -85,6 +85,7 @@ type CanvasNodeContextMenuProps = {
     onUploadToArkPrivateAsset: () => void;
     onSetAssetCategory: (category: CanvasAssetCategory) => void;
     onToggleFrame: () => void;
+    onToggleSubmap?: () => void;
     onSpreadSelection?: () => void;
     onCopySelection?: () => void;
     onDeleteSelection?: () => void;
@@ -134,6 +135,7 @@ export function CanvasNodeContextMenu({
     onUploadToArkPrivateAsset,
     onSetAssetCategory,
     onToggleFrame,
+    onToggleSubmap,
     onSpreadSelection,
     onCopySelection,
     onDeleteSelection,
@@ -184,6 +186,7 @@ export function CanvasNodeContextMenu({
     const isMedia = isImage || isVideo;
     const isAudio = node?.type === CanvasNodeType.Audio;
     const isFrame = node?.type === CanvasNodeType.Frame;
+    const isSubmap = node?.type === CanvasNodeType.Submap;
     const isFolder = isCanvasFolderNode(node);
     const hasNodeContent = isText ? Boolean(nodeContent.trim()) : Boolean(nodeContent);
     const canSaveAsset = Boolean(node && !isCharacterReference && (isText ? hasNodeContent : hasNodeContent && (isImage || isVideo || isAudio)));
@@ -251,6 +254,17 @@ export function CanvasNodeContextMenu({
                             <MenuButton icon={<Undo2 className="size-4" />} label="撤销" shortcut="⌘Z" disabled={!canUndo} onClick={() => runAction(onUndo)} />
                             <MenuButton icon={<Redo2 className="size-4" />} label="重做" shortcut="⇧⌘Z" disabled={!canRedo} onClick={() => runAction(onRedo)} />
                             <MenuButton icon={<Clipboard className="size-4" />} label="粘贴" shortcut="⌘V" disabled={!canPaste} onClick={() => runAction(onPaste)} />
+                            {menu.scopeId && isSubmap ? (
+                                <>
+                                    <MenuDivider />
+                                    <MenuSection label="子画布" />
+                                    {onToggleSubmap ? <MenuButton icon={<PanelTop />} label={node?.metadata?.collapsed ? "展开子画布" : "折叠子画布"} onClick={() => runAction(onToggleSubmap)} /> : null}
+                                    <MenuButton icon={<AtSign />} label="发送到 Agent" disabled={!onSendToAgent} onClick={() => onSendToAgent && runAction(onSendToAgent)} />
+                                    <MenuButton icon={<Copy />} label="复制子画布及内容" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
+                                    <MenuButton icon={<Layers3 />} label="创建子画布副本" shortcut="⌘D" onClick={() => runAction(onDuplicate)} />
+                                    <MenuButton icon={<Trash2 />} label="删除子画布" danger onClick={() => runAction(onDelete)} />
+                                </>
+                            ) : null}
                         </>
                     ) : menu.type === "node" && hasMultiSelection ? (
                         <>
@@ -300,11 +314,11 @@ export function CanvasNodeContextMenu({
                                 <>
                                     <MenuHeader title={node?.title || nodeTypeLabel(node)} />
                                     <MenuSection label="节点操作" />
-                                    {isFrame ? (
+                                    {isFrame || isSubmap ? (
                                         <MenuButton
-                                            icon={isFolder ? <FolderOpen /> : <PanelTop />}
-                                            label={node?.metadata?.frame?.collapsed ? `展开${isFolder ? "文件夹" : "背板"}` : `折叠${isFolder ? "文件夹" : "背板"}`}
-                                            onClick={() => runAction(onToggleFrame)}
+                                            icon={isSubmap ? <PanelTop /> : isFolder ? <FolderOpen /> : <PanelTop />}
+                                            label={isSubmap ? (node?.metadata?.collapsed ? "展开子画布" : "折叠子画布") : node?.metadata?.frame?.collapsed ? `展开${isFolder ? "文件夹" : "背板"}` : `折叠${isFolder ? "文件夹" : "背板"}`}
+                                            onClick={() => runAction(isSubmap ? onToggleSubmap || (() => undefined) : onToggleFrame)}
                                         />
                                     ) : (
                                         <MenuButton icon={<FolderPlus />} label="保存到我的素材" disabled={!canSaveAsset} onClick={() => runAction(onSaveAsset)} />
@@ -317,11 +331,11 @@ export function CanvasNodeContextMenu({
                                     <MenuDivider />
                                     <MenuSection label="副本与内容" />
                                     <MenuButton icon={<AtSign />} label="发送到 Agent" disabled={!onSendToAgent} onClick={() => onSendToAgent && runAction(onSendToAgent)} />
-                                    <MenuButton icon={<Copy />} label={isFrame ? `复制${isFolder ? "文件夹" : "背板"}及内容` : "复制节点"} shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
+                                    <MenuButton icon={<Copy />} label={isFrame ? `复制${isFolder ? "文件夹" : "背板"}及内容` : isSubmap ? "复制子画布及内容" : "复制节点"} shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
                                     {isText ? <MenuButton icon={<Clipboard />} label="复制文本" disabled={!hasNodeContent} onClick={() => runAction(onCopyContent)} /> : null}
-                                    <MenuButton icon={<Copy />} label={isFrame ? `创建${isFolder ? "文件夹" : "背板"}副本` : "创建参数变体"} shortcut="⌘D" onClick={() => runAction(onDuplicate)} />
+                                    <MenuButton icon={<Copy />} label={isFrame ? `创建${isFolder ? "文件夹" : "背板"}副本` : isSubmap ? "创建子画布副本" : "创建参数变体"} shortcut="⌘D" onClick={() => runAction(onDuplicate)} />
                                     <MenuButton icon={<Clipboard />} label="粘贴" shortcut="⌘V" disabled={!canPaste} onClick={() => runAction(onPaste)} />
-                                    <MenuButton icon={<Trash2 />} label={isFrame ? `删除${isFolder ? "文件夹" : "背板"}` : "删除节点"} danger onClick={() => runAction(onDelete)} />
+                                    <MenuButton icon={<Trash2 />} label={isFrame ? `删除${isFolder ? "文件夹" : "背板"}` : isSubmap ? "删除子画布" : "删除节点"} danger onClick={() => runAction(onDelete)} />
                                 </>
                             )}
                         </>

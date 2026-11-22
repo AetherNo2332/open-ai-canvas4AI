@@ -14,7 +14,7 @@ type CanvasProjectContextMenuProps = {
     selectedCount: number;
     screenToCanvas: (clientX: number, clientY: number) => Position;
     onClose: () => void;
-    onAddNode: (type: CanvasNodeTypeId, position: Position) => void;
+    onAddNode: (type: CanvasNodeTypeId, position: Position, content?: string, scopeId?: string) => void;
     onAddFolder: (position: Position) => void;
     onChooseStyle: () => void;
     onOpenPrevis: (position?: Position) => void;
@@ -41,6 +41,7 @@ type CanvasProjectContextMenuProps = {
     onUploadToArkPrivateAsset: (node: CanvasNodeData) => void;
     onSetAssetCategory: (nodeId: string, category: CanvasAssetCategory) => void;
     onToggleFrame: (node: CanvasNodeData) => void;
+    onToggleSubmap: (node: CanvasNodeData) => void;
     onSpreadSelection: () => void;
     onCopySelection: () => void;
     onDeleteSelection: () => void;
@@ -57,6 +58,7 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
     const { onAdoptToDrama, onCreateDramaFromStoryboard } = props;
     if (!menu) return null;
     const menuPosition = () => (menu.type === "canvas" ? menu.position : screenToCanvas(menu.x, menu.y));
+    const operationNodeId = menu.type === "node" ? menu.nodeId : menu.type === "canvas" ? menu.scopeId : undefined;
     return (
         <CanvasNodeContextMenu
             menu={menu}
@@ -69,7 +71,7 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
             selectedCount={props.selectedCount}
             onClose={props.onClose}
             onAddNode={(type) => {
-                if (menu.type === "canvas") props.onAddNode(type, menu.position);
+                if (menu.type === "canvas") props.onAddNode(type, menu.position, undefined, menu.scopeId);
             }}
             onAddFolder={() => {
                 if (menu.type === "canvas") props.onAddFolder(menu.position);
@@ -84,16 +86,16 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
             onRedo={props.onRedo}
             onPaste={() => props.onPaste(menuPosition())}
             onCopyNode={() => {
-                if (menu.type === "node") props.onCopyNode(menu.nodeId);
+                if (operationNodeId) props.onCopyNode(operationNodeId);
             }}
             onCreateGenerationCopy={() => {
-                if (menu.type === "node") props.onCreateGenerationCopy(menu.nodeId);
+                if (operationNodeId) props.onCreateGenerationCopy(operationNodeId);
             }}
             onDuplicate={() => {
-                if (menu.type === "node") props.onDuplicate(menu.nodeId);
+                if (operationNodeId) props.onDuplicate(operationNodeId);
             }}
             onDelete={() => {
-                if (menu.type === "node") props.onDeleteNode(menu.nodeId);
+                if (operationNodeId) props.onDeleteNode(operationNodeId);
                 else if (menu.type === "connection") props.onDeleteConnection(menu.connectionId);
             }}
             onSaveAsset={() => {
@@ -124,6 +126,9 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
             }}
             onToggleFrame={() => {
                 if (node?.type === CanvasNodeType.Frame) props.onToggleFrame(node);
+            }}
+            onToggleSubmap={() => {
+                if (node?.type === CanvasNodeType.Submap) props.onToggleSubmap(node);
             }}
             onSpreadSelection={props.onSpreadSelection}
             onCopySelection={props.onCopySelection}

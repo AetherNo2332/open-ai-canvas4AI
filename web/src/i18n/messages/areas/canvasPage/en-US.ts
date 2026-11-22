@@ -528,5 +528,13 @@ export const enUS: DeepStringRecord<typeof zhCN> = {
         switchedVersion: "Switched to V{{number}}",
         cannotDeleteCurrent: "The current version can't be deleted",
         savedAsNewNode: "Saved as a new node “{{title}}”",
+        submapCopied: "Copied the sub-canvas with all child nodes",
+        submapCopiedWithExternal: "Copied the sub-canvas; {{count}} external references were not copied",
+        submapExpand: "Expand sub-canvas",
+        submapCollapse: "Collapse sub-canvas",
+        submapResizeHandle: "Resize sub-canvas",
+        submapChildCount: "{{count}} child nodes",
+        submapEmptyPreview: "Empty sub-canvas",
+        submapNoNested: "Sub-canvases cannot be nested",
     },
 };

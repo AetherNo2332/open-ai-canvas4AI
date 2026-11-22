@@ -528,5 +528,13 @@ export const deDE: DeepStringRecord<typeof zhCN> = {
         switchedVersion: "Zu V{{number}} gewechselt",
         cannotDeleteCurrent: "Die aktuelle Version kann nicht gelöscht werden",
         savedAsNewNode: "Als neuer Knoten „{{title}}“ gespeichert",
+        submapCopied: "Unterleinwand mit allen untergeordneten Knoten kopiert",
+        submapCopiedWithExternal: "Unterleinwand kopiert; {{count}} externe Referenzen wurden nicht kopiert",
+        submapExpand: "Unterleinwand ausklappen",
+        submapCollapse: "Unterleinwand einklappen",
+        submapResizeHandle: "Unterleinwandgröße ändern",
+        submapChildCount: "{{count}} Kindknoten",
+        submapEmptyPreview: "Leere Unterleinwand",
+        submapNoNested: "Unterleinwände können nicht verschachtelt werden",
     },
 };

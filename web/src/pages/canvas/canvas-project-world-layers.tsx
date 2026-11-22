@@ -7,6 +7,7 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { canvasConnectionPath, CanvasConnectionBeam, ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasFrameNode } from "@/components/canvas/canvas-frame-node";
 import { CanvasNode } from "@/components/canvas/canvas-node";
+import { CanvasSubmapNode } from "@/components/canvas/canvas-submap-node";
 import { useCanvasVisualNode } from "@/components/canvas/canvas-node-resize-motion";
 import type { CanvasConnectionApproach } from "@/lib/canvas/canvas-connection-tilt";
 import type { CanvasBatchConnectionPreview } from "@/lib/canvas/canvas-batch-connection";
@@ -14,6 +15,7 @@ import { batchCellAnchor, BATCH_COLUMN_HEADER_HEIGHT, BATCH_TABLE_HEADER_HEIGHT,
 import { sortCanvasNodesByStackOrder, type CanvasNodeStackOrder } from "@/lib/canvas/canvas-node-stack-order";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
+import { isSubmapNode } from "@/lib/canvas/canvas-submap";
 import type { CanvasNodeRenderLOD } from "@/lib/canvas/canvas-node-lod";
 import type { CanvasSpatialBounds } from "@/lib/canvas/canvas-spatial-index";
 import { useCanvasProgressiveNodeMount } from "./use-canvas-progressive-node-mount";
@@ -42,6 +44,7 @@ type CanvasProjectWorldLayersProps = {
     nodeRenderLODById: Map<string, CanvasNodeRenderLOD>;
     nodeStackOrder: CanvasNodeStackOrder;
     frameChildrenById: Map<string, CanvasNodeData[]>;
+    submapChildrenById: Map<string, CanvasNodeData[]>;
     linkedFolderPreviewNodesById: Map<string, CanvasNodeData[]>;
     dragPreview: DragPreview;
     selectedNodeIds: Set<string>;
@@ -71,10 +74,12 @@ type CanvasProjectWorldLayersProps = {
     onConnectStart: (event: ReactPointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string, anchorRatio?: number) => void;
     onNodeResize: (nodeId: string, width: number, height: number, position?: Position) => void;
     onToggleFrame: (nodeId: string) => void;
+    onToggleSubmap: (nodeId: string) => void;
     onFolderStyleChange: (nodeId: string, style: CanvasFolderStyle) => void;
     onFolderThemeChange: (nodeId: string, theme: CanvasFolderTheme) => void;
     onNodeTitleChange: (nodeId: string, title: string) => void;
     onNodeContextMenu: (event: ReactMouseEvent, nodeId: string) => void;
+    onSubmapContextMenu: (event: ReactMouseEvent, nodeId: string) => void;
     onNodeContentChange: (nodeId: string, content: string) => void;
     onToggleBatch: (nodeId: string) => void;
     onSetBatchPrimary: (node: CanvasNodeData) => void;
@@ -101,9 +106,9 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
     const visibleNodes = useCanvasProgressiveNodeMount(props.candidateNodes, props.immediateRenderNodeIds, props.renderViewBounds);
     const orderedVisibleNodes = useMemo(
         () => [
-            ...visibleNodes.filter(isFrameNode),
+            ...visibleNodes.filter((node) => isFrameNode(node) || isSubmapNode(node)),
             ...sortCanvasNodesByStackOrder(
-                visibleNodes.filter((node) => !isFrameNode(node)),
+                visibleNodes.filter((node) => !isFrameNode(node) && !isSubmapNode(node)),
                 props.nodeStackOrder,
             ),
         ],
@@ -165,7 +170,23 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
             </svg>
 
             {orderedVisibleNodes.map((node) =>
-                isFrameNode(node) ? (
+                isSubmapNode(node) ? (
+                    <CanvasSubmapNode
+                        key={node.id}
+                        data={node}
+                        renderLOD={props.nodeRenderLODById.get(node.id) || "full"}
+                        dragOffset={props.dragPreview?.nodeIds.has(node.id) ? props.dragPreview : undefined}
+                        childNodes={props.submapChildrenById.get(node.id) || EMPTY_CANVAS_NODES}
+                        scale={viewportScale}
+                        isSelected={props.selectedNodeIds.has(node.id)}
+                        onMouseDown={props.onNodeMouseDown}
+                        onResize={props.onNodeResize}
+                        onToggleCollapsed={props.onToggleSubmap}
+                        onTitleChange={props.onNodeTitleChange}
+                        onContextMenu={props.onNodeContextMenu}
+                        onSubmapContextMenu={props.onSubmapContextMenu}
+                    />
+                ) : isFrameNode(node) ? (
                     <CanvasFrameNode
                         key={node.id}
                         data={node}

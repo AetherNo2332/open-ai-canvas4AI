@@ -528,5 +528,13 @@ export const koKR: DeepStringRecord<typeof zhCN> = {
         switchedVersion: "V{{number}}(으)로 전환했습니다",
         cannotDeleteCurrent: "현재 버전은 삭제할 수 없습니다",
         savedAsNewNode: "새 노드 「{{title}}」(으)로 저장했습니다",
+        submapCopied: "서브 캔버스와 모든 하위 노드를 복사했습니다",
+        submapCopiedWithExternal: "서브 캔버스를 복사했습니다. 외부 참조 {{count}}개는 복사되지 않았습니다",
+        submapExpand: "서브 캔버스 펼치기",
+        submapCollapse: "서브 캔버스 접기",
+        submapResizeHandle: "서브 캔버스 크기 조정",
+        submapChildCount: "자식 노드 {{count}}개",
+        submapEmptyPreview: "빈 서브 캔버스",
+        submapNoNested: "서브 캔버스는 중첩할 수 없습니다",
     },
 };
