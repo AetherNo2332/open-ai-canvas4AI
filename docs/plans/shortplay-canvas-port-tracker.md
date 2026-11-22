@@ -4,7 +4,7 @@
 
 2026-11-22 从远端核实 4AI `main`，fetch 后以同一提交建立分支 `codex/shortplay-canvas-port`。目标基线 `036b9190e56158e8fbe12912469bf59c2a8e2226`，供体固定为 `13731aae6c4cefadc2a1719e3e7e59b22e249f94`。[4AI 源码](https://github.com/AetherNo2332/open-ai-canvas4AI/tree/036b9190e56158e8fbe12912469bf59c2a8e2226) · [shortplay 源码](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6c4cefadc2a1719e3e7e59b22e249f94)
 
-当前已通过 S01–S10，覆盖行为基线、文档与关系、项目存储、子画布编辑器、内置镜头、同步与历史、用户预设、分享与 ZIP 往返、Agent 画布命令与审批、生成任务与逐节点回写。实施验收 **10/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
+当前已通过 S01–S11，覆盖行为基线、文档与关系、项目存储、子画布编辑器、内置镜头、同步与历史、用户预设、分享与 ZIP 往返、Agent 画布命令与审批、生成任务与逐节点回写、旧档只读预演。实施验收 **11/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
 
 | 片号 | 交付 | 前置 | 状态 | 实现提交与验证证据 |
 |---|---|---|---|---|
@@ -18,7 +18,7 @@
 | S08 | 分享、导出、资源与导入 | S05 | 通过 | 实现 `60e5a7107`。浏览器验证只读分享、子画布 ZIP 导出重入、旧 ZIP 媒体和绘图往返。Go 专项与 Web 29 项通过。详见下方「S08 实测记录」。 |
 | S09 | Agent 画布命令与审批 | S03、S05 | 通过 | 实现 `5b4341835`。命令词法/管道、submap 寻址、字段读写、new/dup/mv/rm、审批快照固化与检查点重放接入 4AI 控制面；专项 9 PASS，工具契约与画布/架构门禁 PASS，Agent 203 PASS。详见下方「S09 实测记录」。 |
 | S10 | 生成输入、真实任务与回写 | S09 | 通过 | 实现 `a92042b64`。`canvas run` 把节点目录展开为现有 `generate_media_batch`，复用审批、报价、并发、重试、取消、轮询和逐节点回写；文本/角色/节点提及编译、首尾帧、规格与副本任务隔离落地。详见下方「S10 实测记录」。 |
-| S11 | 旧档只读预演与转换器 | S01、S02 | 待施工 | 待记录 |
+| S11 | 旧档只读预演与转换器 | S01、S02 | 通过 | 实现 `010852610`。DB `PayloadJSON` 与 ZIP `projects.json` 共用转换规则，输出身份映射、候选文档、字段差异、资源清单、阻断/警告和引用冲突；原件保持不变。详见下方「S11 实测记录」。 |
 | S12 | 分镜、批量、预演、短剧和电商入口 | S05、S10、S11 | 待施工 | 待记录 |
 | S13 | 旧项目切换与恢复 | S06、S08、S11、S12 | 待施工 | 待记录 |
 | S14 | 集成验收、灰度及旧写入器退役 | S07、S13 | 待施工 | 待记录 |
@@ -179,6 +179,17 @@
 
 复用 4AI `reference_migration.go` 的预览、冲突选择和 revision 检查模式。分别从数据库 `PayloadJSON` 和 ZIP `projects.json` 读入，共用后端转换规则。第一遍建立旧节点、行、列和资源身份映射；第二遍重写引用与作用域。先解释 `row:<id>`、`batch-text:<columnId>`，再调用一般参考推断。输出候选文档、逐字段差异、资源清单和阻断原因。验收重复预演一致、整表公共素材、跨镜头首帧、已有视频、绘图和显式空列覆盖。待裁决档案保留原件。
 
+### S11 实测记录
+
+- **实现** `010852610`。新增 `backend/internal/canvas/legacymigrate`，按“身份映射 → 显式旧句柄解释 → `references.NormalizeLegacy` 一般推断”执行只读预演。DB 入口读取 `PayloadJSON`，ZIP 入口读取 `projects.json` 的 `project`、`files` 和 `drawingDocuments`，两者共用同一转换与差异规则。
+- **输出** 预览返回 `candidate`、逐路径 `diff`、`resources`、`blocking`、`warnings`、`conflicts`、节点/行/列 `identity` 和显式 `explicit`。显式映射列出 `row:<id>` 输入/输出、`batch-text:` / `batch-reference:` 列、批量输出、显式空 cell 和首尾帧字段；未解决的字段/连线冲突沿用 4AI 的 `fields` / `connections` 选择。
+- **确定性与原件** 预览不修改输入文档；ZIP 项目另外记录文件清单和绘图版本。预览期生成的候选连线/绑定使用 `preview-N` 占位身份，保证同一档案重复预演字节一致；正式切换仍由 S13 分配生产身份。
+- **数据库样本** 旧档夹具暴露 1 个真实冲突：`batch-row-2` 的显式 `textNodeIds=["text-2"]` 与列连线的 `text-1` 广播不一致；不选来源时 `ready=false` 且不产出候选，选择 `fields` 后通过。候选保留两行分镜输出、旧视频 `taskId`/`storageKey`、两列批量文字、显式空 `col-description`，并补齐 `batch-row-1.outputNodeId`，消费批量输出旧边。
+- **ZIP 与绘图** v3/v4 样本分别保留 drawing document version 1/2、引擎、预览路径和 v4 生成渲染路径；绘图节点 `drawingId`/`drawingEngine`/`drawingRevision` 保留。归档资源清单包含 `image:frame-1` 和 `drawing:1`。
+- **跨镜头首帧与空列** 构造样本验证 `videoStartFrameNodeId` 指向另一镜头图片时字段原样保留，并在显式映射中记录 `first-frame`；批量行显式空 cell 仍为 `""`，不被当成缺失值删除。
+- **验证命令与结果** `go test -count=1 ./internal/canvas/legacymigrate -v` → 5 PASS（DB 旧档与冲突选择、ZIP v3/v4 绘图、跨镜头首帧与空列、冲突选择、批量输出边消费）。`go test -count=1 ./internal/canvas/... ./internal/architecture` → PASS。
+- **未覆盖** 本地没有真实历史数据库或 ZIP，样本仍是按 schema 重建；绘图只验证清单和元数据，不解析 tldraw 快照或预览字节；资源存在性通过注入查表验证，未接正式资源所有权查询；未提供 HTTP/UI 入口，也未写入任何存档。跨镜头首帧目前保留节点字段，未强制写入 `generationSpec.referenceBindings`，需在 S13/S14 用真实生成链路复验。正式 revision CAS、在途任务和回退演练属于 S13。
+
 ### S12 迁移业务入口
 
 从 `handler/drama_canvas_routes.go`、`handler/ecommerce_agent_canvas_routes.go`、`canvas/commands/native_connections.go`、`canvas/previs` 及 Web `canvas-storyboard-materializer.ts` 检查每个读写方。分镜行映射为镜头 submap，保留资产版本、场景关联和结果读取；批量列保留列 ID、行覆盖、输入次序与重试快照。对短剧、电商、批量和预演各从正式入口创建项目、执行、重开并读回结果。发现供体无法表达的业务行为时在本片登记样本、适配归属和验收结果。
@@ -210,3 +221,4 @@ Go 在 `backend` 下运行 `go test ./internal/canvas/...`，按分片追加实�
 | 2026-11-23 | S08 通过。提交 `60e5a7107`。正式页面分享与子画布 ZIP 重开通过，旧 ZIP 的图片、绘图快照和预览往返通过，匿名资源访问范围已验。Web 专项 29 项通过 | S09 对接 Agent 画布命令、审批与跨端同步 |
 | 2026-11-23 | S09 通过。提交 `5b4341835`。Agent 画布命令面、submap 寻址、审批快照固化与重放落地；专项 9 PASS，工具契约、画布/架构门禁和 Agent 203 项通过。跨端冲突、锁定和子画布复制已在服务级复验；真实 LLM 会话待 S14 补跑 | S10 接入生成默认值、`run` 真实任务与结果回填 |
 | 2026-11-23 | S10 通过。提交 `a92042b64`。`canvas run` 以节点字段展开为现有批次审批与状态机，完成文本/角色/节点提及编译、首尾帧、规格、逐节点任务绑定和副本隔离；专项 5 PASS，状态机复用 5 PASS，画布/架构门禁与 Agent 203 项通过。真实模型渠道和正式页面审批待 S14 | S11 旧数据库与 ZIP 只读预演、字段级差异和阻断原因转换器 |
+| 2026-11-23 | S11 通过。提交 `010852610`。新增旧档只读预演包，DB `PayloadJSON` 与 ZIP `projects.json` 共用身份映射、旧句柄解释、候选文档、差异、资源清单和冲突选择；专项 5 PASS，画布/架构门禁通过。真实历史档案、绘图快照字节和写入切换待 S13/S14 | S12 迁移短剧、电商、批量与预演业务入口，逐入口创建项目并读回结果 |
