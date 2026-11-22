@@ -43,6 +43,7 @@ export enum CanvasNodeType {
     ColorGrade = "colorgrade",
     MediaConversion = "media-conversion",
     BatchTable = "batch-table",
+    Submap = "submap",
 }
 
 /** Runtime IDs contributed by plugins share the persisted node type field. */
@@ -483,6 +484,14 @@ export type CanvasNodeMetadata = {
     characterIds?: string[];
     referenceSetId?: string;
     referenceAssetNodeIds?: string[];
+    /** 媒体参考声明；关系边的唯一真源。 */
+    referenceNodeIds?: string[];
+    /** 文本参考声明；与媒体参考族并列，顺序决定 @文本N。 */
+    referenceTextNodeIds?: string[];
+    /** 派生血缘；来源删除后一并清理。 */
+    derivedFromNodeIds?: string[];
+    /** submap 内容区折叠状态。 */
+    collapsed?: boolean;
     assetBindings?: StoryboardAssetBinding[];
     characterName?: string;
     characterPrompt?: string;
@@ -681,6 +690,8 @@ export type CanvasNodeData = {
     width: number;
     height: number;
     parentId?: string;
+    /** submap 容纳键；子节点仍在顶层 nodes 中，与 parentId 的背板归属互不混用。 */
+    scopeId?: string;
     metadata?: CanvasNodeMetadata;
 };
 

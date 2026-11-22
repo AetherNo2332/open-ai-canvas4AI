@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "media-reference-and-first-frame",
+      "nodes": [
+        {"id": "image-1", "type": "image", "metadata": {}},
+        {"id": "image-2", "type": "image", "metadata": {}},
+        {
+          "id": "video-1",
+          "type": "video",
+          "metadata": {
+            "referenceNodeIds": ["image-2", "image-1", "image-2"],
+            "videoStartFrameNodeId": "image-1"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "family": "R1",
+          "fromNodeId": "image-2",
+          "toNodeId": "video-1",
+          "field": "referenceNodeIds",
+          "id": "conn:r1:video-1:image-2"
+        },
+        {
+          "family": "R1",
+          "fromNodeId": "image-1",
+          "toNodeId": "video-1",
+          "field": "referenceNodeIds",
+          "id": "conn:r1:video-1:image-1"
+        }
+      ]
+    },
+    {
+      "name": "text-reference-keeps-declaration-order",
+      "nodes": [
+        {"id": "text-1", "type": "text", "metadata": {}},
+        {"id": "text-2", "type": "text", "metadata": {}},
+        {"id": "image-1", "type": "image", "metadata": {}},
+        {
+          "id": "image-2",
+          "type": "image",
+          "metadata": {
+            "referenceNodeIds": ["image-1"],
+            "referenceTextNodeIds": ["text-2", "text-1", "text-2"]
+          }
+        }
+      ],
+      "expected": [
+        {
+          "family": "R1",
+          "fromNodeId": "image-1",
+          "toNodeId": "image-2",
+          "field": "referenceNodeIds",
+          "id": "conn:r1:image-2:image-1"
+        },
+        {
+          "family": "R1-text",
+          "fromNodeId": "text-2",
+          "toNodeId": "image-2",
+          "field": "referenceTextNodeIds",
+          "id": "conn:r1:image-2:text-2"
+        },
+        {
+          "family": "R1-text",
+          "fromNodeId": "text-1",
+          "toNodeId": "image-2",
+          "field": "referenceTextNodeIds",
+          "id": "conn:r1:image-2:text-1"
+        }
+      ]
+    },
+    {
+      "name": "first-and-last-frame-roles",
+      "nodes": [
+        {"id": "image-start", "type": "image", "metadata": {}},
+        {"id": "image-end", "type": "image", "metadata": {}},
+        {
+          "id": "video-frame",
+          "type": "video",
+          "metadata": {
+            "videoStartFrameNodeId": "image-start",
+            "videoEndFrameNodeId": "image-end"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "family": "R1-frame",
+          "fromNodeId": "image-start",
+          "toNodeId": "video-frame",
+          "field": "videoStartFrameNodeId",
+          "id": "conn:frame:videoStartFrameNodeId:video-frame:image-start"
+        },
+        {
+          "family": "R1-frame",
+          "fromNodeId": "image-end",
+          "toNodeId": "video-frame",
+          "field": "videoEndFrameNodeId",
+          "id": "conn:frame:videoEndFrameNodeId:video-frame:image-end"
+        }
+      ]
+    },
+    {
+      "name": "copied-submaps-keep-their-own-scope-references",
+      "nodes": [
+        {"id": "submap-1", "type": "submap", "metadata": {"collapsed": false}},
+        {"id": "submap-2", "type": "submap", "metadata": {"collapsed": false}},
+        {"id": "submap-1__text-1", "type": "text", "scopeId": "submap-1", "metadata": {}},
+        {"id": "submap-2__text-1", "type": "text", "scopeId": "submap-2", "metadata": {}},
+        {"id": "submap-1__image-1", "type": "image", "scopeId": "submap-1", "metadata": {}},
+        {"id": "submap-2__image-1", "type": "image", "scopeId": "submap-2", "metadata": {}},
+        {
+          "id": "submap-1__video-1",
+          "type": "video",
+          "scopeId": "submap-1",
+          "metadata": {
+            "referenceNodeIds": ["submap-1__image-1"],
+            "referenceTextNodeIds": ["submap-1__text-1"],
+            "videoStartFrameNodeId": "submap-1__image-1"
+          }
+        },
+        {
+          "id": "submap-2__video-1",
+          "type": "video",
+          "scopeId": "submap-2",
+          "metadata": {
+            "referenceNodeIds": ["submap-2__image-1"],
+            "referenceTextNodeIds": ["submap-2__text-1"],
+            "videoStartFrameNodeId": "submap-2__image-1"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "family": "R1",
+          "fromNodeId": "submap-1__image-1",
+          "toNodeId": "submap-1__video-1",
+          "field": "referenceNodeIds",
+          "id": "conn:r1:submap-1__video-1:submap-1__image-1"
+        },
+        {
+          "family": "R1-text",
+          "fromNodeId": "submap-1__text-1",
+          "toNodeId": "submap-1__video-1",
+          "field": "referenceTextNodeIds",
+          "id": "conn:r1:submap-1__video-1:submap-1__text-1"
+        },
+        {
+          "family": "R1",
+          "fromNodeId": "submap-2__image-1",
+          "toNodeId": "submap-2__video-1",
+          "field": "referenceNodeIds",
+          "id": "conn:r1:submap-2__video-1:submap-2__image-1"
+        },
+        {
+          "family": "R1-text",
+          "fromNodeId": "submap-2__text-1",
+          "toNodeId": "submap-2__video-1",
+          "field": "referenceTextNodeIds",
+          "id": "conn:r1:submap-2__video-1:submap-2__text-1"
+        }
+      ]
+    }
+  ]
+}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"yingce/backend/internal/canvas/relation"
 )
 
 const arrangeCoordCap = 1e6
@@ -62,6 +64,7 @@ func (doc Document) Nodes() []Node {
 		lane, supported := Lane(documentString(node["type"]))
 		item := Node{
 			ID: id, Type: documentString(node["type"]), Lane: lane,
+			Title: documentString(node["title"]), ScopeID: documentString(node["scopeId"]),
 			NoMove: !supported, Movable: movable(node),
 		}
 		if position, ok := node["position"].(map[string]any); ok {
@@ -78,15 +81,14 @@ func (doc Document) Nodes() []Node {
 	return nodes
 }
 
-// Edges projects valid document connections into dependency edges.
+// Edges projects node reference fields into dependency edges. Persisted
+// connections are only a rendering cache; relation projection is the source of
+// truth for layout and replay.
 func (doc Document) Edges() []Edge {
-	edges := make([]Edge, 0)
-	for _, edge := range documentMaps(doc.value["connections"]) {
-		from, to := documentString(edge["fromNodeId"]), documentString(edge["toNodeId"])
-		if from == "" || to == "" {
-			continue
-		}
-		edges = append(edges, Edge{From: from, To: to})
+	projected := relation.Project(documentMaps(doc.value["nodes"]))
+	edges := make([]Edge, 0, len(projected))
+	for _, edge := range projected {
+		edges = append(edges, Edge{From: edge.FromNodeID, To: edge.ToNodeID})
 	}
 	return edges
 }
@@ -104,6 +106,9 @@ func movable(node map[string]any) bool {
 	if strings.TrimSpace(documentString(node["parentId"])) != "" {
 		return false
 	}
+	// scopeId is the submap membership key, not the frame parentId. Submap
+	// children remain top-level nodes in document order and therefore keep the
+	// same movement semantics as other top-level nodes in v1.
 	if strings.TrimSpace(documentString(meta["batchRootId"])) != "" {
 		return false
 	}

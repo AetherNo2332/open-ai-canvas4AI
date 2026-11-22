@@ -1,0 +1,525 @@
+{
+  "columnGap": 96,
+  "columnRowGap": 48,
+  "separators": "·-：:|—",
+  "prefix": [
+    {
+      "title": "项目画风 · 仙侠 · 宏大叙事",
+      "want": "项目画风"
+    },
+    {
+      "title": "CH-01 合欢宗宗主 候选",
+      "want": "CH"
+    },
+    {
+      "title": "章节 · 第一集：",
+      "want": "章节"
+    },
+    {
+      "title": "- 前置内容",
+      "want": "- 前置内容"
+    },
+    {
+      "title": "A|B",
+      "want": "A"
+    },
+    {
+      "title": "  前后空格  ",
+      "want": "前后空格"
+    },
+    {
+      "title": "v1.10 版本",
+      "want": "v1.10 版本"
+    }
+  ],
+  "naturalOrder": [
+    {
+      "titles": [
+        "CH-10 候选",
+        "CH-2 候选",
+        "CH-01 候选"
+      ],
+      "want": [
+        "CH-01 候选",
+        "CH-2 候选",
+        "CH-10 候选"
+      ]
+    },
+    {
+      "titles": [
+        "item2",
+        "item10",
+        "item1"
+      ],
+      "want": [
+        "item1",
+        "item2",
+        "item10"
+      ]
+    },
+    {
+      "titles": [
+        "007",
+        "7",
+        "10"
+      ],
+      "want": [
+        "7",
+        "007",
+        "10"
+      ]
+    },
+    {
+      "titles": [
+        "第10集·场2",
+        "第10集·场10",
+        "第10集·场1"
+      ],
+      "want": [
+        "第10集·场1",
+        "第10集·场2",
+        "第10集·场10"
+      ]
+    }
+  ],
+  "columns": [
+    {
+      "name": "真实绘制画布的自动分列",
+      "note": "同类型内按标题前缀分列，列序为泳道序加列组最早位置",
+      "nodes": [
+        {
+          "id": "text-1",
+          "type": "text",
+          "lane": "text",
+          "title": "项目画风 · 仙侠 · 宏大叙事",
+          "x": -170,
+          "y": -120,
+          "width": 420,
+          "height": 240
+        },
+        {
+          "id": "CH-01",
+          "type": "text",
+          "lane": "text",
+          "title": "CH-01 合欢宗宗主 候选",
+          "x": 1282.8,
+          "y": 398.6,
+          "width": 340,
+          "height": 240
+        },
+        {
+          "id": "CH-02",
+          "type": "text",
+          "lane": "text",
+          "title": "CH-02 羽化宗仙尊 候选",
+          "x": 992.5,
+          "y": -12.3,
+          "width": 340,
+          "height": 240
+        },
+        {
+          "id": "CH-03",
+          "type": "text",
+          "lane": "text",
+          "title": "CH-03 林默 候选",
+          "x": 894.8,
+          "y": 398.6,
+          "width": 340,
+          "height": 240
+        },
+        {
+          "id": "text-3",
+          "type": "text",
+          "lane": "text",
+          "title": "章节 · 第一集：",
+          "x": 894.8,
+          "y": 686.6,
+          "width": 460,
+          "height": 280
+        },
+        {
+          "id": "BIB-01",
+          "type": "text",
+          "lane": "text",
+          "title": "BIB-01 故事圣经",
+          "x": 1402.8,
+          "y": 686.6,
+          "width": 340,
+          "height": 240
+        },
+        {
+          "id": "PROP-01",
+          "type": "text",
+          "lane": "text",
+          "title": "PROP-01 紫玉魔笛 候选",
+          "x": 1470,
+          "y": -120,
+          "width": 340,
+          "height": 240
+        },
+        {
+          "id": "PROP-02",
+          "type": "text",
+          "lane": "text",
+          "title": "PROP-02 天魔阵 候选",
+          "x": 1850,
+          "y": -120,
+          "width": 340,
+          "height": 240
+        }
+      ],
+      "maxGroups": 0,
+      "explicitGroups": null,
+      "wantGroups": [
+        {
+          "type": "text",
+          "prefix": "项目画风",
+          "nodeIds": [
+            "text-1"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "CH",
+          "nodeIds": [
+            "CH-01",
+            "CH-02",
+            "CH-03"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "章节",
+          "nodeIds": [
+            "text-3"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "BIB",
+          "nodeIds": [
+            "BIB-01"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "PROP",
+          "nodeIds": [
+            "PROP-01",
+            "PROP-02"
+          ]
+        }
+      ],
+      "wantOverflow": false,
+      "wantPositions": {
+        "BIB-01": [
+          1338,
+          -120
+        ],
+        "CH-01": [
+          346,
+          -120
+        ],
+        "CH-02": [
+          346,
+          168
+        ],
+        "CH-03": [
+          346,
+          456
+        ],
+        "PROP-01": [
+          1774,
+          -120
+        ],
+        "PROP-02": [
+          1774,
+          168
+        ],
+        "text-1": [
+          -170,
+          -120
+        ],
+        "text-3": [
+          782,
+          -120
+        ]
+      }
+    },
+    {
+      "name": "两条轴：同前缀不同类型各自成列",
+      "note": "text/CH 与 image/CH 是两个列；text 泳道在前",
+      "nodes": [
+        {
+          "id": "t-ch1",
+          "type": "text",
+          "lane": "text",
+          "title": "CH-01 文本卡",
+          "x": 0,
+          "y": 0,
+          "width": 340,
+          "height": 240
+        },
+        {
+          "id": "i-ch1",
+          "type": "image",
+          "lane": "image",
+          "title": "CH-01 参考图",
+          "x": 600,
+          "y": 0,
+          "width": 720,
+          "height": 405
+        },
+        {
+          "id": "i-ch2",
+          "type": "image",
+          "lane": "image",
+          "title": "CH-02 参考图",
+          "x": 600,
+          "y": 500,
+          "width": 720,
+          "height": 405
+        },
+        {
+          "id": "t-zhang",
+          "type": "text",
+          "lane": "text",
+          "title": "章节 · 第二集",
+          "x": 0,
+          "y": 400,
+          "width": 460,
+          "height": 280
+        }
+      ],
+      "maxGroups": 0,
+      "explicitGroups": null,
+      "wantGroups": [
+        {
+          "type": "text",
+          "prefix": "CH",
+          "nodeIds": [
+            "t-ch1"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "章节",
+          "nodeIds": [
+            "t-zhang"
+          ]
+        },
+        {
+          "type": "image",
+          "prefix": "CH",
+          "nodeIds": [
+            "i-ch1",
+            "i-ch2"
+          ]
+        }
+      ],
+      "wantOverflow": false,
+      "wantPositions": {
+        "i-ch1": [
+          992,
+          0
+        ],
+        "i-ch2": [
+          992,
+          453
+        ],
+        "t-ch1": [
+          0,
+          0
+        ],
+        "t-zhang": [
+          436,
+          0
+        ]
+      }
+    },
+    {
+      "name": "显式列序覆盖自动列序",
+      "note": "自动序为 A,B,C；显式给 C,A,B",
+      "nodes": [
+        {
+          "id": "a1",
+          "type": "text",
+          "lane": "text",
+          "title": "A-01 甲",
+          "x": 0,
+          "y": 0,
+          "width": 300,
+          "height": 200
+        },
+        {
+          "id": "b1",
+          "type": "text",
+          "lane": "text",
+          "title": "B-01 乙",
+          "x": 400,
+          "y": 0,
+          "width": 300,
+          "height": 200
+        },
+        {
+          "id": "c1",
+          "type": "text",
+          "lane": "text",
+          "title": "C-01 丙",
+          "x": 800,
+          "y": 0,
+          "width": 300,
+          "height": 200
+        }
+      ],
+      "maxGroups": 0,
+      "explicitGroups": [
+        {
+          "type": "text",
+          "prefix": "C",
+          "nodeIds": [
+            "c1"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "A",
+          "nodeIds": [
+            "a1"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "B",
+          "nodeIds": [
+            "b1"
+          ]
+        }
+      ],
+      "wantGroups": [
+        {
+          "type": "text",
+          "prefix": "C",
+          "nodeIds": [
+            "c1"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "A",
+          "nodeIds": [
+            "a1"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "B",
+          "nodeIds": [
+            "b1"
+          ]
+        }
+      ],
+      "wantOverflow": false,
+      "wantPositions": {
+        "a1": [
+          396,
+          0
+        ],
+        "b1": [
+          792,
+          0
+        ],
+        "c1": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "列数溢出不静默合并",
+      "note": "3 列超过 maxGroups=2：overflow=true 且仍给全量列键",
+      "nodes": [
+        {
+          "id": "a1",
+          "type": "text",
+          "lane": "text",
+          "title": "A-01 甲",
+          "x": 0,
+          "y": 0,
+          "width": 300,
+          "height": 200
+        },
+        {
+          "id": "b1",
+          "type": "text",
+          "lane": "text",
+          "title": "B-01 乙",
+          "x": 400,
+          "y": 0,
+          "width": 300,
+          "height": 200
+        },
+        {
+          "id": "c1",
+          "type": "text",
+          "lane": "text",
+          "title": "C-01 丙",
+          "x": 800,
+          "y": 0,
+          "width": 300,
+          "height": 200
+        }
+      ],
+      "maxGroups": 2,
+      "explicitGroups": null,
+      "wantGroups": [
+        {
+          "type": "text",
+          "prefix": "A",
+          "nodeIds": [
+            "a1"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "B",
+          "nodeIds": [
+            "b1"
+          ]
+        },
+        {
+          "type": "text",
+          "prefix": "C",
+          "nodeIds": [
+            "c1"
+          ]
+        }
+      ],
+      "wantOverflow": true,
+      "wantPositions": {
+        "a1": [
+          0,
+          0
+        ],
+        "b1": [
+          396,
+          0
+        ],
+        "c1": [
+          792,
+          0
+        ]
+      }
+    },
+    {
+      "name": "空输入",
+      "note": "无节点时无分组无位置",
+      "nodes": [],
+      "maxGroups": 0,
+      "explicitGroups": null,
+      "wantGroups": [],
+      "wantOverflow": false,
+      "wantPositions": {}
+    }
+  ]
+}
