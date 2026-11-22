@@ -4,7 +4,7 @@
 
 2026-11-22 从远端核实 4AI `main`，fetch 后以同一提交建立分支 `codex/shortplay-canvas-port`。目标基线 `036b9190e56158e8fbe12912469bf59c2a8e2226`，供体固定为 `13731aae6c4cefadc2a1719e3e7e59b22e249f94`。[4AI 源码](https://github.com/AetherNo2332/open-ai-canvas4AI/tree/036b9190e56158e8fbe12912469bf59c2a8e2226) · [shortplay 源码](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6c4cefadc2a1719e3e7e59b22e249f94)
 
-当前完成分支准备、S01 可重放基线、S02 文档/能力/关系投影、S03 项目存储单一写入器和 S04 正式画布子画布编辑器。实施验收 **4/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
+当前完成分支准备、S01 可重放基线、S02 文档/能力/关系投影、S03 项目存储单一写入器、S04 正式画布子画布编辑器和 S05 内置 storyboard 镜头。实施验收 **5/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
 
 | 片号 | 交付 | 前置 | 状态 | 实现提交与验证证据 |
 |---|---|---|---|---|
@@ -12,7 +12,7 @@
 | S02 | 文档、节点能力及关系投影 | S01 | 通过 | 实现 `7cafd662f`。字段声明、node-json 文档、submap/短剧资产能力、字段关系投影、语义分列和 Go/Web 共用关系黄金夹具落地。详见下方「S02 实测记录」。 |
 | S03 | 版本、操作、鉴权与单一写入器 | S02 | 通过 | 实现 `49b788a41`。文档格式门禁、客户端能力、revision CAS、receipt 重放、事务回滚和 `UpsertCanvasProject` 单一写入路径落地。详见下方「S03 实测记录」。 |
 | S04 | 正式画布路由与完整节点编辑器 | S03 | 通过 | 实现 `bd7fdae81`。顺序 ID、submap 容器/小地图/resize、子画布内创建与复制粘贴、级联删除落地；专项 44 PASS，typecheck/lint/build PASS，正式页面完成创建、编辑、折叠、复制、粘贴和重开。详见下方「S04 实测记录」。 |
-| S05 | 内置镜头创建、复制和子树操作 | S04 | 待施工 | 待记录 |
+| S05 | 内置镜头创建、复制和子树操作 | S04 | 通过 | 实现 `e7c47f6f0`。storyboard 预置、六节点实例化、字段引用投影、整组复制引用重映射和远端回包投影归一化落地；专项 142 PASS，typecheck/lint/build PASS，正式页面完成提示词/首帧编辑、复制与重开。详见下方「S05 实测记录」。 |
 | S06 | 多端同步、历史、撤销与重放 | S05 | 待施工 | 待记录 |
 | S07 | 用户预设持久化与跨画布插入 | S05 | 待施工 | 待记录 |
 | S08 | 分享、导出、资源与导入 | S05 | 待施工 | 待记录 |
@@ -85,6 +85,17 @@
 - **正式页面证据**：后端 `127.0.0.1:18080`、前端 `127.0.0.1:13000`，数据目录 `.local/project-workbench-debug`，本地一次性管理员 `s04_acceptance_20261122`。画布 `loNVFAmxzNzZmj8zDqrFJ` 中创建 `submap-1`、`submap-1__text-1`、`submap-1__image-1`；把图片提示词改为 `S04 acceptance shot image prompt`。拖动容器时容器与两个子节点同量位移；拖动子节点越界只夹紧 x。折叠后显示「2 个子节点」和小地图，重开后折叠状态保留。右键创建副本 `submap-2`，复制粘贴整组生成 `submap-3`；最终 9 节点、0 连线，刷新后仍为 9 节点。SQLite 回读 revision `17`、payload `4382` bytes；`idCounters` 为 `{"submap":3,"submap-1__text":1,"submap-1__image":1,"submap-2__text":1,"submap-2__image":1,"submap-3__text":1,"submap-3__image":1}`。
 - **未覆盖项**：四角 resize 手柄已渲染，但未取得尺寸实际变化的页面记录；删除父容器级联删除子节点只有纯函数测试，未在正式页面记录前后节点清单；外部引用不复制只有单测，未额外构造页面样本。上述三项留到 S05/S06 的真实镜头链路一并复验。
 
+### S05 实测记录
+
+- **实现范围**：后端新增 `backend/internal/canvas/submapworkflow`，用 `testdata/storyboard.json` 声明六节点镜头并校验版本、ID、localId 顺序、文本入边槽位、`@文本N`、`seconds` 与 `startFrame`。Web 新增同构 `submap-presets.json` / `canvas-submap-presets.ts`，由 parity 测试守住后端作者契约；submap 标题栏接入「子画布形式」下拉，切换时删除旧子树、重置该 scope 高水位、按 manifest 顺序实例化 `text-1..4`、`image-1`、`video-1`，并写入提示词、`seconds=4`、首帧和文本引用顺序。
+- **复制与字段真源**：复制 submap 时重映射 `generationSpec.referenceBindings` 与 `inputBindings` 的 `nodeId`，原件与副本分别引用各自子节点。字段引用文档只把 5 条文本/首帧关系投影为编辑器连线，持久 `connections` 仍为 0；导出与重开由 `referenceFieldsVersion=1` 的字段关系恢复。
+- **保存回包修复**：正式页面首次复现「编辑文本保存后 7 节点 / 5 连线变成 7 / 0，刷新恢复 5」。原因是服务端 raw 文档 `connections=[]` 进入 `acknowledged` 后直接替换了本地字段投影。新增 `projectCanvasReferenceConnections`，在快照、打开、Agent 刷新、冲突对齐和保存回包进入 store/哈希前统一投影；新增“远端 connections 为空、本地有投影线，保存和重开后仍保留”的同步回归测试，并保留 `remoteContentHash` 与投影后内容一致。
+- **专项验证**：`go test -count=1 ./internal/canvas/submapworkflow ./internal/architecture` PASS；`go test -count=1 ./internal/canvas/... ./internal/architecture` PASS。Web 相关 10 文件专项 **142 pass，0 fail，648 expectations**；`bun run typecheck` PASS；`bun run lint` PASS；`bun run build` PASS（1m 5s，仅既存 dynamic import / chunk size 警告）；Prettier 全部改动文件 PASS。
+- **全量回归**：`bun run test` → **3527 pass、7 skip、11 fail，3545 tests / 522 files，159.18s**，日志 `.local/s05-full-test.log`。11 条仍是既有 Windows CRLF 源文本/CSS 文本断言与 `welcome-title` 独立 harness 问题；无 submap、字段投影或同步保存相关失败。
+- **正式页面证据**：后端 `127.0.0.1:18080`、前端 `127.0.0.1:13000`，数据目录 `.local/project-workbench-debug`，一次性管理员 `s04_acceptance_20261122`，画布 `lOt4kAlARvkpQaA1xFDSl`。应用 storyboard 后为 7 节点 / 5 连线；文本改为 `S05 镜头文本：雨夜天台的回眸（保存回归）`，首帧提示词改为 `S05 首帧：雨夜天台，人物回眸，霓虹反光`，视频提示词改为 `S05 视频：雨夜天台回眸，霓虹闪烁，镜头缓慢推近`，关闭编辑器仍为 7 / 5。右键创建 `submap-2` 得 14 节点 / 10 连线，刷新重开仍为 14 / 10。
+- **SQLite 回读**：`canvas_projects` revision `8`、payload `7984` bytes、14 nodes、持久 `connections=[]`、`referenceFieldsVersion=1`；`idCounters={"submap":2,"submap-1__text":4,"submap-1__image":1,"submap-1__video":1,"submap-2__text":4,"submap-2__image":1,"submap-2__video":1}`。`submap-1__image-1.referenceTextNodeIds=["submap-1__text-1"]`，`submap-1__video-1.referenceTextNodeIds=["submap-1__text-1","submap-1__text-2","submap-1__text-3"]` 且 `videoStartFrameNodeId="submap-1__image-1"`；副本对应字段全部指向 `submap-2__*`。
+- **未覆盖项**：首帧通过修改首帧节点提示词验证，未新增第二张图片在页面改选首帧；删除容器与撤销/重做仍只有纯函数测试，正式页面未执行破坏性删除样本；四角 resize 本次仍未取得尺寸实际变化；外部共享资源复制页面样本未构造；用户预设持久化留到 S07，真实生成任务回写留到 S10。
+
 ### S04 接入编辑器
 
 以供体 `web/src/pages/canvas/project.tsx`、`use-canvas-project-lifecycle.ts` 为起点移入编辑器、store、节点渲染、工具注册、图层、媒体操作、样式及必要资源。4AI 接项目身份、资源读取、上传和任务服务。用正式页面逐项勾验 S01 注册表，覆盖创建、移动、缩放、快捷键、粘贴、节点编辑、图层拆分与提层、保存与重开。每个供体和目标特有节点记录对应结果。
@@ -142,3 +153,4 @@ Go 在 `backend` 下运行 `go test ./internal/canvas/...`，按分片追加实�
 | 2026-11-22 | S02 通过：提交 `7cafd662f`，文档、能力、关系投影、语义分列与 Go/Web 同源黄金夹具落地；相关 Go/Web 专项测试通过 | S03 接入项目存储、格式门禁、revision CAS 与单一写入器 |
 | 2026-11-22 | S03 通过：提交 `49b788a41`，字段引用文档格式门禁、客户端能力、单一事务写入器、receipt 重放和回滚测试落地；完整 `internal/app` 504.194 秒回归 0 失败、25 跳过 | S04 接入正式画布编辑器与 submap 容器、图层、ID 分配、拖拽/折叠和右键创建 |
 | 2026-11-22 | S04 通过：提交 `bd7fdae81`，顺序 ID、submap 容器/小地图/resize、子画布内创建与复制粘贴、级联删除落地；专项 44 PASS，typecheck/lint/build PASS，全量 3512 PASS / 11 条既有环境失败，正式页面完成创建、编辑、折叠、复制、粘贴和重开 | S05 打通内置 storyboard 镜头：六节点模板、提示词与首帧、整组复制后的引用归属 |
+| 2026-11-22 | S05 通过：提交 `e7c47f6f0`，storyboard 预置、六节点实例化、字段引用投影、复制重映射与远端回包投影归一路径落地；专项 142 PASS，typecheck/lint/build PASS，全量 3527 PASS / 11 条既有环境失败，正式页面完成提示词/首帧编辑、整组复制、保存和重开 | S06 对接协作与历史：两端改字段/子树、断线重放、删除撤销与历史恢复 |
