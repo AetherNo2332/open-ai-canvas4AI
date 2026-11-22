@@ -23,6 +23,16 @@ import (
 const canvasHistoryLimit = 20
 const canvasHistoryInterval = 5 * time.Minute
 
+// 这些原因代表不可重建的审计前像，必须绕过自动快照的 5 分钟节流。
+func canvasHistoryForceCapture(reason string) bool {
+	switch reason {
+	case "before_restore", "before_resource_repair", "before_shot_migration":
+		return true
+	default:
+		return false
+	}
+}
+
 // 浏览器、云端 Agent 和创作任务共用此入口；外层事务仍负责任务和画布的一致性。
 func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasProject, after *model.CanvasProject, reason string) error {
 	var candidate map[string]any
@@ -62,7 +72,7 @@ func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasPr
 	if err != nil {
 		return err
 	}
-	return repo.SaveCanvasWithSnapshot(after, snapshot, resourceIDs, assets.SortedIDs(refs), after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, reason == "before_restore" || reason == "before_resource_repair")
+	return repo.SaveCanvasWithSnapshot(after, snapshot, resourceIDs, assets.SortedIDs(refs), after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, canvasHistoryForceCapture(reason))
 }
 
 // 历史快照保存的是修改前文档。旧文档引用的资源可能已被清理，不能在正常保存时

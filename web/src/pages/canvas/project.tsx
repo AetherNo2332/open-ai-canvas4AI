@@ -34,7 +34,7 @@ import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useCanvasThemeStore, useCanvasThemeScope } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { App, Button } from "antd";
-import { ArrowLeftRight } from "lucide-react";
+import { ArrowLeftRight, Clapperboard, Link2 } from "lucide-react";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { getNodeSpec } from "@/constant/canvas";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
@@ -147,9 +147,9 @@ import { CanvasAssetView } from "@/components/canvas/canvas-asset-view";
 import type { CanvasAssetVersion } from "@/lib/canvas/canvas-asset-catalog";
 import { canDownloadCanvasNodeMedia } from "@/lib/canvas/canvas-media-download";
 import { CanvasSyncStatus } from "./canvas-sync-status";
-import { CanvasReferenceMigrationBanner } from "./canvas-reference-migration-banner";
 import { useCanvasReferenceMigration } from "./use-canvas-reference-migration";
-import { CanvasShotMigrationBanner, CanvasShotMigrationPanel } from "@/components/canvas/canvas-shot-migration-panel";
+import { CanvasShotMigrationPanel } from "@/components/canvas/canvas-shot-migration-panel";
+import { CanvasMigrationNotice, type CanvasMigrationNoticeItem } from "./canvas-migration-notice";
 import { useCanvasShotMigration } from "./use-canvas-shot-migration";
 import { CanvasReferenceMigrationPanel } from "@/components/canvas/canvas-reference-migration-panel";
 import { LibTVImportDialog } from "./components/libtv-import-dialog";
@@ -2857,7 +2857,37 @@ function CanvasViewportPage() {
         [setDialogNodeId, setSearchParams],
     );
     const referenceMigration = useCanvasReferenceMigration(projectId, { enabled: projectLoaded, legacy: currentProject?.referenceFieldsVersion !== 1 });
-    const shotMigration = useCanvasShotMigration(projectId, { enabled: projectLoaded, referenceFieldsVersion });
+    const shotMigration = useCanvasShotMigration(projectId, {
+        enabled: projectLoaded,
+        referenceFieldsVersion,
+        onOpenCanvas: (canvasId) => navigate(`/canvas/${encodeURIComponent(canvasId)}`),
+    });
+    const migrationNoticeItems: CanvasMigrationNoticeItem[] = [
+        ...(referenceMigration.required
+            ? [
+                  {
+                      key: "reference",
+                      title: "素材引用待迁移",
+                      description: "旧版素材关联需要转换一次，完成后 Agent 才能稳定引用素材和生成。",
+                      action: "处理引用",
+                      onAction: () => referenceMigration.setOpen(true),
+                      icon: <Link2 className="size-4" />,
+                  },
+              ]
+            : []),
+        ...(shotMigration.required && shotMigration.preview
+            ? [
+                  {
+                      key: "shot",
+                      title: "旧分镜可升级为镜头子画布",
+                      description: referenceMigration.required ? `检测到 ${shotMigration.preview.rows} 条旧分镜行；建议先完成素材引用迁移，存在冲突时会阻止升级。` : `检测到 ${shotMigration.preview.rows} 条旧分镜行；已出图、素材和任务绑定会保留。`,
+                      action: "升级分镜",
+                      onAction: () => shotMigration.setOpen(true),
+                      icon: <Clapperboard className="size-4" />,
+                  },
+              ]
+            : []),
+    ];
     const locateAssetNode = useCallback(
         (nodeId: string) => {
             changeCanvasView("canvas");
@@ -3009,6 +3039,8 @@ function CanvasViewportPage() {
                                     onRedo={redoCanvas}
                                     onShare={() => setShareModalOpen(true)}
                                     onOpenVersionHistory={() => setVersionHistoryOpen(true)}
+                                    shotMigrationRollbackAvailable={shotMigration.rollbackAvailable}
+                                    onOpenShotMigrationRollback={() => shotMigration.setOpen(true)}
                                     shortcutRequestNonce={shortcutRequestNonce}
                                     syncIcon={<CanvasSyncStatus projectId={projectId} />}
                                     onOpenSearch={() => setNodeSearchOpen(true)}
@@ -3026,8 +3058,7 @@ function CanvasViewportPage() {
                                     shortDramaGuide={shortDramaGuide}
                                 />
                             ) : null}
-                            {referenceMigration.required ? <CanvasReferenceMigrationBanner onOpen={() => referenceMigration.setOpen(true)} /> : null}
-                            {shotMigration.preview ? <CanvasShotMigrationBanner rows={shotMigration.preview.rows} onOpen={() => shotMigration.setOpen(true)} /> : null}
+                            {!focusMode && canvasView === "canvas" ? <CanvasMigrationNotice items={migrationNoticeItems} /> : null}
                             <CanvasReferenceMigrationPanel
                                 open={referenceMigration.open}
                                 conflicts={referenceMigration.conflicts}
@@ -3049,6 +3080,7 @@ function CanvasViewportPage() {
                                 error={shotMigration.error}
                                 onCancel={() => shotMigration.setOpen(false)}
                                 onApply={() => void shotMigration.apply()}
+                                onRollback={(strategy) => void shotMigration.rollback(strategy)}
                             />
 
                             <CanvasNodeSearchModal

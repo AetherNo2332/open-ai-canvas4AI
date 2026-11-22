@@ -20,15 +20,26 @@ const shotMigrationSnapshotReason = "before_shot_migration"
 // CanvasShotMigrationPreview combines the read-only S11 converter with the S12
 // shot-row plan and the in-flight task gate. It never writes the document.
 type CanvasShotMigrationPreview struct {
-	Revision    int64                          `json:"revision"`
-	Required    bool                           `json:"required"`
-	Ready       bool                           `json:"ready"`
-	Conflicts   []references.MigrationConflict `json:"conflicts"`
-	ShotSubmaps int                            `json:"shotSubmaps"`
-	Rows        int                            `json:"rows"`
-	ActiveTasks []string                       `json:"activeTasks"`
-	Blocking    []legacymigrate.Issue          `json:"blocking"`
-	Warnings    []legacymigrate.Issue          `json:"warnings"`
+	Revision    int64                               `json:"revision"`
+	Required    bool                                `json:"required"`
+	Ready       bool                                `json:"ready"`
+	Conflicts   []references.MigrationConflict      `json:"conflicts"`
+	ShotSubmaps int                                 `json:"shotSubmaps"`
+	Rows        int                                 `json:"rows"`
+	ActiveTasks []string                            `json:"activeTasks"`
+	Blocking    []legacymigrate.Issue               `json:"blocking"`
+	Warnings    []legacymigrate.Issue               `json:"warnings"`
+	Rollback    *CanvasShotMigrationRollbackPreview `json:"rollback,omitempty"`
+}
+
+type CanvasShotMigrationRollbackPreview struct {
+	SnapshotID        string `json:"snapshotId"`
+	SnapshotRevision  int64  `json:"snapshotRevision"`
+	MigrationRevision int64  `json:"migrationRevision"`
+	Revision          int64  `json:"revision"`
+	NewerEdits        bool   `json:"newerEdits"`
+	CanRestore        bool   `json:"canRestore"`
+	CanCopy           bool   `json:"canCopy"`
 }
 
 type CanvasShotMigrationRequest struct {
@@ -71,11 +82,15 @@ func (s *Service) PreviewCanvasShotMigration(userID, canvasID string) (CanvasSho
 	if err != nil {
 		return CanvasShotMigrationPreview{}, err
 	}
+	rollback, err := s.shotMigrationRollbackPreview(userID, canvasID, project.Revision, len(preview.ShotSubmaps) > 0)
+	if err != nil {
+		return CanvasShotMigrationPreview{}, err
+	}
 	return CanvasShotMigrationPreview{
 		Revision: project.Revision, Required: len(preview.ShotSubmaps) > 0,
 		Ready: preview.Ready, Conflicts: preview.Conflicts, ShotSubmaps: len(preview.ShotSubmaps),
 		Rows: countShotRows(preview.ShotSubmaps), ActiveTasks: active,
-		Blocking: preview.Blocking, Warnings: preview.Warnings,
+		Blocking: preview.Blocking, Warnings: preview.Warnings, Rollback: rollback,
 	}, nil
 }
 
@@ -169,6 +184,14 @@ func (s *Service) RollbackCanvasShots(userID, canvasID string, req CanvasShotMig
 	if current.Revision != *req.Revision {
 		return CanvasShotMigrationRollbackResult{}, canvasRevisionConflict()
 	}
+	doc, err := canvasReferenceDocument(current.PayloadJSON)
+	if err != nil {
+		return CanvasShotMigrationRollbackResult{}, err
+	}
+	if !references.Enabled(doc) {
+		return CanvasShotMigrationRollbackResult{}, canvasMutationError("shot_migration_rollback_not_applicable",
+			"当前画布不是升级后的镜头子画布格式，无需回退")
+	}
 	snapshot, err := s.repo.LatestCanvasSnapshotWithReason(userID, canvasID, shotMigrationSnapshotReason)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return CanvasShotMigrationRollbackResult{}, canvasMutationError("shot_migration_rollback_missing",
@@ -181,6 +204,16 @@ func (s *Service) RollbackCanvasShots(userID, canvasID string, req CanvasShotMig
 	if newer && strategy != "new_canvas" {
 		return CanvasShotMigrationRollbackResult{}, canvasMutationError("shot_migration_has_newer_edits",
 			"切换后已有新编辑，不能直接覆盖；请选择 new_canvas 保留当前画布并生成迁移前副本")
+	}
+	if strategy == "restore" {
+		active, err := s.activeShotMigrationTasks(userID, canvasID, current.PayloadJSON)
+		if err != nil {
+			return CanvasShotMigrationRollbackResult{}, err
+		}
+		if len(active) > 0 {
+			return CanvasShotMigrationRollbackResult{}, canvasMutationError("shot_migration_tasks_active",
+				"画布仍有在途生成任务，请等待任务结束或取消后再回退："+strings.Join(active, "、"))
+		}
 	}
 	if strategy == "new_canvas" {
 		newID, err := s.copyCanvasSnapshotToNewCanvas(userID, current.Title, snapshot)
@@ -197,6 +230,32 @@ func (s *Service) RollbackCanvasShots(userID, canvasID string, req CanvasShotMig
 	}
 	return CanvasShotMigrationRollbackResult{
 		Restored: true, SnapshotID: snapshot.ID, MigrationRevision: snapshot.Revision + 1, Revision: summary.Revision,
+	}, nil
+}
+
+func (s *Service) shotMigrationRollbackPreview(userID, canvasID string, revision int64, required bool) (*CanvasShotMigrationRollbackPreview, error) {
+	if required {
+		return nil, nil
+	}
+	snapshot, err := s.repo.LatestCanvasSnapshotWithReason(userID, canvasID, shotMigrationSnapshotReason)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	migrationRevision := snapshot.Revision + 1
+	if revision < migrationRevision {
+		return nil, nil
+	}
+	return &CanvasShotMigrationRollbackPreview{
+		SnapshotID:        snapshot.ID,
+		SnapshotRevision:  snapshot.Revision,
+		MigrationRevision: migrationRevision,
+		Revision:          revision,
+		NewerEdits:        revision > migrationRevision,
+		CanRestore:        revision == migrationRevision,
+		CanCopy:           revision > migrationRevision,
 	}, nil
 }
 

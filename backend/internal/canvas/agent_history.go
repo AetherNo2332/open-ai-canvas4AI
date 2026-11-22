@@ -21,5 +21,5 @@ func CaptureDocumentHistory(repo *repository.Repository, before *model.CanvasPro
 	if err := assets.CollectOwnedDocumentReferences(after.PayloadJSON, current); err != nil {
 		return err
 	}
-	return repo.CaptureCanvasSnapshot(&after, snapshot, resourceIDs, assets.SortedIDs(current), after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, reason == "before_restore" || reason == "before_resource_repair")
+	return repo.CaptureCanvasSnapshot(&after, snapshot, resourceIDs, assets.SortedIDs(current), after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, canvasHistoryForceCapture(reason))
 }

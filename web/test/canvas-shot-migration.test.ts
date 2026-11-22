@@ -13,5 +13,6 @@ describe("canvas shot migration reason text", () => {
         expect(shotMigrationReasonMessage("unknown")).toBeUndefined();
         expect(shotMigrationErrorText(new Error("网络失败"))).toBe("网络失败");
         expect(shotMigrationErrorText({ reason: "shot_migration_not_required" })).toContain("没有待转换");
+        expect(shotMigrationReasonMessage("shot_migration_rollback_not_applicable")).toContain("无需回退");
     });
 });

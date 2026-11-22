@@ -48,6 +48,14 @@ func TestShotMigrationSwitchesRowsAndRestoresPreimage(t *testing.T) {
 	if result.Rows != 2 || result.Submaps != 2 || result.ExistingImages != 1 || result.ExistingVideos != 1 || result.Project.Revision != 4 {
 		t.Fatalf("migration result = %+v", result)
 	}
+	afterMigration, err := svc.PreviewCanvasShotMigration("user", "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterMigration.Required || afterMigration.Rollback == nil || !afterMigration.Rollback.CanRestore || afterMigration.Rollback.CanCopy ||
+		afterMigration.Rollback.SnapshotRevision != 3 || afterMigration.Rollback.MigrationRevision != 4 {
+		t.Fatalf("rollback preview = %+v, %v", afterMigration, err)
+	}
 	project, err := svc.repo.CanvasProjectForUser("user", "legacy")
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +111,16 @@ func TestShotMigrationSwitchesRowsAndRestoresPreimage(t *testing.T) {
 	if nodeByID(restoredDoc)["submap-1"] != nil {
 		t.Fatal("restored preimage still contains generated submaps")
 	}
+	afterRestore, err := svc.PreviewCanvasShotMigration("user", "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !afterRestore.Required || afterRestore.Rollback != nil {
+		t.Fatalf("restored preview = %+v, %v", afterRestore, err)
+	}
+	if _, err := svc.RollbackCanvasShots("user", "legacy", CanvasShotMigrationRollbackRequest{Revision: &afterRestore.Revision}); referenceMigrationReason(err) != "shot_migration_rollback_not_applicable" {
+		t.Fatalf("repeated rollback error = %v", err)
+	}
 }
 
 func TestShotMigrationBlocksActiveTasksAndPreservesNewerEdits(t *testing.T) {
@@ -126,6 +144,16 @@ func TestShotMigrationBlocksActiveTasksAndPreservesNewerEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.repo.Create(&model.Task{ID: "rollback-active-task", UserID: "user", ProjectID: "busy", Status: model.TaskStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	rollbackRevision := result.Project.Revision
+	if _, err := svc.RollbackCanvasShots("user", "busy", CanvasShotMigrationRollbackRequest{Revision: &rollbackRevision}); referenceMigrationReason(err) != "shot_migration_tasks_active" {
+		t.Fatalf("active task rollback error = %v", err)
+	}
+	if err := svc.repo.Delete(&model.Task{ID: "rollback-active-task"}, "id = ?", "rollback-active-task"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.ApplyUserCanvasOperations("user", "busy", CanvasOperationsRequest{MutationID: "newer-edit", ClientCapabilities: []string{CanvasClientCapabilityReferenceFields}, Operations: []CanvasOperation{{
 		Type: "patch_node", ID: "submap-1", Patch: map[string]json.RawMessage{"title": json.RawMessage(`"镜头 1 新标题"`)},
 		Before: map[string]json.RawMessage{"title": json.RawMessage(`"镜头 1"`)},
@@ -138,6 +166,13 @@ func TestShotMigrationBlocksActiveTasksAndPreservesNewerEdits(t *testing.T) {
 	}
 	if current.Revision != result.Project.Revision+1 {
 		t.Fatalf("newer edit revision = %d, want %d", current.Revision, result.Project.Revision+1)
+	}
+	newerPreview, err := svc.PreviewCanvasShotMigration("user", "busy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newerPreview.Rollback == nil || newerPreview.Rollback.CanRestore || !newerPreview.Rollback.CanCopy || !newerPreview.Rollback.NewerEdits {
+		t.Fatalf("newer edit rollback preview = %+v, %v", newerPreview, err)
 	}
 	if _, err := svc.RollbackCanvasShots("user", "busy", CanvasShotMigrationRollbackRequest{Revision: &current.Revision}); referenceMigrationReason(err) != "shot_migration_has_newer_edits" {
 		t.Fatalf("newer edit rollback error = %v", err)
@@ -164,6 +199,50 @@ func TestShotMigrationBlocksActiveTasksAndPreservesNewerEdits(t *testing.T) {
 	copyBoard := canvasObject(canvasObject(nodeByID(copyDoc)["board"]["metadata"])["storyboard"])
 	if rows := canvasMaps(copyBoard["rows"]); len(rows) != 2 {
 		t.Fatalf("copied preimage rows = %d, want 2", len(rows))
+	}
+}
+
+func TestShotMigrationCapturesPreimageAfterRecentAutomaticSnapshot(t *testing.T) {
+	svc := newCanvasOperationTestService(t)
+	shotMigrationSeed(t, svc, "recent-history", 3)
+	if _, err := svc.ApplyUserCanvasOperations("user", "recent-history", CanvasOperationsRequest{
+		MutationID: "recent-edit",
+		Operations: []CanvasOperation{{
+			Type: "patch_node", ID: "old-image",
+			Patch:  map[string]json.RawMessage{"title": json.RawMessage(`"已出图 2"`)},
+			Before: map[string]json.RawMessage{"title": json.RawMessage(`"已出图"`)},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshots, err := svc.repo.CanvasSnapshots("user", "recent-history", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].Reason != "automatic" || snapshots[0].Revision != 3 {
+		t.Fatalf("recent automatic snapshots = %+v", snapshots)
+	}
+	preview, err := svc.PreviewCanvasShotMigration("user", "recent-history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.Required || preview.Revision != 4 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	result, err := svc.MigrateCanvasShots("user", "recent-history", CanvasShotMigrationRequest{Revision: &preview.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := svc.repo.LatestCanvasSnapshotWithReason("user", "recent-history", shotMigrationSnapshotReason)
+	if err != nil || snapshot.Revision != preview.Revision {
+		t.Fatalf("migration preimage = %+v, %v; want revision %d", snapshot, err, preview.Revision)
+	}
+	rollback, err := svc.PreviewCanvasShotMigration("user", "recent-history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rollback.Rollback == nil || !rollback.Rollback.CanRestore || result.Project.Revision != preview.Revision+1 {
+		t.Fatalf("rollback preview = %+v, result = %+v", rollback, result)
 	}
 }
 

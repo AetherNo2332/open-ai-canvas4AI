@@ -39,6 +39,8 @@ type CanvasTopBarProps = {
     onRedo: () => void;
     onShare: () => void;
     onOpenVersionHistory: () => void;
+    shotMigrationRollbackAvailable?: boolean;
+    onOpenShotMigrationRollback?: () => void;
     shortcutRequestNonce: number;
     syncIcon?: ReactNode;
     onOpenSearch: () => void;
@@ -70,6 +72,8 @@ export function CanvasTopBar({
     onRedo,
     onShare,
     onOpenVersionHistory,
+    shotMigrationRollbackAvailable,
+    onOpenShotMigrationRollback,
     shortcutRequestNonce,
     syncIcon,
     onOpenSearch,
@@ -126,6 +130,7 @@ export function CanvasTopBar({
                                     { key: "delete", danger: true, icon: <Trash2 className="size-4" />, label: "删除当前画布", onClick: onDeleteProject },
                                     { key: "save", icon: <Save className="size-4" />, label: <MenuLabel text="保存" shortcut="⌘ S" />, onClick: () => void onSave() },
                                     { key: "history", icon: <History className="size-4" />, label: "版本历史", onClick: onOpenVersionHistory },
+                                    ...(shotMigrationRollbackAvailable && onOpenShotMigrationRollback ? [{ key: "shot-migration-rollback", icon: <Undo2 className="size-4" />, label: "分镜升级回退", onClick: onOpenShotMigrationRollback }] : []),
                                     { type: "divider" },
                                     { key: "import", icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
                                     { key: "search", icon: <Search className="size-4" />, label: <MenuLabel text="搜索节点" shortcut="⌘ F" />, onClick: onOpenSearch },

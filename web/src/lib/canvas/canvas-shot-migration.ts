@@ -10,6 +10,15 @@ export type CanvasShotMigrationPreview = {
     activeTasks: string[];
     blocking: Array<{ code: string; path?: string; message: string }>;
     warnings: Array<{ code: string; path?: string; message: string }>;
+    rollback?: {
+        snapshotId: string;
+        snapshotRevision: number;
+        migrationRevision: number;
+        revision: number;
+        newerEdits: boolean;
+        canRestore: boolean;
+        canCopy: boolean;
+    };
 };
 
 export type CanvasShotMigrationResult = {
@@ -41,6 +50,8 @@ export function shotMigrationReasonMessage(reason: string | undefined): string |
             return "切换后已有新编辑，不能直接覆盖；请选择“保留当前并生成迁移前副本”";
         case "shot_migration_rollback_missing":
             return "找不到这次格式切换前的历史快照";
+        case "shot_migration_rollback_not_applicable":
+            return "当前画布不是升级后的镜头子画布格式，无需回退";
         default:
             return undefined;
     }
