@@ -4371,6 +4371,86 @@ paths:
           description: 画布已有更新、仍有冲突未选择（reason reference_migration_conflict）或已完成规范化（reason reference_migration_not_required）
         "428":
           description: 缺少 revision
+  /canvas-projects/{id}/shot-migration:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 预览旧分镜行切换为镜头子画布
+      description: 只读。返回引用冲突、待迁移行数、分镜转 submap 计划、阻断/警告和当前在途任务；升级写入前必须没有在途任务。
+      responses:
+        "200":
+          description: 信封 data 为 { revision, required, ready, conflicts, shotSubmaps, rows, activeTasks, blocking, warnings }
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+    post:
+      tags: [canvas]
+      summary: 执行旧分镜行到镜头子画布的切换
+      description: 先按 revision CAS，再将旧连线规范化为字段引用，把每条分镜行转为 submap 与四个提示词子节点；已有图片/视频结果保持原节点和任务绑定。写入前保留历史快照 reason before_shot_migration，写入后重算托管连线。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, format: int64, minimum: 0 }
+                choices:
+                  type: object
+                  description: 引用冲突 scopeKey 到来源的映射，取值 fields 或 connections
+                  additionalProperties: { type: string, enum: [fields, connections] }
+      responses:
+        "200":
+          description: 信封 data 为 { project, submaps, rows, existingImages, existingVideos, preservedAssets }
+        "400":
+          description: 引用取值或文档格式无效
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+        "409":
+          description: 画布已有更新、仍有冲突、没有待迁移行，或存在在途任务（reason shot_migration_tasks_active）
+        "428":
+          description: 缺少 revision
+  /canvas-projects/{id}/shot-migration/rollback:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [canvas]
+      summary: 回退镜头子画布迁移
+      description: 读取最近一次 before_shot_migration 快照。切换后没有新编辑时 restore 用快照覆盖当前画布；已有新编辑时必须用 new_canvas，把迁移前文档复制成新画布，保留当前画布增量。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, format: int64, minimum: 0 }
+                strategy: { type: string, enum: [restore, new_canvas], default: restore }
+      responses:
+        "200":
+          description: 信封 data 为 { restored, newCanvasId, snapshotId, migrationRevision, revision }
+        "400":
+          description: 回退策略无效
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+        "409":
+          description: 画布已有更新、找不到迁移快照，或切换后已有新编辑但未选择 new_canvas
+        "428":
+          description: 缺少 revision
   /skills/install:
     post:
       tags: [skills]

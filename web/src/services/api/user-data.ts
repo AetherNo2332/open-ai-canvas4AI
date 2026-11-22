@@ -2,6 +2,7 @@ import type { Asset } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { compactApiParams, http } from "@/services/api/request";
 import type { CanvasReferenceMigrationChoice, CanvasReferenceMigrationPreview } from "@/lib/canvas/canvas-reference-migration";
+import type { CanvasShotMigrationPreview, CanvasShotMigrationResult, CanvasShotMigrationRollbackResult } from "@/lib/canvas/canvas-shot-migration";
 
 export const CANVAS_CLIENT_CAPABILITY_REFERENCE_FIELDS = "canvas-reference-fields/v1";
 
@@ -217,4 +218,17 @@ export function getCanvasReferenceMigration(canvasId: string, signal?: AbortSign
 
 export function migrateCanvasReferences(canvasId: string, revision: number, choices: Record<string, CanvasReferenceMigrationChoice>) {
     return http.post<{ project: RemoteUserDataSummary & { revision: number } }>(`/canvas-projects/${encodeURIComponent(canvasId)}/reference-migration`, { revision, choices });
+}
+
+/** 旧分镜行切换为镜头子画布：预览只读，执行前必须在途任务为空。 */
+export function getCanvasShotMigration(canvasId: string, signal?: AbortSignal) {
+    return http.get<CanvasShotMigrationPreview>(`/canvas-projects/${encodeURIComponent(canvasId)}/shot-migration`, { signal });
+}
+
+export function migrateCanvasShots(canvasId: string, revision: number, choices: Record<string, CanvasReferenceMigrationChoice> = {}) {
+    return http.post<CanvasShotMigrationResult>(`/canvas-projects/${encodeURIComponent(canvasId)}/shot-migration`, { revision, choices });
+}
+
+export function rollbackCanvasShots(canvasId: string, revision: number, strategy: "restore" | "new_canvas" = "restore") {
+    return http.post<CanvasShotMigrationRollbackResult>(`/canvas-projects/${encodeURIComponent(canvasId)}/shot-migration/rollback`, { revision, strategy });
 }

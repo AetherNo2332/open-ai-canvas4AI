@@ -52,6 +52,7 @@ func RegisterCanvasAPI(api *gin.RouterGroup, svc *service.Service) {
 	RegisterPoseLibraryRoutes(api, svc)
 	RegisterInspirationFeedRoutes(api, svc)
 	RegisterUserDataRoutes(api, svc)
+	RegisterCanvasShotMigrationRoutes(api, svc)
 	RegisterCanvasRealtimeRoutes(api, svc)
 	RegisterCanvasHistoryRoutes(api, svc)
 	RegisterUserSubmapPresetRoutes(api, svc)

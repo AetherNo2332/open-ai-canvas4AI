@@ -149,6 +149,8 @@ import { canDownloadCanvasNodeMedia } from "@/lib/canvas/canvas-media-download";
 import { CanvasSyncStatus } from "./canvas-sync-status";
 import { CanvasReferenceMigrationBanner } from "./canvas-reference-migration-banner";
 import { useCanvasReferenceMigration } from "./use-canvas-reference-migration";
+import { CanvasShotMigrationBanner, CanvasShotMigrationPanel } from "@/components/canvas/canvas-shot-migration-panel";
+import { useCanvasShotMigration } from "./use-canvas-shot-migration";
 import { CanvasReferenceMigrationPanel } from "@/components/canvas/canvas-reference-migration-panel";
 import { LibTVImportDialog } from "./components/libtv-import-dialog";
 import { TapNowImportDialog } from "./components/tapnow-import-dialog";
@@ -2855,6 +2857,7 @@ function CanvasViewportPage() {
         [setDialogNodeId, setSearchParams],
     );
     const referenceMigration = useCanvasReferenceMigration(projectId, { enabled: projectLoaded, legacy: currentProject?.referenceFieldsVersion !== 1 });
+    const shotMigration = useCanvasShotMigration(projectId, { enabled: projectLoaded, referenceFieldsVersion });
     const locateAssetNode = useCallback(
         (nodeId: string) => {
             changeCanvasView("canvas");
@@ -3024,6 +3027,7 @@ function CanvasViewportPage() {
                                 />
                             ) : null}
                             {referenceMigration.required ? <CanvasReferenceMigrationBanner onOpen={() => referenceMigration.setOpen(true)} /> : null}
+                            {shotMigration.preview ? <CanvasShotMigrationBanner rows={shotMigration.preview.rows} onOpen={() => shotMigration.setOpen(true)} /> : null}
                             <CanvasReferenceMigrationPanel
                                 open={referenceMigration.open}
                                 conflicts={referenceMigration.conflicts}
@@ -3037,6 +3041,14 @@ function CanvasViewportPage() {
                                 error={referenceMigration.error}
                                 onCancel={() => referenceMigration.setOpen(false)}
                                 onApply={(choices) => void referenceMigration.apply(choices)}
+                            />
+                            <CanvasShotMigrationPanel
+                                open={shotMigration.open}
+                                preview={shotMigration.preview}
+                                applying={shotMigration.applying}
+                                error={shotMigration.error}
+                                onCancel={() => shotMigration.setOpen(false)}
+                                onApply={() => void shotMigration.apply()}
                             />
 
                             <CanvasNodeSearchModal

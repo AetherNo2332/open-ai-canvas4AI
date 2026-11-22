@@ -53,6 +53,15 @@ func (r *Repository) CanvasSnapshot(userID, canvasID, id string) (*model.CanvasS
 	return &item, err
 }
 
+// LatestCanvasSnapshotWithReason lets the document migration find its own
+// preimage without relying on the compact history page or a second table.
+func (r *Repository) LatestCanvasSnapshotWithReason(userID, canvasID, reason string) (*model.CanvasSnapshot, error) {
+	var item model.CanvasSnapshot
+	err := r.db.Where("user_id = ? AND canvas_id = ? AND reason = ?", userID, canvasID, reason).
+		Order("revision DESC").First(&item).Error
+	return &item, err
+}
+
 // The successful CAS takes the canvas row lock before inspecting the history.
 // Snapshot creation, reference protection and retention commit with the content.
 func (r *Repository) SaveCanvasWithSnapshot(project *model.CanvasProject, snapshot *model.CanvasSnapshot, resourceIDs, currentResourceIDs []string, cutoff time.Time, limit int, force bool) error {
