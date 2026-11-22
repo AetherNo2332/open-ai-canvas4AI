@@ -42,6 +42,7 @@ type Preview struct {
 	Conflicts     []references.MigrationConflict `json:"conflicts"`
 	Identity      Identity                       `json:"identity"`
 	Explicit      Explicit                       `json:"explicit"`
+	ShotSubmaps   []ShotSubmap                   `json:"shotSubmaps"`
 	Archive       *Archive                       `json:"archive,omitempty"`
 }
 
@@ -145,6 +146,7 @@ func PreviewDocument(doc map[string]any, options Options) (Preview, error) {
 		SchemaVersion: SchemaVersion, Source: options.Source,
 		Diff: []Diff{}, Resources: resources, Blocking: blocking, Warnings: warnings,
 		Conflicts: []references.MigrationConflict{}, Identity: identity, Explicit: explicit,
+		ShotSubmaps: mapStoryboardShotSubmaps(doc),
 	}
 	if len(blocking) > 0 {
 		return preview, nil

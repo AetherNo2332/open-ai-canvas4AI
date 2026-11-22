@@ -747,6 +747,7 @@ function CanvasViewportPage() {
     const drama = useCanvasDrama({
         canvasId: projectId,
         dramaId: linkedProjectId,
+        referenceFieldsVersion,
         projectLoaded,
         nodes,
         nodesRef,

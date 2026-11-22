@@ -131,3 +131,18 @@ test("a thousand shared rows need two edges; offscreen independent cell edges ar
     expect(filterBatchCellConnections(entries, {}, cell.connection.id)).toHaveLength(3);
     expect(filterBatchCellConnections(entries, { table: { top: 999 * 122, left: 0 } }, null)).toHaveLength(3);
 });
+test("field documents keep row inputs when column edges have not been read back yet", () => {
+    const f = fixture(2);
+    const table = f.nodes[0].metadata!.batchTable!;
+    table.referenceMode = "cells";
+    table.referenceColumnInputs = { a: ["person"], b: ["outfit"] };
+    rows(f.nodes)[0].inputNodeIds = ["person", "outfit"];
+    rows(f.nodes)[1].inputNodeIds = ["other", "outfit"];
+    rows(f.nodes)[1].referenceOverrides = ["a"];
+
+    expect(syncBatchColumnReferences(f.nodes, [])).toBe(f.nodes);
+    expect(rows(f.nodes).map((row) => row.inputNodeIds)).toEqual([
+        ["person", "outfit"],
+        ["other", "outfit"],
+    ]);
+});

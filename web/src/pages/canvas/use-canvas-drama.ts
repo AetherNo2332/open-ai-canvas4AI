@@ -19,6 +19,7 @@ import {
     findDramaFinalNode,
     findDramaSegmentFrame,
     isDramaNodeStale,
+    materializeDramaSegmentReferences,
     placeDramaGroup,
     type DramaAdoptTarget,
     type DramaCanvasPresence,
@@ -43,6 +44,7 @@ export type UseCanvasDramaInput = {
     canvasId: string;
     /** 画布关联的短剧作品 ID；未关联或未开放短剧时为空。 */
     dramaId: string;
+    referenceFieldsVersion?: number;
     projectLoaded: boolean;
     nodes: CanvasNodeData[];
     nodesRef: { current: CanvasNodeData[] };
@@ -113,7 +115,7 @@ function withDramaMedia(node: CanvasNodeData, resourceId: string, assetId: strin
 }
 
 export function useCanvasDrama(input: UseCanvasDramaInput) {
-    const { canvasId, dramaId, projectLoaded, nodes, nodesRef, setNodes, setConnections, searchParams, setSearchParams } = input;
+    const { canvasId, dramaId, referenceFieldsVersion, projectLoaded, nodes, nodesRef, setNodes, setConnections, searchParams, setSearchParams } = input;
     const { message, modal } = App.useApp();
     const queryClient = useQueryClient();
 
@@ -289,17 +291,18 @@ export function useCanvasDrama(input: UseCanvasDramaInput) {
             const frameIds: string[] = [];
             segments.forEach((segment, index) => {
                 const group = buildDramaSegmentGroup({ projectId: dramaId, episode: detail.episode, segment, shots: detail.shots, castById, aspectRatio, takes: takesList[index], media });
-                const placed = placeDramaGroup(group.nodes, dramaPlacement(working, group.size, { kind: "segment", episodeId: detail.episode.id }));
+                const materialized = materializeDramaSegmentReferences(group.nodes, group.connections, referenceFieldsVersion);
+                const placed = placeDramaGroup(materialized.nodes, dramaPlacement(working, group.size, { kind: "segment", episodeId: detail.episode.id }));
                 working = [...working, ...placed];
                 added.push(...placed);
-                connections.push(...group.connections);
+                connections.push(...materialized.connections);
                 frameIds.push(group.frameId);
             });
             setNodes((items) => [...items, ...added]);
             setConnections((items) => [...items, ...connections]);
             return frameIds;
         },
-        [dramaId, nodesRef, setConnections, setNodes],
+        [dramaId, nodesRef, referenceFieldsVersion, setConnections, setNodes],
     );
 
     const projectSegment = useCallback(

@@ -262,7 +262,6 @@
     {"id":"internal/canvas/commands/history.go:func:Service.changeHistory:lines","max":156,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
     {"id":"internal/canvas/commands/host_mutation.go:func:Service.ExecuteHost.func1:complexity","max":30,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/canvas/commands/host_mutation.go:func:Service.ExecuteHost:lines","max":131,"reason":"存量长函数：拆出步骤，行数下降后同步下调或删除本条"},
-    {"id":"internal/canvas/commands/native_connections.go:func:planner.applyNativeConnection:complexity","max":22,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/canvas/commands/native_connections.go:func:planner.nativeConnectionRow:complexity","max":32,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/canvas/commands/native_drawing.go:func:planner.applyNativeDrawing:complexity","max":41,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},
     {"id":"internal/canvas/commands/native_previs.go:func:planner.editNativePrevis:complexity","max":36,"reason":"存量高复杂度函数：拆分分支，复杂度下降后同步下调或删除本条"},

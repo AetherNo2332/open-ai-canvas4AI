@@ -330,3 +330,32 @@ func TestEcommerceAgentTimeoutRecordsAllPagesAndRefunds(t *testing.T) {
 		t.Fatalf("timeout refund=%+v", account)
 	}
 }
+
+func TestEcommerceAgentCanvasSaveAndReopen(t *testing.T) {
+	svc, db := mockEcommerceAgentService(t)
+	if err := db.Create(&model.EcommerceProject{ID: "ecommerce-project", UserID: "owner", Name: "S12 电商", Status: "active", DraftJSON: "{}", PlanJSON: "{}"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	canvas := ecommerceagent.PosterCanvas{
+		Version: "1", CanvasProtocol: "SNAPSHOT", Width: 800, Height: 800, Background: "#ffffff",
+		Objects: []ecommerceagent.CanvasObject{
+			{Type: "image", Name: "主图", Src: "https://example.test/hero.png", Left: 0, Top: 0, Width: 800, Height: 800},
+			{Type: "i-text", Name: "标题", Text: "S12 电商画布", Left: 40, Top: 40, FontSize: 32, Fill: "#111111"},
+		},
+		Meta: map[string]any{"source": "s12", "platform": "Amazon"},
+	}
+	version, err := svc.SaveEcommerceAgentCanvas("owner", "ecommerce-project", canvas)
+	if err != nil || version.Version != 1 {
+		t.Fatalf("save version=%+v err=%v", version, err)
+	}
+	view, err := svc.EcommerceAgentCanvas("owner", "ecommerce-project")
+	if err != nil || view.PosterCanvas == nil || len(view.Versions) != 1 {
+		t.Fatalf("reopen view=%+v err=%v", view, err)
+	}
+	if len(view.PosterCanvas.Objects) != 2 || view.PosterCanvas.Objects[1].Text != "S12 电商画布" || view.PosterCanvas.Meta["platform"] != "Amazon" {
+		t.Fatalf("poster canvas lost objects or metadata: %+v", view.PosterCanvas)
+	}
+	if _, err := svc.EcommerceAgentCanvas("other", "ecommerce-project"); err == nil {
+		t.Fatal("foreign user read the poster canvas")
+	}
+}

@@ -3,10 +3,12 @@ import { nanoid } from "nanoid";
 import { createCanvasNode, createStoryboardRow } from "@/lib/canvas/canvas-project-domain";
 import { FRAME_HEADER_HEIGHT, FRAME_PADDING } from "@/lib/canvas/canvas-frame";
 import { findAvailableGenerationGroupPosition } from "@/lib/canvas/canvas-generation-layout";
+import { projectReferenceConnections, referenceFieldsEnabled } from "@/lib/canvas/canvas-reference-fields";
+import { readNodeGenerationSpec, validateGenerationSpec, type ReferenceBinding } from "@/lib/canvas/generation-contract";
 import { createDefaultTracks, DEFAULT_VIDEO_TRACK_ID } from "@/lib/timeline/timeline-tracks";
 import { DRAMA_CAST_KIND_LABEL, dramaCastDisplayName } from "@/lib/drama/drama-format";
 import type { DramaCast, DramaCastKind, DramaEpisode, DramaSegment, DramaShot, DramaTake } from "@/services/api/drama";
-import { CanvasNodeType, type CanvasConnection, type CanvasDramaRef, type CanvasMediaVersion, type CanvasNodeData, type CanvasVideoEditOperation, type Position, type StoryboardColumn, type StoryboardRow } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasDramaRef, type CanvasMediaVersion, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation, type Position, type StoryboardColumn, type StoryboardRow } from "@/types/canvas";
 import type { TimelineClip, TimelineProject } from "@/types/timeline";
 
 // 短剧 → 精修画布的投送：纯函数，只负责把短剧对象排成节点、连线与时间线；
@@ -233,6 +235,97 @@ export function dramaSegmentPrompt(segment: DramaSegment) {
         .map((part) => part?.trim())
         .filter(Boolean)
         .join("\n\n");
+}
+
+function dramaReferenceMediaType(node: CanvasNodeData): ReferenceBinding["mediaType"] | undefined {
+    if (node.metadata?.workflowKind === "character") return "image";
+    switch (node.type) {
+        case CanvasNodeType.Text:
+        case CanvasNodeType.Markdown:
+        case CanvasNodeType.Skill:
+        case CanvasNodeType.Svg:
+        case CanvasNodeType.Html:
+        case CanvasNodeType.Chart:
+            return "text";
+        case CanvasNodeType.Audio:
+            return "audio";
+        case CanvasNodeType.Video:
+            return "video";
+        case CanvasNodeType.Image:
+        case CanvasNodeType.Drawing:
+        case CanvasNodeType.Panorama:
+        case CanvasNodeType.Compare:
+        case CanvasNodeType.ColorGrade:
+        case CanvasNodeType.MediaConversion:
+            return "image";
+        default:
+            return undefined;
+    }
+}
+
+function pushUnique(map: Map<string, string[]>, targetId: string, sourceId: string) {
+    const current = map.get(targetId) || [];
+    if (current.includes(sourceId)) return;
+    map.set(targetId, [...current, sourceId]);
+}
+
+/**
+ * 业务投送只负责搭场景，引用真源要落到节点字段：
+ * 参考图按连线顺序写 referenceNodeIds，文本写 referenceTextNodeIds；
+ * videoStartFrameNodeId 已经声明的首帧由该字段自己表达，不重复塞进普通引用。
+ *
+ * 4AI 的生成节点还需 generationSpec.referenceBindings：服务端只从它生成引用边，
+ * 生成链路也只从它读取参考输入；只写 metadata 数组会让短剧投送在保存后丢连线。
+ * 旧格式画布保持原连线，避免在迁移前改变行为。
+ */
+export function materializeDramaSegmentReferences(nodes: CanvasNodeData[], connections: CanvasConnection[], version: unknown) {
+    if (!referenceFieldsEnabled(version)) return { nodes, connections };
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const media = new Map<string, string[]>();
+    const text = new Map<string, string[]>();
+    for (const node of nodes) {
+        if (node.type !== CanvasNodeType.Video) continue;
+        for (const sourceId of node.metadata?.referenceNodeIds || []) pushUnique(media, node.id, sourceId);
+        for (const sourceId of node.metadata?.referenceTextNodeIds || []) pushUnique(text, node.id, sourceId);
+    }
+    for (const connection of connections) {
+        const source = byId.get(connection.fromNodeId);
+        const target = byId.get(connection.toNodeId);
+        if (!source || !target || target.type !== CanvasNodeType.Video) continue;
+        if (target.metadata?.videoStartFrameNodeId === source.id) continue;
+        const mediaType = dramaReferenceMediaType(source);
+        if (mediaType === "text") pushUnique(text, target.id, source.id);
+        else if (mediaType) pushUnique(media, target.id, source.id);
+    }
+    let failed = false;
+    const next = nodes.map((node) => {
+        if (node.type !== CanvasNodeType.Video) return node;
+        const frame = node.metadata?.videoStartFrameNodeId;
+        const mediaIds = (media.get(node.id) || []).filter((sourceId) => {
+            const source = byId.get(sourceId);
+            return sourceId !== frame && Boolean(source && dramaReferenceMediaType(source));
+        });
+        const textIds = (text.get(node.id) || []).filter((sourceId) => byId.has(sourceId));
+        if (!mediaIds.length && !textIds.length && !frame) return node;
+        const metadata: CanvasNodeMetadata = {
+            ...node.metadata,
+            referenceNodeIds: mediaIds.length ? mediaIds : undefined,
+            referenceTextNodeIds: textIds.length ? textIds : undefined,
+        };
+        try {
+            const spec = metadata.generationSpec ? validateGenerationSpec(metadata.generationSpec) : readNodeGenerationSpec({ ...node, metadata });
+            const bindings: ReferenceBinding[] = [
+                ...mediaIds.map((nodeId, order) => ({ id: `node:${nodeId}`, nodeId, mediaType: dramaReferenceMediaType(byId.get(nodeId)!)!, role: "reference" as const, order, resolution: "latest" as const })),
+                ...textIds.map((nodeId, index) => ({ id: `node:${nodeId}`, nodeId, mediaType: "text" as const, role: "source-text" as const, order: mediaIds.length + index, resolution: "latest" as const })),
+                ...(frame ? [{ id: `node:${frame}`, nodeId: frame, mediaType: "image" as const, role: "first-frame" as const, order: mediaIds.length + textIds.length, resolution: "latest" as const }] : []),
+            ];
+            metadata.generationSpec = validateGenerationSpec({ ...spec, referenceBindings: bindings });
+        } catch {
+            failed = true;
+        }
+        return { ...node, metadata };
+    });
+    return { nodes: next, connections: failed ? connections : projectReferenceConnections(next, connections, version) };
 }
 
 /**
