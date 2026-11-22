@@ -32,6 +32,9 @@ const cloudAgentPrevisMaxCameraMoves = 24
 
 var cloudAgentPrevisCameraFollowSides = []string{"behind", "front", "left", "right", "above", "shoulder", "pov"}
 
+// 跟拍景别：按焦段与画幅换算距离、注视高度与机位高度，只对 behind/front/left/right 生效；与前端 PREVIS_CAMERA_FOLLOW_SHOT_SIZES 同序。
+var cloudAgentPrevisCameraFollowShotSizes = []string{"extreme_close_up", "close_up", "medium", "full", "wide", "extreme_wide"}
+
 var cloudAgentPrevisCameraTechniques = []cloudAgentPrevisCameraTechnique{
 	{ID: "push_in", Name: "推镜头", Subject: "none", Params: []cloudAgentPrevisCameraParam{{Key: "distance", Min: 0.1, Max: 200}}},
 	{ID: "pull_out", Name: "拉镜头", Subject: "none", Params: []cloudAgentPrevisCameraParam{{Key: "distance", Min: 0.1, Max: 200}}},
@@ -54,7 +57,7 @@ var cloudAgentPrevisCameraTechniques = []cloudAgentPrevisCameraTechnique{
 	{ID: "crane_down", Name: "摇臂降（distance=同时前推）", Subject: "none", Params: []cloudAgentPrevisCameraParam{{Key: "height", Min: 0.2, Max: 100}, {Key: "distance", Min: 0, Max: 200}}},
 	{ID: "orbit_left", Name: "左环绕", Subject: "optional", Params: []cloudAgentPrevisCameraParam{{Key: "angle", Min: 5, Max: 720}, {Key: "rise", Min: -50, Max: 50}, {Key: "aim", Min: 0, Max: 20}}},
 	{ID: "orbit_right", Name: "右环绕", Subject: "optional", Params: []cloudAgentPrevisCameraParam{{Key: "angle", Min: 5, Max: 720}, {Key: "rise", Min: -50, Max: 50}, {Key: "aim", Min: 0, Max: 20}}},
-	{ID: "follow", Name: "跟拍（随演员移动，飞行/御剑时一起升空）", Subject: "required", Params: []cloudAgentPrevisCameraParam{{Key: "side", Options: cloudAgentPrevisCameraFollowSides}, {Key: "distance", Min: 0, Max: 60}, {Key: "height", Min: -5, Max: 100}, {Key: "lag", Min: 0, Max: 2}, {Key: "aim", Min: 0, Max: 20}}},
+	{ID: "follow", Name: "跟拍（随演员移动，飞行/御剑时一起升空；shotSize 按景别取距离，换 side/shotSize 时用 blend 秒绕主体过渡）", Subject: "required", Params: []cloudAgentPrevisCameraParam{{Key: "side", Options: cloudAgentPrevisCameraFollowSides}, {Key: "shotSize", Options: cloudAgentPrevisCameraFollowShotSizes}, {Key: "distance", Min: 0, Max: 60}, {Key: "height", Min: -5, Max: 100}, {Key: "lag", Min: 0, Max: 2}, {Key: "blend", Min: 0, Max: 10}, {Key: "aim", Min: 0, Max: 20}}},
 	{ID: "look_at", Name: "跟摇（机位不动盯住主体）", Subject: "required", Params: []cloudAgentPrevisCameraParam{{Key: "aim", Min: 0, Max: 20}}},
 	{ID: "handheld", Name: "手持晃动（叠加层）", Subject: "none", Layer: true, Params: []cloudAgentPrevisCameraParam{{Key: "intensity", Min: 0.1, Max: 3}}},
 	{ID: "shake", Name: "冲击震动（叠加层）", Subject: "none", Layer: true, Duration: 0.6, Params: []cloudAgentPrevisCameraParam{{Key: "intensity", Min: 0.1, Max: 3}}},
@@ -157,9 +160,12 @@ func cloudAgentPrevisApplyCameraMove(scene map[string]any, camera map[string]any
 		return fmt.Sprintf("删除摄影机《%s》的一段运镜", cameraName), nil
 	}
 
+	if strings.TrimSpace(operation.Recipe) != "" {
+		return cloudAgentPrevisApplyCameraRecipe(scene, camera, operation)
+	}
 	technique, ok := cloudAgentPrevisFindCameraTechnique(strings.TrimSpace(operation.Technique))
 	if !ok {
-		return "", BadAuthRequest(fmt.Sprintf("运镜手法 %q 不受支持；先按需读取已启用的 previs-world-guide Skill 的 references/moves.md", operation.Technique))
+		return "", BadAuthRequest(fmt.Sprintf("运镜手法 %q 不受支持；先按需读取已启用的 yingce-previs-world-guide Skill 的 references/moves.md", operation.Technique))
 	}
 	shotDuration := cloudAgentPrevisShotDuration(scene)
 	start := 0.0
@@ -365,4 +371,28 @@ func cloudAgentPrevisProjectCameraMoves(camera map[string]any) []map[string]any 
 		result = append(result, item)
 	}
 	return result
+}
+
+// cloudAgentPrevisCameraMovesGuide 生成运镜手法目录：ID、中文名与可用参数。* 表示必须给 subjectId，° 表示可选 subjectId。
+func cloudAgentPrevisCameraMovesGuide() string {
+	parts := make([]string, 0, len(cloudAgentPrevisCameraTechniques))
+	for _, technique := range cloudAgentPrevisCameraTechniques {
+		mark := ""
+		switch technique.Subject {
+		case "required":
+			mark = "*"
+		case "optional":
+			mark = "°"
+		}
+		keys := make([]string, 0, len(technique.Params))
+		for _, param := range technique.Params {
+			if len(param.Options) > 0 {
+				keys = append(keys, param.Key+"="+strings.Join(param.Options, "/"))
+			} else {
+				keys = append(keys, fmt.Sprintf("%s %g~%g", param.Key, param.Min, param.Max))
+			}
+		}
+		parts = append(parts, fmt.Sprintf("%s%s %s[%s]", technique.ID, mark, technique.Name, strings.Join(keys, ", ")))
+	}
+	return strings.Join(parts, "；")
 }

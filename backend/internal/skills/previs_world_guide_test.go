@@ -50,6 +50,9 @@ func TestPrevisWorldGuideFrozenPackageReads(t *testing.T) {
 		"references/edit.md",
 		"references/output.md",
 		"references/recipes.md",
+		"references/recipes_action.md",
+		"references/recipes_epic.md",
+		"references/shots.md",
 	}
 	if skill.FileCount != len(files) {
 		t.Fatalf("guide file count = %d, want %d", skill.FileCount, len(files))

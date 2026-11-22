@@ -3,14 +3,14 @@ name: previs-world-guide
 description: "预演台世界引擎操作指南：用户要求在真实画布世界引擎里搭景、调整天气、摆放演员和道具、标记 A/B 点、让演员移动、画或复用路径、创建编辑删除运镜段、用时间轴修改并保存回读时使用。指导 Agent 先读真实场景，再通过 director 的 read、create_scene、apply_patch、preview 操作；路径与运镜正文按主题读取。"
 metadata:
   skillId: yingce-previs-world-guide
-  version: "1.0.0"
+  version: "1.1.0"
   author: "影策"
   owner: yingce-system
   tag: others
   sortWeight: 900
   source: 3
   createdAt: "2026-11-22T00:00:00Z"
-  updatedAt: "2026-11-23T00:00:00Z"
+  updatedAt: "2026-11-23T12:00:00Z"
 ---
 
 # 预演台世界引擎
@@ -29,9 +29,12 @@ metadata:
 | 找用户画的参考轨迹、按标签复用、让演员沿摄影机轨迹走 | [paths.md](references/paths.md) |
 | 摄影机、景别、机位高度、构图 | [camera.md](references/camera.md) |
 | 推拉摇移、环绕、跟拍、手持、震动等运镜段 | [moves.md](references/moves.md) |
+| 多节拍设计、镜头检查 review、跟拍景别与过渡 | [shots.md](references/shots.md) |
 | 删除对象/路径/运镜、重画路径、时间轴编辑、保留原开始时间 | [edit.md](references/edit.md) |
 | 保存后回读、自检、预览、交付视频 | [output.md](references/output.md) |
-| 多场景组合做法 | [recipes.md](references/recipes.md) |
+| 文戏完整范例、双人对话与多场景组合 | [recipes.md](references/recipes.md) |
+| 动作戏完整范例、追逐、打斗与御剑 | [recipes_action.md](references/recipes_action.md) |
+| 大场面完整范例、航拍揭示与群戏 | [recipes_epic.md](references/recipes_epic.md) |
 
 行为规范是每次写入前都应读的入口：[rules.md](references/rules.md)。
 

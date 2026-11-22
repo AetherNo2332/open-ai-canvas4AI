@@ -567,5 +567,12 @@ func applyCloudAgentPrevisMutation(repo *repository.Repository, userID, canvasID
 	if resultSnapshotHash == "" {
 		resultSnapshotHash = plan.AfterSnapshotHash
 	}
-	return map[string]any{"canvasId": canvasID, "sceneId": plan.SceneID, "snapshotHash": resultSnapshotHash, "canvasSnapshotHash": plan.AfterSnapshotHash, "beforeCanvasSnapshotHash": plan.BeforeSnapshotHash, "committed": true, "summary": plan.Preview.Description}, nil
+	result := map[string]any{"canvasId": canvasID, "sceneId": plan.SceneID, "snapshotHash": resultSnapshotHash, "canvasSnapshotHash": plan.AfterSnapshotHash, "beforeCanvasSnapshotHash": plan.BeforeSnapshotHash, "committed": true, "summary": plan.Preview.Description}
+	if scene, ok := findPrevisScene(creationMaps(plan.Document["previsScenes"]), plan.SceneID); ok {
+		if reviews := cloudAgentPrevisShotReviews(scene); len(reviews) > 0 {
+			result["review"] = reviews
+			result["reviewGuide"] = cloudAgentPrevisReviewGuide
+		}
+	}
+	return result, nil
 }

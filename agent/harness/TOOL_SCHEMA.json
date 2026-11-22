@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v28",
+  "schemaVersion": "cloud-agent-tools/v29",
   "tools": [
     {
       "function": {
@@ -139,7 +139,7 @@
     },
     {
       "function": {
-        "description": "导演台唯一工具。read 只读：无 sceneId/nodeId 返回场景目录，指定后返回场景、坐标、snapshotHash、目录、标记点和工作站 nodeId。create_scene 按 template 建白模场景并绑定可打开导演台的视频节点。apply_patch 用 patch.operations 做受限语义修改，须带 read 的 expectedSceneHash，禁止原始 JSON/URL/storage key；角色绑定须同时给 characterAssetId、characterVersionId、referenceNodeId，分别取 canvas_get_state 角色卡的 character.assetId、character.versionId 与节点 id。实物用 kind=prop+propId(+params)，N 个同类用 object_array_add，演员 A→B 走跑飞闪现用 actor_travel，街区城镇用 kind=layout，时间天气用 world_update；目录与参数见 read 返回的 catalog。preview 让浏览器导演台录制白模视频，运行等待回传；status=completed 才有 videoResourceId，reason=director_viewport_unavailable 表示页面未打开或超时，可请用户打开导演台后重试。写入与 preview 按权限审批并自动打开导演台；只读模式仅 read。",
+        "description": "导演台唯一工具。read 只读，返回场景、坐标、snapshotHash、目录、标记点与 nodeId；create_scene 按 template 建场景；apply_patch 用 operations 做受限语义修改并带 read 的 expectedSceneHash；preview 请求浏览器录制白模。操作字段与目录见 read 回执，创作规则按需读取已启用的 yingce-previs-world-guide Skill；禁止原始 JSON、URL、storage key。写入与 preview 按权限审批并自动打开导演台，只读模式仅 read。",
         "name": "director",
         "parameters": {
           "additionalProperties": false,
@@ -228,6 +228,19 @@
                           "man",
                           "woman",
                           "monster"
+                        ],
+                        "type": "string"
+                      },
+                      "aspectRatio": {
+                        "enum": [
+                          "auto",
+                          "2.39:1",
+                          "21:9",
+                          "16:9",
+                          "4:3",
+                          "1:1",
+                          "3:4",
+                          "9:16"
                         ],
                         "type": "string"
                       },
@@ -415,6 +428,33 @@
                         ],
                         "type": "string"
                       },
+                      "motion": {
+                        "description": "actor_motion_add 动作；time=开始秒，duration=时长，intensity=幅度0.2-2；remove 用 keyframeId 传动作 id",
+                        "enum": [
+                          "idle",
+                          "walk",
+                          "run",
+                          "talk",
+                          "wave",
+                          "nod",
+                          "shake_head",
+                          "look_around",
+                          "point",
+                          "phone_call",
+                          "sit_idle",
+                          "clap",
+                          "fight_idle",
+                          "punch",
+                          "jump",
+                          "fall",
+                          "cry",
+                          "cheer",
+                          "slap",
+                          "hold_hand",
+                          "hit_react"
+                        ],
+                        "type": "string"
+                      },
                       "name": {
                         "maxLength": 160,
                         "type": "string"
@@ -519,6 +559,10 @@
                       },
                       "propId": {
                         "maxLength": 40,
+                        "type": "string"
+                      },
+                      "recipe": {
+                        "maxLength": 32,
                         "type": "string"
                       },
                       "referenceNodeId": {
@@ -638,6 +682,8 @@
                           "object_keyframe_remove",
                           "object_motion_path_set",
                           "object_motion_path_clear",
+                          "actor_motion_add",
+                          "actor_motion_remove",
                           "camera_add",
                           "camera_update",
                           "camera_remove",

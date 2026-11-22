@@ -123,8 +123,9 @@ func TestPrevisWorldGuideExamplesMatchTools(t *testing.T) {
 		}
 		for _, word := range previsSkillSnakeWord.FindAllString(content, -1) {
 			if strings.HasPrefix(word, "ancient_") || strings.HasPrefix(word, "modern_") {
-				if !slices.Contains(cloudAgentPrevisLayoutIDs, word) {
-					t.Errorf("%s mentions unknown layout %q", filePath, word)
+				_, isProp := cloudAgentPrevisFindProp(word)
+				if !slices.Contains(cloudAgentPrevisLayoutIDs, word) && !isProp {
+					t.Errorf("%s mentions unknown layout or prop %q", filePath, word)
 				}
 			}
 		}
@@ -139,18 +140,24 @@ func TestPrevisWorldGuideExamplesMatchTools(t *testing.T) {
 }
 
 // 说明书内容只能由原生 Skill 文件读取；director 的 schema 和 read 回执都不再携带 manual 旁路。
+// cameraRecipes 是 camera_move.recipe 的机器目录，不包含 Skill 正文或规则。
 func TestDirectorDoesNotExposeManualBypass(t *testing.T) {
 	properties := cloudAgentDirectorToolSchema(false)
 	if _, ok := properties["manual"]; ok {
 		t.Fatal("director schema still exposes manual")
 	}
 	catalog := cloudAgentPrevisCatalogGuide()
-	for _, key := range []string{"manual", "rules", "cameraMoves", "cameraRecipes"} {
+	for _, key := range []string{"manual", "rules", "cameraMoves"} {
 		if _, ok := catalog[key]; ok {
 			t.Fatalf("scene catalog still exposes manual bypass key %q", key)
 		}
 	}
-	if len(catalog) != 3 {
+	for _, key := range []string{"props", "layouts", "params", "cameraRecipes"} {
+		if _, ok := catalog[key]; !ok {
+			t.Fatalf("scene catalog is missing directory key %q", key)
+		}
+	}
+	if len(catalog) != 4 {
 		t.Fatalf("scene catalog must contain only directory facts, got %#v", catalog)
 	}
 }

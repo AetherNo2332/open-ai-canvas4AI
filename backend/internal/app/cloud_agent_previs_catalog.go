@@ -90,8 +90,9 @@ func cloudAgentPrevisFindLayoutTemplate(id string) (cloudAgentPrevisLayoutTempla
 	return cloudAgentPrevisLayoutTemplate{}, false
 }
 
-// cloudAgentPrevisCatalogGuide 只放机器可校验的目录事实：道具 ID、布景模板和参数范围。
-// 路径、运镜与编辑手册属于内置 Skill 正文，由本轮已授权的 read 按主题读取，不能从这里旁路投送。
+// cloudAgentPrevisCatalogGuide 只放机器可校验的目录事实：道具 ID、布景模板、参数范围，
+// 以及 camera_move.recipe 可用的配方标识与逐段构成。路径、运镜与编辑手册正文属于内置
+// Skill，由本轮已授权的 read 按主题读取，不能从这里旁路投送。
 func cloudAgentPrevisCatalogGuide() map[string]any {
 	props := map[string][]string{}
 	order := []string{}
@@ -110,9 +111,10 @@ func cloudAgentPrevisCatalogGuide() map[string]any {
 		layouts = append(layouts, fmt.Sprintf("%s %s（%s，%g-%gm）", item.ID, item.Name, item.Hint, item.Min, item.Max))
 	}
 	return map[string]any{
-		"props":   grouped,
-		"layouts": strings.Join(layouts, "；"),
-		"params":  cloudAgentPrevisParamsGuide(),
+		"props":         grouped,
+		"layouts":       strings.Join(layouts, "；"),
+		"params":        cloudAgentPrevisParamsGuide(),
+		"cameraRecipes": cloudAgentPrevisCameraRecipesGuide(),
 	}
 }
 

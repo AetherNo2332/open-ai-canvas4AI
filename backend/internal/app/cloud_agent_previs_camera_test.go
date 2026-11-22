@@ -191,18 +191,32 @@ func TestCloudAgentPrevisCameraMoveContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(recipes), "希区柯克") || !strings.Contains(string(recipes), "御剑跟拍") {
-		t.Fatal("Skill recipes.md is missing master recipes")
+	actionRecipes, err := builtinAssets.FS.ReadFile("previs-world-guide/references/recipes_action.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(recipes), "希区柯克") || !strings.Contains(string(actionRecipes), "御剑飞行") {
+		t.Fatal("Skill recipe references are missing master recipes")
 	}
 	schema := cloudAgentPrevisPatchOperationSchema()["properties"].(map[string]any)
 	types := schema["type"].(map[string]any)["enum"].([]string)
 	if !strings.Contains(strings.Join(types, ","), "camera_move,camera_move_remove") {
 		t.Fatalf("schema type enum missing camera moves: %v", types)
 	}
-	for _, key := range []string{"technique", "subjectId"} {
+	for _, key := range []string{"technique", "recipe", "subjectId"} {
 		if _, ok := schema[key]; !ok {
 			t.Fatalf("schema missing %s", key)
 		}
+	}
+	if !strings.Contains(string(moves), "shotSize=extreme_close_up/close_up/medium/full/wide/extreme_wide") || !strings.Contains(string(moves), "blend 0~10") {
+		t.Fatalf("Skill moves.md must list follow shot sizes and blend: %s", moves)
+	}
+	shots, err := builtinAssets.FS.ReadFile("previs-world-guide/references/shots.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(shots), "recipes_action.md") || !strings.Contains(string(shots), "review") {
+		t.Fatalf("Skill shots.md must point to complete recipes and review: %s", shots)
 	}
 }
 

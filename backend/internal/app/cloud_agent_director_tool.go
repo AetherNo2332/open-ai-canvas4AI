@@ -433,11 +433,18 @@ func applyCloudAgentDirectorMutation(repo *repository.Repository, userID, canvas
 			return nil, nil, err
 		}
 	}
-	return plan, map[string]any{
+	result := map[string]any{
 		"action": plan.Args.Action, "canvasId": canvasID, "nodeId": plan.NodeID, "sceneId": plan.SceneID, "shotId": plan.ShotID,
 		"snapshotHash": mutation.ResultSnapshotHash, "canvasSnapshotHash": mutation.AfterSnapshotHash, "beforeCanvasSnapshotHash": mutation.BeforeSnapshotHash,
 		"committed": true, "directorOpened": true, "summary": cloudAgentDirectorApprovalPreview(plan).Description,
-	}, nil
+	}
+	if scene, ok := findPrevisScene(creationMaps(mutation.Document["previsScenes"]), plan.SceneID); ok {
+		if reviews := cloudAgentPrevisShotReviews(scene); len(reviews) > 0 {
+			result["review"] = reviews
+			result["reviewGuide"] = cloudAgentPrevisReviewGuide
+		}
+	}
+	return plan, result, nil
 }
 
 func cloudAgentDirectorOpenPayload(canvasID, nodeID, sceneID, shotID, action, requestID string) map[string]any {

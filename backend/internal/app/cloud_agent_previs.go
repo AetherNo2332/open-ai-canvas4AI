@@ -91,7 +91,7 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 		projection["spatialLayout"] = cloudAgentPrevisSpatialLayout(scene)
 		projection["coordinateGuide"] = "坐标系: Y轴向上，单位为米，地面Y=0。人物高约1.8m。position=[X,Y,Z]，rotation=[绕X,绕Y,绕Z弧度]。演员原点在脚底，Y=脚底离地高度：站上桌面/台阶/屋顶时设为台面高度，低于0会被拉回地面；box/sphere/cylinder原点在中心。target是摄影机焦点坐标。路径点与参考轨迹的 Y 是离地高度。"
 	}
-	return map[string]any{
+	result := map[string]any{
 		"canvasId":           canvasID,
 		"scene":              projection,
 		"snapshotHash":       creationHash(scene),
@@ -99,7 +99,12 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 		"revision":           canvas.Revision,
 		"catalog":            cloudAgentPrevisCatalogGuide(),
 		"guidance":           "安全摘要。修改用 director apply_patch；预演用 director preview；布局规划读取已包含精确坐标。snapshotHash 只代表该场景。路径、运镜和编辑规则按需用本轮原生 read 读取已启用 Skill 的主题文件。",
-	}, nil
+	}
+	if reviews := cloudAgentPrevisShotReviews(scene); len(reviews) > 0 {
+		result["review"] = reviews
+		result["reviewGuide"] = cloudAgentPrevisReviewGuide
+	}
+	return result, nil
 }
 
 // previsMapSafe safely casts a value to map[string]any, returning an empty map on failure.
@@ -171,12 +176,13 @@ func cloudAgentPrevisSpatialLayout(scene map[string]any) map[string]any {
 	shotLayouts := make([]map[string]any, 0, len(shots))
 	for _, shot := range shots {
 		shotLayouts = append(shotLayouts, map[string]any{
-			"id":         stringValue(shot["id"]),
-			"name":       stringValue(shot["name"]),
-			"cameraId":   stringValue(shot["cameraId"]),
-			"shotSize":   stringValue(shot["shotSize"]),
-			"cameraMove": stringValue(shot["cameraMove"]),
-			"duration":   shot["duration"],
+			"id":          stringValue(shot["id"]),
+			"name":        stringValue(shot["name"]),
+			"cameraId":    stringValue(shot["cameraId"]),
+			"shotSize":    stringValue(shot["shotSize"]),
+			"aspectRatio": cloudAgentPrevisShotAspectRatio(shot),
+			"cameraMove":  stringValue(shot["cameraMove"]),
+			"duration":    shot["duration"],
 		})
 	}
 
@@ -262,6 +268,14 @@ func cloudAgentPrevisPreview(repo *repository.Repository, userID, canvasID strin
 	}, nil
 }
 
+// cloudAgentPrevisShotAspectRatio 返回镜头画幅；未设置时与前端一致按 9:16 竖屏。
+func cloudAgentPrevisShotAspectRatio(shot map[string]any) string {
+	if aspect := stringValue(shot["aspectRatio"]); aspect != "" {
+		return aspect
+	}
+	return "9:16"
+}
+
 func findPrevisSceneCamera(scene map[string]any, id string) (map[string]any, bool) {
 	for _, camera := range creationMaps(scene["cameras"]) {
 		if stringValue(camera["id"]) == id {
@@ -296,13 +310,14 @@ func projectPrevisScene(scene map[string]any, shotID string, objectIDs map[strin
 			continue
 		}
 		shots = append(shots, map[string]any{
-			"id":         stringValue(shot["id"]),
-			"name":       truncateRunes(stringValue(shot["name"]), 160),
-			"cameraId":   stringValue(shot["cameraId"]),
-			"duration":   numberValue(shot["duration"], 5),
-			"fps":        int(numberValue(shot["fps"], 24)),
-			"shotSize":   stringValue(shot["shotSize"]),
-			"cameraMove": stringValue(shot["cameraMove"]),
+			"id":          stringValue(shot["id"]),
+			"name":        truncateRunes(stringValue(shot["name"]), 160),
+			"cameraId":    stringValue(shot["cameraId"]),
+			"duration":    numberValue(shot["duration"], 5),
+			"fps":         int(numberValue(shot["fps"], 24)),
+			"shotSize":    stringValue(shot["shotSize"]),
+			"aspectRatio": cloudAgentPrevisShotAspectRatio(shot),
+			"cameraMove":  stringValue(shot["cameraMove"]),
 		})
 	}
 	objects := make([]map[string]any, 0)

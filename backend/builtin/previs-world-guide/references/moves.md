@@ -31,7 +31,7 @@
 | crane_down | 摇臂降（distance=同时前推） | 不给 | height 0.2–100；distance 0–200 |
 | orbit_left | 左环绕 | 可选 | angle 5–720；rise -50–50；aim 0–20 |
 | orbit_right | 右环绕 | 可选 | angle 5–720；rise -50–50；aim 0–20 |
-| follow | 跟拍（随演员移动，飞行/御剑时一起升空） | 必须 | side=behind/front/left/right/above/shoulder/pov；distance 0–60；height -5–100；lag 0–2；aim 0–20 |
+| follow | 跟拍（随演员移动，飞行/御剑时一起升空） | 必须 | side=behind/front/left/right/above/shoulder/pov；shotSize=extreme_close_up/close_up/medium/full/wide/extreme_wide；distance 0–60；height -5–100；lag 0–2；blend 0~10；aim 0–20 |
 | look_at | 跟摇（机位不动盯住主体） | 必须 | aim 0–20 |
 | handheld | 手持晃动（叠加层） | 不给 | intensity 0.1–3 |
 | shake | 冲击震动（叠加层，默认 0.6 秒） | 不给 | intensity 0.1–3 |
@@ -51,6 +51,12 @@
   {"type":"camera_move","id":"cam","technique":"orbit_left","subjectId":"hero","time":2.5,"duration":2,"params":{"angle":120}}
 ]
 ```
+
+## 跟拍景别与过渡
+- `shotSize` 按当前焦段和画幅换算跟拍距离、注视高度与机位高度，优先于 `distance`。超近景贴近脸，中景保留半身动作，远景交代空间。
+- 同一主体换 `side` 或 `shotSize` 时，后一段写 `blend`（秒，0–10），机位在指定时间内绕主体过渡；绕到另一侧通常 1.5–3 秒。
+- 前一段跟拍要持续到后一段 `blend` 结束，避免交接期间机位停住、人物继续走远。
+- 大师配方一次展开多段跟拍，见 [recipes.md](recipes.md) 与 `catalog.cameraRecipes`。
 
 ## 用户口语与手法
 | 用户说 | 手法 |

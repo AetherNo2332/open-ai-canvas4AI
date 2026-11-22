@@ -25,6 +25,9 @@ const (
 	cloudAgentPrevisTextLimit     = 160
 )
 
+// cloudAgentPrevisAspectRatios 与前端 PREVIS_ASPECT_RATIOS 同序；未设置时按 9:16。
+var cloudAgentPrevisAspectRatios = []string{"auto", "2.39:1", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
+
 type cloudAgentPrevisSceneCreateArgs struct {
 	CanvasSnapshotHash string `json:"canvasSnapshotHash"`
 	SceneID            string `json:"sceneId"`
@@ -52,6 +55,7 @@ type cloudAgentPrevisPatchOperation struct {
 	ParentID  *string `json:"parentId"`
 	Visible   *bool   `json:"visible"`
 	Pose      string  `json:"pose"`
+	Motion    string  `json:"motion"`
 
 	CharacterAssetID   *string `json:"characterAssetId"`
 	CharacterVersionID *string `json:"characterVersionId"`
@@ -77,6 +81,7 @@ type cloudAgentPrevisPatchOperation struct {
 	Duration    *float64 `json:"duration"`
 	FPS         *int     `json:"fps"`
 	ShotSize    string   `json:"shotSize"`
+	AspectRatio string   `json:"aspectRatio"`
 	CameraMove  string   `json:"cameraMove"`
 	Prompt      *string  `json:"prompt"`
 	FocalLength *float64 `json:"focalLength"`
@@ -117,8 +122,10 @@ type cloudAgentPrevisPatchOperation struct {
 	ToMarker    *string  `json:"toMarker"`
 	Height      *float64 `json:"height"`
 
-	// camera_move：运镜手法与跟拍 / 环绕主体；参数白名单见 cloud_agent_previs_camera.go。
+	// camera_move：运镜手法与跟拍 / 环绕主体；参数走 params，白名单见 cloud_agent_previs_camera.go。
+	// recipe 与 technique 二选一：按大师手法表一次展开成多段运镜，见 cloud_agent_previs_camera_recipes.go。
 	Technique string  `json:"technique"`
+	Recipe    string  `json:"recipe"`
 	SubjectID *string `json:"subjectId"`
 
 	// world_update：时间、天气、远景、地面范围；worldEnabled=false 关闭世界环境。
@@ -145,7 +152,7 @@ type cloudAgentPrevisMutationPlan struct {
 func cloudAgentPrevisPatchOperationSchema() map[string]any {
 	vec3 := map[string]any{"type": "array", "minItems": 3, "maxItems": 3, "items": map[string]any{"type": "number"}}
 	properties := map[string]any{
-		"type":               map[string]any{"type": "string", "enum": []string{"scene_update", "world_update", "object_array_add", "actor_travel", "camera_move", "camera_move_remove", "shot_add", "shot_update", "shot_remove", "object_add", "object_update", "object_remove", "object_keyframe_upsert", "object_keyframe_remove", "object_motion_path_set", "object_motion_path_clear", "camera_add", "camera_update", "camera_remove", "camera_keyframe_upsert", "camera_keyframe_remove", "light_add", "light_update", "light_remove"}},
+		"type":               map[string]any{"type": "string", "enum": []string{"scene_update", "world_update", "object_array_add", "actor_travel", "camera_move", "camera_move_remove", "shot_add", "shot_update", "shot_remove", "object_add", "object_update", "object_remove", "object_keyframe_upsert", "object_keyframe_remove", "object_motion_path_set", "object_motion_path_clear", "actor_motion_add", "actor_motion_remove", "camera_add", "camera_update", "camera_remove", "camera_keyframe_upsert", "camera_keyframe_remove", "light_add", "light_update", "light_remove"}},
 		"id":                 map[string]any{"type": "string", "maxLength": 80, "description": "目标或新建资源 ID"},
 		"name":               map[string]any{"type": "string", "maxLength": cloudAgentPrevisTextLimit},
 		"title":              map[string]any{"type": "string", "maxLength": cloudAgentPrevisTextLimit},
@@ -157,6 +164,7 @@ func cloudAgentPrevisPatchOperationSchema() map[string]any {
 		"referenceNodeId":    map[string]any{"type": "string", "maxLength": 120, "description": "角色绑定：该角色卡节点 id；三者必须同时提供"},
 		"characterName":      map[string]any{"type": "string", "maxLength": cloudAgentPrevisTextLimit},
 		"pose":               map[string]any{"type": "string", "enum": []string{"stand", "sit", "walk", "run", "wave", "think", "fight", "kick", "throw", "push", "reach", "arms_crossed", "phone", "bow", "kneel_single", "kneel_double", "lean", "squat", "hands_hips", "neutral", "t_pose"}, "description": "演员姿态"},
+		"motion":             map[string]any{"type": "string", "enum": cloudAgentPrevisMotionIDs, "description": "actor_motion_add 动作；time=开始秒，duration=时长，intensity=幅度0.2-2；remove 用 keyframeId 传动作 id"},
 		"color":              map[string]any{"type": "string", "maxLength": 9, "pattern": `^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`, "description": "十六进制颜色"},
 		"parentId":           map[string]any{"type": "string", "maxLength": 80},
 		"visible":            map[string]any{"type": "boolean"},
@@ -177,6 +185,7 @@ func cloudAgentPrevisPatchOperationSchema() map[string]any {
 		"duration":             map[string]any{"type": "number", "minimum": 0.1, "maximum": 60},
 		"fps":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 60},
 		"shotSize":             map[string]any{"type": "string", "enum": []string{"extreme_wide", "wide", "full", "medium", "close_up", "extreme_close_up"}},
+		"aspectRatio":          map[string]any{"type": "string", "enum": cloudAgentPrevisAspectRatios},
 		"cameraMove":           map[string]any{"type": "string", "enum": []string{"static", "push_in", "pull_out", "pan_left", "pan_right", "tilt_up", "tilt_down", "orbit_left", "orbit_right", "handheld"}},
 		"prompt":               map[string]any{"type": "string", "maxLength": 2000},
 		"focalLength":          map[string]any{"type": "number", "minimum": 1, "maximum": 300},
@@ -214,6 +223,7 @@ func cloudAgentPrevisPatchOperationSchema() map[string]any {
 		"toMarker":             map[string]any{"type": "string", "maxLength": 8},
 		"height":               map[string]any{"type": "number", "minimum": 0, "maximum": 50},
 		"technique":            map[string]any{"type": "string", "maxLength": 24},
+		"recipe":               map[string]any{"type": "string", "maxLength": 32},
 		"subjectId":            map[string]any{"type": "string", "maxLength": 80},
 	}
 	return map[string]any{"type": "object", "properties": properties, "required": []string{"type", "id"}, "additionalProperties": false}
@@ -677,6 +687,11 @@ func cloudAgentPrevisValidateScene(scene map[string]any) error {
 		}
 		if err := cloudAgentPrevisValidateText(stringValue(shot["prompt"]), "导演镜头提示词", 2000, false); err != nil {
 			return err
+		}
+		if aspect, ok := shot["aspectRatio"]; ok && aspect != nil {
+			if err := cloudAgentPrevisValidateEnum(stringValue(aspect), "导演镜头画幅", cloudAgentPrevisAspectRatios...); err != nil {
+				return err
+			}
 		}
 	}
 	for _, light := range creationMaps(scene["lights"]) {
@@ -1532,6 +1547,16 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 			scene["objects"] = objects
 		}
 		return item, err
+	case "actor_motion_add", "actor_motion_remove":
+		object := cloudAgentPrevisFindByID(objects, operation.ID)
+		if object == nil {
+			return cloudAgentApprovalPreviewItem{}, BadAuthRequest("目标对象不存在")
+		}
+		if err := cloudAgentPrevisApplyActorMotion(object, operation, cloudAgentPrevisShotDuration(scene)); err != nil {
+			return cloudAgentApprovalPreviewItem{}, err
+		}
+		scene["objects"] = objects
+		return cloudAgentApprovalPreviewItem{Operation: operation.Type, NodeID: operation.ID, NodeTitle: stringValue(object["name"]), Summary: fmt.Sprintf("修改演员《%s》的动作", stringValue(object["name"]))}, nil
 	case "object_motion_path_set", "object_motion_path_clear":
 		// 路径可以给演员、道具，也可以给摄影机（运镜路径）。
 		item := cloudAgentPrevisFindByID(objects, operation.ID)
@@ -1630,6 +1655,12 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 			return cloudAgentApprovalPreviewItem{}, err
 		}
 		shot := map[string]any{"id": operation.ID, "name": name, "cameraId": cameraID, "duration": duration, "fps": fps, "shotSize": shotSize, "cameraMove": cameraMove, "prompt": "", "cuts": []any{}}
+		if operation.AspectRatio != "" {
+			if err := cloudAgentPrevisValidateEnum(operation.AspectRatio, "镜头画幅 aspectRatio", cloudAgentPrevisAspectRatios...); err != nil {
+				return cloudAgentApprovalPreviewItem{}, err
+			}
+			shot["aspectRatio"] = operation.AspectRatio
+		}
 		if operation.Prompt != nil {
 			if err := cloudAgentPrevisValidateText(*operation.Prompt, "镜头提示词", 2000, false); err != nil {
 				return cloudAgentApprovalPreviewItem{}, err
@@ -1697,6 +1728,12 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 				return cloudAgentApprovalPreviewItem{}, err
 			}
 			shot["cameraMove"] = operation.CameraMove
+		}
+		if operation.AspectRatio != "" {
+			if err := cloudAgentPrevisValidateEnum(operation.AspectRatio, "镜头画幅 aspectRatio", cloudAgentPrevisAspectRatios...); err != nil {
+				return cloudAgentApprovalPreviewItem{}, err
+			}
+			shot["aspectRatio"] = operation.AspectRatio
 		}
 		if operation.Prompt != nil {
 			if err := cloudAgentPrevisValidateText(*operation.Prompt, "镜头提示词", 2000, false); err != nil {
@@ -1942,4 +1979,74 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 	default:
 		return cloudAgentApprovalPreviewItem{}, BadAuthRequest("不支持的预演台语义操作")
 	}
+}
+
+// cloudAgentPrevisMotionIDs 与前端 PREVIS_MOTIONS（previs-motion.ts）一一对应。
+var cloudAgentPrevisMotionIDs = []string{"idle", "walk", "run", "talk", "wave", "nod", "shake_head", "look_around", "point", "phone_call", "sit_idle", "clap", "fight_idle", "punch", "jump", "fall", "cry", "cheer", "slap", "hold_hand", "hit_react"}
+
+const cloudAgentPrevisMaxActorMotions = 32
+
+// cloudAgentPrevisApplyActorMotion 在演员时间轴上插入/删除程序化动作片段。移动步态由位移自动推导，不需要写 walk/run。
+func cloudAgentPrevisApplyActorMotion(object map[string]any, operation cloudAgentPrevisPatchOperation, duration float64) error {
+	if stringValue(object["kind"]) != "actor" && stringValue(object["primitive"]) != "character" {
+		return BadAuthRequest("只有演员可以添加动作")
+	}
+	motions := creationMaps(object["motions"])
+	if operation.Type == "actor_motion_remove" {
+		if operation.KeyframeID == nil || *operation.KeyframeID == "" {
+			return BadAuthRequest("删除动作需要用 keyframeId 传动作 id")
+		}
+		filtered := make([]map[string]any, 0, len(motions))
+		for _, item := range motions {
+			if stringValue(item["id"]) != *operation.KeyframeID {
+				filtered = append(filtered, item)
+			}
+		}
+		if len(filtered) == len(motions) {
+			return BadAuthRequest("目标动作不存在")
+		}
+		object["motions"] = filtered
+		return nil
+	}
+	if err := cloudAgentPrevisValidateEnum(operation.Motion, "动作", cloudAgentPrevisMotionIDs...); err != nil {
+		return err
+	}
+	if len(motions) >= cloudAgentPrevisMaxActorMotions {
+		return BadAuthRequest("单个演员最多32个动作片段")
+	}
+	start := 0.0
+	if operation.Time != nil {
+		start = *operation.Time
+	}
+	if err := cloudAgentPrevisFiniteInRange(start, "动作开始时间", 0, duration); err != nil {
+		return err
+	}
+	length := math.Max(0.2, duration-start)
+	if operation.Duration != nil {
+		length = *operation.Duration
+	}
+	if err := cloudAgentPrevisFiniteInRange(length, "动作时长", 0.2, 60); err != nil {
+		return err
+	}
+	intensity := 1.0
+	if operation.Intensity != nil {
+		intensity = *operation.Intensity
+	}
+	if err := cloudAgentPrevisFiniteInRange(intensity, "动作幅度", 0.2, 2); err != nil {
+		return err
+	}
+	id := fmt.Sprintf("%s-motion-%d", stringValue(object["id"]), len(motions)+1)
+	if operation.KeyframeID != nil && *operation.KeyframeID != "" {
+		if err := validateCloudAgentID(*operation.KeyframeID, "动作 id", 120); err != nil {
+			return err
+		}
+		id = *operation.KeyframeID
+	}
+	for _, item := range motions {
+		if stringValue(item["id"]) == id {
+			return BadAuthRequest("动作 id 已存在")
+		}
+	}
+	object["motions"] = append(motions, map[string]any{"id": id, "motion": operation.Motion, "start": start, "duration": length, "intensity": intensity})
+	return nil
 }
