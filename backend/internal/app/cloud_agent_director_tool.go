@@ -255,16 +255,36 @@ type cloudAgentDirectorPlan struct {
 func prepareCloudAgentDirectorMutation(repo *repository.Repository, userID, canvasID, runID string, call cloudAgentCall) (*cloudAgentDirectorPlan, error) {
 	args, err := cloudAgentDirectorDecode(call)
 	if err != nil {
-		return nil, err
+		return nil, cloudAgentDirectorRepairError(err)
 	}
 	switch args.Action {
 	case "create_scene":
-		return prepareCloudAgentDirectorCreate(repo, userID, canvasID, runID, call, args)
+		plan, err := prepareCloudAgentDirectorCreate(repo, userID, canvasID, runID, call, args)
+		return plan, cloudAgentDirectorRepairError(err)
 	case "apply_patch":
-		return prepareCloudAgentDirectorPatch(repo, userID, canvasID, call, args)
+		plan, err := prepareCloudAgentDirectorPatch(repo, userID, canvasID, call, args)
+		return plan, cloudAgentDirectorRepairError(err)
 	default:
 		return nil, BadAuthRequest("director 写入只支持 create_scene 或 apply_patch")
 	}
+}
+
+// cloudAgentDirectorRepairError classifies deterministic 400/422 validation
+// rejections as repairable tool errors. Permission, quota, conflicts and
+// infrastructure failures retain their existing handling.
+func cloudAgentDirectorRepairError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var argumentErr *cloudAgentArgumentError
+	if errors.As(err, &argumentErr) {
+		return err
+	}
+	var appErr *AppError
+	if errors.As(err, &appErr) && appErr != nil && (appErr.Status == 400 || appErr.Status == 422) {
+		return &cloudAgentArgumentError{err}
+	}
+	return err
 }
 
 func prepareCloudAgentDirectorCreate(repo *repository.Repository, userID, canvasID, runID string, call cloudAgentCall, args cloudAgentDirectorArgs) (*cloudAgentDirectorPlan, error) {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -895,11 +896,11 @@ func prepareCloudAgentPrevisApplyPatch(repo *repository.Repository, userID, canv
 	items := make([]cloudAgentApprovalPreviewItem, 0, len(args.Operations))
 	for index, operation := range args.Operations {
 		if err := cloudAgentPrevisValidateCharacterBindingInCanvas(repo, userID, doc, operation); err != nil {
-			return nil, err
+			return nil, cloudAgentPrevisPatchOperationError(index, err)
 		}
 		item, err := cloudAgentPrevisApplyPatchOperation(scene, operation, index)
 		if err != nil {
-			return nil, err
+			return nil, cloudAgentPrevisPatchOperationError(index, err)
 		}
 		items = append(items, item)
 	}
@@ -913,6 +914,28 @@ func prepareCloudAgentPrevisApplyPatch(repo *repository.Repository, userID, canv
 	}
 	doc["previsScenes"] = scenes
 	return &cloudAgentPrevisMutationPlan{Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: canvasSnapshotHash, AfterSnapshotHash: cloudAgentCanvasHash(doc), ResultSnapshotHash: creationHash(scene), Operation: "previs_apply_patch", SceneID: args.SceneID, Preview: cloudAgentPrevisMutationApprovalPreview("previs_apply_patch", args.SceneID, stringValue(scene["title"]), itemsToDetails(items))}, nil
+}
+
+// cloudAgentPrevisPatchOperationError turns an operation-level validation
+// rejection into a model-visible field error. The model can identify and fix
+// the failed operation in the next step instead of losing the whole run.
+// Repository and other infrastructure errors keep their original type so the
+// surrounding transaction still rolls back.
+func cloudAgentPrevisPatchOperationError(index int, err error) error {
+	var argumentErr *cloudAgentArgumentError
+	if errors.As(err, &argumentErr) {
+		return err
+	}
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr == nil || (appErr.Status != 400 && appErr.Status != 422) {
+		return err
+	}
+	field := fmt.Sprintf("operations[%d]", index)
+	return &cloudAgentFieldArgumentError{
+		error: &cloudAgentArgumentError{fmt.Errorf("%s: %w", field, err)},
+		Field: field,
+		Issue: "invalid_value",
+	}
 }
 
 func itemsToDetails(items []cloudAgentApprovalPreviewItem) []string {

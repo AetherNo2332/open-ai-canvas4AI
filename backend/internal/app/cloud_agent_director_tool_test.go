@@ -306,6 +306,62 @@ func TestDirectorCatalogTravelApprovalAndReadBack(t *testing.T) {
 	}
 }
 
+func TestDirectorInvalidPatchKeepsRunRecoverable(t *testing.T) {
+	payload, actorID := directorWorldSceneDocument(t)
+	doc := mustCreationDocument(t, payload)
+	scene, ok := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	if !ok {
+		t.Fatal("scene fixture missing")
+	}
+	for _, shot := range creationMaps(scene["shots"]) {
+		if stringValue(shot["id"]) == stringValue(scene["activeShotId"]) {
+			shot["duration"] = 3.0
+		}
+	}
+	payloadRaw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := directorTestCall("director-bad-keyframe-time", map[string]any{
+		"action":            "apply_patch",
+		"sceneId":           "scene",
+		"expectedSceneHash": creationHash(scene),
+		"patch": map[string]any{"operations": []map[string]any{{
+			"type": "object_keyframe_upsert",
+			"id":   actorID,
+			"time": 3.05,
+		}}},
+	})
+	s, run, state := directorFixture(t, "request_approval", string(payloadRaw), call)
+	before, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if run.Status != "running" || state.Approval != nil || state.CallIndex != 1 {
+		t.Fatalf("invalid patch terminated the run: status=%s approval=%v callIndex=%d", run.Status, state.Approval, state.CallIndex)
+	}
+	failed := directorEvents(state, "tool_failed")
+	if len(failed) != 1 {
+		t.Fatalf("expected one recoverable tool failure: %+v", state.Events)
+	}
+	payloadMap, _ := failed[0].Payload["result"].(map[string]any)
+	retry, _ := payloadMap["retry"].(map[string]any)
+	if payloadMap["field"] != "operations[0]" || payloadMap["errorClass"] != cloudAgentToolErrorSchemaError || retry["status"] != "retrying" {
+		t.Fatalf("unexpected recoverable receipt: %+v", payloadMap)
+	}
+	after, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PayloadJSON != before.PayloadJSON {
+		t.Fatal("invalid patch changed the canvas")
+	}
+}
+
 func TestDirectorReadAllowedReadOnly(t *testing.T) {
 	req := tierAutoRequest()
 	req.PermissionMode = "read_only"
