@@ -75,6 +75,7 @@ type CanvasProjectWorldLayersProps = {
     onNodeResize: (nodeId: string, width: number, height: number, position?: Position) => void;
     onToggleFrame: (nodeId: string) => void;
     onToggleSubmap: (nodeId: string) => void;
+    onSubmapPresetChange?: (nodeId: string, presetId: string) => void;
     onFolderStyleChange: (nodeId: string, style: CanvasFolderStyle) => void;
     onFolderThemeChange: (nodeId: string, theme: CanvasFolderTheme) => void;
     onNodeTitleChange: (nodeId: string, title: string) => void;
@@ -183,6 +184,7 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                         onResize={props.onNodeResize}
                         onToggleCollapsed={props.onToggleSubmap}
                         onTitleChange={props.onNodeTitleChange}
+                        onPresetChange={props.onSubmapPresetChange}
                         onContextMenu={props.onNodeContextMenu}
                         onSubmapContextMenu={props.onSubmapContextMenu}
                     />

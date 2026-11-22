@@ -100,7 +100,24 @@ describe("submap 删除、复制与引用", () => {
             submap(),
             child("submap-1__text-1", CanvasNodeType.Text, "submap-1", { metadata: { content: "提示词" } }),
             child("submap-1__image-1", CanvasNodeType.Image, "submap-1", { metadata: { referenceNodeIds: ["submap-1__text-1", "image-9"] } }),
-            child("submap-1__video-1", CanvasNodeType.Video, "submap-1", { metadata: { videoStartFrameNodeId: "submap-1__image-1", referenceTextNodeIds: ["submap-1__text-1", "text-9"] } }),
+            child("submap-1__video-1", CanvasNodeType.Video, "submap-1", {
+                metadata: {
+                    videoStartFrameNodeId: "submap-1__image-1",
+                    referenceTextNodeIds: ["submap-1__text-1", "text-9"],
+                    generationSpec: {
+                        version: 1,
+                        mode: "video",
+                        prompt: "",
+                        options: {},
+                        textInputMode: "prompt-only",
+                        referenceBindings: [
+                            { id: "node:submap-1__text-1", nodeId: "submap-1__text-1", mediaType: "text", role: "source-text", order: 0, resolution: "latest" },
+                            { id: "node:text-9", nodeId: "text-9", mediaType: "text", role: "source-text", order: 1, resolution: "latest" },
+                            { id: "node:submap-1__image-1", nodeId: "submap-1__image-1", mediaType: "image", role: "first-frame", order: 2, resolution: "latest" },
+                        ],
+                    },
+                },
+            }),
         ];
         const allocate = createSequentialIdAllocator(sources.map((node) => node.id));
         const idMap = allocateCopiedCanvasNodeIds(sources, allocate);
@@ -113,6 +130,7 @@ describe("submap 删除、复制与引用", () => {
         expect(copy.find((node) => node.id === "submap-2__image-1")?.metadata?.referenceNodeIds).toEqual(["submap-2__text-1"]);
         expect(copy.find((node) => node.id === "submap-2__video-1")?.metadata?.videoStartFrameNodeId).toBe("submap-2__image-1");
         expect(copy.find((node) => node.id === "submap-2__video-1")?.metadata?.referenceTextNodeIds).toEqual(["submap-2__text-1"]);
+        expect(copy.find((node) => node.id === "submap-2__video-1")?.metadata?.generationSpec?.referenceBindings.map((binding) => binding.nodeId)).toEqual(["submap-2__text-1", "submap-2__image-1"]);
         expect(sources[2].metadata?.referenceNodeIds).toEqual(["submap-1__text-1", "image-9"]);
     });
 

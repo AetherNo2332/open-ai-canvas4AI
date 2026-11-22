@@ -536,5 +536,10 @@ export const deDE: DeepStringRecord<typeof zhCN> = {
         submapChildCount: "{{count}} Kindknoten",
         submapEmptyPreview: "Leere Unterleinwand",
         submapNoNested: "Unterleinwände können nicht verschachtelt werden",
+        submapPresetLabel: "Unterleinwand-Vorlage",
+        submapPresetHint: "Eine Vorlage baut die Kindknoten aus der Vorlage neu auf",
+        submapPresetApplied: "Unterleinwand-Vorlage „{{title}}“ angewendet",
+        submapPresetCleared: "Unterleinwand geleert",
+        submapPresetUnknown: "Unbekannte Unterleinwand-Vorlage",
     },
 };

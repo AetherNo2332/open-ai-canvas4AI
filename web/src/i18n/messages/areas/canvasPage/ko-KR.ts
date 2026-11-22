@@ -536,5 +536,10 @@ export const koKR: DeepStringRecord<typeof zhCN> = {
         submapChildCount: "자식 노드 {{count}}개",
         submapEmptyPreview: "빈 서브 캔버스",
         submapNoNested: "서브 캔버스는 중첩할 수 없습니다",
+        submapPresetLabel: "서브 캔버스 프리셋",
+        submapPresetHint: "프리셋을 선택하면 템플릿에서 자식 노드를 다시 만듭니다",
+        submapPresetApplied: "서브 캔버스 프리셋 “{{title}}”을(를) 적용했습니다",
+        submapPresetCleared: "서브 캔버스를 비웠습니다",
+        submapPresetUnknown: "알 수 없는 서브 캔버스 프리셋",
     },
 };

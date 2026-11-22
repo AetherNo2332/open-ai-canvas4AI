@@ -1,4 +1,5 @@
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
+import { validateGenerationSpec } from "@/lib/canvas/generation-contract";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type StoryboardRow } from "@/types/canvas";
 
 const COPY_TITLE_SUFFIX = /^(.*)_copy(\d+)$/i;
@@ -175,6 +176,27 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     metadata.previsDepthNodeId = remapReference(node.metadata?.previsDepthNodeId, idMap);
     metadata.previsDepthVideoNodeId = remapReference(node.metadata?.previsDepthVideoNodeId, idMap);
     metadata.previsNormalNodeId = remapReference(node.metadata?.previsNormalNodeId, idMap);
+
+    const generationSpec = node.metadata?.generationSpec;
+    if (generationSpec) {
+        const referenceBindings = generationSpec.referenceBindings
+            .flatMap((binding) => {
+                if (!binding.nodeId) return [binding];
+                const nodeId = remapReference(binding.nodeId, idMap);
+                return nodeId ? [{ ...binding, nodeId }] : [];
+            })
+            .map((binding, order) => ({ ...binding, order }));
+        metadata.generationSpec = validateGenerationSpec({ ...generationSpec, referenceBindings });
+    }
+    if (node.metadata?.inputBindings) {
+        metadata.inputBindings = node.metadata.inputBindings
+            .flatMap((binding) => {
+                if (!binding.nodeId) return [binding];
+                const nodeId = remapReference(binding.nodeId, idMap);
+                return nodeId ? [{ ...binding, nodeId }] : [];
+            })
+            .map((binding, order) => ({ ...binding, order }));
+    }
 
     const characterViewNodeIds = node.metadata?.characterViewNodeIds;
     const copiedCharacterViewNodeIds = characterViewNodeIds

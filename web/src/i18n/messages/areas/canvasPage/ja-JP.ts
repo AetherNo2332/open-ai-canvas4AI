@@ -536,5 +536,10 @@ export const jaJP: DeepStringRecord<typeof zhCN> = {
         submapChildCount: "{{count}} 個の子ノード",
         submapEmptyPreview: "空のサブキャンバス",
         submapNoNested: "サブキャンバスを入れ子にはできません",
+        submapPresetLabel: "サブキャンバス形式",
+        submapPresetHint: "プリセットを選ぶとテンプレートから子ノードを再構築します",
+        submapPresetApplied: "サブキャンバス形式「{{title}}」を適用しました",
+        submapPresetCleared: "サブキャンバスを空にしました",
+        submapPresetUnknown: "不明なサブキャンバス形式",
     },
 };

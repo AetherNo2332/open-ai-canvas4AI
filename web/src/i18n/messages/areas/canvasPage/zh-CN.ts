@@ -535,5 +535,10 @@ export const zhCN = {
         submapChildCount: "{{count}} 个子节点",
         submapEmptyPreview: "空子画布",
         submapNoNested: "子画布不能再嵌套子画布",
+        submapPresetLabel: "子画布形式",
+        submapPresetHint: "选择预置会按模板重建子节点",
+        submapPresetApplied: "已应用子画布形式「{{title}}」",
+        submapPresetCleared: "已清空子画布",
+        submapPresetUnknown: "未知的子画布形式",
     },
 };

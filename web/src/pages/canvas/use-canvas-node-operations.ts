@@ -18,6 +18,7 @@ import { adoptMediaVersion, createNodeFromMediaVersion, mediaVersionAdoptBlock, 
 import { getSubmapChildIds, getSubmapChildren, isSubmapNode } from "@/lib/canvas/canvas-submap";
 import { fitSubmapToChildren, nextSubmapChildPosition } from "@/lib/canvas/canvas-submap-layout";
 import { allocateCopiedCanvasNodeIds, countSubmapExternalReferences, isCopiedSubmapTreeNode, submapCopySources } from "@/lib/canvas/canvas-submap-operations";
+import { EMPTY_SUBMAP_PRESET_ID, getSubmapPreset, replaceSubmapChildrenWithPreset } from "@/lib/canvas/canvas-submap-presets";
 import { useCanvasIdAllocator, useCanvasIdBatcher } from "./use-canvas-id-allocator";
 import { canvasEditLeases } from "@/services/canvas-edit-leases";
 import { CanvasNodeType, type CanvasConnection, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ContextMenuState, type Position } from "@/types/canvas";
@@ -795,6 +796,39 @@ export function useCanvasNodeOperations({
         [beginIdBatch, cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, getCanvasCenter, nodesRef, selectNodes, setContextMenu, setDialogNodeId],
     );
 
+    const applySubmapPreset = useCallback(
+        (nodeId: string, presetId: string) => {
+            const submap = nodesRef.current.find((node) => node.id === nodeId && isSubmapNode(node));
+            if (!submap) return;
+            if (submap.metadata?.locked) {
+                message.warning(translate("canvasPage.nodeOps.lockedNoSwitch"));
+                return;
+            }
+            const preset = getSubmapPreset(presetId);
+            if (presetId !== EMPTY_SUBMAP_PRESET_ID && !preset) {
+                message.warning(translate("canvasPage.nodeOps.submapPresetUnknown"));
+                return;
+            }
+            const idBatch = beginIdBatch([...nodesRef.current.map((node) => node.id), ...connectionsRef.current.map((connection) => connection.id)], nodeId);
+            const result = replaceSubmapChildrenWithPreset({
+                nodes: nodesRef.current,
+                connections: connectionsRef.current,
+                submapId: nodeId,
+                presetId,
+                referenceFieldsVersion: useCanvasStore.getState().openProject(projectId)?.referenceFieldsVersion,
+                allocateId: idBatch.allocate,
+            });
+            if (!result) return;
+            idBatch.commit();
+            commitNodes(result.nodes);
+            commitConnections(result.connections);
+            selectNodes(new Set([nodeId]));
+            setDialogNodeId(null);
+            message.success(presetId !== EMPTY_SUBMAP_PRESET_ID && preset ? translate("canvasPage.nodeOps.submapPresetApplied", { title: preset.title }) : translate("canvasPage.nodeOps.submapPresetCleared"));
+        },
+        [beginIdBatch, commitConnections, commitNodes, connectionsRef, message, nodesRef, projectId, selectNodes, setDialogNodeId],
+    );
+
     const restoreCopiedNodesFromText = useCallback((value: string) => {
         const isMarker = value.startsWith(CANVAS_NODES_CLIPBOARD_PREFIX);
         const isLegacyJSON = value.startsWith(CANVAS_NODES_JSON_CLIPBOARD_PREFIX);
@@ -816,6 +850,7 @@ export function useCanvasNodeOperations({
 
     return {
         alignSelectedNodes,
+        applySubmapPreset,
         autoArrangeCanvasNodes,
         arrangeSelectedNodes,
         spreadSelectedNodes,

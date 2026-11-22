@@ -536,5 +536,10 @@ export const frFR: DeepStringRecord<typeof zhCN> = {
         submapChildCount: "{{count}} nœuds enfants",
         submapEmptyPreview: "Sous-canevas vide",
         submapNoNested: "Les sous-canevas ne peuvent pas être imbriqués",
+        submapPresetLabel: "Modèle de sous-canevas",
+        submapPresetHint: "Choisir un modèle reconstruit les nœuds enfants à partir du modèle",
+        submapPresetApplied: "Modèle de sous-canevas « {{title}} » appliqué",
+        submapPresetCleared: "Sous-canevas vidé",
+        submapPresetUnknown: "Modèle de sous-canevas inconnu",
     },
 };

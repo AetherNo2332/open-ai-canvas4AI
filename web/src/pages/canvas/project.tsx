@@ -1051,6 +1051,7 @@ function CanvasViewportPage() {
         spreadSelectedNodes,
         copyNodesToClipboard,
         copySelectedNodes,
+        applySubmapPreset,
         createFolder,
         createNode,
         createReferenceGroup,
@@ -3099,6 +3100,7 @@ function CanvasViewportPage() {
                                                     onNodeResize={handleNodeResize}
                                                     onToggleFrame={handleFrameToggle}
                                                     onToggleSubmap={toggleSubmapCollapsed}
+                                                    onSubmapPresetChange={applySubmapPreset}
                                                     onFolderStyleChange={handleFolderStyleChange}
                                                     onFolderThemeChange={handleFolderThemeChange}
                                                     onNodeTitleChange={handleNodeTitleChange}

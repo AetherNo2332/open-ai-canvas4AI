@@ -2,10 +2,14 @@ import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, LayoutPanelTop } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { Select } from "@/components/ui/base/select";
 import { FRAME_HEADER_HEIGHT } from "@/lib/canvas/canvas-frame";
 import { canvasNodeDisplayPath } from "@/lib/canvas/canvas-submap";
+import { listSubmapPresetOptions, resolveSubmapPresetId } from "@/lib/canvas/canvas-submap-presets";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasNodeData } from "@/types/canvas";
+
+const SUBMAP_PRESET_OPTIONS = listSubmapPresetOptions();
 
 export function CanvasSubmapNodeHeader({
     data,
@@ -15,6 +19,7 @@ export function CanvasSubmapNodeHeader({
     theme,
     onToggleCollapsed,
     onTitleChange,
+    onPresetChange,
 }: {
     data: CanvasNodeData;
     childCount: number;
@@ -23,6 +28,7 @@ export function CanvasSubmapNodeHeader({
     theme: CanvasTheme;
     onToggleCollapsed: (nodeId: string) => void;
     onTitleChange: (nodeId: string, title: string) => void;
+    onPresetChange?: (nodeId: string, presetId: string) => void;
 }) {
     const { t } = useTranslation();
     const [editing, setEditing] = useState(false);
@@ -87,6 +93,19 @@ export function CanvasSubmapNodeHeader({
             <span className="shrink-0 text-[var(--fs-label)] tabular-nums opacity-60" title={canvasNodeDisplayPath(data)}>
                 {data.id}
             </span>
+            {onPresetChange && !readOnly && !data.metadata?.locked ? (
+                <span className="shrink-0" title={t("canvasPage.nodeOps.submapPresetHint")} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+                    <Select
+                        size="sm"
+                        appearance="soft"
+                        ariaLabel={t("canvasPage.nodeOps.submapPresetLabel")}
+                        value={resolveSubmapPresetId(data.metadata)}
+                        options={SUBMAP_PRESET_OPTIONS}
+                        popupMatchSelectWidth={false}
+                        onChange={(value) => onPresetChange(data.id, String(value))}
+                    />
+                </span>
+            ) : null}
             <span className="ml-auto shrink-0 pr-1 text-[var(--fs-label)] tabular-nums" style={{ color: theme.node.muted }}>
                 {t("canvasPage.nodeOps.submapChildCount", { count: childCount })}
             </span>

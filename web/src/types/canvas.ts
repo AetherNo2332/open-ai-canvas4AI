@@ -471,6 +471,9 @@ export type CanvasNodeMetadata = {
     workflowKind?: CanvasWorkflowKind;
     workflowTitle?: string;
     workflowDescription?: string;
+    /** 内置 submap 形式的创建模板标识与版本；模板实例化后不保留活链接。 */
+    workflowId?: string;
+    workflowVersion?: number;
     stylePresetId?: string;
     styleProfileJson?: string;
     styleExecutionPlan?: StyleExecutionPlan;

@@ -536,5 +536,10 @@ export const enUS: DeepStringRecord<typeof zhCN> = {
         submapChildCount: "{{count}} child nodes",
         submapEmptyPreview: "Empty sub-canvas",
         submapNoNested: "Sub-canvases cannot be nested",
+        submapPresetLabel: "Sub-canvas preset",
+        submapPresetHint: "Choosing a preset rebuilds the child nodes from the template",
+        submapPresetApplied: "Applied sub-canvas preset “{{title}}”",
+        submapPresetCleared: "Cleared the sub-canvas",
+        submapPresetUnknown: "Unknown sub-canvas preset",
     },
 };

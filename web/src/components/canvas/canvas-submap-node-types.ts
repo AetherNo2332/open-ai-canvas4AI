@@ -22,6 +22,7 @@ export type CanvasSubmapNodeProps = {
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
     onToggleCollapsed: (nodeId: string) => void;
     onTitleChange: (nodeId: string, title: string) => void;
+    onPresetChange?: (nodeId: string, presetId: string) => void;
     onContextMenu: (event: ReactMouseEvent, nodeId: string) => void;
     onSubmapContextMenu: (event: ReactMouseEvent, nodeId: string) => void;
 };
