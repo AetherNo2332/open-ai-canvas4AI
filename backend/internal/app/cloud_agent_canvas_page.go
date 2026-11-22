@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"yingce/backend/internal/canvas/mediaversions"
@@ -283,6 +284,14 @@ func cloudAgentCanvasPageNodeBase(node, meta map[string]any, id string) map[stri
 	item := map[string]any{"id": id, "kind": stringValue(node["type"])}
 	if title, ok := node["title"].(string); ok {
 		item["title"] = truncateRunes(title, 300)
+	}
+	// submap 子节点靠 scopeId 归属；不写 parentId。读取面必须暴露 scopeId，
+	// 否则 Agent 只能用节点 ID 前缀猜作用域，submap 路径会与真实文档脱节。
+	if scopeID := strings.TrimSpace(stringValue(node["scopeId"])); scopeID != "" {
+		item["scopeId"] = scopeID
+	}
+	if parentID := strings.TrimSpace(stringValue(node["parentId"])); parentID != "" {
+		item["parentId"] = parentID
 	}
 	if position, ok := node["position"].(map[string]any); ok {
 		safePosition := map[string]any{}

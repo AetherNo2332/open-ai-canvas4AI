@@ -67,6 +67,11 @@ func (s *Service) routeCloudAgentToolCall(run *model.CloudAgentExecution, state 
 	if allowed && cloudAgentReadOnlyDirectorWrite(state, call) {
 		return s.recordCloudAgentToolReceipt(run, state, call, nil, kernel.Forbidden("只读模式下 director 只允许 action=read"))
 	}
+	// canvas 命令工具按命令敏感度分叉：只读会话里的写命令在任何执行之前拒绝，
+	// 避免出现「前几步写了、后面才被权限挡住」。
+	if allowed && cloudAgentReadOnlyCanvasWrite(state, call) {
+		return s.recordCloudAgentToolReceipt(run, state, call, nil, cloudAgentCanvasCommandReadOnlyError(call))
+	}
 	if allowed && call.Function.Name == "storyboard" {
 		return s.executeCloudAgentStoryboard(run, state, call)
 	}
@@ -74,7 +79,8 @@ func (s *Service) routeCloudAgentToolCall(run *model.CloudAgentExecution, state 
 		return s.requestCloudAgentMediaBatchApproval(run, state, call)
 	}
 	mediaTool := call.Function.Name == "generate_media"
-	if allowed && cloudAgentWriteCall(call) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
+	destructiveCanvas := cloudAgentCanvasCommandDestructiveCall(call)
+	if allowed && cloudAgentWriteCall(call) && (state.Request.PermissionMode == "request_approval" || mediaTool || destructiveCanvas) && state.Approval == nil {
 		return s.requestCloudAgentWriteApproval(run, state, call)
 	}
 	if allowed && call.Function.Name == "plan_update" && cloudAgentPlanRequiresFirstApproval(state, call) {
@@ -83,6 +89,14 @@ func (s *Service) routeCloudAgentToolCall(run *model.CloudAgentExecution, state 
 		}
 	}
 	return s.executeCloudAgentAdmittedToolCall(run, state, call, allowed)
+}
+
+func cloudAgentReadOnlyCanvasWrite(state *cloudAgentRuntime, call cloudAgentCall) bool {
+	return call.Function.Name == "canvas" && state.Request.PermissionMode == "read_only" && cloudAgentWriteCall(call)
+}
+
+func cloudAgentCanvasCommandDestructiveCall(call cloudAgentCall) bool {
+	return call.Function.Name == "canvas" && cloudAgentCanvasCommandDestructive(call)
 }
 
 // executeCloudAgentAdmittedToolCall 执行已过审批闸门的调用：已批准的媒体生成、导演台预览和子代理创建在检查点事务外执行，
@@ -351,6 +365,8 @@ func runCloudAgentCanvasWriteTool(tc *cloudAgentToolCheckpoint, repo *repository
 		result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 	case call.Function.Name == "canvas_create_character":
 		result, toolErr = applyCloudAgentCharacterCreate(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+	case call.Function.Name == "canvas":
+		result, toolErr = applyCloudAgentCanvasCommand(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 	default:
 		return cloudAgentToolOutcome{}, false
 	}

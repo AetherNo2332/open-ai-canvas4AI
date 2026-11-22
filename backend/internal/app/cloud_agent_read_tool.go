@@ -40,6 +40,8 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":
 		return cloudAgentReadCanvasState(repo, userID, state, call)
+	case "canvas":
+		return cloudAgentReadCanvasCommand(repo, userID, state, call, services...)
 	case "storyboard":
 		return cloudAgentReadStoryboardTool(repo, userID, state, call)
 	case "canvas_read_batch_table":
@@ -54,6 +56,13 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentReadTask(repo, userID, state, call)
 	}
 	return nil, BadAuthRequest("未知工具")
+}
+
+func cloudAgentReadCanvasCommand(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, services ...*Service) (any, error) {
+	if cloudAgentWriteCall(call) {
+		return nil, cloudAgentCanvasCommandReadOnlyError(call)
+	}
+	return canvasCommandHandleRead(repo, userID, state, call, services...)
 }
 
 func cloudAgentReadWebSearch(service *Service, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {

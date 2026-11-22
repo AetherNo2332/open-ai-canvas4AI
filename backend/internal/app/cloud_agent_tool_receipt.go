@@ -312,7 +312,7 @@ func cloudAgentInvalidateReadCache(state *cloudAgentRuntime) {
 	// Canvas writes invalidate only canvas projections. Skill documents and
 	// the model catalog remain valid, avoiding unrelated repeated reads.
 	for key := range state.ToolReadResults {
-		if strings.HasPrefix(key, "canvas_get_state:") || strings.HasPrefix(key, "storyboard:") || strings.HasPrefix(key, cloudAgentDirectorTool+":") {
+		if strings.HasPrefix(key, "canvas_get_state:") || strings.HasPrefix(key, "canvas:") || strings.HasPrefix(key, "storyboard:") || strings.HasPrefix(key, cloudAgentDirectorTool+":") {
 			delete(state.ToolReadResults, key)
 			delete(state.ToolReadReplays, key)
 		}
