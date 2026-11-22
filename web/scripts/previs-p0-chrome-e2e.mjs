@@ -883,15 +883,31 @@ async function shotOutputs(cdp, baseUrl) {
     assert(result.maxColorError <= 2, "G5 beauty matches default framebuffer tone mapping", `max error=${result.maxColorError}`);
     const recording = await cdp.evaluate(`(async () => {
         const handle=window.__previsCaptureTest.handle;
-        const blob=await handle.recordVideo(.6,12,'depth',{longEdge:320});
+        const events=[], NativeRecorder=window.MediaRecorder;
+        window.MediaRecorder=class extends NativeRecorder {
+            constructor(stream,options) {
+                super(stream,options);
+                for(const type of ['start','dataavailable','stop','error']) this.addEventListener(type,event=>events.push({type,at:performance.now(),size:event.data?.size,state:this.state}));
+                const settings=stream.getVideoTracks()[0]?.getSettings();
+                events.push({type:'created',at:performance.now(),mime:options.mimeType,width:settings?.width,height:settings?.height,fps:settings?.frameRate});
+            }
+            start(...args) {events.push({type:'start-call',at:performance.now()});super.start(...args);}
+            stop() {events.push({type:'stop-call',at:performance.now(),state:this.state});super.stop();}
+        };
+        let blob;
+        try { blob=await handle.recordVideo(.6,12,'depth',{longEdge:320}); }
+        catch(error) {throw new Error(error.message+'; recording events='+JSON.stringify(events));}
+        finally {window.MediaRecorder=NativeRecorder;}
         const video=document.createElement('video'),url=URL.createObjectURL(blob);video.muted=true;
         try { await new Promise((resolve,reject)=>{video.onloadeddata=resolve;video.onerror=()=>reject(new Error('recording cannot decode'));video.src=url;});
             const abort=new AbortController();const pending=handle.recordVideo(2,12,'beauty',{longEdge:320,signal:abort.signal});abort.abort();
             let cancelled=false;try{await pending;}catch{cancelled=true;}
-            return {bytes:blob.size,width:video.videoWidth,height:video.videoHeight,cancelled};
+            const started=events.find(event=>event.type==='start'),stopped=events.find(event=>event.type==='stop-call');
+            return {bytes:blob.size,width:video.videoWidth,height:video.videoHeight,cancelled,captureMs:stopped?.at-started?.at};
         } finally {video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
     })()`);
     assert(recording.bytes > 0 && recording.width === 180 && recording.height === 320, "G6 recording is decodable at shot dimensions", JSON.stringify(recording));
+    assert(recording.captureMs >= 500, "G6a short recording measures duration after encoder start", JSON.stringify(recording));
     assert(recording.cancelled, "G7 recording cancellation rejects and releases session");
     const monitorButton = 'button[title^="投放到第二屏幕"]';
     await cdp.evaluate(`(() => { const open=window.open.bind(window);window.open=(...args)=>{const popup=open(...args);window.__previsPopup=popup;return popup;}; })()`);

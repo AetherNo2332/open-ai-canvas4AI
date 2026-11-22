@@ -228,9 +228,9 @@ export async function recordCanvas(source: PrevisCaptureSource, duration: number
             };
             options.signal?.addEventListener("abort", onAbort, { once: true });
             document.addEventListener("visibilitychange", onHidden);
-            activeRecorder.start(250);
-            const start = performance.now();
+            let start = 0;
             const tick = () => {
+                if (activeRecorder.state !== "recording" || failure) return;
                 try {
                     const elapsed = (performance.now() - start) / 1000;
                     if (elapsed >= duration) {
@@ -243,7 +243,20 @@ export async function recordCanvas(source: PrevisCaptureSource, duration: number
                     stop(error instanceof Error ? error : new Error("录制期间渲染失败"));
                 }
             };
-            timer = window.setTimeout(tick, 1000 / fps);
+            // 编码器可能异步启动，不能在它收到首帧前耗尽短片时长。
+            activeRecorder.onstart = () => {
+                if (activeRecorder.state !== "recording" || failure) return;
+                start = performance.now();
+                timer = window.setTimeout(tick, 1000 / fps);
+            };
+            activeRecorder.start(250);
+            // captureStream 创建前的绘制不保证进入新轨道，启动后提交首帧。
+            try {
+                surface.render(mode, 0);
+                (stream?.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined)?.requestFrame?.();
+            } catch (error) {
+                stop(error instanceof Error ? error : new Error("录制期间渲染失败"));
+            }
             watchdog = window.setTimeout(
                 () => {
                     stop(new Error("视频编码超时"));
