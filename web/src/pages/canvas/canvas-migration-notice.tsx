@@ -18,7 +18,11 @@ export function CanvasMigrationNotice({ items }: { items: CanvasMigrationNoticeI
     if (!items.length) return null;
     return (
         <div className="pointer-events-none absolute inset-x-0 top-[var(--canvas-topbar-offset)] z-[var(--z-panel-floating)] flex justify-center px-3">
-            <div role="status" className="pointer-events-auto w-[min(720px,100%)] overflow-hidden rounded-[var(--card-radius)] border border-border/60 bg-[var(--site-surface)] text-foreground shadow-[var(--shadow-lg)]" data-canvas-no-zoom>
+            <div
+                role="status"
+                className="pointer-events-auto w-[min(720px,100%)] overflow-hidden rounded-[var(--card-radius)] border border-border/70 bg-[var(--popover)] text-foreground shadow-[var(--shadow-lg)] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-200"
+                data-canvas-no-zoom
+            >
                 <div className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-2.5">
                     <p className="text-sm font-semibold">画布升级</p>
                     <span className="shrink-0 text-[var(--fs-tiny)] text-foreground/50">{items.length} 项待处理</span>
