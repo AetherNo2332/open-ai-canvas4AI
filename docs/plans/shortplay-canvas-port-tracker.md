@@ -4,14 +4,14 @@
 
 2026-11-22 从远端核实 4AI `main`，fetch 后以同一提交建立分支 `codex/shortplay-canvas-port`。目标基线 `036b9190e56158e8fbe12912469bf59c2a8e2226`，供体固定为 `13731aae6c4cefadc2a1719e3e7e59b22e249f94`。[4AI 源码](https://github.com/AetherNo2332/open-ai-canvas4AI/tree/036b9190e56158e8fbe12912469bf59c2a8e2226) · [shortplay 源码](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6c4cefadc2a1719e3e7e59b22e249f94)
 
-当前完成分支准备、S01 可重放基线、S02 文档/能力/关系投影和 S03 项目存储单一写入器。实施验收 **3/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
+当前完成分支准备、S01 可重放基线、S02 文档/能力/关系投影、S03 项目存储单一写入器和 S04 正式画布子画布编辑器。实施验收 **4/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
 
 | 片号 | 交付 | 前置 | 状态 | 实现提交与验证证据 |
 |---|---|---|---|---|
 | S01 | 供体行为与目标基线夹具 | 可开始 | 通过 | 实现 `37906500c`。供体固定提交运行采集；4AI 旧档经真实 SQLite repository 写入回读；ZIP v3/v4 重建样本经 Bun 读取。详见 [S01 证据](../../testdata/shortplay-canvas-port/README.md) 与下方「S01 实测记录」。 |
 | S02 | 文档、节点能力及关系投影 | S01 | 通过 | 实现 `7cafd662f`。字段声明、node-json 文档、submap/短剧资产能力、字段关系投影、语义分列和 Go/Web 共用关系黄金夹具落地。详见下方「S02 实测记录」。 |
 | S03 | 版本、操作、鉴权与单一写入器 | S02 | 通过 | 实现 `49b788a41`。文档格式门禁、客户端能力、revision CAS、receipt 重放、事务回滚和 `UpsertCanvasProject` 单一写入路径落地。详见下方「S03 实测记录」。 |
-| S04 | 正式画布路由与完整节点编辑器 | S03 | 待施工 | 待记录 |
+| S04 | 正式画布路由与完整节点编辑器 | S03 | 通过 | 实现 `bd7fdae81`。顺序 ID、submap 容器/小地图/resize、子画布内创建与复制粘贴、级联删除落地；专项 44 PASS，typecheck/lint/build PASS，正式页面完成创建、编辑、折叠、复制、粘贴和重开。详见下方「S04 实测记录」。 |
 | S05 | 内置镜头创建、复制和子树操作 | S04 | 待施工 | 待记录 |
 | S06 | 多端同步、历史、撤销与重放 | S05 | 待施工 | 待记录 |
 | S07 | 用户预设持久化与跨画布插入 | S05 | 待施工 | 待记录 |
@@ -76,6 +76,15 @@
 - **验证命令与结果**：`go test -count=1 ./internal/canvas/... ./internal/architecture` PASS；`go test -count=1 ./internal/handler -run 'TestOpenAPI'` PASS；`go test -count=1 ./internal/app -run 'Test.*Canvas.*(Create|Operation|Reference)|TestCloudAgent.*Canvas'` 14.5 秒 PASS；`bun run typecheck` PASS；`bun test test/canvas-operations-build.test.ts test/canvas-sync-progress.test.ts` 76 PASS、0 FAIL；`go test -count=1 -json -skip '^TestSettingsEncryptionKey' ./internal/app` 504.194 秒 PASS，FAIL 0、SKIP 25。
 - **未覆盖项**：S03 没有进入正式页面完成保存/重开验收，留给 S04；完整 app 套件刻意跳过 `TestSettingsEncryptionKeyPublication`、`TestSettingsEncryptionKeyLinkFallback`、`TestSettingsEncryptionKeyConcurrentFirstUse`，它们在本机因 Windows 与 POSIX `0600` 权限语义差异返回 `key permissions = 666`，与画布改动无关；正式 PostgreSQL 与多端并发留给 S06/S14。
 
+### S04 实测记录
+
+- **实现范围**：画布节点 ID 改为 `${prefix}-${N}` 顺序发号，`idCounters` 随项目文档持久化且只增不减；submap 子节点使用 `${scopeId}__${type}-N`，保留 `scopeId`、`localId` 与展示路径，不写 `parentId`。`canvas-submap-node*` 提供标题栏、内容区、折叠小地图和四角 resize；子画布内创建、落点、容器撑开、拖动夹紧、折叠/展开由正式画布接入。
+- **复制与删除**：复制 submap 时先发新容器号，再按新容器发子节点号；内部引用重映射到副本，外部引用与外部入边不复制。单次复制和剪贴板粘贴统一用 `isCopiedSubmapTreeNode` 判定容器作用域，修复了混用两种复制路径时作用域不一致的问题。删除容器按 v1 语义级联删除子节点。
+- **专项验证**：`bun test test/canvas-node-id.test.ts test/canvas-submap.test.ts test/canvas-submap-minimap.test.ts test/canvas-node-copy.test.ts test/canvas-node-lod.test.ts test/canvas-storyboard-panel.test.ts` → **44 pass，0 fail，176 expectations**。`bun run typecheck` PASS；`bun run lint` PASS；`bun run build` PASS（20.67s，仅既存 dynamic import / chunk size 警告）。
+- **全量回归**：`bun run test` → **3512 pass、7 skip、11 fail，3530 tests / 521 files，241.51s**。11 条失败均为 Windows CRLF 下按源码文本提取失败、CSS 文本断言或 `welcome-title` 独立 harness 问题，分布在 `canvas-keyboard`、`canvas-media-performance`、`canvas-resource-mention-editor`、`director-template-mode-wiring`、`settings-preference-spacing`、`welcome-title`、`workspace-menu-density`、`workspace-sidebar-checkin` 等既有文件；无 submap/ID/复制相关断言失败。
+- **正式页面证据**：后端 `127.0.0.1:18080`、前端 `127.0.0.1:13000`，数据目录 `.local/project-workbench-debug`，本地一次性管理员 `s04_acceptance_20261122`。画布 `loNVFAmxzNzZmj8zDqrFJ` 中创建 `submap-1`、`submap-1__text-1`、`submap-1__image-1`；把图片提示词改为 `S04 acceptance shot image prompt`。拖动容器时容器与两个子节点同量位移；拖动子节点越界只夹紧 x。折叠后显示「2 个子节点」和小地图，重开后折叠状态保留。右键创建副本 `submap-2`，复制粘贴整组生成 `submap-3`；最终 9 节点、0 连线，刷新后仍为 9 节点。SQLite 回读 revision `17`、payload `4382` bytes；`idCounters` 为 `{"submap":3,"submap-1__text":1,"submap-1__image":1,"submap-2__text":1,"submap-2__image":1,"submap-3__text":1,"submap-3__image":1}`。
+- **未覆盖项**：四角 resize 手柄已渲染，但未取得尺寸实际变化的页面记录；删除父容器级联删除子节点只有纯函数测试，未在正式页面记录前后节点清单；外部引用不复制只有单测，未额外构造页面样本。上述三项留到 S05/S06 的真实镜头链路一并复验。
+
 ### S04 接入编辑器
 
 以供体 `web/src/pages/canvas/project.tsx`、`use-canvas-project-lifecycle.ts` 为起点移入编辑器、store、节点渲染、工具注册、图层、媒体操作、样式及必要资源。4AI 接项目身份、资源读取、上传和任务服务。用正式页面逐项勾验 S01 注册表，覆盖创建、移动、缩放、快捷键、粘贴、节点编辑、图层拆分与提层、保存与重开。每个供体和目标特有节点记录对应结果。
@@ -132,3 +141,4 @@ Go 在 `backend` 下运行 `go test ./internal/canvas/...`，按分片追加实�
 | 2026-11-22 | S01 通过：提交 `37906500c`，供体 storyboard 创建/编辑/复制/重开运行时采集，4AI 旧档真实 SQLite 回读、ZIP v3/v4 重建样本、目标 200 节点耗时基线和两端专项测试均通过；供体既有 document 失败已登记 | S02 移植 `canvas/{capability,contract,document,relation,layout}` 功能闭包，补齐逐注册类型和 Go/Web 语义投影对照 |
 | 2026-11-22 | S02 通过：提交 `7cafd662f`，文档、能力、关系投影、语义分列与 Go/Web 同源黄金夹具落地；相关 Go/Web 专项测试通过 | S03 接入项目存储、格式门禁、revision CAS 与单一写入器 |
 | 2026-11-22 | S03 通过：提交 `49b788a41`，字段引用文档格式门禁、客户端能力、单一事务写入器、receipt 重放和回滚测试落地；完整 `internal/app` 504.194 秒回归 0 失败、25 跳过 | S04 接入正式画布编辑器与 submap 容器、图层、ID 分配、拖拽/折叠和右键创建 |
+| 2026-11-22 | S04 通过：提交 `bd7fdae81`，顺序 ID、submap 容器/小地图/resize、子画布内创建与复制粘贴、级联删除落地；专项 44 PASS，typecheck/lint/build PASS，全量 3512 PASS / 11 条既有环境失败，正式页面完成创建、编辑、折叠、复制、粘贴和重开 | S05 打通内置 storyboard 镜头：六节点模板、提示词与首帧、整组复制后的引用归属 |
