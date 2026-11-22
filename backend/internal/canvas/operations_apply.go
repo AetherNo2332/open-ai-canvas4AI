@@ -196,8 +196,8 @@ func prepareCanvasOperationDocument(tx *repository.Repository, userID, canvasID 
 			adoptedReferenceFormat = adopted
 		}
 	}
-	if explicitReferenceFormat && legacyConnectionWrites && !adoptedReferenceFormat {
-		return nil, canvasMutationError("canvas_document_format_conflict", "旧引用无法规范化为字段引用格式，画布未保存")
+	if err := finishCanvasReferenceCreate(payload, explicitReferenceFormat, legacyConnectionWrites, adoptedReferenceFormat); err != nil {
+		return nil, err
 	}
 	if err := validateCanvasDocumentOperationFormat(payload, nil, req); err != nil {
 		return nil, err
@@ -220,6 +220,20 @@ func prepareCanvasOperationDocument(tx *repository.Repository, userID, canvasID 
 		return nil, err
 	}
 	return raw, nil
+}
+
+func finishCanvasReferenceCreate(payload map[string]json.RawMessage, explicit, legacyWrites, adopted bool) error {
+	if !explicit {
+		return nil
+	}
+	if !legacyWrites {
+		payload["connections"] = json.RawMessage(`[]`)
+		return nil
+	}
+	if !adopted {
+		return canvasMutationError("canvas_document_format_conflict", "旧引用无法规范化为字段引用格式，画布未保存")
+	}
+	return nil
 }
 
 func canvasMutationError(reason kernel.ErrorReason, message string) *kernel.AppError {

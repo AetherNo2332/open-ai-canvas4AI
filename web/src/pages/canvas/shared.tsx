@@ -8,6 +8,7 @@ import { AuthLoginLink } from "@/components/auth/auth-login-link";
 import { ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasNodeToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-toolbar";
 import { CanvasFrameNode } from "@/components/canvas/canvas-frame-node";
+import { CanvasSubmapNode } from "@/components/canvas/canvas-submap-node";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import { CanvasBatchTableNodeContent } from "@/components/canvas/canvas-batch-table-node";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
@@ -18,11 +19,12 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canvasAppearanceBaseTheme, canvasAppearanceForTheme, DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, resolveCanvasAppearance, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, isCanvasFolderNode, isFrameNode, isNodeHiddenByCollapsedFrame, resolveFrameConnection } from "@/lib/canvas/canvas-frame";
-import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
 import { getContextResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { normalizeSharedCanvas } from "@/lib/canvas/canvas-relation-normalize";
+import { getSubmapChildren, isNodeHiddenByCollapsedSubmap, isSubmapNode } from "@/lib/canvas/canvas-submap";
 import { getPublicCanvasShare } from "@/services/api/canvas-share";
 import { useCanvasThemeStore, useCanvasThemeScope } from "@/stores/canvas/use-canvas-theme-store";
-import { CanvasNodeType, type CanvasNodeData, type Position, type ViewportTransform } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position, type ViewportTransform } from "@/types/canvas";
 import { nodeGenerationPrompt } from "@/lib/canvas/generation-contract";
 type ContextMenu = { x: number; y: number; world: Position; nodeId?: string };
 type DragState = { primaryId: string; nodeIds: string[]; startX: number; startY: number; origins: Map<string, Position>; moved: boolean };
@@ -39,7 +41,7 @@ export default function SharedCanvasPage() {
     const toolbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [title, setTitle] = useState("共享画布");
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
-    const [connections, setConnections] = useState<Awaited<ReturnType<typeof getPublicCanvasShare>>["project"]["connections"]>([]);
+    const [connections, setConnections] = useState<CanvasConnection[]>([]);
     const [appearance, setAppearance] = useState<CanvasAppearance>(() => canvasAppearanceForTheme(colorTheme));
     const [backgroundMode, setBackgroundMode] = useState<"lines" | "dots" | "blank">("dots");
     const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
@@ -64,14 +66,16 @@ export default function SharedCanvasPage() {
         });
         return result;
     }, [nodes]);
-    const visibleNodes = useMemo(() => nodes.filter((node) => !isNodeHiddenByCollapsedFrame(node, nodes)), [nodes]);
+    const hiddenSubmapChildIds = useMemo(() => new Set(nodes.filter((node) => isNodeHiddenByCollapsedSubmap(node, nodes)).map((node) => node.id)), [nodes]);
+    const visibleNodes = useMemo(() => nodes.filter((node) => !hiddenSubmapChildIds.has(node.id) && !isNodeHiddenByCollapsedFrame(node, nodes)), [hiddenSubmapChildIds, nodes]);
     const visibleConnections = useMemo(
         () =>
             connections.flatMap((connection) => {
+                if (hiddenSubmapChildIds.has(connection.fromNodeId || "") || hiddenSubmapChildIds.has(connection.toNodeId || "")) return [];
                 const resolved = resolveFrameConnection(connection, nodes);
                 return resolved ? [{ connection, ...resolved }] : [];
             }),
-        [connections, nodes],
+        [connections, hiddenSubmapChildIds, nodes],
     );
     const connectionBounds = useMemo(() => {
         if (!nodes.length) return { left: -1, top: -1, width: 2, height: 2 };
@@ -96,8 +100,9 @@ export default function SharedCanvasPage() {
             .then(({ project }) => {
                 if (!active) return;
                 setTitle(project.title || "共享画布");
-                setNodes((project.nodes || []).map(ensureMediaNodeMinimumSize));
-                setConnections(project.connections || []);
+                const normalized = normalizeSharedCanvas(project);
+                setNodes(normalized.nodes);
+                setConnections(normalized.connections);
                 const nextAppearance = project.appearance ? normalizeCanvasAppearance(project.appearance, themeBeforeShare) : canvasAppearanceForTheme(themeBeforeShare);
                 setAppearance(nextAppearance);
                 appliedShareTheme = canvasAppearanceBaseTheme(nextAppearance, themeBeforeShare);
@@ -350,7 +355,27 @@ export default function SharedCanvasPage() {
                     ))}
                 </svg>
                 {visibleNodes.map((node) =>
-                    isFrameNode(node) ? (
+                    isSubmapNode(node) ? (
+                        <CanvasSubmapNode
+                            key={node.id}
+                            data={node}
+                            childNodes={getSubmapChildren(node.id, nodes)}
+                            scale={viewport.k}
+                            isSelected={selectedNodeId === node.id}
+                            readOnly
+                            onMouseDown={(event, nodeId) => {
+                                event.stopPropagation();
+                                if (event.button !== 0) return;
+                                setSelectedNodeId(nodeId);
+                                setContextMenu(null);
+                            }}
+                            onResize={() => undefined}
+                            onToggleCollapsed={(nodeId) => setNodes((current) => current.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, collapsed: !item.metadata?.collapsed } } : item)))}
+                            onTitleChange={unauthorized}
+                            onContextMenu={(event, nodeId) => openContextMenu(event, nodeId)}
+                            onSubmapContextMenu={(event, nodeId) => openContextMenu(event, nodeId)}
+                        />
+                    ) : isFrameNode(node) ? (
                         <CanvasFrameNode
                             key={node.id}
                             data={node}

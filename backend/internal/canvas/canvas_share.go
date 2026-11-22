@@ -53,6 +53,9 @@ var publicCanvasMetadataKeys = map[string]bool{
 	"previsPreviewNodeId": true, "previsDepthNodeId": true, "previsDepthVideoNodeId": true, "previsNormalNodeId": true,
 	"skillId": true, "skillVersion": true, "skillSnapshot": true, "storyboard": true,
 	"storyboardShotDuration": true, "storyboardShotCount": true, "storyboardComposerHeight": true, "frame": true,
+	"referenceNodeIds": true, "referenceTextNodeIds": true, "derivedFromNodeIds": true,
+	"imageEditSourceNodeId": true, "imageLayerGroup": true, "collapsed": true,
+	"workflowId": true, "workflowVersion": true,
 }
 
 var publicCanvasForbiddenKeys = map[string]bool{
@@ -272,6 +275,9 @@ func publicCanvasNode(value any, token string, allowedResources map[string]bool)
 		"id": node["id"], "type": node["type"], "title": node["title"], "position": scrubPublicCanvasValue(node["position"]),
 		"width": node["width"], "height": node["height"], "parentId": node["parentId"],
 	}
+	if scopeID := kernel.StringValue(node["scopeId"]); scopeID != "" {
+		result["scopeId"] = scopeID
+	}
 	metadata, _ := node["metadata"].(map[string]any)
 	publicMetadata := map[string]any{}
 	for key, value := range metadata {
@@ -279,6 +285,13 @@ func publicCanvasNode(value any, token string, allowedResources map[string]bool)
 			continue
 		}
 		publicMetadata[key] = scrubPublicCanvasValue(value)
+	}
+	bindings := metadata["inputBindings"]
+	if spec, ok := metadata["generationSpec"].(map[string]any); ok {
+		bindings = spec["referenceBindings"]
+	}
+	if publicBindings := publicCanvasNodeBindings(bindings); len(publicBindings) > 0 {
+		publicMetadata["inputBindings"] = publicBindings
 	}
 	if resourceID := assets.ResourceID(kernel.StringValue(metadata["storageKey"])); resourceID != "" {
 		allowedResources[resourceID] = true
@@ -292,6 +305,35 @@ func publicCanvasNode(value any, token string, allowedResources map[string]bool)
 	delete(publicMetadata, "storageKey")
 	result["metadata"] = publicMetadata
 	return result, true
+}
+
+func publicCanvasNodeBindings(value any) []any {
+	bindings, _ := value.([]any)
+	result := make([]any, 0, len(bindings))
+	for _, value := range bindings {
+		binding, _ := value.(map[string]any)
+		nodeID := kernel.StringValue(binding["nodeId"])
+		if nodeID == "" {
+			continue
+		}
+		role := kernel.StringValue(binding["role"])
+		mediaType := kernel.StringValue(binding["mediaType"])
+		switch role {
+		case "reference", "source-text", "first-frame", "last-frame", "mask":
+		default:
+			continue
+		}
+		switch mediaType {
+		case "text", "image", "video", "audio":
+		default:
+			continue
+		}
+		result = append(result, map[string]any{
+			"id": "node:" + nodeID + ":" + role, "nodeId": nodeID, "role": role,
+			"mediaType": mediaType, "order": len(result), "resolution": "latest",
+		})
+	}
+	return result
 }
 
 func scrubPublicCanvasValue(value any) any {

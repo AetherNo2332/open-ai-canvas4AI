@@ -88,6 +88,7 @@ type CanvasNodeContextMenuProps = {
     onToggleFrame: () => void;
     onToggleSubmap?: () => void;
     onSaveSubmapPresetAs?: () => void;
+    onExportSubmapWorkflow?: () => void;
     onSpreadSelection?: () => void;
     onCopySelection?: () => void;
     onDeleteSelection?: () => void;
@@ -139,6 +140,7 @@ export function CanvasNodeContextMenu({
     onToggleFrame,
     onToggleSubmap,
     onSaveSubmapPresetAs,
+    onExportSubmapWorkflow,
     onSpreadSelection,
     onCopySelection,
     onDeleteSelection,
@@ -266,6 +268,7 @@ export function CanvasNodeContextMenu({
                                     <MenuButton icon={<Copy />} label="复制子画布及内容" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
                                     <MenuButton icon={<Layers3 />} label="创建子画布副本" shortcut="⌘D" onClick={() => runAction(onDuplicate)} />
                                     {onSaveSubmapPresetAs ? <MenuButton icon={<Save />} label="另存为用户模板" onClick={() => runAction(onSaveSubmapPresetAs)} /> : null}
+                                    {onExportSubmapWorkflow ? <MenuButton icon={<Download />} label="导出子画布工作流" onClick={() => runAction(onExportSubmapWorkflow)} /> : null}
                                     <MenuButton icon={<Trash2 />} label="删除子画布" danger onClick={() => runAction(onDelete)} />
                                 </>
                             ) : null}
@@ -339,6 +342,7 @@ export function CanvasNodeContextMenu({
                                     {isText ? <MenuButton icon={<Clipboard />} label="复制文本" disabled={!hasNodeContent} onClick={() => runAction(onCopyContent)} /> : null}
                                     <MenuButton icon={<Copy />} label={isFrame ? `创建${isFolder ? "文件夹" : "背板"}副本` : isSubmap ? "创建子画布副本" : "创建参数变体"} shortcut="⌘D" onClick={() => runAction(onDuplicate)} />
                                     {isSubmap && onSaveSubmapPresetAs ? <MenuButton icon={<Save />} label="另存为用户模板" onClick={() => runAction(onSaveSubmapPresetAs)} /> : null}
+                                    {isSubmap && onExportSubmapWorkflow ? <MenuButton icon={<Download />} label="导出子画布工作流" onClick={() => runAction(onExportSubmapWorkflow)} /> : null}
                                     <MenuButton icon={<Clipboard />} label="粘贴" shortcut="⌘V" disabled={!canPaste} onClick={() => runAction(onPaste)} />
                                     <MenuButton icon={<Trash2 />} label={isFrame ? `删除${isFolder ? "文件夹" : "背板"}` : isSubmap ? "删除子画布" : "删除节点"} danger onClick={() => runAction(onDelete)} />
                                 </>

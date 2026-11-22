@@ -103,6 +103,7 @@ func TestCanvasOperationCreateAcceptsReferenceFieldsVersion(t *testing.T) {
 				"referenceFieldsVersion": json.RawMessage(`1`),
 			}},
 			{Type: "create_node", Node: json.RawMessage(`{"id":"a","type":"image","metadata":{}}`)},
+			{Type: "create_node", Node: json.RawMessage(`{"id":"b","type":"image","metadata":{"inputBindings":[{"id":"ref","nodeId":"a","mediaType":"image","role":"reference","order":0,"resolution":"latest"}]}}`)},
 		},
 	}
 	if _, err := svc.ApplyUserCanvasOperations("user", "canvas", request); err != nil {
@@ -118,6 +119,9 @@ func TestCanvasOperationCreateAcceptsReferenceFieldsVersion(t *testing.T) {
 	}
 	if saved["referenceFieldsVersion"] != float64(1) {
 		t.Fatalf("referenceFieldsVersion = %#v, want 1: %s", saved["referenceFieldsVersion"], project.PayloadJSON)
+	}
+	if edges, _ := saved["connections"].([]any); len(edges) != 0 {
+		t.Fatalf("field-only create persisted %d projected edges", len(edges))
 	}
 }
 

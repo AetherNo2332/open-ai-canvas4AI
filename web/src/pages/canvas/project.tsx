@@ -136,6 +136,7 @@ import { stampCanvasNodeChanges, updateCanvasNode, updateCanvasNodes } from "@/l
 import { canvasAssetHandoffAttempt, finalizeCanvasAssetHandoff, uninsertedCanvasAssetHandoffPayloads } from "@/lib/canvas/canvas-asset-handoff";
 import { expandBatchSourceNodeIds } from "@/lib/canvas/canvas-batch-connection";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
+import { exportCanvasSubmap } from "@/lib/canvas/canvas-export";
 import { deriveStoryboardPipelineProgress } from "@/lib/canvas/canvas-storyboard-progress";
 import { CanvasOperationChangeToast, CanvasMergeStatusToast, CanvasUploadStatusToast } from "./canvas-project-feedback";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
@@ -2047,6 +2048,25 @@ function CanvasViewportPage() {
         setSubmapPresetSaveNodeId(nodeId);
     }, []);
 
+    const exportSubmapWorkflow = useCallback(
+        (node: CanvasNodeData) => {
+            if (!currentProject) return;
+            setContextMenu(null);
+            void exportCanvasSubmap(
+                {
+                    ...currentProject,
+                    nodes: nodesRef.current,
+                    connections: connectionsRef.current,
+                },
+                node.id,
+                `${node.title || "子画布"}工作流`,
+            )
+                .then((exported) => message.success(`已导出「${exported.project.title}」工作流`))
+                .catch((error) => message.error(error instanceof Error ? error.message : "导出子画布工作流失败"));
+        },
+        [connectionsRef, currentProject, message, nodesRef],
+    );
+
     const confirmSubmapPresetSave = useCallback(
         (name: string) => {
             if (!submapPresetSaveNodeId) return;
@@ -3507,6 +3527,7 @@ function CanvasViewportPage() {
                                 onToggleFrame={(node) => handleFrameToggle(node.id)}
                                 onToggleSubmap={(node) => toggleSubmapCollapsed(node.id)}
                                 onSaveSubmapPresetAs={(node) => openSubmapPresetSave(node.id)}
+                                onExportSubmapWorkflow={exportSubmapWorkflow}
                                 onSpreadSelection={spreadSelectedNodes}
                                 onCopySelection={copySelectedNodes}
                                 onDeleteSelection={() => deleteNodes(selectedNodeIds)}
