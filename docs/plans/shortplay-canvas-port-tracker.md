@@ -4,12 +4,12 @@
 
 2026-11-22 从远端核实 4AI `main`，fetch 后以同一提交建立分支 `codex/shortplay-canvas-port`。目标基线 `036b9190e56158e8fbe12912469bf59c2a8e2226`，供体固定为 `13731aae6c4cefadc2a1719e3e7e59b22e249f94`。[4AI 源码](https://github.com/AetherNo2332/open-ai-canvas4AI/tree/036b9190e56158e8fbe12912469bf59c2a8e2226) · [shortplay 源码](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6c4cefadc2a1719e3e7e59b22e249f94)
 
-当前完成分支准备、静态规划与 S01 可重放基线。实施验收 **1/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
+当前完成分支准备、S01 可重放基线与 S02 文档/能力/关系投影。实施验收 **2/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
 
 | 片号 | 交付 | 前置 | 状态 | 实现提交与验证证据 |
 |---|---|---|---|---|
-| S01 | 供体行为与目标基线夹具 | 可开始 | 通过 | 实现 `37906500c`。供体固定提交运行采集；4AI 旧档经真实 SQLite repository 写入回读；ZIP v3/v4 重建样本经 Bun 读取。详见 [S01 证据](../testdata/shortplay-canvas-port/README.md) 与下方「S01 实测记录」。 |
-| S02 | 文档、节点能力及关系投影 | S01 | 待施工 | 待记录 |
+| S01 | 供体行为与目标基线夹具 | 可开始 | 通过 | 实现 `37906500c`。供体固定提交运行采集；4AI 旧档经真实 SQLite repository 写入回读；ZIP v3/v4 重建样本经 Bun 读取。详见 [S01 证据](../../testdata/shortplay-canvas-port/README.md) 与下方「S01 实测记录」。 |
+| S02 | 文档、节点能力及关系投影 | S01 | 通过 | 实现 `7cafd662f`。字段声明、node-json 文档、submap/短剧资产能力、字段关系投影、语义分列和 Go/Web 共用关系黄金夹具落地。详见下方「S02 实测记录」。 |
 | S03 | 版本、操作、鉴权与单一写入器 | S02 | 待施工 | 待记录 |
 | S04 | 正式画布路由与完整节点编辑器 | S03 | 待施工 | 待记录 |
 | S05 | 内置镜头创建、复制和子树操作 | S04 | 待施工 | 待记录 |
@@ -51,6 +51,17 @@
 ### S02 移植文档与关系
 
 迁入供体 `backend/internal/canvas/{capability,contract,document,relation,layout}` 中功能闭包及配套测试，前端同步节点契约和 `canvas-relation-edge-id.ts`、`canvas-edge-presentation.ts`。文档包还包含 Agent 文本寻址语法。保持 `scopeId`、`parentId`、ID 高水位、媒体引用顺序与首尾帧角色。用同一输入对照 Go 与 Web 的语义投影，验证普通参考兼首帧、文本换序、锚点变化和重复投影。
+
+### S02 实测记录
+
+- **后端能力**：新增 `Field`/`Fields` 声明与旧 `PatchField` 派生桥，保留 4AI 旧命令面；注册 `submap`、`shortplay-asset`，`frame` 标记为视觉节点并从 Agent 文档发现面排除。`locked` 在新文档面只读，旧编辑器命令仍可写。
+- **文档与寻址**：新增 `internal/canvas/document`，实现 node-json v1 打印/解析、裸换行、CRLF/BOM/末尾换行规范化、重复键/未知字段/类型/值域/节点身份错误码、字段块区间、模板，以及 `submap-N/localId` 地址解析。全部 Agent 类型逐个执行了打印→解析→再打印的字节稳定往返。
+- **关系投影**：`relation.Project` 只读节点字段，按“目标节点顺序 × 字段数组顺序”产出 R1、首尾帧和文本参考；R1 与首帧重叠时保留 R1，结果按边身份幂等去重。布局 `Edges` 改用该投影，旧持久化 `connections` 只作为渲染缓存，不再作为依赖真源。
+- **作用域**：`submap` 子节点使用顶层 `scopeId` 归属，不写 `parentId`；布局节点快照单独保留 `ScopeID`，背板 `parentId` 语义不变。复制后原文与副本分别引用各自子节点，外部共享引用不复制。
+- **语义分列**：新增 `ColumnGap`、`ColumnRowGap`、`ColumnPrefix`、`AutoColumnGroups`、`Columns`、自然序与稳定列序。分列夹具位于 `backend/internal/canvas/layout/testdata/column-cases.json`，覆盖真实画布列、双轴分列、显式列序、溢出不合并和空输入。
+- **Web 契约**：补齐 `CanvasNodeType.Submap`、顶层 `scopeId`、参考字段和 `collapsed`；新增字段关系投影、输入成员解析、边身份和锚点展示纯函数。Go 与 Web 直接读取同一份 `testdata/shortplay-canvas-port/relation-projection.json`，覆盖普通参考兼首帧、文本换序、首尾帧角色、复制 submap 和重复投影。
+- **验证命令与结果**：`go test -count=1 ./internal/canvas/... ./internal/architecture` PASS；相关 app 用例 `TestCloudAgentNodeTypesExposeExecutableAllowList`、`TestCloudAgentToolsFollowCanvasCapabilityRegistry` PASS；`bun run typecheck` PASS；`bun test test/shortplay-relation-projection.test.ts test/canvas-node-copy.test.ts` 16 PASS。全量 `go test ./...` 的其它包通过，`internal/app` 首次运行暴露新增节点类型清单未同步；修正后已跑对应用例通过。
+- **未覆盖项**：S02 没有接正式项目存储或浏览器编辑路径，留待 S03/S04；Web 只迁移关系读取与边身份，写回投影和媒体引用归一化随 S04/S05 接入；没有把本次 Go/Web 同源投影当作真实页面验收。全量 `internal/app` 在修正后尚未重跑完整 575 秒套件，推送前必须补跑。
 
 ### S03 接入项目存储
 
