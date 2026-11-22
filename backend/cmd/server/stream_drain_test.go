@@ -233,8 +233,8 @@ func TestServerDrainClosesRealSSERoutesAndFinishesOrdinaryWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lateResponse.Body.Close()
 	_, _ = io.Copy(io.Discard, lateResponse.Body)
+	_ = lateResponse.Body.Close()
 	if lateResponse.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("late stream status = %s, want 503", lateResponse.Status)
 	}
@@ -248,7 +248,6 @@ func TestServerDrainClosesRealSSERoutesAndFinishesOrdinaryWrite(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ordinary write did not finish")
 	}
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("ordinary write status = %s, body=%v", response.Status, response.Body)
 	}
