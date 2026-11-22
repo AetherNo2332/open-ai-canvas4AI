@@ -95,7 +95,7 @@ func canvasCommandExecRead(repo *repository.Repository, userID string, state *cl
 	case "preset":
 		return canvasCommandPreset(repo, userID, step.Args)
 	case "run":
-		return "", canvasCommandError("command", "dependency", "run 依赖 S10 的真实生成任务与回填；本片不支持伪装提交。请先用 generate_media/wait_generations 完成单条生成，或在 S10 接入后使用 run")
+		return "", canvasCommandError("command", "invalid_value", "run 必须单独调用并走批次审批，不能在只读路径执行")
 	default:
 		return "", canvasCommandError("command", "unsupported", fmt.Sprintf("命令 %q 尚未实现；支持的命令：%s", step.Name, strings.Join(canvasCommandNames(false), "、")))
 	}

@@ -24,7 +24,7 @@ summary 必填，内容为给用户的最终答复全文。通过后持久化回
 
 ## canvas
 
-把画布投影成目录的命令面：节点是目录（./<节点ID>/），字段是文件（./<节点ID>/<字段>.<ext>）；submap 子节点写作 ./<submapID>/<localId>/<字段>.<ext>。只读：pwd、ls（--types 列可建类型，-l 带值）、cat（-n 带行号）、grep、wc、head、tail、find、help、log、preset list/delete。写：new [--in <submap>] <type> <title...> 由服务端按 idCounters 高水位发号；dup 复制节点，submap 连同子节点并重映射内部引用，外部引用不复制；mv 只改标题；rm 删除，submap 级联子节点，任何权限模式都要审批；edit 写字段（省略值清空）；sed -i s/原文/替换/ 要求唯一命中；正文用 cat > ./image-1/prompt.txt <<'EOF'。支持 &&、; 和换行，失败即整条不落库；不支持 ||。管道只支持 cat/head/tail 接 head/tail/grep/wc。写命令带最新 snapshotHash；审批前服务端会固化。锁定节点拒绝一切增删改；run 依赖 S10，preset save 走 S07 页面入口。
+把画布投影成目录的命令面：节点是目录（./<节点ID>/），字段是文件（./<节点ID>/<字段>.<ext>）；submap 子节点写作 ./<submapID>/<localId>/<字段>.<ext>。只读：pwd、ls（--types 列可建类型，-l 带值）、cat（-n 带行号）、grep、wc、head、tail、find、help、log、preset list/delete。写：new [--in <submap>] <type> <title...> 由服务端按 idCounters 高水位发号；dup 复制节点，submap 连同子节点并重映射内部引用，外部引用不复制；mv 只改标题；rm 删除，submap 级联子节点，任何权限模式都要审批；edit 写字段（省略值清空）；sed -i s/原文/替换/ 要求唯一命中；正文用 cat > ./image-1/prompt.txt <<'EOF'。支持 &&、; 和换行，失败即整条不落库；不支持 ||。管道只支持 cat/head/tail 接 head/tail/grep/wc。写命令带最新 snapshotHash；审批前服务端会固化。锁定节点拒绝一切增删改；run 按节点字段批量生成并走批次审批，preset save 走 S07 页面入口。
 
 ## canvas_read_batch_table
 

@@ -63,32 +63,79 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 
 // routeCloudAgentToolCall 检查只读限制、分镜执行器和审批闸门；都不命中时交给已准入调用的执行路径。
 func (s *Service) routeCloudAgentToolCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) error {
+	if err, handled := s.routeCloudAgentReadOnlyCall(run, state, call, allowed); handled {
+		return err
+	}
+	if err, handled := s.routeCloudAgentSpecialCall(run, state, call, allowed); handled {
+		return err
+	}
+	if err, handled := s.routeCloudAgentApprovalCall(run, state, call, allowed); handled {
+		return err
+	}
+	return s.executeCloudAgentAdmittedToolCall(run, state, call, allowed)
+}
+
+// routeCloudAgentReadOnlyCall 在只读会话里拒绝写 action；返回 handled=true 表示已经回执。
+func (s *Service) routeCloudAgentReadOnlyCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) (error, bool) {
 	// read_only 只放行 director read；写 action 即使绕过了预检 schema 也在执行前拒绝。
 	if allowed && cloudAgentReadOnlyDirectorWrite(state, call) {
-		return s.recordCloudAgentToolReceipt(run, state, call, nil, kernel.Forbidden("只读模式下 director 只允许 action=read"))
+		return s.recordCloudAgentToolReceipt(run, state, call, nil, kernel.Forbidden("只读模式下 director 只允许 action=read")), true
 	}
 	// canvas 命令工具按命令敏感度分叉：只读会话里的写命令在任何执行之前拒绝，
 	// 避免出现「前几步写了、后面才被权限挡住」。
 	if allowed && cloudAgentReadOnlyCanvasWrite(state, call) {
-		return s.recordCloudAgentToolReceipt(run, state, call, nil, cloudAgentCanvasCommandReadOnlyError(call))
+		return s.recordCloudAgentToolReceipt(run, state, call, nil, cloudAgentCanvasCommandReadOnlyError(call)), true
+	}
+	return nil, false
+}
+
+// routeCloudAgentSpecialCall 处理复用独立执行器的工具（canvas run、storyboard）。
+func (s *Service) routeCloudAgentSpecialCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) (error, bool) {
+	// canvas run 展开为现有 generate_media_batch：审批、报价、并发、逐条回写和
+	// 取消/重试都复用同一套批次状态机，不另建任务提交路径。
+	if allowed && call.Function.Name == "canvas" && state.Approval == nil {
+		if handled, err := s.requestCloudAgentCanvasRunApproval(run, state, call); handled {
+			return err, true
+		}
 	}
 	if allowed && call.Function.Name == "storyboard" {
-		return s.executeCloudAgentStoryboard(run, state, call)
+		return s.executeCloudAgentStoryboard(run, state, call), true
 	}
+	return nil, false
+}
+
+// requestCloudAgentCanvasRunApproval 只把 run 寻址展开成批次参数；其余命令返回 handled=false。
+func (s *Service) requestCloudAgentCanvasRunApproval(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) (bool, error) {
+	_, hasRun, err := cloudAgentCanvasRunStep(call)
+	if err != nil {
+		return true, s.recordCloudAgentToolReceipt(run, state, call, nil, err)
+	}
+	if !hasRun {
+		return false, nil
+	}
+	batchArgs, _, err := cloudAgentCanvasRunBatchArgs(s.repo, run.UserID, state.Request.CanvasID, call)
+	if err != nil {
+		return true, s.recordCloudAgentToolReceipt(run, state, call, nil, err)
+	}
+	return true, s.requestCloudAgentMediaBatchApprovalWithArgs(run, state, call, batchArgs)
+}
+
+// routeCloudAgentApprovalCall 是普通写工具、媒体工具和计划工具的审批闸门。
+func (s *Service) routeCloudAgentApprovalCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) (error, bool) {
 	if allowed && call.Function.Name == "generate_media_batch" && state.Approval == nil {
-		return s.requestCloudAgentMediaBatchApproval(run, state, call)
+		return s.requestCloudAgentMediaBatchApproval(run, state, call), true
 	}
 	mediaTool := call.Function.Name == "generate_media"
 	destructiveCanvas := cloudAgentCanvasCommandDestructiveCall(call)
 	if allowed && cloudAgentWriteCall(call) && (state.Request.PermissionMode == "request_approval" || mediaTool || destructiveCanvas) && state.Approval == nil {
-		return s.requestCloudAgentWriteApproval(run, state, call)
+		return s.requestCloudAgentWriteApproval(run, state, call), true
 	}
 	if allowed && call.Function.Name == "plan_update" && cloudAgentPlanRequiresFirstApproval(state, call) {
 		if preview, ok := cloudAgentPlanApprovalPreview(call); ok {
-			return s.requestCloudAgentPlanApproval(run, state, call, preview)
+			return s.requestCloudAgentPlanApproval(run, state, call, preview), true
 		}
 	}
-	return s.executeCloudAgentAdmittedToolCall(run, state, call, allowed)
+	return nil, false
 }
 
 func cloudAgentReadOnlyCanvasWrite(state *cloudAgentRuntime, call cloudAgentCall) bool {
@@ -102,7 +149,7 @@ func cloudAgentCanvasCommandDestructiveCall(call cloudAgentCall) bool {
 // executeCloudAgentAdmittedToolCall 执行已过审批闸门的调用：已批准的媒体生成、导演台预览和子代理创建在检查点事务外执行，
 // 其余工具在检查点事务里执行。
 func (s *Service) executeCloudAgentAdmittedToolCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) error {
-	if allowed && call.Function.Name == "generate_media_batch" && state.Approval != nil && state.Approval.Decision == "approve" {
+	if allowed && state.MediaBatch != nil && state.Approval != nil && state.Approval.Decision == "approve" && state.MediaBatch.CallID == call.ID {
 		return s.startCloudAgentMediaBatch(run, state, call)
 	}
 	if allowed && call.Function.Name == "media_batch_control" {

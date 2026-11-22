@@ -264,7 +264,7 @@ func canvasCommandExecWrite(repo *repository.Repository, userID, canvasID string
 		}
 		item, output, err = canvasCommandHeredocWrite(doc, fs, step)
 	case "run":
-		err = canvasCommandError("command", "dependency", "run 依赖 S10 的真实生成任务与回填；本片不提交收费任务。请先用 generate_media/wait_generations 完成单条生成，或在 S10 接入后使用 run")
+		err = canvasCommandError("command", "invalid_value", "run 必须单独调用并走批次审批；不能和其他画布写命令混用")
 	default:
 		err = canvasCommandError("command", "unsupported", fmt.Sprintf("命令 %q 是写命令但尚未实现", step.Name))
 	}

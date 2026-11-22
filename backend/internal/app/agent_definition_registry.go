@@ -60,6 +60,7 @@ func init() {
 			BusinessTools: []string{
 				"director", "canvas_list_node_types", "canvas_list_assets", "canvas_read_content", "canvas_search_nodes",
 				"canvas_get_state", "canvas_read_batch_table", "task_get", "canvas_inspect_image", "canvas_undo",
+				"canvas",
 				"canvas_redo", "canvas_bind_asset", "model_list", "storyboard", "canvas_create_character",
 				"canvas_edit_batch_table", "canvas_apply_ops", "canvas_arrange_nodes", "generate_media",
 				"wait_generations", "generate_media_batch", "media_batch_control", "canvas_build_board", "canvas_preflight",

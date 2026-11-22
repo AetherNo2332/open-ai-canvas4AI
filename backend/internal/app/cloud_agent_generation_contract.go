@@ -30,11 +30,7 @@ func cloudAgentGenerationSpec(a cloudAgentMediaArgs, refs map[string]any, resolv
 			options.Resolution = &a.Quality
 		}
 	} else if a.Mode == "image" {
-		count := 1
-		options.Count = &count
-		if a.Quality != "" {
-			options.Quality = &a.Quality
-		}
+		cloudAgentApplyImageGenerationOptions(&options, a)
 	}
 	if resolvedConfig != nil {
 		config := options.TaskConfig()
@@ -83,4 +79,17 @@ func cloudAgentGenerationSpec(a cloudAgentMediaArgs, refs map[string]any, resolv
 	}
 	spec := contract.GenerationSpec{Version: contract.GenerationVersion, Mode: a.Mode, Prompt: a.Prompt, ModelSelection: selection, Options: options, ReferenceBindings: bindings, TextInputMode: "prompt-only"}
 	return spec, spec.Validate()
+}
+
+// cloudAgentApplyImageGenerationOptions 把图片模式下已有的可选规格写入合同；
+// 空值代表交给模型能力目录解析默认值。
+func cloudAgentApplyImageGenerationOptions(options *contract.Options, a cloudAgentMediaArgs) {
+	count := 1
+	options.Count = &count
+	if a.Quality != "" {
+		options.Quality = &a.Quality
+	}
+	if resolution := strings.TrimSpace(a.ImageResolution); resolution != "" {
+		options.ImageResolution = &resolution
+	}
 }

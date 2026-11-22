@@ -31,7 +31,7 @@ var canvasCommandSpecs = []canvasCommandSpec{
 	{Name: "dup", Usage: "dup <nodedir> <title...>", Summary: "复制节点；submap 连同子节点复制，内部引用重映射，外部引用不复制", Sensitive: true, Action: "复制节点"},
 	{Name: "mv", Usage: "mv <nodedir> <title...>", Summary: "只改节点标题，ID 与路径不变", Sensitive: true, Action: "重命名"},
 	{Name: "rm", Usage: "rm <nodedir>", Summary: "删除节点；submap 级联删除子节点，任何权限模式下都需审批", Sensitive: true, Destructive: true, Action: "删除节点"},
-	{Name: "run", Usage: "run <nodedir...> [--mode ...]", Summary: "触发生成；依赖 S10 的真实任务与回填，本片返回明确依赖状态", Sensitive: true, Action: "触发生成"},
+	{Name: "run", Usage: "run <nodedir...> [--glob <pattern>] [--mode image|video|audio] [--concurrency N] [--max-retries N] [--canary]", Summary: "按节点 generationSpec 批量触发生成；走批次审批，结果逐条回写各自节点", Sensitive: true, Action: "触发生成"},
 	{Name: "edit", Usage: "edit <字段文件> [value...] | edit --glob <pattern> <value...>", Summary: "写字段文件；省略值表示清空", Sensitive: true, Action: "写字段"},
 	{Name: "log", Usage: "log [-n N]", Summary: "打印本画布最近的 Agent 写入留痕"},
 	{Name: "preset", Usage: "preset list | preset delete <id>", Summary: "列出或删除当前用户的 submap 预制件；save 走 S07 页面入口", Sensitive: false, Action: "管理预制件"},
