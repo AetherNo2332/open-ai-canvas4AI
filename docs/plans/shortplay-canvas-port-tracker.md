@@ -4,7 +4,7 @@
 
 2026-11-22 从远端核实 4AI `main`，fetch 后以同一提交建立分支 `codex/shortplay-canvas-port`。目标基线 `036b9190e56158e8fbe12912469bf59c2a8e2226`，供体固定为 `13731aae6c4cefadc2a1719e3e7e59b22e249f94`。[4AI 源码](https://github.com/AetherNo2332/open-ai-canvas4AI/tree/036b9190e56158e8fbe12912469bf59c2a8e2226) · [shortplay 源码](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6c4cefadc2a1719e3e7e59b22e249f94)
 
-当前完成分支准备、S01 可重放基线、S02 文档/能力/关系投影、S03 项目存储单一写入器、S04 正式画布子画布编辑器和 S05 内置 storyboard 镜头。实施验收 **5/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
+当前完成分支准备、S01 可重放基线、S02 文档/能力/关系投影、S03 项目存储单一写入器、S04 正式画布子画布编辑器、S05 内置 storyboard 镜头和 S06 多端同步、历史、撤销与重放。实施验收 **6/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
 
 | 片号 | 交付 | 前置 | 状态 | 实现提交与验证证据 |
 |---|---|---|---|---|
@@ -13,7 +13,7 @@
 | S03 | 版本、操作、鉴权与单一写入器 | S02 | 通过 | 实现 `49b788a41`。文档格式门禁、客户端能力、revision CAS、receipt 重放、事务回滚和 `UpsertCanvasProject` 单一写入路径落地。详见下方「S03 实测记录」。 |
 | S04 | 正式画布路由与完整节点编辑器 | S03 | 通过 | 实现 `bd7fdae81`。顺序 ID、submap 容器/小地图/resize、子画布内创建与复制粘贴、级联删除落地；专项 44 PASS，typecheck/lint/build PASS，正式页面完成创建、编辑、折叠、复制、粘贴和重开。详见下方「S04 实测记录」。 |
 | S05 | 内置镜头创建、复制和子树操作 | S04 | 通过 | 实现 `e7c47f6f0`。storyboard 预置、六节点实例化、字段引用投影、整组复制引用重映射和远端回包投影归一化落地；专项 142 PASS，typecheck/lint/build PASS，正式页面完成提示词/首帧编辑、复制与重开。详见下方「S05 实测记录」。 |
-| S06 | 多端同步、历史、撤销与重放 | S05 | 待施工 | 待记录 |
+| S06 | 多端同步、历史、撤销与重放 | S05 | 通过 | 实现 `65f4ef7ad`。浏览器 operations 自动历史与回滚、历史列表/预览/CAS 恢复接口、`before_restore` 留档、字段引用恢复、`idCounters` 高水位合并和版本历史抽屉落地；专项 42 PASS，Go/Web 构建检查 PASS，正式页面完成双端编辑、删除、撤销、冲突与恢复。详见下方「S06 实测记录」。 |
 | S07 | 用户预设持久化与跨画布插入 | S05 | 待施工 | 待记录 |
 | S08 | 分享、导出、资源与导入 | S05 | 待施工 | 待记录 |
 | S09 | Agent 画布命令与审批 | S03、S05 | 待施工 | 待记录 |
@@ -96,6 +96,18 @@
 - **SQLite 回读**：`canvas_projects.revision=8`、payload `8738` bytes、14 nodes、持久 `connections=[]`、`referenceFieldsVersion=1`；`idCounters={"submap":2,"submap-1__text":4,"submap-1__image":1,"submap-1__video":1,"submap-2__text":4,"submap-2__image":1,"submap-2__video":1}`。`submap-1__image-1.metadata.referenceTextNodeIds=["submap-1__text-1"]`；`submap-1__video-1.metadata.referenceTextNodeIds=["submap-1__text-1","submap-1__text-2","submap-1__text-3"]` 且 `videoStartFrameNodeId="submap-1__image-1"`；副本对应字段全部指向 `submap-2__*`，视频 `seconds="4"`、`generationSpec.options.durationSeconds=4`。复现命令：`sqlite3 -readonly .local/project-workbench-debug/open_ai_canvas.db "SELECT revision, length(CAST(payload_json AS BLOB)) FROM canvas_projects WHERE id='Deruu2tqUnR5O7AGgKb_g';"`。
 - **未覆盖项**：首帧通过修改首帧节点提示词验证，未新增第二张图片在页面改选首帧；删除容器与撤销/重做仍只有纯函数测试，正式页面未执行破坏性删除样本；四角 resize 本次仍未取得尺寸实际变化；外部共享资源复制页面样本未构造；用户预设持久化留到 S07，真实生成任务回写留到 S10。副本 `generationSpec.referenceBindings[].id` 仍保留 `node:submap-1__*` 形式，但 `nodeId` 已重映射到 `submap-2__*`；当前页面和 SQLite 回读的引用归属正确，binding `id` 去源化未在 S05 处理。
 
+### S06 实测记录
+
+- **实现范围**：`ApplyUserCanvasOperations` 在 revision 更新后、同一事务内调用 `CaptureDocumentHistory`，真实浏览器保存因此生成 `canvas_snapshots`；快照写入失败会连同画布和 receipt 一起回滚。历史前像只保护仍存在且 ready 的资源，当前文档引用仍严格校验。新增历史列表、快照预览和 CAS 恢复接口；恢复前强制写入 `before_restore`，字段引用文档恢复后保留 `referenceFieldsVersion=1` 和字段绑定，持久 `connections` 置空，由读取投影重新画出。
+- **前端同步**：`canvas-sync-rebase` 对 `idCounters` 按 key 取高水位，避免并发 rebase 把已发出的编号还回去；rebase 和撤销快照恢复都重新按字段投影引用线并剔除悬空边。版本历史抽屉提供版本号、节点/连线数、时间和恢复操作，恢复前先保存当前编辑，恢复后读取服务端并重置撤销基线。历史恢复和引用迁移复用现有画布写入限流与通知刷新。
+- **专项验证**：`go test -count=1 ./internal/canvas/... ./internal/handler ./internal/architecture` PASS（canvas 23.974s、commands 28.857s、handler 180.217s、architecture 7.301s）；Web `bun run typecheck`、`bun run lint`、`bun run build` PASS（build 1m 13s，仅既存 dynamic import / chunk size 警告）；`bun test test/canvas-sync-rebase.test.ts test/canvas-reference-roundtrip.test.ts test/canvas-submap.test.ts test/editor-history.test.ts` **42 pass、0 fail、113 expectations**。
+- **全量回归**：`bun run test` → **3468 pass、7 skip、12 fail，3487 tests / 522 files，182.68s**。失败仍落在 S05 已登记的 11 组 Windows CRLF 源文本/CSS 文本断言与 `welcome` 独立 harness 问题上（本次 `welcome` 文件产生两个失败项）；没有 submap、rebase、历史捕获、历史恢复或字段投影相关失败。
+- **正式页面证据**：后端 `127.0.0.1:18080`、前端 `127.0.0.1:13000`，数据目录 `.local/project-workbench-debug`，画布 `Deruu2tqUnR5O7AGgKb_g`。修复前真实浏览器保存后 `canvas_snapshots=0`；修复后首次保存生成自动版本 V11（14 节点、0 条持久连线），抽屉正常显示版本、节点数、连线数和时间。恢复 V11/V12/V19 均成功，每次恢复前生成 `before_restore`；首次恢复暴露了把旧读取投影线写回持久文档的问题，修复后从 V19 恢复得到 revision 14、14 节点、`connections=[]`，刷新页面仍为 14 节点和 10 条字段投影线。
+- **双端与删除**：两个窗口分别修改 `submap-1__text-3` 和 `submap-2__text-4`，两边均落库且互不覆盖。删除 `submap-1__text-2` 后页面为 13 节点 / 9 连线，保存后仍为 13 节点，删除节点没有复活；撤销/重做恢复 `submap-1__text-3`，`idCounters` 保持 `{"submap":2,"submap-1__text":4,"submap-1__image":1,"submap-1__video":1,"submap-2__text":4,"submap-2__image":1,"submap-2__video":1}`，没有回退。对 revision 19 发送旧字段写请求返回 409：`reason=canvas_field_conflict`、revision 仍为 19，错误文案指出节点 `submap-1__text-3` 的 `metadata.content` 已被其他写入修改。
+- **最终 SQLite 回读**：从 V19 恢复并清掉恢复产生的重复副本文本后，当前 revision 24、14 节点、持久 `connections=[]`、`referenceFieldsVersion=1`，页面仍投影 10 条引用线。关键历史行包含 `rev22 before_restore 13/0`、`rev19 automatic 14/0`、`rev13 before_restore 14/10`（修复前旧样本）、`rev12 before_restore 14/0`、`rev11 automatic 14/0`。复现命令：`sqlite3 -readonly .local/project-workbench-debug/open_ai_canvas.db "SELECT revision, json_array_length(json_extract(payload_json,'$.nodes')), json_array_length(json_extract(payload_json,'$.connections')) FROM canvas_projects WHERE id='Deruu2tqUnR5O7AGgKb_g';"`。
+- **最终字段样本**：`submap-1__text-1=S06 历史快照保存A：文本1`，`submap-1__text-2=S06 窗口B：文本2 独立编辑`，`submap-1__text-3=S06 并发子树A：submap-1 台词`，`submap-2__text-1=S06 断线后：文本3 由窗口A写入`，`submap-2__text-2=S05 干净验收视频：雨夜天台回眸，霓虹闪烁，镜头缓慢推近`，`submap-2__text-4=S06 并发子树B：submap-2 备注`；`submap-1__text-4` 与 `submap-2__text-3` 为显式空值。
+- **未覆盖项**：没有多人实时协同，仍是同账号不同窗口各自的 operations 自动重放；正式页面未用 DevTools 断网窗口演练完整离线队列，断线重放依据现有 journal/receipt 同步测试。历史抽屉展示摘要与恢复，不展示完整快照内容预览；预览接口由 HTTP contract 测试覆盖。没有在恢复过程中制造在途生成任务，留给 S13；只在 SQLite 隔离库验证，正式 PostgreSQL 留给 S14。历史前像中已清理资源不阻断保存已有实现路径，未额外构造真实资源清理页面样本。
+
 ### S04 接入编辑器
 
 以供体 `web/src/pages/canvas/project.tsx`、`use-canvas-project-lifecycle.ts` 为起点移入编辑器、store、节点渲染、工具注册、图层、媒体操作、样式及必要资源。4AI 接项目身份、资源读取、上传和任务服务。用正式页面逐项勾验 S01 注册表，覆盖创建、移动、缩放、快捷键、粘贴、节点编辑、图层拆分与提层、保存与重开。每个供体和目标特有节点记录对应结果。
@@ -154,3 +166,4 @@ Go 在 `backend` 下运行 `go test ./internal/canvas/...`，按分片追加实�
 | 2026-11-22 | S03 通过：提交 `49b788a41`，字段引用文档格式门禁、客户端能力、单一事务写入器、receipt 重放和回滚测试落地；完整 `internal/app` 504.194 秒回归 0 失败、25 跳过 | S04 接入正式画布编辑器与 submap 容器、图层、ID 分配、拖拽/折叠和右键创建 |
 | 2026-11-22 | S04 通过：提交 `bd7fdae81`，顺序 ID、submap 容器/小地图/resize、子画布内创建与复制粘贴、级联删除落地；专项 44 PASS，typecheck/lint/build PASS，全量 3512 PASS / 11 条既有环境失败，正式页面完成创建、编辑、折叠、复制、粘贴和重开 | S05 打通内置 storyboard 镜头：六节点模板、提示词与首帧、整组复制后的引用归属 |
 | 2026-11-22 | S05 通过：提交 `e7c47f6f0`，storyboard 预置、六节点实例化、字段引用投影、复制重映射与远端回包投影归一路径落地；专项 142 PASS，typecheck/lint/build PASS，全量 3527 PASS / 11 条既有环境失败，正式页面完成提示词/首帧编辑、整组复制、保存和重开 | S06 对接协作与历史：两端改字段/子树、断线重放、删除撤销与历史恢复 |
+| 2026-11-23 | S06 通过：提交 `65f4ef7ad`，operations 同事务自动历史、历史/CAS 恢复接口、恢复前留档、字段引用恢复、`idCounters` 高水位合并和版本历史抽屉落地；专项 42 PASS，Go/Web 构建检查 PASS，全量 3468 PASS / 12 条原始环境失败（11 组已知问题），正式页面完成双端编辑、删除、撤销、冲突和恢复 | S07 用户预设：局部 ID 快照、repository/handler/迁移、跨画布插入与边界验收 |
