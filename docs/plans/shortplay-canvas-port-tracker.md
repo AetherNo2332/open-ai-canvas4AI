@@ -4,7 +4,7 @@
 
 2026-11-22 从远端核实 4AI `main`，fetch 后以同一提交建立分支 `codex/shortplay-canvas-port`。目标基线 `036b9190e56158e8fbe12912469bf59c2a8e2226`，供体固定为 `13731aae6c4cefadc2a1719e3e7e59b22e249f94`。[4AI 源码](https://github.com/AetherNo2332/open-ai-canvas4AI/tree/036b9190e56158e8fbe12912469bf59c2a8e2226) · [shortplay 源码](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6c4cefadc2a1719e3e7e59b22e249f94)
 
-当前完成分支准备、S01 可重放基线、S02 文档/能力/关系投影、S03 项目存储单一写入器、S04 正式画布子画布编辑器、S05 内置 storyboard 镜头、S06 多端同步、历史、撤销与重放，以及 S07 用户预设持久化与跨画布插入。实施验收 **7/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
+当前已通过 S01–S08，覆盖行为基线、文档与关系、项目存储、子画布编辑器、内置镜头、同步与历史、用户预设、分享与 ZIP 往返。实施验收 **8/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
 
 | 片号 | 交付 | 前置 | 状态 | 实现提交与验证证据 |
 |---|---|---|---|---|
@@ -15,7 +15,7 @@
 | S05 | 内置镜头创建、复制和子树操作 | S04 | 通过 | 实现 `e7c47f6f0`。storyboard 预置、六节点实例化、字段引用投影、整组复制引用重映射和远端回包投影归一化落地；专项 142 PASS，typecheck/lint/build PASS，正式页面完成提示词/首帧编辑、复制与重开。详见下方「S05 实测记录」。 |
 | S06 | 多端同步、历史、撤销与重放 | S05 | 通过 | 实现 `65f4ef7ad`。浏览器 operations 自动历史与回滚、历史列表/预览/CAS 恢复接口、`before_restore` 留档、字段引用恢复、`idCounters` 高水位合并和版本历史抽屉落地；专项 42 PASS，Go/Web 构建检查 PASS，正式页面完成双端编辑、删除、撤销、冲突与恢复。详见下方「S06 实测记录」。 |
 | S07 | 用户预设持久化与跨画布插入 | S05 | 通过 | 实现 `b842557ec`。Schema 111、按用户隔离的模板 API、局部 ID 快照、引用重映射、保存入口和跨画布插入落地；专项 37 PASS，Go/Web 构建检查 PASS，正式页面两次插入均引用各自子节点。详见下方「S07 实测记录」。 |
-| S08 | 分享、导出、资源与导入 | S05 | 待施工 | 待记录 |
+| S08 | 分享、导出、资源与导入 | S05 | 通过 | 实现 `60e5a7107`。浏览器验证只读分享、子画布 ZIP 导出重入、旧 ZIP 媒体和绘图往返。Go 专项与 Web 29 项通过。详见下方「S08 实测记录」。 |
 | S09 | Agent 画布命令与审批 | S03、S05 | 待施工 | 待记录 |
 | S10 | 生成输入、真实任务与回写 | S09 | 待施工 | 待记录 |
 | S11 | 旧档只读预演与转换器 | S01、S02 | 待施工 | 待记录 |
@@ -140,6 +140,15 @@
 
 从 `canvas_share.go`、`canvas-import-save.ts`、`web/src/lib/canvas/canvas-export.ts` 接到 4AI 实际资源交付。覆盖 ZIP、历史分享、外部导入、绘图快照、预览和媒体缺失。用户 A 分享给用户 B 时逐项检查可见范围和资源授权。导出再导入的文档须保持引用、子树、绘图可编辑内容和顺序。旧格式识别交给 S11。
 
+### S08 实测记录
+
+- **实现** `60e5a7107`。只读分享按 `scopeId` 渲染子画布，公开快照从生成合同提取画连线需要的节点绑定。整画布 ZIP 保留旧业务连线，子画布工作流 ZIP 保留容器、子节点和内部引用，清理外部引用及媒体生成结果。ZIP 导入保留文档格式和节点编号高水位，旧普通连线可补齐引用字段，包内媒体重新归属导入账号。
+- **只读分享** 在隔离 SQLite Schema 111 上打开正式分享页。匿名请求返回 200，页面显示 2 个子画布、14 个节点和 10 条连线。旧快照仅有 `connections` 时仍可显示，专项测试覆盖悬空端点。资源服务测试覆盖跨用户查询、分享链接轮换与资源白名单。浏览器匿名读取真实上传图片返回 200、68 字节，画布外资源返回 404。
+- **子画布 ZIP** 从正式画布子画布右键菜单导出。`projects.json` 依次保留容器、4 个文本、图片和视频，共 7 个节点，格式版本为 1。经 `/canvas` 的 ZIP 导入入口创建新画布并完成云端保存。首次导入的失败样本 `6EkKHVtAWoZch_SIMHDLH` 落库 5 条投影边。修复后重导 `SWow1Cr5a7iajYGhH_qOI`，SQLite revision 1 保留 7 个节点和 0 条持久边。重开显示 5 条连线，6 个子节点及文本、首帧和生成绑定均引用自身子树。
+- **旧 ZIP 与绘图** 浏览器构造含 `connections`、PNG 和绘图快照的 v4 样本，经正式入口导入。节点重新绑定账号下的 `resource:` 资源和素材，文本引用保留。绘图快照 revision 3、预览和生成渲染均可读，整画布重导出再次包含快照、两张预览文件、源媒体及旧连线。删除包内媒体后导入明确提示缺件。v3/v4 重建夹具由 `shortplay-canvas-baseline.test.ts` 验证。
+- **复现与验证** 在隔离目录 `.local/project-workbench-debug` 运行 `go run ./cmd/server`，打开正式画布的子画布右键菜单，选择「导出子画布工作流」，再从 `/canvas` 导入并刷新新画布。用 `sqlite3 -readonly .local/project-workbench-debug/open_ai_canvas.db "SELECT revision, json_array_length(payload_json,'$.nodes'), json_array_length(payload_json,'$.connections') FROM canvas_projects WHERE id='SWow1Cr5a7iajYGhH_qOI';"` 核对持久结果。`go test -count=1 ./internal/canvas ./internal/handler ./internal/database ./internal/architecture` 通过，后端创建路径修正后复跑 `./internal/canvas ./internal/architecture` 通过。`bun test test/canvas-import-normalize.test.ts test/canvas-import-media-remap.test.ts test/canvas-share-export-payload.test.ts test/canvas-submap-export.test.ts test/canvas-import-save.test.ts test/shortplay-canvas-baseline.test.ts` 为 29 通过、0 失败。`bun run typecheck`、`bun run lint` 和 `bun run build` 通过。
+- **未覆盖** 旧 ZIP 使用重建样本，绘图验证快照和预览字节往返，未在绘图编辑器操作实际笔划。跨用户权限使用 Go 服务测试，浏览器验证匿名访问。生产历史库、对象存储或 CDN、全量推送门禁和远端 CI 待对应阶段验证。
+
 ### S09 Agent 命令
 
 以供体 `cloud_agent_canvas_shell.go`、`cloud_agent_canvas_field_write.go` 及 submap 寻址测试为入口，迁入读写命令、工具声明、策略片段和编译生成物，对接 4AI 控制面和当前检查点结构。逐项核对供体命令清单。以 Agent 修改一个镜头、用户修改另一个镜头为跨端例，复验锁定、拒绝审批、批准重放、续轮恢复和 UI 同步。
@@ -180,3 +189,4 @@ Go 在 `backend` 下运行 `go test ./internal/canvas/...`，按分片追加实�
 | 2026-11-22 | S05 通过：提交 `e7c47f6f0`，storyboard 预置、六节点实例化、字段引用投影、复制重映射与远端回包投影归一路径落地；专项 142 PASS，typecheck/lint/build PASS，全量 3527 PASS / 11 条既有环境失败，正式页面完成提示词/首帧编辑、整组复制、保存和重开 | S06 对接协作与历史：两端改字段/子树、断线重放、删除撤销与历史恢复 |
 | 2026-11-23 | S06 通过：提交 `65f4ef7ad`，operations 同事务自动历史、历史/CAS 恢复接口、恢复前留档、字段引用恢复、`idCounters` 高水位合并和版本历史抽屉落地；专项 42 PASS，Go/Web 构建检查 PASS，全量 3468 PASS / 12 条原始环境失败（11 组已知问题），正式页面完成双端编辑、删除、撤销、冲突和恢复 | S07 用户预设：局部 ID 快照、repository/handler/迁移、跨画布插入与边界验收 |
 | 2026-11-23 | S07 通过：提交 `b842557ec`，Schema 111 用户模板表、按用户隔离的 CRUD、自包含快照校验、引用重映射、保存入口和跨画布插入落地；专项 37 PASS，Go/Web 构建检查 PASS，全量 3539 PASS / 11 条既有环境失败，正式页面连续插入两次并重开验证 14 节点 / 10 条字段投影边 | S08 分享、导出、资源与导入：分享授权、ZIP/历史分享、外部导入、绘图快照和媒体缺失路径 |
+| 2026-11-23 | S08 通过。提交 `60e5a7107`。正式页面分享与子画布 ZIP 重开通过，旧 ZIP 的图片、绘图快照和预览往返通过，匿名资源访问范围已验。Web 专项 29 项通过 | S09 对接 Agent 画布命令、审批与跨端同步 |
