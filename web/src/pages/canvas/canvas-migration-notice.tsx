@@ -20,7 +20,9 @@ export function CanvasMigrationNotice({ items }: { items: CanvasMigrationNoticeI
         <div className="pointer-events-none absolute inset-x-0 top-[var(--canvas-topbar-offset)] z-[var(--z-panel-floating)] flex justify-center px-3">
             <div
                 role="status"
-                className="pointer-events-auto w-[min(720px,100%)] overflow-hidden rounded-[var(--card-radius)] border border-border/70 bg-[var(--popover)] text-foreground shadow-[var(--shadow-lg)] motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-200"
+                aria-live="polite"
+                data-canvas-migration-notice
+                className="pointer-events-auto isolate w-[min(720px,100%)] overflow-hidden rounded-[var(--card-radius)] border border-border/70 bg-[var(--canvas-notice-surface)] text-foreground opacity-100 shadow-[var(--shadow-lg)] motion-safe:animate-in motion-safe:slide-in-from-top-2 motion-safe:duration-200"
                 data-canvas-no-zoom
             >
                 <div className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-2.5">
