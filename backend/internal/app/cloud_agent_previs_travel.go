@@ -87,7 +87,7 @@ func cloudAgentPrevisApplyActorTravel(scene map[string]any, object map[string]an
 	if err := cloudAgentPrevisValidateEnum(style, "travelStyle", cloudAgentPrevisTravelStyles...); err != nil {
 		return "", err
 	}
-	shotDuration := cloudAgentPrevisShotDuration(scene)
+	shotDuration := cloudAgentPrevisPerformanceDuration(scene)
 	start := 0.0
 	if operation.Time != nil {
 		start = *operation.Time

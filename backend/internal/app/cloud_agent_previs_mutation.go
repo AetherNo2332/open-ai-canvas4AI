@@ -198,7 +198,7 @@ func cloudAgentPrevisPatchOperationSchema() map[string]any {
 		"background":           map[string]any{"type": "string", "maxLength": 32},
 		"environmentIntensity": map[string]any{"type": "number", "minimum": 0, "maximum": 100},
 		"gridVisible":          map[string]any{"type": "boolean"},
-		"activeShotId":         map[string]any{"type": "string", "maxLength": 80},
+		"activeShotId":         map[string]any{"type": "string", "maxLength": 80, "description": "切换当前预览镜头；shot_update 与 scene_update 都支持"},
 		"propId":               map[string]any{"type": "string", "maxLength": 40},
 		"variant":              map[string]any{"type": "integer", "minimum": 0, "maximum": 7},
 		"layoutTemplate":       map[string]any{"type": "string", "enum": cloudAgentPrevisLayoutIDs},
@@ -1151,6 +1151,39 @@ func cloudAgentPrevisShotDuration(scene map[string]any) float64 {
 	return 5
 }
 
+// cloudAgentPrevisPerformanceDuration 是共享表演时间线：所有镜头都从 0 秒播放同一段表演，
+// 因此动作、走位与对象关键帧可以写到最长镜头的结尾，短镜头只播放其中一段。
+func cloudAgentPrevisPerformanceDuration(scene map[string]any) float64 {
+	longest := 0.0
+	for _, shot := range creationMaps(scene["shots"]) {
+		if duration := numberValue(shot["duration"], 0); duration > longest {
+			longest = duration
+		}
+	}
+	if longest > 0 {
+		return longest
+	}
+	return 5
+}
+
+// cloudAgentPrevisCameraDuration 是某台摄影机可用的最长镜头时长。
+// 同一台摄影机被多个镜头引用时取最大时长；没有镜头引用时回退到活动镜头。
+func cloudAgentPrevisCameraDuration(scene map[string]any, cameraID string) float64 {
+	longest := 0.0
+	for _, shot := range creationMaps(scene["shots"]) {
+		if stringValue(shot["cameraId"]) != cameraID {
+			continue
+		}
+		if duration := numberValue(shot["duration"], 0); duration > longest {
+			longest = duration
+		}
+	}
+	if longest > 0 {
+		return longest
+	}
+	return cloudAgentPrevisShotDuration(scene)
+}
+
 func cloudAgentPrevisKeyframeTransform(item map[string]any, operation cloudAgentPrevisPatchOperation) (map[string]any, error) {
 	transform := cloudAgentPrevisMapTransform(item)
 	result := map[string]any{}
@@ -1575,7 +1608,7 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 		if object == nil {
 			return cloudAgentApprovalPreviewItem{}, BadAuthRequest("目标对象不存在")
 		}
-		if err := cloudAgentPrevisApplyActorMotion(object, operation, cloudAgentPrevisShotDuration(scene)); err != nil {
+		if err := cloudAgentPrevisApplyActorMotion(object, operation, cloudAgentPrevisPerformanceDuration(scene)); err != nil {
 			return cloudAgentApprovalPreviewItem{}, err
 		}
 		scene["objects"] = objects
@@ -1584,16 +1617,22 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 		// 路径可以给演员、道具，也可以给摄影机（运镜路径）。
 		item := cloudAgentPrevisFindByID(objects, operation.ID)
 		locked := item != nil && (stringValue(item["kind"]) == "actor" || stringValue(item["primitive"]) == "character" || stringValue(item["kind"]) == "layout")
+		isCamera := false
 		if item == nil {
 			item = cloudAgentPrevisFindByID(cameras, operation.ID)
+			isCamera = item != nil
 		}
 		if item == nil {
 			return cloudAgentApprovalPreviewItem{}, BadAuthRequest("目标对象或摄影机不存在")
 		}
 		summary := fmt.Sprintf("清除《%s》的路径动画", stringValue(item["name"]))
 		if operation.Type == "object_motion_path_set" {
+			duration := cloudAgentPrevisPerformanceDuration(scene)
+			if isCamera {
+				duration = cloudAgentPrevisCameraDuration(scene, operation.ID)
+			}
 			var err error
-			if summary, err = cloudAgentPrevisSetMotionPath(scene, item, operation, cloudAgentPrevisShotDuration(scene), locked); err != nil {
+			if summary, err = cloudAgentPrevisSetMotionPath(scene, item, operation, duration, locked); err != nil {
 				return cloudAgentApprovalPreviewItem{}, err
 			}
 		} else {
@@ -1606,7 +1645,7 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 		if object == nil {
 			return cloudAgentApprovalPreviewItem{}, BadAuthRequest("目标对象不存在")
 		}
-		duration := cloudAgentPrevisShotDuration(scene)
+		duration := cloudAgentPrevisPerformanceDuration(scene)
 		var err error
 		if operation.Type == "object_keyframe_upsert" {
 			err = cloudAgentPrevisUpsertKeyframe(object, operation, duration)
@@ -1716,6 +1755,18 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 			}
 			return cloudAgentApprovalPreviewItem{Operation: operation.Type, NodeID: operation.ID, NodeTitle: stringValue(shot["name"]), Summary: fmt.Sprintf("删除镜头《%s》", stringValue(shot["name"]))}, nil
 		}
+		activeShotID, activeShotName := "", ""
+		if operation.ActiveShotID != nil {
+			activeShotID = strings.TrimSpace(*operation.ActiveShotID)
+			if err := validateCloudAgentID(activeShotID, "activeShotId", 80); err != nil {
+				return cloudAgentApprovalPreviewItem{}, err
+			}
+			activeShot := cloudAgentPrevisFindByID(shots, activeShotID)
+			if activeShot == nil {
+				return cloudAgentApprovalPreviewItem{}, BadAuthRequest("activeShotId 指向的镜头不存在")
+			}
+			activeShotName = stringValue(activeShot["name"])
+		}
 		if err := cloudAgentPrevisApplyName(shot, operation.Name, "镜头名称"); err != nil {
 			return cloudAgentApprovalPreviewItem{}, err
 		}
@@ -1764,13 +1815,18 @@ func cloudAgentPrevisApplyPatchOperation(scene map[string]any, operation cloudAg
 			}
 			shot["prompt"] = *operation.Prompt
 		}
-		return cloudAgentApprovalPreviewItem{Operation: operation.Type, NodeID: operation.ID, NodeTitle: stringValue(shot["name"]), Summary: fmt.Sprintf("修改镜头《%s》", stringValue(shot["name"]))}, nil
+		summary := fmt.Sprintf("修改镜头《%s》", stringValue(shot["name"]))
+		if activeShotID != "" {
+			scene["activeShotId"] = activeShotID
+			summary += fmt.Sprintf("，切到《%s》", activeShotName)
+		}
+		return cloudAgentApprovalPreviewItem{Operation: operation.Type, NodeID: operation.ID, NodeTitle: stringValue(shot["name"]), Summary: summary}, nil
 	case "camera_keyframe_upsert", "camera_keyframe_remove":
 		camera := cloudAgentPrevisFindByID(cameras, operation.ID)
 		if camera == nil {
 			return cloudAgentApprovalPreviewItem{}, BadAuthRequest("目标摄影机不存在")
 		}
-		duration := cloudAgentPrevisShotDuration(scene)
+		duration := cloudAgentPrevisCameraDuration(scene, operation.ID)
 		var err error
 		if operation.Type == "camera_keyframe_upsert" {
 			err = cloudAgentPrevisUpsertKeyframe(camera, operation, duration)
@@ -2050,6 +2106,9 @@ func cloudAgentPrevisApplyActorMotion(object map[string]any, operation cloudAgen
 	}
 	if err := cloudAgentPrevisFiniteInRange(length, "动作时长", 0.2, 60); err != nil {
 		return err
+	}
+	if start+length > duration+1e-6 {
+		return BadAuthRequest(fmt.Sprintf("动作 %.1f–%.1fs 超出共享表演时间线 %.1fs（最长镜头）；缩短 duration 或先用 shot_update 加长镜头", start, start+length, duration))
 	}
 	intensity := 1.0
 	if operation.Intensity != nil {

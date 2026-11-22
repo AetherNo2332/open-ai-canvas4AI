@@ -3,7 +3,7 @@
 ## 基本用法
 `{"type":"camera_move","id":"<摄影机id>","technique":"push_in","time":0,"duration":4,"easing":"smooth","params":{"distance":2}}`
 - 完整手法表见下。带 `*` 的手法必须给 `subjectId`，带 `°` 的可以给；大师手法配方见 [recipes.md](recipes.md)。
-- 时间：`time` 是开始秒，`duration` 省略时到镜头结束；超过镜头时长会被拒绝。
+- 时间：`time` 是开始秒，`duration` 省略时到这台摄影机所属镜头结束；超过镜头时长会被拒绝。多镜头时按使用该摄影机的镜头校验，同一台被多个镜头引用取最长。
 - `easing`：linear 匀速、ease_in 加速、ease_out 减速、smooth 缓入缓出（默认）。
 - 参数省略时会自动取值：推镜默认推近当前距离的 45%，跟拍按方位取距离与高度。
 

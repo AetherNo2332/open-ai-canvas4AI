@@ -170,7 +170,7 @@ func cloudAgentPrevisApplyCameraRecipe(scene map[string]any, camera map[string]a
 	if len(operation.Params) > 0 || operation.Easing != "" || (operation.KeyframeID != nil && strings.TrimSpace(*operation.KeyframeID) != "") {
 		return "", BadAuthRequest("recipe 的每段参数是固定配方，不接受 params、easing 或 keyframeId；要调整某一段，写入后用 camera_move 的 keyframeId 覆盖那一段，或改用 technique 逐段写")
 	}
-	shotDuration := cloudAgentPrevisShotDuration(scene)
+	shotDuration := cloudAgentPrevisCameraDuration(scene, stringValue(camera["id"]))
 	start := 0.0
 	if operation.Time != nil {
 		start = *operation.Time

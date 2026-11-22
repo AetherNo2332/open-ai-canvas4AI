@@ -475,23 +475,22 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 			// 系统提示给的是相对路径 skills/<name>/SKILL.md；补一个前导斜杠，
 			// 让相对与绝对路径都能按同一标记定位到技能目录。
 			path := "/" + strings.TrimLeft(strings.ReplaceAll(arguments.Path, "\\", "/"), "/")
-			for skillIndex := range state.Skills {
-				skill := &state.Skills[skillIndex]
-				marker := "/skills/" + skill.NativeName + "/"
-				position := strings.LastIndex(path, marker)
-				if position < 0 {
-					continue
-				}
-				relativePath, err := normalizeNativeSkillReadPath(path[position+len(marker):])
-				if err != nil {
-					if !requireFile {
-						return nil, "", nil
+			const marker = "/skills/"
+			position := strings.LastIndex(path, marker)
+			if position >= 0 {
+				rest := path[position+len(marker):]
+				if slash := strings.Index(rest, "/"); slash > 0 {
+					skill := nativeSkillReadAlias(state, rest[:slash])
+					relativePath, err := normalizeNativeSkillReadPath(rest[slash+1:])
+					if err == nil && skill != nil {
+						for _, file := range skill.NativeFiles {
+							if file.Path == relativePath && file.Text {
+								return skill, relativePath, nil
+							}
+						}
 					}
-					return nil, "", err
-				}
-				for _, file := range skill.NativeFiles {
-					if file.Path == relativePath && file.Text {
-						return skill, relativePath, nil
+					if err != nil && requireFile {
+						return nil, "", err
 					}
 				}
 			}
@@ -504,4 +503,26 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 		return nil, "", kernel.Forbidden("native Skill read call is not paired with an enabled file")
 	}
 	return nil, "", kernel.Forbidden("native Skill read result has no assistant call")
+}
+
+// nativeSkillReadAlias mirrors the worker's unique alias resolution so a
+// successful read from a human Skill ID or display name can be checkpointed.
+func nativeSkillReadAlias(state *cloudAgentRuntime, requested string) *cloudAgentSkill {
+	for index := range state.Skills {
+		if state.Skills[index].NativeName == requested {
+			return &state.Skills[index]
+		}
+	}
+	var match *cloudAgentSkill
+	for index := range state.Skills {
+		skill := &state.Skills[index]
+		if skill.ID != requested && skill.Name != requested {
+			continue
+		}
+		if match != nil {
+			return nil
+		}
+		match = skill
+	}
+	return match
 }

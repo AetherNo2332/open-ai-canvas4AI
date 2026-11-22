@@ -167,7 +167,7 @@ func cloudAgentPrevisApplyCameraMove(scene map[string]any, camera map[string]any
 	if !ok {
 		return "", BadAuthRequest(fmt.Sprintf("运镜手法 %q 不受支持；先按需读取已启用的 yingce-previs-world-guide Skill 的 references/moves.md", operation.Technique))
 	}
-	shotDuration := cloudAgentPrevisShotDuration(scene)
+	shotDuration := cloudAgentPrevisCameraDuration(scene, cameraID)
 	start := 0.0
 	if operation.Time != nil {
 		start = *operation.Time

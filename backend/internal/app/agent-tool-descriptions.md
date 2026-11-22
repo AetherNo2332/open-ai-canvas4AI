@@ -65,7 +65,7 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 ## director
 
-导演台唯一工具。read 只读，返回场景、坐标、snapshotHash、目录、标记点与 nodeId；create_scene 按 template 建场景；apply_patch 用 operations 做受限语义修改并带 read 的 expectedSceneHash；preview 请求浏览器录制白模。操作字段与目录见 read 回执，创作规则按需读取已启用的 yingce-previs-world-guide Skill；禁止原始 JSON、URL、storage key。写入与 preview 按权限审批并自动打开导演台，只读模式仅 read。
+导演台唯一工具。read 只读：无 sceneId/nodeId 返回目录，指定后返回场景、坐标、snapshotHash 与 nodeId。create_scene 按 template 建场景并绑定导演台节点。apply_patch 用 operations 做受限修改，须带 expectedSceneHash；角色绑定同时给 characterAssetId、characterVersionId、referenceNodeId，分别取角色卡的 character.assetId、character.versionId 与节点 id。preview 录制白模；completed 才有 videoResourceId，viewport_unavailable 时可重试。写入与 preview 按权限审批并自动打开导演台，只读仅 read。
 
 ## canvas_create_character
 
