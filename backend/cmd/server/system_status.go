@@ -14,10 +14,12 @@ import (
 )
 
 type systemStatus struct {
-	db       *gorm.DB
-	service  *service.Service
-	started  atomic.Bool
-	draining atomic.Bool
+	streamContext context.Context
+	stopStreams   context.CancelFunc
+	db            *gorm.DB
+	service       *service.Service
+	started       atomic.Bool
+	draining      atomic.Bool
 }
 
 type systemStatusSnapshot struct {
@@ -38,16 +40,34 @@ type systemStatusChecks struct {
 }
 
 func newSystemStatus(db *gorm.DB, svc *service.Service) *systemStatus {
-	return &systemStatus{db: db, service: svc}
+	streamContext, stopStreams := context.WithCancel(context.Background())
+	return &systemStatus{db: db, service: svc, streamContext: streamContext, stopStreams: stopStreams}
 }
 
 func (s *systemStatus) markStarted() { s.started.Store(true) }
 
 func (s *systemStatus) beginDrain() {
 	s.draining.Store(true)
+	s.stopStreams()
 	if s.service != nil {
 		s.service.BeginDrain()
 	}
+}
+
+func (s *systemStatus) drainEventStreams(c *gin.Context) {
+	switch c.FullPath() {
+	case "/internal-agent/events", "/api/agent/runs/:id/events", "/api/tasks/:id/text-events":
+		if s.streamContext.Err() != nil {
+			c.AbortWithStatus(http.StatusServiceUnavailable)
+			return
+		}
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		stop := context.AfterFunc(s.streamContext, cancel)
+		defer stop()
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+	}
+	c.Next()
 }
 
 func (s *systemStatus) snapshot(ctx context.Context) systemStatusSnapshot {

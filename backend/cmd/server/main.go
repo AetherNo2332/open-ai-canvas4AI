@@ -105,10 +105,10 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.Use(corsMiddleware)
 	handler.ConfigureRuntime(svc)
-	api := r.Group("/api")
 	status := newSystemStatus(db, svc)
+	r.Use(corsMiddleware, status.drainEventStreams)
+	api := r.Group("/api")
 	registerSystemStatusRoutes(api, status)
 	handler.RegisterOAuthCallbackRoutes(r, svc)
 	handler.RegisterCanvasAPI(api, svc)

@@ -18,7 +18,7 @@ import (
 
 const (
 	diagnosticSchemaVersion    = 1
-	diagnosticRedactionVersion = 1
+	diagnosticRedactionVersion = 2
 	diagnosticMaxWindow        = 24 * time.Hour
 	diagnosticMaxClientEvents  = observability.DiagnosticMaxClientEvents
 	diagnosticMaxBundleBytes   = 10 << 20
@@ -464,7 +464,8 @@ func redactDiagnosticText(value string, limit int) string {
 	if value == "" {
 		return ""
 	}
-	for _, marker := range []string{"authorization", "cookie", "set-cookie", "x-goog-api-key", "x-canvas-upstream-headers", "api_key", "api-key", "apikey", "access_key", "access-key", "secret_key", "secret-key", "password", "token="} {
+	value = redactDiagnosticHeaders(value)
+	for _, marker := range []string{"x-goog-api-key", "x-canvas-upstream-headers", "api_key", "api-key", "apikey", "access_key", "access-key", "secret_key", "secret-key", "password", "token="} {
 		value = redactDiagnosticMarker(value, marker)
 	}
 	return truncateRunes(redactDiagnosticURLs(value), limit)
@@ -524,6 +525,7 @@ func redactDiagnosticURLs(value string) string {
 			continue
 		}
 		parsed.RawQuery = ""
+		parsed.User = nil
 		parsed.Fragment = ""
 		safe := parsed.String()
 		value = value[:start] + safe + value[end:]
