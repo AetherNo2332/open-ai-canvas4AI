@@ -84,6 +84,38 @@ func directorWorldSceneDocument(t *testing.T) (string, string) {
 	return string(raw), actorID
 }
 
+func directorPathSceneDocument(t *testing.T) (string, string, string) {
+	t.Helper()
+	raw, actorID := directorWorldSceneDocument(t)
+	doc := mustCreationDocument(t, raw)
+	scene, ok := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	if !ok {
+		t.Fatal("path fixture scene missing")
+	}
+	pathID := "path-1"
+	scene["paths"] = []any{map[string]any{
+		"id": pathID, "label": "路径1",
+		"points": []any{[]any{-4.0, 0.0, 0.0}, []any{0.0, 1.2, 1.0}, []any{5.0, 0.0, 3.0}},
+	}}
+	payload, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(payload), actorID, pathID
+}
+
+func appendDirectorCall(t *testing.T, s *Service, run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) (*model.CloudAgentExecution, *cloudAgentRuntime) {
+	t.Helper()
+	state.Calls = append(state.Calls, call)
+	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": "", "tool_calls": []cloudAgentCall{call}})
+	if err := s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return reloadPiRun(t, s, run.ID)
+}
+
 func directorEvents(state *cloudAgentRuntime, kind string) []CloudAgentEvent {
 	out := []CloudAgentEvent{}
 	for _, event := range state.Events {
@@ -331,6 +363,209 @@ func TestDirectorReadAllowedReadOnly(t *testing.T) {
 	canvas, _ := s.repo.CanvasProjectForUser("user", run.CanvasID)
 	if strings.Contains(canvas.PayloadJSON, "previsScenes\":[{") {
 		t.Fatal("read_only director wrote the canvas")
+	}
+}
+
+// 走真实 director 工具链：先读用户画的参考轨迹，再申请写入并审批，最后回读路径与关键帧。
+func TestDirectorPathReadApprovalAndReadBack(t *testing.T) {
+	payload, actorID, pathID := directorPathSceneDocument(t)
+	readCall := directorTestCall("director-path-read", map[string]any{"action": "read", "sceneId": "scene"})
+	s, run, state := directorFixture(t, "request_approval", payload, readCall)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	readResult := directorToolMessage(t, state, readCall.ID)
+	projection, _ := readResult["scene"].(map[string]any)
+	paths := creationMaps(projection["paths"])
+	if len(paths) != 1 || paths[0]["id"] != pathID || paths[0]["label"] != "路径1" {
+		t.Fatalf("director read did not project the sketch path: %#v", projection["paths"])
+	}
+	snapshotHash := stringValue(readResult["snapshotHash"])
+	if snapshotHash == "" {
+		t.Fatal("director read did not return a scene snapshot hash")
+	}
+
+	patchCall := directorTestCall("director-path-patch", map[string]any{
+		"action":            "apply_patch",
+		"sceneId":           "scene",
+		"expectedSceneHash": snapshotHash,
+		"patch": map[string]any{"operations": []map[string]any{{
+			"type": "object_motion_path_set", "id": actorID, "pathId": pathID, "duration": 3.0, "easing": "smooth",
+		}}},
+	})
+	run, state = appendDirectorCall(t, s, run, state, patchCall)
+	before, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJSON := before.PayloadJSON
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if run.Status != "waiting_approval" || state.Approval == nil {
+		t.Fatalf("path write must wait for approval: status=%s approval=%v", run.Status, state.Approval)
+	}
+	unchanged, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.PayloadJSON != beforeJSON {
+		t.Fatal("path write changed the canvas before approval")
+	}
+	if err := s.DecideCloudAgentApproval("user", run.ID, state.Approval.ID, "approve", ""); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if state.Approval != nil || run.Status == "waiting_approval" {
+		t.Fatalf("approved path write did not settle: status=%s approval=%v", run.Status, state.Approval)
+	}
+
+	stored, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := mustCreationDocument(t, stored.PayloadJSON)
+	scene, ok := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	if !ok {
+		t.Fatal("path scene disappeared after approval")
+	}
+	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), actorID)
+	motionPath, ok := actor["motionPath"].(map[string]any)
+	if !ok || len(creationAnyList(motionPath["points"])) != 3 || len(creationMaps(actor["keyframes"])) < 2 {
+		t.Fatalf("approved path was not persisted: %#v", actor)
+	}
+	if numberValue(motionPath["duration"], 0) != 3 || stringValue(motionPath["easing"]) != "smooth" {
+		t.Fatalf("path timing was not persisted: %#v", motionPath)
+	}
+
+	readBackRaw, err := cloudAgentDirectorRead(s.repo, "user", run.CanvasID, directorTestCall("director-path-read-back", map[string]any{"action": "read", "sceneId": "scene"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readBack := readBackRaw.(map[string]any)
+	if stringValue(readBack["snapshotHash"]) == snapshotHash {
+		t.Fatal("read-back snapshot hash did not advance")
+	}
+	readBackProjection, _ := readBack["scene"].(map[string]any)
+	readBackObjects, _ := readBackProjection["objects"].([]map[string]any)
+	found := false
+	for _, object := range readBackObjects {
+		if object["id"] != actorID {
+			continue
+		}
+		path, _ := object["motionPath"].(map[string]any)
+		found = path != nil && numberValue(path["duration"], 0) == 3 && path["points"] != nil
+	}
+	if !found {
+		t.Fatalf("director read-back did not expose the persisted motion path: %#v", readBackObjects)
+	}
+}
+
+// pathId 无效时补丁在审批前失败，不能留下前一半操作或批准入口。
+func TestDirectorInvalidPathKeepsSceneIntact(t *testing.T) {
+	payload, actorID, pathID := directorPathSceneDocument(t)
+	readCall := directorTestCall("director-invalid-path-read", map[string]any{"action": "read", "sceneId": "scene"})
+	s, run, state := directorFixture(t, "request_approval", payload, readCall)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	snapshotHash := stringValue(directorToolMessage(t, state, readCall.ID)["snapshotHash"])
+	before, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJSON := before.PayloadJSON
+	badPatch := directorTestCall("director-invalid-path-patch", map[string]any{
+		"action":            "apply_patch",
+		"sceneId":           "scene",
+		"expectedSceneHash": snapshotHash,
+		"patch": map[string]any{"operations": []map[string]any{
+			{"type": "object_add", "id": "partial-write", "kind": "prop", "propId": "tree_willow"},
+			{"type": "object_motion_path_set", "id": actorID, "pathId": pathID + "-missing"},
+		}},
+	})
+	run, state = appendDirectorCall(t, s, run, state, badPatch)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if state.Approval != nil || run.Status == "waiting_approval" {
+		t.Fatalf("invalid path must fail before approval: status=%s approval=%v", run.Status, state.Approval)
+	}
+	if len(directorEvents(state, "tool_failed")) == 0 {
+		t.Fatal("invalid path did not produce a failed tool receipt")
+	}
+	after, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PayloadJSON != beforeJSON || strings.Contains(after.PayloadJSON, "partial-write") {
+		t.Fatal("failed path patch partially wrote the canvas")
+	}
+	doc := mustCreationDocument(t, after.PayloadJSON)
+	scene, _ := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), actorID)
+	if actor == nil {
+		t.Fatal("actor disappeared after failed path patch")
+	}
+	if actor["motionPath"] != nil {
+		t.Fatalf("failed path patch left a motion path behind: %#v", actor)
+	}
+}
+
+// 只读会话可以读真实路径，但同一路径写入在审批前就被拒绝，画布保持不变。
+func TestDirectorPathWriteRejectedReadOnly(t *testing.T) {
+	payload, actorID, pathID := directorPathSceneDocument(t)
+	readCall := directorTestCall("director-readonly-path-read", map[string]any{"action": "read", "sceneId": "scene"})
+	s, run, state := directorFixture(t, "read_only", payload, readCall)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	snapshotHash := stringValue(directorToolMessage(t, state, readCall.ID)["snapshotHash"])
+	before, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJSON := before.PayloadJSON
+	patchCall := directorTestCall("director-readonly-path-patch", map[string]any{
+		"action":            "apply_patch",
+		"sceneId":           "scene",
+		"expectedSceneHash": snapshotHash,
+		"patch": map[string]any{"operations": []map[string]any{{
+			"type": "object_motion_path_set", "id": actorID, "pathId": pathID,
+		}}},
+	})
+	run, state = appendDirectorCall(t, s, run, state, patchCall)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if state.Approval != nil || len(directorEvents(state, "tool_failed")) == 0 {
+		t.Fatalf("read-only path write was not rejected: approval=%v", state.Approval)
+	}
+	after, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PayloadJSON != beforeJSON {
+		t.Fatal("read-only path write changed the canvas")
+	}
+	doc := mustCreationDocument(t, after.PayloadJSON)
+	scene, _ := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), actorID)
+	if actor == nil {
+		t.Fatal("actor disappeared after read-only path write")
+	}
+	if actor["motionPath"] != nil {
+		t.Fatalf("read-only path write left a motion path behind: %#v", actor)
 	}
 }
 

@@ -27,7 +27,7 @@ func cloudAgentPrevisMarkerPosition(scene map[string]any, label string) ([]float
 		labels = append(labels, stringValue(marker["label"]))
 	}
 	if len(labels) == 0 {
-		return nil, BadAuthRequest("场景里还没有标记点；请用户在预演台视口右键地面「标记为点 A」，或改用 pathPoints 给出坐标")
+		return nil, BadAuthRequest("场景里还没有标记点；请用户在世界引擎视口右键地面「标记为点 A」，或改用 pathPoints 给出坐标")
 	}
 	return nil, BadAuthRequest(fmt.Sprintf("标记点 %q 不存在，现有：%s", wanted, strings.Join(labels, "、")))
 }
@@ -134,9 +134,15 @@ func cloudAgentPrevisApplyActorTravel(scene map[string]any, object map[string]an
 	if from == nil {
 		from = cloudAgentPrevisActorPositionAt(object, start)
 	}
-	a := []float64{from[0], 0, from[2]}
-	b := []float64{to[0], 0, to[2]}
 	transform := cloudAgentPrevisMapTransform(object)
+	position, ok := cloudAgentPrevisNumberVec3(transform["position"])
+	if !ok {
+		position = []float64{0, 0, 0}
+	}
+	// 演员原点是脚底：位移只改 X/Z，保留演员自身的脚底高度。
+	// 飞行、御剑、悬浮的额外高度由 travels[].height 在求值时叠加。
+	a := []float64{from[0], position[1], from[2]}
+	b := []float64{to[0], position[1], to[2]}
 	rotation, ok := cloudAgentPrevisNumberVec3(transform["rotation"])
 	if !ok {
 		rotation = []float64{0, 0, 0}

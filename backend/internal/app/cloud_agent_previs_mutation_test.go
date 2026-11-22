@@ -357,8 +357,13 @@ func TestCloudAgentPrevisCharacterBindingAndAnimationPatch(t *testing.T) {
 	storedDoc, _ = creationDocument(stored.PayloadJSON)
 	scene, _ = findPrevisScene(creationMaps(storedDoc["previsScenes"]), "binding-scene")
 	actor = cloudAgentPrevisFindByID(creationMaps(scene["objects"]), "hero-actor")
-	if len(creationMaps(actor["keyframes"])) != 1 || actor["motionPath"] == nil {
+	if len(creationMaps(actor["keyframes"])) != 3 || actor["motionPath"] == nil {
 		t.Fatalf("animation patch was not persisted: %#v", actor)
+	}
+	for _, keyframe := range creationMaps(actor["keyframes"]) {
+		if !strings.HasPrefix(stringValue(keyframe["id"]), "hero-actor-path-") {
+			t.Fatalf("motion path retained a conflicting manual keyframe: %#v", keyframe)
+		}
 	}
 }
 

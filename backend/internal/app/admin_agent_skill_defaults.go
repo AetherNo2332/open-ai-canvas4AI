@@ -143,7 +143,7 @@ func (s *Service) ReplaceAgentSkillDefaults(actor *model.User, revision int64, i
 func (s *Service) validateAgentSkillDefaultItem(item AgentSkillDefaultItem) (model.AgentSkillDefault, skills.SkillCapacityFacts, error) {
 	skillID := item.SkillID
 	scope := effectiveAgentSkillDefaultScope(skillID, firstNonEmpty(item.Scope, "global"))
-	if (scope != "global" && scope != "canvas" && scope != "drama") || (skillID == canvasToolsGuideSkillID && scope != "canvas") {
+	if (scope != "global" && scope != "canvas" && scope != "drama") || ((skillID == canvasToolsGuideSkillID || skillID == previsWorldGuideSkillID) && scope != "canvas") {
 		return model.AgentSkillDefault{}, skills.SkillCapacityFacts{}, kernel.AgentSkillDefaultsInvalid("默认技能适用范围无效", map[string]any{"skillId": skillID})
 	}
 	skill, err := s.repo.Skill(skillID)
@@ -195,12 +195,13 @@ func boolToInt(value bool) int {
 }
 
 // platformAgentSkillDefaultIDs 是平台为新会话预置的默认技能，补种时按列表顺序排在默认集合最前。
-var platformAgentSkillDefaultIDs = []string{canvasToolsGuideSkillID}
+var platformAgentSkillDefaultIDs = []string{canvasToolsGuideSkillID, previsWorldGuideSkillID}
 
 const canvasToolsGuideSkillID = "yingce-canvas-tools-guide"
+const previsWorldGuideSkillID = "yingce-previs-world-guide"
 
 func effectiveAgentSkillDefaultScope(skillID, scope string) string {
-	if skillID == canvasToolsGuideSkillID && scope == "global" {
+	if (skillID == canvasToolsGuideSkillID || skillID == previsWorldGuideSkillID) && scope == "global" {
 		return "canvas"
 	}
 	return scope

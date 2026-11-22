@@ -82,9 +82,11 @@ function normalizeServerPreview(value: unknown): AgentApprovalPresentation | nul
         const op = operation(item?.operation);
         const summary = text(item?.summary);
         if (!item || !op || !summary) continue;
+        // 预演场景的 nodeId 是场景标识，不是画布节点；把它渲染成定位按钮会跳到错误目标。
+        const nodeId = op === "previs_scene_create" || op === "previs_apply_patch" ? undefined : text(item.nodeId, 120) || undefined;
         items.push({
             operation: op,
-            nodeId: text(item.nodeId, 120) || undefined,
+            nodeId,
             nodeTitle: text(item.nodeTitle, 120) || undefined,
             resultTitle: text(item.resultTitle, 120) || undefined,
             nodeType: text(item.nodeType, 32) || undefined,

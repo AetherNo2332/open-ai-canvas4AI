@@ -237,7 +237,7 @@ func cloudAgentDirectorRead(repo *repository.Repository, userID, canvasID string
 		if nodeID != "" {
 			fields["nodeId"] = nodeID
 		}
-		fields["guidance"] = "安全摘要。修改用 director apply_patch 并把 snapshotHash 作为 expectedSceneHash；预演用 director preview。snapshotHash 只代表该场景。"
+		fields["guidance"] = "安全摘要。修改用 director apply_patch 并把 snapshotHash 作为 expectedSceneHash；预演用 director preview。snapshotHash 只代表该场景。路径、运镜和编辑规则按需用本轮原生 read 读取已启用 Skill 的主题文件。"
 	}
 	return result, nil
 }

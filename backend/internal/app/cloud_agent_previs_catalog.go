@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// 预演台程序化道具与布景的白名单，ID 与 web/src/lib/canvas/previs/previs-prop-catalog.ts 一一对应。
+// 世界引擎程序化道具与布景的白名单，ID 与 web/src/lib/canvas/previs/previs-prop-catalog.ts 一一对应。
 // Agent 只能引用这里的 ID；几何体由前端按 ID 生成，后端不保存任何模型 URL。
 type cloudAgentPrevisCatalogProp struct {
 	ID       string
@@ -90,8 +90,8 @@ func cloudAgentPrevisFindLayoutTemplate(id string) (cloudAgentPrevisLayoutTempla
 	return cloudAgentPrevisLayoutTemplate{}, false
 }
 
-// cloudAgentPrevisCatalogGuide 放在 previs_scene_read 的返回里，而不是工具 schema 里：
-// 只有读场景时才付这段 token，不占每一步都要发的固定 schema 预算。
+// cloudAgentPrevisCatalogGuide 只放机器可校验的目录事实：道具 ID、布景模板和参数范围。
+// 路径、运镜与编辑手册属于内置 Skill 正文，由本轮已授权的 read 按主题读取，不能从这里旁路投送。
 func cloudAgentPrevisCatalogGuide() map[string]any {
 	props := map[string][]string{}
 	order := []string{}
@@ -113,14 +113,13 @@ func cloudAgentPrevisCatalogGuide() map[string]any {
 		"props":   grouped,
 		"layouts": strings.Join(layouts, "；"),
 		"params":  cloudAgentPrevisParamsGuide(),
-		"rules":   "实物一律 kind=prop+propId，原点在底面中心、y=0 贴地，不要用 box/cylinder 拼。数量明确的建筑/树/车用参数化组件（params 定层数、尺寸、风格）配 object_array_add（count+pattern+spacing+vary），例如三栋 12 层玻璃楼：propId=building,count=3,params={floors:12,style:glass}。成片街区、城镇、园林、森林用一个 kind=layout。外景先 world_update 设置时间、天气、远景。人物 A→B 移动用 actor_travel（travelStyle=walk/run/dash/jump/fly/sword_fly/float/teleport，time 起始秒，duration 用时，fromMarker/toMarker 为 scene.markers 的标签，如 A、B；没给起点则从演员当前位置出发），飞行类可给 height 米。不要用 actor_motion_add run 代替位移：那是原地动作。",
 	}
 }
 
 func cloudAgentPrevisValidateLayout(layout map[string]any) error {
 	template, ok := cloudAgentPrevisFindLayoutTemplate(stringValue(layout["template"]))
 	if !ok {
-		return BadAuthRequest("预演台布景模板不受支持")
+		return BadAuthRequest("世界引擎布景模板不受支持")
 	}
 	if err := cloudAgentPrevisFiniteInRange(numberValue(layout["size"], math.NaN()), "布景范围", template.Min, template.Max); err != nil {
 		return err
@@ -208,7 +207,7 @@ func cloudAgentPrevisAddCatalogObject(operation cloudAgentPrevisPatchOperation, 
 	case "prop":
 		prop, ok := cloudAgentPrevisFindProp(operation.PropID)
 		if !ok {
-			return nil, "", BadAuthRequest("propId 不在预演台道具目录中，先读 previs_scene_read 的 catalog")
+			return nil, "", BadAuthRequest("propId 不在世界引擎道具目录中，先读 director 的 catalog")
 		}
 		if name == "" {
 			name = prop.Name

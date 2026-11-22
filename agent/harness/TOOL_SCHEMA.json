@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v27",
+  "schemaVersion": "cloud-agent-tools/v28",
   "tools": [
     {
       "function": {
@@ -304,7 +304,9 @@
                         "enum": [
                           "step",
                           "linear",
-                          "smooth"
+                          "smooth",
+                          "ease_in",
+                          "ease_out"
                         ],
                         "type": "string"
                       },
@@ -424,6 +426,10 @@
                         "type": "object"
                       },
                       "parentId": {
+                        "maxLength": 80,
+                        "type": "string"
+                      },
+                      "pathId": {
                         "maxLength": 80,
                         "type": "string"
                       },
@@ -567,6 +573,10 @@
                         "minimum": 0,
                         "type": "number"
                       },
+                      "subjectId": {
+                        "maxLength": 80,
+                        "type": "string"
+                      },
                       "target": {
                         "items": {
                           "type": "number"
@@ -574,6 +584,10 @@
                         "maxItems": 3,
                         "minItems": 3,
                         "type": "array"
+                      },
+                      "technique": {
+                        "maxLength": 24,
+                        "type": "string"
                       },
                       "time": {
                         "maximum": 60,
@@ -612,6 +626,8 @@
                           "world_update",
                           "object_array_add",
                           "actor_travel",
+                          "camera_move",
+                          "camera_move_remove",
                           "shot_add",
                           "shot_update",
                           "shot_remove",

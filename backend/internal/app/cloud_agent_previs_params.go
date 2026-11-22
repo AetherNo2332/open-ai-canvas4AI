@@ -115,7 +115,7 @@ func cloudAgentPrevisParamKeys(propID string) string {
 	return strings.Join(keys, ",")
 }
 
-// cloudAgentPrevisParamsGuide 列出所有参数化组件的参数，放进 previs_scene_read.catalog。
+// cloudAgentPrevisParamsGuide 列出所有参数化组件的参数，放进 director read.catalog。
 func cloudAgentPrevisParamsGuide() map[string]string {
 	ids := make([]string, 0, len(cloudAgentPrevisPropParams))
 	for id := range cloudAgentPrevisPropParams {
