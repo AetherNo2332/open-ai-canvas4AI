@@ -97,7 +97,8 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 		"snapshotHash":       creationHash(scene),
 		"canvasSnapshotHash": cloudAgentCanvasHash(doc),
 		"revision":           canvas.Revision,
-		"guidance":           "安全摘要。修改用 director apply_patch；预演用 director preview。snapshotHash 只代表该场景。",
+		"catalog":            cloudAgentPrevisCatalogGuide(),
+		"guidance":           "安全摘要。修改用 director apply_patch；预演用 director preview；布局规划用 includeTransforms=true 获取精确坐标。snapshotHash 只代表该场景。",
 	}, nil
 }
 
@@ -134,6 +135,14 @@ func cloudAgentPrevisSpatialLayout(scene map[string]any) map[string]any {
 			"scale":         transform["scale"],
 			"keyframeCount": len(creationMaps(obj["keyframes"])),
 			"hasMotionPath": obj["motionPath"] != nil,
+		}
+		cloudAgentPrevisProjectCatalogFields(entry, obj)
+		if motions := creationMaps(obj["motions"]); len(motions) > 0 {
+			projected := make([]map[string]any, 0, len(motions))
+			for _, motion := range motions {
+				projected = append(projected, map[string]any{"id": stringValue(motion["id"]), "motion": stringValue(motion["motion"]), "start": motion["start"], "duration": motion["duration"]})
+			}
+			entry["motions"] = projected
 		}
 		if binding, ok := obj["characterBinding"].(map[string]any); ok {
 			entry["characterBinding"] = map[string]any{
@@ -302,7 +311,7 @@ func projectPrevisScene(scene map[string]any, shotID string, objectIDs map[strin
 		if len(objectIDs) > 0 && !objectIDs[id] {
 			continue
 		}
-		objects = append(objects, map[string]any{
+		entry := map[string]any{
 			"id":        id,
 			"name":      truncateRunes(stringValue(object["name"]), 160),
 			"kind":      stringValue(object["kind"]),
@@ -311,7 +320,9 @@ func projectPrevisScene(scene map[string]any, shotID string, objectIDs map[strin
 			"pose":      stringValue(object["pose"]),
 			"visible":   boolValue(object["visible"], true),
 			"transform": projectPrevisTransform(object["transform"]),
-		})
+		}
+		cloudAgentPrevisProjectCatalogFields(entry, object)
+		objects = append(objects, entry)
 	}
 	cameras := make([]map[string]any, 0)
 	for _, camera := range creationMaps(scene["cameras"]) {
@@ -323,7 +334,7 @@ func projectPrevisScene(scene map[string]any, shotID string, objectIDs map[strin
 			"target":      projectPrevisVec3(camera["target"]),
 		})
 	}
-	return map[string]any{
+	projection := map[string]any{
 		"id":           stringValue(scene["id"]),
 		"title":        truncateRunes(stringValue(scene["title"]), 160),
 		"activeShotId": stringValue(scene["activeShotId"]),
@@ -331,6 +342,29 @@ func projectPrevisScene(scene map[string]any, shotID string, objectIDs map[strin
 		"objects":      objects,
 		"cameras":      cameras,
 		"lightCount":   len(creationMaps(scene["lights"])),
+	}
+	if markers := cloudAgentPrevisProjectMarkers(scene); len(markers) > 0 {
+		projection["markers"] = markers
+	}
+	if world, ok := scene["world"].(map[string]any); ok {
+		projection["world"] = map[string]any{"timeOfDay": numberValue(world["timeOfDay"], 10), "weather": stringValue(world["weather"]), "ground": stringValue(world["ground"]), "groundSize": int(numberValue(world["groundSize"], 1000)), "horizon": boolValue(world["horizon"], true)}
+	}
+	return projection
+}
+
+// cloudAgentPrevisProjectCatalogFields 只投影目录 ID 与布景参数，不含任何 URL。
+func cloudAgentPrevisProjectCatalogFields(entry map[string]any, object map[string]any) {
+	if travels := cloudAgentPrevisProjectTravels(object); len(travels) > 0 {
+		entry["travels"] = travels
+	}
+	switch stringValue(object["kind"]) {
+	case "prop":
+		entry["propId"] = stringValue(object["propId"])
+		entry["variant"] = int(numberValue(object["variant"], 0))
+	case "layout":
+		if layout, ok := object["layout"].(map[string]any); ok {
+			entry["layout"] = map[string]any{"template": stringValue(layout["template"]), "seed": int(numberValue(layout["seed"], 0)), "size": numberValue(layout["size"], 0), "density": numberValue(layout["density"], 0.75), "crowd": boolValue(layout["crowd"], true)}
+		}
 	}
 }
 
