@@ -4,11 +4,11 @@
 
 2026-11-22 从远端核实 4AI `main`，fetch 后以同一提交建立分支 `codex/shortplay-canvas-port`。目标基线 `036b9190e56158e8fbe12912469bf59c2a8e2226`，供体固定为 `13731aae6c4cefadc2a1719e3e7e59b22e249f94`。[4AI 源码](https://github.com/AetherNo2332/open-ai-canvas4AI/tree/036b9190e56158e8fbe12912469bf59c2a8e2226) · [shortplay 源码](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6c4cefadc2a1719e3e7e59b22e249f94)
 
-当前完成分支准备与静态规划。实施验收 **0/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
+当前完成分支准备、静态规划与 S01 可重放基线。实施验收 **1/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
 
 | 片号 | 交付 | 前置 | 状态 | 实现提交与验证证据 |
 |---|---|---|---|---|
-| S01 | 供体行为与目标基线夹具 | 可开始 | 待施工 | 待记录 |
+| S01 | 供体行为与目标基线夹具 | 可开始 | 通过 | 实现 `37906500c`。供体固定提交运行采集；4AI 旧档经真实 SQLite repository 写入回读；ZIP v3/v4 重建样本经 Bun 读取。详见 [S01 证据](../testdata/shortplay-canvas-port/README.md) 与下方「S01 实测记录」。 |
 | S02 | 文档、节点能力及关系投影 | S01 | 待施工 | 待记录 |
 | S03 | 版本、操作、鉴权与单一写入器 | S02 | 待施工 | 待记录 |
 | S04 | 正式画布路由与完整节点编辑器 | S03 | 待施工 | 待记录 |
@@ -30,6 +30,19 @@
 目标的 `backend/internal/canvas/operations.go` 持久化 `connections`，`commands/native_connections.go` 用分镜行和批量文字列端口定位业务对象。供体的 `relation/projection.go` 与 `web/src/lib/canvas/canvas-node-inputs.ts` 按节点字段还原输入。格式标记、客户端能力和文档 revision 共同控制写入。所有旧格式入口在导入边界转换，运行时重放以当前文档字段为准。
 
 ## 分片工作单
+
+### S01 实测记录
+
+- **供体规则**：按 `13731aae6c4cefadc2a1719e3e7e59b22e249f94` 在独立工作树采集。采集器为 `scripts/shortplay-port/capture_donor_baseline.py`，临时注入 `backend/internal/app` 后运行 `TestS01CaptureDonorBehavior` 并清理文件；供体结束后仍为 detached、干净状态。
+- **供体创建**：storyboard 生成 1 个 `submap-1` 容器和 6 个子节点，顺序为 `text-1` 至 `text-4`、`image-1`、`video-1`。子节点有 `scopeId=submap-1`、无 `parentId`；`video-1` 的 `referenceTextNodeIds` 顺序为文本 1、2、3，`videoStartFrameNodeId=submap-1__image-1`，`seconds=4`。
+- **编辑与保存**：通过字段通道写入图片提示词、首帧字段和视频参考列表。写入后持久文档不含 `connections` 边，关系由字段和读取投影产生；`payloadJson` 与重开摘要一致。
+- **复制**：`dup ./submap-1 镜头2` 生成 `submap-2` 与 6 个子节点；副本首帧为 `submap-2__image-1`，文本引用全部重映射到 `submap-2__*`，外部 `image-1` / `text-1` 未复制，回执报告 2 个外部引用未复制。
+- **4AI 旧档**：`legacy/payload-with-extensions.json` 含两行分镜、跨镜头首帧、已有视频、素材绑定、两列批量文字、显式空 cell、`row:<id>` / `batch-text:<columnId>` 端口及未知字段；测试通过目标 `UpsertCanvasProject` 写入隔离 SQLite 后读回，文档经 `reflect.DeepEqual` 与输入一致，资源 owner 查询通过。标记为按真实 schema 重建的样本，不是生产历史档案。
+- **ZIP**：`zip/projects-v3.json` 与 `zip/projects-v4.json` 覆盖 `infinite-canvas/3` 与 `yingce/4`、drawing document v1/v2、engine 差异、媒体路径和 drawing 预览/渲染路径；`archive-entries.json` 提供可解包的媒体字节。样本标记为按 exporter 历史重建，不是真实下载包。
+- **验证命令与结果**：供体 `go test -count=1 -run 'TestS01CaptureDonorBehavior' -v ./internal/app` PASS（局部测试库缺少 `shortplay_episodes` 只产生既有 WARN）；目标 `go test -count=1 -run 'TestShortplayS01' -v ./internal/canvas` PASS；`go test -count=1 ./internal/canvas/...` PASS；`bun test test/shortplay-canvas-baseline.test.ts` 3 PASS。
+- **耗时基线**：200 节点、79,382 字节文档、10 轮，隔离 SQLite，Windows 本机实测 `open_avg=209.35µs`、`open_max=528.4µs`、`save_avg=3.05581ms`、`save_max=3.6029ms`。单机样本，不作为 SLA。
+- **既有失败**：供体固定提交的 `go test ./internal/canvas/document` 在 `audio` / `image` / `video` 的 render/parse round-trip 上失败，表现为读到 `logical:样例文本` 而非 `样例文本`；与本次采集和移植无关，后续不得误报为新回归。
+- **未覆盖项**：供体已登记 registry 清单、类型清单和字段清单，但没有逐个注册类型跑创建/编辑序列；逐类型编辑矩阵放到 S02。没有可用的真实历史 ZIP 或生产 SQLite 档案，因此旧档与 ZIP 不能冒充生产样本。S04 起补正式页面实测，S05 补镜头里程碑的真实页面证据。
 
 ### S01 采集两端基线
 
@@ -96,3 +109,4 @@ Go 在 `backend` 下运行 `go test ./internal/canvas/...`，按分片追加实�
 | 日期 | 完成与证据 | 下一项 |
 |---|---|---|
 | 2026-11-22 | 核对远端 main 与 fetch 结果，建立独立分支，核对供体源码、目标组合根、迁移 API、业务入口和测试位置，完成施工拆片 | S01 建立两端可重放行为夹具。运行基线、转换覆盖率与功能验收均待采集 |
+| 2026-11-22 | S01 通过：提交 `37906500c`，供体 storyboard 创建/编辑/复制/重开运行时采集，4AI 旧档真实 SQLite 回读、ZIP v3/v4 重建样本、目标 200 节点耗时基线和两端专项测试均通过；供体既有 document 失败已登记 | S02 移植 `canvas/{capability,contract,document,relation,layout}` 功能闭包，补齐逐注册类型和 Go/Web 语义投影对照 |
