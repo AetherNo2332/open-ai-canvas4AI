@@ -252,6 +252,8 @@ func TestServerDrainClosesRealSSERoutesAndFinishesOrdinaryWrite(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("ordinary write status = %s, body=%v", response.Status, response.Body)
 	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
 
 	for name, done := range map[string]<-chan error{
 		"worker": workerDone,
