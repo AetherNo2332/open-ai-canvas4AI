@@ -19,6 +19,7 @@ const paths: Record<string, string> = {
     "@/lib/canvas/sync-recovery": fileURLToPath(new URL("lib/canvas/sync-recovery.ts", root)),
     "@/lib/canvas/canvas-sync-rebase": join(dir, "rebase.ts"),
     "@/lib/canvas/canvas-text-merge": fileURLToPath(new URL("lib/canvas/canvas-text-merge.ts", root)),
+    "@/lib/canvas/canvas-node-id": fileURLToPath(new URL("lib/canvas/canvas-node-id.ts", root)),
     "@/lib/canvas/canvas-content": join(dir, "content.ts"),
     "@/lib/canvas/canvas-edge-presentation": fileURLToPath(new URL("lib/canvas/canvas-edge-presentation.ts", root)),
     "@/stores/use-sync-progress-store": join(dir, "progress.ts"),
