@@ -6,6 +6,7 @@ export type TimelineExportSize = { width: number; height: number };
 export type TimelineExportPreset = "first" | "drama" | "9:16" | "16:9" | "1:1";
 
 export const TIMELINE_FALLBACK_EXPORT_SIZE: TimelineExportSize = { width: 1920, height: 1080 };
+export const TIMELINE_DEFAULT_EXPORT_FPS = 30;
 const MAX_FOLLOW_LONG_EDGE = 1920;
 
 const FIXED_PRESET_SIZES: Record<"9:16" | "16:9" | "1:1", TimelineExportSize> = {
@@ -38,6 +39,11 @@ export function normalizeTimelineSourceSize(width?: number, height?: number): Ti
 
 export function defaultTimelineExportPreset(dramaAspectRatio?: string): TimelineExportPreset {
     return dramaAspectRatio ? "drama" : "first";
+}
+
+/** 预演项目沿用镜头帧率；普通画布保持时间线既有默认，避免无依据改变通用成片规格。 */
+export function resolveTimelineExportFps(previsFps?: number): number {
+    return previsFps === 24 || previsFps === 25 || previsFps === 30 ? previsFps : TIMELINE_DEFAULT_EXPORT_FPS;
 }
 
 export function resolveTimelineExportSize(preset: TimelineExportPreset, options: { firstClipSize?: { width?: number; height?: number } | null; dramaAspectRatio?: string }): TimelineExportSize {

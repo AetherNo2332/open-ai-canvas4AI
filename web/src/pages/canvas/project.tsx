@@ -3505,6 +3505,7 @@ function CanvasViewportPage() {
                                     open={Boolean(timelineNode)}
                                     nodes={nodes}
                                     timeline={currentProject?.timeline || null}
+                                    previsFps={currentProject?.previsScenes?.find((scene) => nodes.some((node) => node.metadata?.previsSceneId === scene.id))?.shots[0]?.fps}
                                     selectedNodeIds={selectedNodeIds}
                                     dramaAspectRatio={drama.active ? drama.summary?.production.settings.aspectRatio : undefined}
                                     onClose={() => setTimelineNodeId(null)}
@@ -3512,7 +3513,10 @@ function CanvasViewportPage() {
                                         setTimelineNodeId(null);
                                         setSubtitleNodeId(subNodeId);
                                     }}
-                                    onSave={(next) => updateProject(projectId, { timeline: next })}
+                                    onSave={async (next) => {
+                                        updateProject(projectId, { timeline: next });
+                                        await saveRemoteUserDataNow(projectId);
+                                    }}
                                     onSaveSubtitles={(subNodeId, entries) =>
                                         handleConfigNodeChange(subNodeId, {
                                             subtitleEntries: entries,
