@@ -4,7 +4,7 @@
 
 2026-11-22 从远端核实 4AI `main`，fetch 后以同一提交建立分支 `codex/shortplay-canvas-port`。目标基线 `036b9190e56158e8fbe12912469bf59c2a8e2226`，供体固定为 `13731aae6c4cefadc2a1719e3e7e59b22e249f94`。[4AI 源码](https://github.com/AetherNo2332/open-ai-canvas4AI/tree/036b9190e56158e8fbe12912469bf59c2a8e2226) · [shortplay 源码](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6c4cefadc2a1719e3e7e59b22e249f94)
 
-当前已通过 S01–S08，覆盖行为基线、文档与关系、项目存储、子画布编辑器、内置镜头、同步与历史、用户预设、分享与 ZIP 往返。实施验收 **8/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
+当前已通过 S01–S09，覆盖行为基线、文档与关系、项目存储、子画布编辑器、内置镜头、同步与历史、用户预设、分享与 ZIP 往返、Agent 画布命令与审批。实施验收 **9/14**。每行代表一个可独立评审的分片。推进时更新状态为「进行中」「待验证」「通过」或「阻塞」。证据栏填写实现提交、测试命令和结果链接，阻塞项填写失败样本、负责人和恢复条件。每次交接在末尾追加日期及下一片。完成数以通过行数计算。
 
 | 片号 | 交付 | 前置 | 状态 | 实现提交与验证证据 |
 |---|---|---|---|---|
@@ -16,7 +16,7 @@
 | S06 | 多端同步、历史、撤销与重放 | S05 | 通过 | 实现 `65f4ef7ad`。浏览器 operations 自动历史与回滚、历史列表/预览/CAS 恢复接口、`before_restore` 留档、字段引用恢复、`idCounters` 高水位合并和版本历史抽屉落地；专项 42 PASS，Go/Web 构建检查 PASS，正式页面完成双端编辑、删除、撤销、冲突与恢复。详见下方「S06 实测记录」。 |
 | S07 | 用户预设持久化与跨画布插入 | S05 | 通过 | 实现 `b842557ec`。Schema 111、按用户隔离的模板 API、局部 ID 快照、引用重映射、保存入口和跨画布插入落地；专项 37 PASS，Go/Web 构建检查 PASS，正式页面两次插入均引用各自子节点。详见下方「S07 实测记录」。 |
 | S08 | 分享、导出、资源与导入 | S05 | 通过 | 实现 `60e5a7107`。浏览器验证只读分享、子画布 ZIP 导出重入、旧 ZIP 媒体和绘图往返。Go 专项与 Web 29 项通过。详见下方「S08 实测记录」。 |
-| S09 | Agent 画布命令与审批 | S03、S05 | 待施工 | 待记录 |
+| S09 | Agent 画布命令与审批 | S03、S05 | 通过 | 实现 `5b4341835`。命令词法/管道、submap 寻址、字段读写、new/dup/mv/rm、审批快照固化与检查点重放接入 4AI 控制面；专项 9 PASS，工具契约与画布/架构门禁 PASS，Agent 203 PASS。详见下方「S09 实测记录」。 |
 | S10 | 生成输入、真实任务与回写 | S09 | 待施工 | 待记录 |
 | S11 | 旧档只读预演与转换器 | S01、S02 | 待施工 | 待记录 |
 | S12 | 分镜、批量、预演、短剧和电商入口 | S05、S10、S11 | 待施工 | 待记录 |
@@ -153,6 +153,14 @@
 
 以供体 `cloud_agent_canvas_shell.go`、`cloud_agent_canvas_field_write.go` 及 submap 寻址测试为入口，迁入读写命令、工具声明、策略片段和编译生成物，对接 4AI 控制面和当前检查点结构。逐项核对供体命令清单。以 Agent 修改一个镜头、用户修改另一个镜头为跨端例，复验锁定、拒绝审批、批准重放、续轮恢复和 UI 同步。
 
+### S09 实测记录
+
+- **实现** `5b4341835`。新增 `cloud_agent_canvas_{command,command_copy,command_write,field_write,path,read}.go`，命令表覆盖 pwd/ls/cat/grep/wc/head/tail/find/sed/new/dup/mv/rm/run/edit/log/preset/help；支持 `&&`、`;`、换行、heredoc 和 cat/head/tail 管道，`||` 明确拒绝。`new` 按 `idCounters` 高水位发号并支持 `--in <submap>`；`dup` 复制 submap 子树并重映射内部引用、丢弃外部引用；`rm` 任何权限模式都审批；`edit`/`sed -i`/heredoc 统一走 `Field.Write`/`ApplyPatch`。只读会话在任何执行前拒绝写命令，审批前固化 `snapshotHash`，批准执行与检查点重放使用同一份参数。`preset list/delete` 走 4AI 用户预制件 repository；`preset save` 与 `run` 分别返回 S07 页面入口、S10 生成任务的明确依赖。
+- **跨端例** `TestCanvasCommandCrossEndEditKeepsUserShot`：Agent 先按旧快照准备改镜头 A，用户通过 `UpsertCanvasProject` 正式保存路径改镜头 B；旧计划必须 `stale_snapshot` 失败且 A/B 均不被覆盖；重读后 Agent 写入 A，B 保持用户版本且 revision 只增一次；同一调用重放按过期快照拒绝；锁定 A 后 Agent 写入返回 `locked`。`TestCanvasCommandDupChildKeepsScope` 验证 submap 内复制保留 `scopeId` 并可用局部路径重读。
+- **验收中修复** 命令分类器的 JSON 解码启用 `DisallowUnknownFields`，原先漏声明 `snapshotHash` 导致只读 `cat` 被误判为写；命令分段/管道扫描按字节转 rune 破坏中文参数；媒体节点旧 `prompt` 字段抢占 `prompt.txt` 别名，读取为空；submap 内复制误删 `scopeId`。
+- **验证命令与结果** `go test -count=1 ./internal/app -run 'TestCanvasCommand'` 9 PASS；`TestAgentToolSchemaArtifactMatchesRuntime|TestCloudAgentToolsFollowCanvasCapabilityRegistry|TestCloudAgentNodeTypesExposeExecutableAllowList` 3 PASS；`go test -count=1 ./internal/canvas/... ./internal/architecture` PASS；`npm test`（`agent`）203 PASS、1 SKIP；`node agent/scripts/sync-harness.mjs --tool-descriptions-only` 后 `harness-sync`/`tool-contracts` 6 PASS。
+- **未覆盖** 隔离开发库没有配置模型渠道，未运行真实 LLM 驱动的 Agent 会话，因此浏览器审批卡、拒绝审批后的 revision 不变和检查点续轮恢复仍以服务级审批/重放测试为证据；真实页面只读同步留待 S14 集成验收补跑。`run` 的真实任务与结果回填按计划在 S10 完成，`preset save` 仍走 S07 页面入口。
+
 ### S10 生成与结果回填
 
 移入供体 `cloud_agent_generation_defaults.go` 的逐字段默认值和 `run` 输入解析。接 4AI `canvas/tasks`、生成轮询与前端任务消费者。对照文本顺序、角色资源版本、尺寸、模型、首尾帧和报价。受控渠道测试成功、失败、取消、重复回调和晚到回调；在获准的实际渠道验证图像和视频请求。记录结果写入正确子节点和费用流水，验证副本与原件任务隔离。
@@ -190,3 +198,4 @@ Go 在 `backend` 下运行 `go test ./internal/canvas/...`，按分片追加实�
 | 2026-11-23 | S06 通过：提交 `65f4ef7ad`，operations 同事务自动历史、历史/CAS 恢复接口、恢复前留档、字段引用恢复、`idCounters` 高水位合并和版本历史抽屉落地；专项 42 PASS，Go/Web 构建检查 PASS，全量 3468 PASS / 12 条原始环境失败（11 组已知问题），正式页面完成双端编辑、删除、撤销、冲突和恢复 | S07 用户预设：局部 ID 快照、repository/handler/迁移、跨画布插入与边界验收 |
 | 2026-11-23 | S07 通过：提交 `b842557ec`，Schema 111 用户模板表、按用户隔离的 CRUD、自包含快照校验、引用重映射、保存入口和跨画布插入落地；专项 37 PASS，Go/Web 构建检查 PASS，全量 3539 PASS / 11 条既有环境失败，正式页面连续插入两次并重开验证 14 节点 / 10 条字段投影边 | S08 分享、导出、资源与导入：分享授权、ZIP/历史分享、外部导入、绘图快照和媒体缺失路径 |
 | 2026-11-23 | S08 通过。提交 `60e5a7107`。正式页面分享与子画布 ZIP 重开通过，旧 ZIP 的图片、绘图快照和预览往返通过，匿名资源访问范围已验。Web 专项 29 项通过 | S09 对接 Agent 画布命令、审批与跨端同步 |
+| 2026-11-23 | S09 通过。提交 `5b4341835`。Agent 画布命令面、submap 寻址、审批快照固化与重放落地；专项 9 PASS，工具契约、画布/架构门禁和 Agent 203 项通过。跨端冲突、锁定和子画布复制已在服务级复验；真实 LLM 会话待 S14 补跑 | S10 接入生成默认值、`run` 真实任务与结果回填 |
