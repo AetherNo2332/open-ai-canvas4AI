@@ -5837,6 +5837,80 @@ paths:
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
         "403": {$ref: "#/components/responses/Error"}
+  /user-submap-presets:
+    get:
+      tags: [canvas]
+      summary: 列出当前用户的子画布模板
+      description: 只返回当前登录用户的模板，按最近更新时间倒序；模板名称、修订号和规范化快照均由服务端维护。Cache-Control 为 private, no-store。
+      responses:
+        "200":
+          description: 信封 data.presets 为当前用户的模板数组
+        "401":
+          description: 未登录
+    post:
+      tags: [canvas]
+      summary: 保存当前用户的子画布模板
+      description: 请求只提交局部化节点快照；id、version、revision 和归属由服务端覆盖。每个用户最多 200 个模板，单份快照最多 200 个节点、512 KiB，名称最多 80 个字。快照必须自包含，三组引用只能指向组内 localId。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifestJson]
+              properties:
+                manifestJson:
+                  type: string
+                  description: 序列化后的 {version, id, title, nodes} 快照；传入 manifestJson 字符串而非嵌套对象
+                  maxLength: 524288
+      responses:
+        "200":
+          description: 信封 data.preset 为已保存的模板
+        "400":
+          description: 快照为空、JSON/字段不符、版本不受支持、引用悬空或超过上限
+        "401":
+          description: 未登录
+  /user-submap-presets/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [canvas]
+      summary: 更新当前用户的子画布模板
+      description: 保留模板 id 并递增 revision；其他用户访问返回 404。请求体规则与创建相同。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifestJson]
+              properties:
+                manifestJson:
+                  type: string
+                  maxLength: 524288
+      responses:
+        "200":
+          description: 信封 data.preset 为更新后的模板
+        "400":
+          description: 快照无效或超过上限
+        "401":
+          description: 未登录
+        "404":
+          description: 模板不存在或不属于当前用户
+    delete:
+      tags: [canvas]
+      summary: 删除当前用户的子画布模板
+      description: 只删除当前用户的模板；其他用户访问返回 404。已插入画布的节点不会回溯修改。
+      responses:
+        "200":
+          description: 信封 data.id 为已删除模板 ID
+        "401":
+          description: 未登录
+        "404":
+          description: 模板不存在或不属于当前用户
 components:
   parameters:
     AgentRunID:

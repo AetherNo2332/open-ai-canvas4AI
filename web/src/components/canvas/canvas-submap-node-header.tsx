@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, LayoutPanelTop } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, LayoutPanelTop, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Select } from "@/components/ui/base/select";
@@ -20,6 +20,8 @@ export function CanvasSubmapNodeHeader({
     onToggleCollapsed,
     onTitleChange,
     onPresetChange,
+    userPresets,
+    onSavePreset,
 }: {
     data: CanvasNodeData;
     childCount: number;
@@ -29,12 +31,17 @@ export function CanvasSubmapNodeHeader({
     onToggleCollapsed: (nodeId: string) => void;
     onTitleChange: (nodeId: string, title: string) => void;
     onPresetChange?: (nodeId: string, presetId: string) => void;
+    userPresets?: Array<{ id: string; name: string }>;
+    onSavePreset?: (nodeId: string) => void;
 }) {
     const { t } = useTranslation();
     const [editing, setEditing] = useState(false);
     const [title, setTitle] = useState(data.title);
 
     useEffect(() => setTitle(data.title), [data.title]);
+
+    const userPresetIds = useMemo(() => new Set((userPresets || []).map((preset) => preset.id)), [userPresets]);
+    const presetOptions = useMemo(() => [...SUBMAP_PRESET_OPTIONS, ...(userPresets || []).map((preset) => ({ value: preset.id, label: preset.name }))], [userPresets]);
 
     const commitTitle = () => {
         const next = title.trim() || t("canvasPage.nodeOps.submapEmptyPreview");
@@ -99,12 +106,28 @@ export function CanvasSubmapNodeHeader({
                         size="sm"
                         appearance="soft"
                         ariaLabel={t("canvasPage.nodeOps.submapPresetLabel")}
-                        value={resolveSubmapPresetId(data.metadata)}
-                        options={SUBMAP_PRESET_OPTIONS}
+                        value={resolveSubmapPresetId(data.metadata, userPresetIds)}
+                        options={presetOptions}
                         popupMatchSelectWidth={false}
                         onChange={(value) => onPresetChange(data.id, String(value))}
                     />
                 </span>
+            ) : null}
+            {onSavePreset && !readOnly && !data.metadata?.locked ? (
+                <button
+                    type="button"
+                    className="grid size-7 shrink-0 place-items-center rounded-md transition-colors hover:bg-black/5 focus-visible:outline focus-visible:outline-2 dark:hover:bg-white/10"
+                    style={{ outlineColor: theme.frame.activeStroke }}
+                    aria-label={t("canvasPage.nodeOps.submapPresetSave")}
+                    title={t("canvasPage.nodeOps.submapPresetSave")}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onSavePreset(data.id);
+                    }}
+                >
+                    <Save className="size-3.5" />
+                </button>
             ) : null}
             <span className="ml-auto shrink-0 pr-1 text-[var(--fs-label)] tabular-nums" style={{ color: theme.node.muted }}>
                 {t("canvasPage.nodeOps.submapChildCount", { count: childCount })}

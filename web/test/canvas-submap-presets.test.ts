@@ -71,7 +71,14 @@ describe("submap 形式下拉接线", () => {
         expect(worldLayers).toContain("onPresetChange={props.onSubmapPresetChange}");
         expect(project).toContain("applySubmapPreset,");
         expect(project).toContain("onSubmapPresetChange={applySubmapPreset}");
-        expect(nodeOps).toContain("replaceSubmapChildrenWithPreset({");
+        expect(project).toContain("onSubmapSavePreset={openSubmapPresetSave}");
+        expect(project).toContain("CanvasSubmapSavePresetModal");
+        expect(worldLayers).toContain("onSavePreset={props.onSubmapSavePreset}");
+        expect(node).toContain("onSavePreset={onSavePreset}");
+        expect(header).toContain("onSavePreset(data.id)");
+        expect(nodeOps).toContain("replaceSubmapChildren({");
+        expect(nodeOps).toContain("createUserSubmapPreset(");
+        expect(nodeOps).toContain("instantiateSubmapSnapshot({");
         expect(nodeOps).toContain("getSubmapPreset(presetId)");
     });
 });

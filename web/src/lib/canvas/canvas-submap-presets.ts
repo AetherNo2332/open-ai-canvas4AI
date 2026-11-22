@@ -209,11 +209,11 @@ function pruneLegacyReferenceFields(nodes: CanvasNodeData[], removedIds: Readonl
     return changed ? next : nodes;
 }
 
-function withWorkflowMetadata(submap: CanvasNodeData, preset: SubmapPreset): CanvasNodeData {
+function withWorkflowMetadata(submap: CanvasNodeData, workflowId: string | undefined, workflowVersion: number | undefined): CanvasNodeData {
     const metadata = { ...submap.metadata };
-    if (preset.id) {
-        metadata.workflowId = preset.id;
-        metadata.workflowVersion = preset.version;
+    if (workflowId) {
+        metadata.workflowId = workflowId;
+        metadata.workflowVersion = workflowVersion;
     } else {
         delete metadata.workflowId;
         delete metadata.workflowVersion;
@@ -221,8 +221,47 @@ function withWorkflowMetadata(submap: CanvasNodeData, preset: SubmapPreset): Can
     return { ...submap, metadata };
 }
 
+export type ReplaceSubmapChildrenOptions = {
+    nodes: CanvasNodeData[];
+    connections: CanvasConnection[];
+    submapId: string;
+    workflowId?: string;
+    workflowVersion?: number;
+    referenceFieldsVersion: unknown;
+    allocateId: (prefix: string) => string;
+    buildChildren: (submap: CanvasNodeData, allocateId: (prefix: string) => string) => CanvasNodeData[];
+};
+
 /**
- * 用预置整体替换一个 submap 的子树。
+ * 用任意模板整体替换一个 submap 的子树。
+ *
+ * 旧子节点、触碰旧子节点的连线、以及所有指向旧子节点的引用字段先清掉；新节点由
+ * buildChildren 按模板实例化后，再用 referenceFieldsVersion 投影可见边。ID 由
+ * 调用方交给 beginIdBatch(..., submapId) 重置局部高水位。
+ */
+export function replaceSubmapChildren({ nodes, connections, submapId, workflowId, workflowVersion, referenceFieldsVersion, allocateId, buildChildren }: ReplaceSubmapChildrenOptions): ReplaceSubmapPresetResult | null {
+    const submap = nodes.find((node) => node.id === submapId && isSubmapNode(node));
+    if (!submap || submap.metadata?.locked) return null;
+
+    const previousChildIds = getSubmapChildIds(submapId, nodes);
+    const removed = removeCanvasNodes(nodes, previousChildIds);
+    const pruned = pruneReferenceFields(removed.nodes, removed.removedIds, referenceFieldsVersion);
+    const remaining = pruneLegacyReferenceFields(pruned, removed.removedIds);
+    const replacedSubmap = withWorkflowMetadata(submap, workflowId, workflowVersion);
+    const baseNodes = remaining.map((node) => (node.id === submapId ? replacedSubmap : node));
+    const children = buildChildren(replacedSubmap, allocateId);
+    const nextNodes = fitSubmapToChildren([...baseNodes, ...children], submapId);
+    const nextConnections = connections.filter((connection) => !removed.removedIds.has(connection.fromNodeId) && !removed.removedIds.has(connection.toNodeId));
+
+    return {
+        nodes: nextNodes,
+        connections: projectReferenceConnections(nextNodes, nextConnections, referenceFieldsVersion),
+        removedIds: removed.removedIds,
+    };
+}
+
+/**
+ * 用系统预置整体替换一个 submap 的子树。
  *
  * 旧子节点、触碰旧子节点的连线、以及所有指向旧子节点的引用字段先清掉；新节点按
  * manifest 顺序实例化后，再用 referenceFieldsVersion 投影可见边。ID 由调用方
@@ -244,26 +283,18 @@ export function replaceSubmapChildrenWithPreset({
     referenceFieldsVersion: unknown;
     allocateId: (prefix: string) => string;
 }): ReplaceSubmapPresetResult | null {
-    const submap = nodes.find((node) => node.id === submapId && isSubmapNode(node));
-    if (!submap || submap.metadata?.locked) return null;
     const preset = getSubmapPreset(presetId);
     if (!preset) return null;
-
-    const previousChildIds = getSubmapChildIds(submapId, nodes);
-    const removed = removeCanvasNodes(nodes, previousChildIds);
-    const pruned = pruneReferenceFields(removed.nodes, removed.removedIds, referenceFieldsVersion);
-    const remaining = pruneLegacyReferenceFields(pruned, removed.removedIds);
-    const replacedSubmap = withWorkflowMetadata(submap, preset);
-    const baseNodes = remaining.map((node) => (node.id === submapId ? replacedSubmap : node));
-    const instantiated = instantiateSubmapPreset({ submap: replacedSubmap, preset, allocateId });
-    const nextNodes = fitSubmapToChildren([...baseNodes, ...instantiated.children], submapId);
-    const nextConnections = connections.filter((connection) => !removed.removedIds.has(connection.fromNodeId) && !removed.removedIds.has(connection.toNodeId));
-
-    return {
-        nodes: nextNodes,
-        connections: projectReferenceConnections(nextNodes, nextConnections, referenceFieldsVersion),
-        removedIds: removed.removedIds,
-    };
+    return replaceSubmapChildren({
+        nodes,
+        connections,
+        submapId,
+        workflowId: preset.id || undefined,
+        workflowVersion: preset.id ? preset.version : undefined,
+        referenceFieldsVersion,
+        allocateId,
+        buildChildren: (submap, childAllocateId) => instantiateSubmapPreset({ submap, preset, allocateId: childAllocateId }).children,
+    });
 }
 
 /** 供类型下拉展示：当前 submap 的 workflowId 归一到哨兵 id。 */

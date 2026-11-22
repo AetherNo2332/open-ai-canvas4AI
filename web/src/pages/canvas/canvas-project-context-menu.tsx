@@ -42,6 +42,7 @@ type CanvasProjectContextMenuProps = {
     onSetAssetCategory: (nodeId: string, category: CanvasAssetCategory) => void;
     onToggleFrame: (node: CanvasNodeData) => void;
     onToggleSubmap: (node: CanvasNodeData) => void;
+    onSaveSubmapPresetAs?: (node: CanvasNodeData) => void;
     onSpreadSelection: () => void;
     onCopySelection: () => void;
     onDeleteSelection: () => void;
@@ -130,6 +131,7 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
             onToggleSubmap={() => {
                 if (node?.type === CanvasNodeType.Submap) props.onToggleSubmap(node);
             }}
+            onSaveSubmapPresetAs={props.onSaveSubmapPresetAs && node?.type === CanvasNodeType.Submap ? () => props.onSaveSubmapPresetAs?.(node) : undefined}
             onSpreadSelection={props.onSpreadSelection}
             onCopySelection={props.onCopySelection}
             onDeleteSelection={props.onDeleteSelection}

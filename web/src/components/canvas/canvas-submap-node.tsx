@@ -28,6 +28,8 @@ export const CanvasSubmapNode = React.memo(function CanvasSubmapNode({
     onToggleCollapsed,
     onTitleChange,
     onPresetChange,
+    userPresets,
+    onSavePreset,
     onContextMenu,
     onSubmapContextMenu,
 }: CanvasSubmapNodeProps) {
@@ -76,7 +78,18 @@ export const CanvasSubmapNode = React.memo(function CanvasSubmapNode({
                     </div>
                 ) : (
                     <>
-                        <CanvasSubmapNodeHeader data={data} childCount={childNodes.length} collapsed={false} readOnly={readOnly} theme={theme} onToggleCollapsed={onToggleCollapsed} onTitleChange={onTitleChange} onPresetChange={onPresetChange} />
+                        <CanvasSubmapNodeHeader
+                            data={data}
+                            childCount={childNodes.length}
+                            collapsed={false}
+                            readOnly={readOnly}
+                            theme={theme}
+                            onToggleCollapsed={onToggleCollapsed}
+                            onTitleChange={onTitleChange}
+                            onPresetChange={onPresetChange}
+                            userPresets={userPresets}
+                            onSavePreset={onSavePreset}
+                        />
                         <div
                             data-submap-content={data.id}
                             className="absolute inset-x-2 bottom-2 rounded-md border border-dashed"

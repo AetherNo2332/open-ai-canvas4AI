@@ -555,6 +555,21 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。`inten
 
 operations 的结构化配额在提交事务内实时统计账号的素材/画布数量和 JSON 字节数，不为画布保存扫描任务正文及 API 请求/响应日志。接口请求、响应、容量上限及错误语义均不变；性能排查应分别记录成功写入、同请求重放和冲突请求的耗时，冲突请求提前退出不能代表完整提交耗时。
 
+## 用户子画布模板
+
+用户模板保存的是一棵子画布子树的局部化快照，不是系统 storyboard 清单。接口只允许当前登录用户读写自己的模板；跨用户更新或删除返回 404，不返回模板是否存在。列表响应使用 `Cache-Control: private, no-store`。
+
+| 接口 | 入参与结果 |
+| --- | --- |
+| `GET /api/user-submap-presets` | 返回 `data.presets`，按最近更新时间倒序。 |
+| `POST /api/user-submap-presets` | 请求 `{ "manifestJson": string }`。字符串解析后必须是 `{ version, id, title, nodes }`；服务端覆盖 `id`、`version`、模板归属、修订号和创建时间，并返回 `data.preset`。 |
+| `PATCH /api/user-submap-presets/:id` | 请求体同上；保留模板 ID、递增 `revision`，返回 `data.preset`。 |
+| `DELETE /api/user-submap-presets/:id` | 返回 `data.id`。已插入画布的副本不受影响。 |
+
+每份快照最多 200 个节点、512 KiB，模板名最多 80 个字；每个用户最多保存 200 个模板。节点 `localId` 必须唯一且匹配 `[a-z0-9][a-z0-9_-]{0,63}`，类型必须是当前画布注册类型。`referenceNodeIds`、`referenceTextNodeIds`、`videoStartFrameNodeId`、`videoEndFrameNodeId`、`generationSpec.referenceBindings` 与 `inputBindings` 中指向节点的引用必须自包含；悬空、非字符串或畸形绑定整份拒绝。显式声明不支持的 `version` 同样整份拒绝，不按当前结构猜测未来载荷。
+
+前端保存时把子节点的全局 ID 去掉 `scopeId__` 前缀并裁掉组外引用；插入时为目标子画布重新发号，并把文本、图像、首帧、尾帧和生成绑定一起映射到新子节点。插入和替换都在浏览器文档内完成，不新增画布写接口，也不把模板 ID 当成画布节点身份。
+
 ## 推广中心
 
 推广设置保存在 `system_settings` 的 `referral` 键，管理员通过 `GET/PATCH /admin/settings/referral` 读写 `{ enabled, mode, commissionRateBasisPoints }`，保存记录管理员审计。`mode` 为 `all`（全民推广）或 `assigned`（指定推广人）；返佣比例为万分比，范围 0–5000。推广人标记通过 `PATCH /admin/users/:id` 的可选布尔字段 `isPromoter` 修改，省略表示不变。

@@ -18,7 +18,9 @@ import { adoptMediaVersion, createNodeFromMediaVersion, mediaVersionAdoptBlock, 
 import { getSubmapChildIds, getSubmapChildren, isSubmapNode } from "@/lib/canvas/canvas-submap";
 import { fitSubmapToChildren, nextSubmapChildPosition } from "@/lib/canvas/canvas-submap-layout";
 import { allocateCopiedCanvasNodeIds, countSubmapExternalReferences, isCopiedSubmapTreeNode, submapCopySources } from "@/lib/canvas/canvas-submap-operations";
-import { EMPTY_SUBMAP_PRESET_ID, getSubmapPreset, replaceSubmapChildrenWithPreset } from "@/lib/canvas/canvas-submap-presets";
+import { EMPTY_SUBMAP_PRESET_ID, getSubmapPreset, instantiateSubmapPreset, replaceSubmapChildren } from "@/lib/canvas/canvas-submap-presets";
+import { exportSubmapSnapshot, instantiateSubmapSnapshot, validateUserSubmapSnapshot } from "@/lib/canvas/canvas-submap-snapshots";
+import { createUserSubmapPreset, listUserSubmapPresets, type UserSubmapPreset, type UserSubmapPresetSnapshot } from "@/services/api/submap-presets";
 import { useCanvasIdAllocator, useCanvasIdBatcher } from "./use-canvas-id-allocator";
 import { canvasEditLeases } from "@/services/canvas-edit-leases";
 import { CanvasNodeType, type CanvasConnection, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ContextMenuState, type Position } from "@/types/canvas";
@@ -81,6 +83,20 @@ export function useCanvasNodeOperations({
     const markerWriteSequenceRef = useRef(0);
     const internalMarkerWriteRef = useRef(false);
     const [hasCopiedNodes, setHasCopiedNodes] = useState(false);
+    const [userSubmapPresets, setUserSubmapPresets] = useState<UserSubmapPreset[]>([]);
+
+    // 用户模板是 per-user 画布资料，进入画布时拉取一次；失败只让下拉缺项，不阻断编辑。
+    useEffect(() => {
+        let alive = true;
+        listUserSubmapPresets()
+            .then((result) => {
+                if (alive) setUserSubmapPresets(result.presets || []);
+            })
+            .catch(() => undefined);
+        return () => {
+            alive = false;
+        };
+    }, []);
 
     const releaseCopiedNodesPastePriority = useCallback(() => {
         if (internalMarkerWriteRef.current) return;
@@ -805,18 +821,37 @@ export function useCanvasNodeOperations({
                 return;
             }
             const preset = getSubmapPreset(presetId);
-            if (presetId !== EMPTY_SUBMAP_PRESET_ID && !preset) {
+            const userPreset = presetId !== EMPTY_SUBMAP_PRESET_ID && !preset ? userSubmapPresets.find((item) => item.id === presetId) : undefined;
+            if (presetId !== EMPTY_SUBMAP_PRESET_ID && !preset && !userPreset) {
                 message.warning(translate("canvasPage.nodeOps.submapPresetUnknown"));
                 return;
             }
+            let snapshot: UserSubmapPresetSnapshot | undefined;
+            if (userPreset) {
+                try {
+                    snapshot = JSON.parse(userPreset.manifestJson) as UserSubmapPresetSnapshot;
+                    validateUserSubmapSnapshot(snapshot);
+                } catch (error) {
+                    const detail = error instanceof Error && error.message ? `：${error.message}` : "";
+                    message.error(translate("canvasPage.nodeOps.submapPresetInvalid") + detail);
+                    return;
+                }
+            }
+            const referenceFieldsVersion = useCanvasStore.getState().openProject(projectId)?.referenceFieldsVersion;
             const idBatch = beginIdBatch([...nodesRef.current.map((node) => node.id), ...connectionsRef.current.map((connection) => connection.id)], nodeId);
-            const result = replaceSubmapChildrenWithPreset({
+            const result = replaceSubmapChildren({
                 nodes: nodesRef.current,
                 connections: connectionsRef.current,
                 submapId: nodeId,
-                presetId,
-                referenceFieldsVersion: useCanvasStore.getState().openProject(projectId)?.referenceFieldsVersion,
+                workflowId: preset?.id || userPreset?.id,
+                workflowVersion: preset?.version || snapshot?.version,
+                referenceFieldsVersion,
                 allocateId: idBatch.allocate,
+                buildChildren: (target, allocateId) => {
+                    if (preset) return instantiateSubmapPreset({ submap: target, preset, allocateId }).children;
+                    if (!snapshot) return [];
+                    return instantiateSubmapSnapshot({ submap: target, snapshot, allocateId });
+                },
             });
             if (!result) return;
             idBatch.commit();
@@ -824,9 +859,45 @@ export function useCanvasNodeOperations({
             commitConnections(result.connections);
             selectNodes(new Set([nodeId]));
             setDialogNodeId(null);
-            message.success(presetId !== EMPTY_SUBMAP_PRESET_ID && preset ? translate("canvasPage.nodeOps.submapPresetApplied", { title: preset.title }) : translate("canvasPage.nodeOps.submapPresetCleared"));
+            const appliedTitle = preset?.title || userPreset?.name;
+            message.success(appliedTitle ? translate("canvasPage.nodeOps.submapPresetApplied", { title: appliedTitle }) : translate("canvasPage.nodeOps.submapPresetCleared"));
         },
-        [beginIdBatch, commitConnections, commitNodes, connectionsRef, message, nodesRef, projectId, selectNodes, setDialogNodeId],
+        [beginIdBatch, commitConnections, commitNodes, connectionsRef, message, nodesRef, projectId, selectNodes, setDialogNodeId, userSubmapPresets],
+    );
+
+    /** 当前 submap 子树导出为 per-user 模板；名称由调用方显式给出。 */
+    const saveSubmapPreset = useCallback(
+        async (nodeId: string, presetTitle: string) => {
+            const submap = nodesRef.current.find((node) => node.id === nodeId && isSubmapNode(node));
+            if (!submap) return false;
+            const title = presetTitle.trim();
+            if (!title) {
+                message.warning(translate("canvasPage.nodeOps.submapPresetNameRequired"));
+                return false;
+            }
+            let snapshot: UserSubmapPresetSnapshot;
+            try {
+                snapshot = exportSubmapSnapshot(submap, nodesRef.current, title);
+            } catch (error) {
+                const detail = error instanceof Error && error.message ? error.message : translate("canvasPage.nodeOps.submapPresetEmpty");
+                message.warning(detail);
+                return false;
+            }
+            try {
+                const created = await createUserSubmapPreset(JSON.stringify(snapshot));
+                setUserSubmapPresets((current) => [created.preset, ...current.filter((item) => item.id !== created.preset.id)]);
+                message.success(translate("canvasPage.nodeOps.submapPresetSaved", { name: created.preset.name }));
+                void listUserSubmapPresets()
+                    .then((result) => setUserSubmapPresets(result.presets || []))
+                    .catch(() => undefined);
+                return true;
+            } catch (error) {
+                const detail = error instanceof Error && error.message ? `：${error.message}` : "";
+                message.error(translate("canvasPage.nodeOps.submapPresetFailed") + detail);
+                return false;
+            }
+        },
+        [message, nodesRef],
     );
 
     const restoreCopiedNodesFromText = useCallback((value: string) => {
@@ -867,11 +938,13 @@ export function useCanvasNodeOperations({
         pasteCopiedNodes,
         restoreCopiedNodesFromText,
         releaseCopiedNodesPastePriority,
+        saveSubmapPreset,
         setPrimaryVersion,
         adoptNodeMediaVersion,
         deleteNodeMediaVersion,
         extractNodeMediaVersion,
         shouldPreferCopiedNodes,
         toggleNodeLocked,
+        userSubmapPresets,
     };
 }

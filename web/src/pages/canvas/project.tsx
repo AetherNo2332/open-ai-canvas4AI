@@ -54,6 +54,7 @@ import { createStyleProfileSnapshot, resolveStyleProfile, serializeStyleProfile 
 import { CanvasNodeToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-toolbar";
 import { CanvasMediaVersionModal } from "@/components/canvas/canvas-media-version-modal";
 import { CanvasVersionHistoryDrawer } from "@/components/canvas/canvas-version-history-drawer";
+import { CanvasSubmapSavePresetModal } from "@/components/canvas/canvas-submap-save-preset-modal";
 import { CanvasSubtitleDialog } from "@/components/canvas/canvas-subtitle-dialog";
 import { CanvasVideoFrameDialog } from "@/components/canvas/canvas-video-frame-dialog";
 import { CanvasVideoSegmentDialog } from "@/components/canvas/canvas-video-segment-dialog";
@@ -286,6 +287,7 @@ function CanvasViewportPage() {
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+    const [submapPresetSaveNodeId, setSubmapPresetSaveNodeId] = useState<string | null>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
     const [canvasAppearance, setCanvasAppearance] = useState<CanvasAppearance>(() => canvasAppearanceForTheme(colorTheme));
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>(DEFAULT_CANVAS_BACKGROUND_MODE);
@@ -1081,8 +1083,10 @@ function CanvasViewportPage() {
         pasteCopiedNodes,
         restoreCopiedNodesFromText,
         releaseCopiedNodesPastePriority,
+        saveSubmapPreset,
         shouldPreferCopiedNodes,
         toggleNodeLocked,
+        userSubmapPresets,
         setPrimaryVersion,
         adoptNodeMediaVersion,
         deleteNodeMediaVersion,
@@ -2038,6 +2042,21 @@ function CanvasViewportPage() {
         [closeConnectionCreateMenu, screenToCanvas, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds],
     );
 
+    const openSubmapPresetSave = useCallback((nodeId: string) => {
+        setContextMenu(null);
+        setSubmapPresetSaveNodeId(nodeId);
+    }, []);
+
+    const confirmSubmapPresetSave = useCallback(
+        (name: string) => {
+            if (!submapPresetSaveNodeId) return;
+            void saveSubmapPreset(submapPresetSaveNodeId, name).then((saved) => {
+                if (saved) setSubmapPresetSaveNodeId(null);
+            });
+        },
+        [saveSubmapPreset, submapPresetSaveNodeId],
+    );
+
     const handleNodeContextMenu = useCallback(
         (event: ReactMouseEvent, id: string) => {
             event.preventDefault();
@@ -2672,6 +2691,7 @@ function CanvasViewportPage() {
     const editCanvasPrevis = useCallback((node: CanvasNodeData) => openPrevisWorkbench(node.id), [openPrevisWorkbench]);
     const storyboardAssetNode = nodes.find((node) => node.id === storyboardAssetTarget?.nodeId);
     const storyboardAssetRow = storyboardAssetNode?.metadata?.storyboard?.rows.find((row) => row.id === storyboardAssetTarget?.rowId);
+    const submapPresetSaveNode = submapPresetSaveNodeId ? nodeById.get(submapPresetSaveNodeId) || null : null;
     const storyboardAssetBindings =
         storyboardAssetNode && storyboardAssetRow
             ? normalizeStoryboardAssetBindings([
@@ -3128,6 +3148,8 @@ function CanvasViewportPage() {
                                                     onToggleFrame={handleFrameToggle}
                                                     onToggleSubmap={toggleSubmapCollapsed}
                                                     onSubmapPresetChange={applySubmapPreset}
+                                                    userSubmapPresets={userSubmapPresets}
+                                                    onSubmapSavePreset={openSubmapPresetSave}
                                                     onFolderStyleChange={handleFolderStyleChange}
                                                     onFolderThemeChange={handleFolderThemeChange}
                                                     onNodeTitleChange={handleNodeTitleChange}
@@ -3484,6 +3506,7 @@ function CanvasViewportPage() {
                                 onSetAssetCategory={(nodeId, assetCategory) => handleConfigNodeChange(nodeId, { assetCategory })}
                                 onToggleFrame={(node) => handleFrameToggle(node.id)}
                                 onToggleSubmap={(node) => toggleSubmapCollapsed(node.id)}
+                                onSaveSubmapPresetAs={(node) => openSubmapPresetSave(node.id)}
                                 onSpreadSelection={spreadSelectedNodes}
                                 onCopySelection={copySelectedNodes}
                                 onDeleteSelection={() => deleteNodes(selectedNodeIds)}
@@ -3492,6 +3515,15 @@ function CanvasViewportPage() {
                                 onDownloadSelection={() => void downloadNodesMedia(nodesRef.current.filter((node) => selectedNodeIds.has(node.id)))}
                                 onAdoptToDrama={drama.active ? drama.openAdopt : undefined}
                                 onCreateDramaFromStoryboard={shortDramaEnabled ? createDramaFromStoryboard : undefined}
+                            />
+
+                            <CanvasSubmapSavePresetModal
+                                open={Boolean(submapPresetSaveNode)}
+                                initialTitle={Array.from(submapPresetSaveNode?.title || "镜头模板")
+                                    .slice(0, 80)
+                                    .join("")}
+                                onCancel={() => setSubmapPresetSaveNodeId(null)}
+                                onSave={confirmSubmapPresetSave}
                             />
 
                             <CanvasUploadModal open={uploadModalOpen} onClose={closeUploadModal} onUpload={handleUploadFiles} />

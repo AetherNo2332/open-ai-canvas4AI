@@ -115,6 +115,7 @@ type (
 	CanvasHistoryList                      = app.CanvasHistoryList
 	CanvasShareRequest                     = app.CanvasShareRequest
 	CanvasShareStatus                      = app.CanvasShareStatus
+	UserSubmapPresetRequest                = app.UserSubmapPresetRequest
 	CapabilityMatch                        = app.CapabilityMatch
 	CapabilitySpec                         = app.CapabilitySpec
 	ChannelModelCatalogDefaultParameters   = app.ChannelModelCatalogDefaultParameters
