@@ -6,6 +6,7 @@ import { addPrevisCameraMoves, buildPrevisCameraRecipeMoves, createPrevisCameraM
 import { PREVIS_PATH_EASINGS } from "@/lib/canvas/previs/previs-motion-path";
 import {
     describePrevisCameraMove,
+    PREVIS_CAMERA_FOLLOW_SHOT_SIZES,
     PREVIS_CAMERA_FOLLOW_SIDES,
     PREVIS_CAMERA_MAX_MOVES,
     PREVIS_CAMERA_RECIPES,
@@ -15,7 +16,7 @@ import {
     type PrevisCameraNumberParamKey,
     type PrevisCameraRecipe,
 } from "@/lib/canvas/previs/previs-camera-techniques";
-import type { PrevisCamera, PrevisCameraFollowSide, PrevisCameraMoveParams, PrevisCameraMoveSegment, PrevisCameraTechnique, PrevisPathEasing, PrevisScene } from "@/types/previs";
+import type { PrevisCamera, PrevisCameraFollowSide, PrevisCameraMoveParams, PrevisCameraMoveSegment, PrevisCameraTechnique, PrevisPathEasing, PrevisScene, PrevisShotSize } from "@/types/previs";
 
 /**
  * 摄影机「运镜」：view=technique 选单个手法（推拉摇移、环绕、希区柯克变焦、跟拍…）与主体，从播放头开始添加一段；
@@ -143,6 +144,19 @@ export function PrevisCameraMoveSection({
                                     aria-label="跟拍方位"
                                 />
                             </label>
+                        ) : spec.kind === "shotSize" ? (
+                            <label key={spec.key} className="pv-camera-move__param">
+                                <span>{spec.label}</span>
+                                <Select
+                                    size="small"
+                                    allowClear
+                                    value={params.shotSize}
+                                    placeholder="按方位默认距离"
+                                    onChange={(shotSize: PrevisShotSize | undefined) => setParams((current) => ({ ...current, shotSize }))}
+                                    options={PREVIS_CAMERA_FOLLOW_SHOT_SIZES.map((item) => ({ value: item.value, label: item.label }))}
+                                    aria-label="跟拍景别"
+                                />
+                            </label>
                         ) : (
                             <label key={spec.key} className="pv-camera-move__param">
                                 <span>
@@ -178,7 +192,17 @@ export function PrevisCameraMoveSection({
             )}
             <div className="pv-travel__row">
                 <span className="pv-travel__hint">{start.toFixed(1)}s 起，用时</span>
-                <InputNumber size="small" min={0.1} max={remaining} step={0.5} value={duration} placeholder={String(Number(Math.min(info.duration ?? remaining, remaining).toFixed(2)))} suffix="秒" onChange={(value) => setDuration(value)} aria-label="运镜时长" />
+                <InputNumber
+                    size="small"
+                    min={0.1}
+                    max={remaining}
+                    step={0.5}
+                    value={duration}
+                    placeholder={String(Number(Math.min(info.duration ?? remaining, remaining).toFixed(2)))}
+                    suffix="秒"
+                    onChange={(value) => setDuration(value)}
+                    aria-label="运镜时长"
+                />
                 <Button size="small" type="primary" icon={<Plus className="size-3.5" />} disabled={needsSubject} title={needsSubject ? "先选择跟随的主体" : `从 ${start.toFixed(1)}s 添加${info.label}`} onClick={add}>
                     添加
                 </Button>
@@ -197,7 +221,17 @@ function clearedCameraPath(): Pick<PrevisCamera, "keyframes" | "motionPath"> {
  * 摄影机已有的运镜：画出的运镜路径与每段运镜各占一行。点一行把播放头移到开始，垃圾桶删除，
  * 多于一项时可一键清空。摆场与动画模式都放在「运镜」分组最上方，删运镜不必翻到添加区下面。
  */
-export function PrevisCameraMotionList({ camera, scene, onChange, onSeek }: { camera: PrevisCamera; scene: Pick<PrevisScene, "objects">; onChange: (patch: Pick<Partial<PrevisCamera>, "moves" | "keyframes" | "motionPath">) => void; onSeek: (time: number) => void }) {
+export function PrevisCameraMotionList({
+    camera,
+    scene,
+    onChange,
+    onSeek,
+}: {
+    camera: PrevisCamera;
+    scene: Pick<PrevisScene, "objects">;
+    onChange: (patch: Pick<Partial<PrevisCamera>, "moves" | "keyframes" | "motionPath">) => void;
+    onSeek: (time: number) => void;
+}) {
     const moves = (camera.moves ?? []).toSorted((left, right) => left.start - right.start);
     const path = camera.motionPath;
     const count = moves.length + (path ? 1 : 0);
