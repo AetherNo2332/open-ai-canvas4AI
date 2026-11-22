@@ -950,8 +950,8 @@ export function SceneRow({ active, icon, label, onClick, onDelete }: { active?: 
             {onDelete ? (
                 <button
                     type="button"
-                    aria-label={`删除${label}`}
-                    title={`删除${label}`}
+                    aria-label={`删除 ${label}`}
+                    title={`删除 ${label}`}
                     className="grid size-6 shrink-0 place-items-center rounded opacity-60 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
                     onClick={(event) => {
                         event.stopPropagation();

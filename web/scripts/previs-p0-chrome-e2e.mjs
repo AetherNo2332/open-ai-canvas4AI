@@ -393,19 +393,40 @@ async function openUnifiedWorkbench(cdp, label) {
     if (!ready) throw new Error(`${label}: unified previs workbench did not enter layout context`);
 }
 
+/** 桌面端默认展开对象列表；窄屏或用户收起后，用产品工具条重新打开。 */
+async function ensureSceneObjectList(cdp, label) {
+    const visible = `(() => {
+        const panel = document.querySelector('.pv-panel--left');
+        if (!(panel instanceof HTMLElement)) return false;
+        const rect = panel.getBoundingClientRect();
+        const style = getComputedStyle(panel);
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0;
+    })()`;
+    if (await cdp.evaluate(visible)) return;
+    if (!(await cdp.click('[aria-label="场景对象列表"]'))) throw new Error(`${label}: 场景对象列表 button not clickable`);
+    if (!(await cdp.poll(visible, `${label} scene object list`, 10000))) throw new Error(`${label}: scene object list did not open`);
+}
+
 /** 使用当前产品流程从预设库加入一个真实道具，不依赖旧版快捷菜单。 */
 async function addProp(cdp, name, label) {
+    await ensureSceneObjectList(cdp, label);
     if (!(await cdp.click('[aria-label="添加到场景"]'))) throw new Error(`${label}: 添加到场景 button not clickable`);
     if (!(await cdp.poll(`!!document.querySelector('.previs-add-dialog [role="tab"]')`, `${label} add dialog`, 10000))) throw new Error(`${label}: add dialog did not open`);
     if (!(await cdp.clickText("道具", '[role="tab"]'))) throw new Error(`${label}: 道具 tab not clickable`);
+    if (!(await cdp.clickText("室内家具"))) throw new Error(`${label}: 室内家具 category not clickable`);
 
-    const card = `[...document.querySelectorAll('.previs-add-dialog__card')].find((button) => (button.textContent || '').includes(${JSON.stringify(name)}) && button.getClientRects().length > 0)`;
+    const card = `[...document.querySelectorAll('.previs-add-dialog__card')].find((button) => (button.querySelector('.previs-add-dialog__card-title')?.textContent || '').trim() === ${JSON.stringify(name)} && button.getClientRects().length > 0)`;
     if (!(await cdp.poll(`!!(${card})`, `${label} prop card`, 10000))) throw new Error(`${label}: ${name} prop card not visible`);
     if (!(await cdp.clickPoint(card, `${label}: prop ${name}`))) throw new Error(`${label}: ${name} prop card not clickable`);
 
     const confirmLabel = `加入「${name}」`;
     if (!(await cdp.clickText(confirmLabel, ".previs-add-dialog__footer button"))) throw new Error(`${label}: ${confirmLabel} button not clickable`);
-    if (!(await cdp.poll(`!!document.querySelector(${JSON.stringify(`[aria-label="删除 ${name}"]`)})`, `${label} prop row`, 20000))) throw new Error(`${label}: ${name} row did not appear`);
+    const rowReady = `(() => {
+        const rows = [...document.querySelectorAll('.pv-entity-row')];
+        const row = rows.find((item) => (item.querySelector('.pv-entity-row__name')?.textContent || '').trim() === ${JSON.stringify(name)});
+        return Boolean(row && row.querySelector(${JSON.stringify(`[aria-label="删除 ${name}"]`)}));
+    })()`;
+    if (!(await cdp.poll(rowReady, `${label} prop row`, 20000))) throw new Error(`${label}: ${name} row did not appear`);
 }
 
 async function smokeWorkbench(cdp, baseUrl) {
@@ -491,13 +512,23 @@ async function smokeWorkbench(cdp, baseUrl) {
     if (!(await cdp.click('button[data-mode="layout"]'))) throw new Error("A: 摆场模式按钮不可点击");
     assert(await cdp.poll(`document.querySelectorAll('.previs-sequencer').length === 0`, "layout hides sequencer", 10000), "A7b 回到摆场模式隐藏时间轴");
 
-    await addProp(cdp, "单人沙发", "A");
-    const propAppeared = await cdp.poll(`!!document.querySelector('[aria-label="删除 单人沙发"]')`, "prop row", 20000);
-    assert(propAppeared, "A10 added prop appears in object list");
+    await addProp(cdp, "沙发", "A");
+    const addedProp = await cdp.evaluate(`(() => {
+        const rows = [...document.querySelectorAll('.pv-entity-row')];
+        const row = rows.find((item) => (item.querySelector('.pv-entity-row__name')?.textContent || '').trim() === '沙发');
+        return {
+            count: rows.filter((item) => (item.querySelector('.pv-entity-row__name')?.textContent || '').trim() === '沙发').length,
+            selected: Boolean(row?.classList.contains('pv-entity-row--active')),
+            deleteLabel: row?.querySelector('.pv-entity-row__del')?.getAttribute('aria-label') ?? null,
+        };
+    })()`);
+    assert(addedProp.count === 1, "A10 added sofa appears exactly once in object list", JSON.stringify(addedProp));
+    assert(addedProp.selected, "A10a added sofa is the selected scene object", JSON.stringify(addedProp));
+    assert(addedProp.deleteLabel === "删除 沙发", "A10b selected object exposes its delete action label", JSON.stringify(addedProp));
 
     const undone = await cdp.click('[aria-label="撤销"]');
     if (!undone) throw new Error("A: 撤销 button not clickable");
-    const propGone = await cdp.poll(`!document.querySelector('[aria-label="删除 单人沙发"]')`, "prop removed by undo", 20000);
+    const propGone = await cdp.poll(`![...document.querySelectorAll('.pv-entity-row__name')].some((item) => (item.textContent || '').trim() === '沙发')`, "prop removed by undo", 20000);
     assert(propGone, "A11 Undo removes the added prop");
 
     // 场景结束前必须真实关闭：下一个场景要重新导航，不能靠忽略 beforeunload 绕过未保存态。
