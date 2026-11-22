@@ -13,6 +13,7 @@ import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { normalizeCanvasNodeTimestamps } from "@/lib/canvas/canvas-node-timestamps";
 import { canvasPersistentNodes } from "@/lib/canvas/canvas-persistent-nodes";
 import { projectReferenceConnections } from "@/lib/canvas/canvas-reference-fields";
+import { withCanvasEdgePresentation } from "@/lib/canvas/canvas-edge-presentation";
 import { hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import {
@@ -143,10 +144,13 @@ export function useCanvasProjectLifecycle({
                 createdAt: targetProject.createdAt,
                 updatedAt: targetProject.updatedAt,
             });
+            const projectedConnections = projectReferenceConnections(initialNodes, targetProject.connections, targetProject.referenceFieldsVersion).map((connection) =>
+                withCanvasEdgePresentation(connection, targetProject.edgePresentation),
+            );
             const snapshot: CanvasHistorySnapshot = {
                 nodes: initialNodes,
                 // Agent 写入的引用字段在打开时投影为可见连线；浏览器 operations 保存不会替编辑器补线。
-                connections: projectReferenceConnections(initialNodes, targetProject.connections, targetProject.referenceFieldsVersion),
+                connections: projectedConnections,
                 chatSessions: targetProject.chatSessions || [],
                 activeChatId: targetProject.activeChatId || null,
                 canvasAppearance: restoredAppearance,

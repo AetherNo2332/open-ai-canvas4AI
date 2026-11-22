@@ -61,6 +61,7 @@ operations 可携带 `editProofs: [{nodeId, sessionId, token}]`，服务端校�
 {
   "mutationId": "客户端生成的稳定请求 ID",
   "baseRevision": 12,
+  "clientCapabilities": ["canvas-reference-fields/v1"],
   "operations": [
     {
       "type": "patch_node",
@@ -75,6 +76,12 @@ operations 可携带 `editProofs: [{nodeId, sessionId, token}]`，服务端校�
 `mutationId` 是重试身份，不是版本号。请求超时、响应丢失、断网、刷新或后台自动重试时，必须使用相同的 `mutationId`、`baseRevision` 和原始 `operations`。修改原始 payload 后复用 ID 会返回 `canvas_mutation_id_reused`。
 
 `baseRevision` 是生成请求时的已确认版本，用于记录和诊断。真正的并发校验在操作本身：字段补丁使用 `before`，对象更新或删除使用 `expected`，顶层字段使用 `beforeValue`。不同字段可以合并；同一字段或同一对象的基线不匹配时返回冲突。
+
+`clientCapabilities` 描述当前客户端的文档能力，不计入 mutation 摘要。支持 `referenceFieldsVersion: 1` 的客户端发送 `canvas-reference-fields/v1`；打开字段引用文档后，缺少该能力的旧客户端再次提交操作会得到 `409 canvas_client_capability_required`，原文档和 revision 不变。字段引用文档的 `connections` 只是读取投影，写入必须更新节点引用字段；对其提交 `create_connection`、`update_connection` 或 `remove_connection` 会得到 `409 canvas_connection_operations_retired`。没有 `referenceFieldsVersion` 的旧版文档继续接受连接操作。
+
+`create_canvas` 只能在创建时写入 `referenceFieldsVersion: 1`，且请求必须携带上述能力；后续 `set_field` 不能修改该版本。`idCounters` 和 `edgePresentation` 是字段引用文档的持久簿记：前者保存顺序 ID 高水位，后者保存边锚点，避免从只读投影反复生成。旧客户端仍可创建没有格式标记的旧文档；服务端不会把这类文档静默升级。
+
+新客户端在创建时带入历史节点和连线时，服务端先按旧图规范化引用字段，再决定是否保留 `referenceFieldsVersion`。只有创建时显式要求版本 1 且旧图无法无冲突规范化时返回 `409 canvas_document_format_conflict`；其他无法规范化的导入按旧格式保存，画布和删改回执保持原子性。
 
 服务端对“已经是目标值”的写入做幂等收敛，不再因基线过期而整笔拒绝：
 
@@ -91,13 +98,13 @@ operations 可携带 `editProofs: [{nodeId, sessionId, token}]`，服务端校�
 
 ## 操作类型
 
-- `create_canvas`：只在画布不存在时创建，第一项必须是该操作。
+- `create_canvas`：只在画布不存在时创建，第一项必须是该操作；字段引用格式标记仅可在创建期写入。
 - `create_node`：显式新增节点，已有 ID 不会被覆盖。
 - `patch_node`：对已有节点按字段路径更新，节点缺失或字段基线不匹配都会失败。
 - `remove_node`：按完整对象基线删除节点，并删除关联连接。
-- `create_connection`：显式新增连接，两个端点必须存在。
-- `update_connection`：按连接对象基线更新，连接缺失或端点缺失都会失败。
-- `remove_connection`：按连接对象基线删除。
+- `create_connection`：显式新增连接，两个端点必须存在；仅用于未标记 `referenceFieldsVersion` 的旧版文档。
+- `update_connection`：按连接对象基线更新，连接缺失或端点缺失都会失败；字段引用文档拒绝此操作。
+- `remove_connection`：按连接对象基线删除；字段引用文档拒绝此操作。
 - `set_field`：更新白名单中的画布字段，并校验 `beforeValue`；字段不存在时用 JSON `null` 表示删除或缺失基线。
 
 只有 create 操作可以创建实体。删除后的迟到编辑、媒体回写或 Agent 更新得到 `canvas_object_missing`，不会隐式重建节点、连接或画布。画布删除后的迟到请求同样不会重建画布；只有新的 `create_canvas` 才能显式重新创建。

@@ -18,7 +18,7 @@ func TestOperationsPreserveReferenceFields(t *testing.T) {
 	if err := svc.repo.Create(&model.CanvasProject{ID: "canvas", UserID: "user", PayloadJSON: payload}); err != nil {
 		t.Fatal(err)
 	}
-	request := CanvasOperationsRequest{MutationID: "rename", Operations: []CanvasOperation{{Type: "patch_node", ID: "target",
+	request := CanvasOperationsRequest{MutationID: "rename", ClientCapabilities: []string{CanvasClientCapabilityReferenceFields}, Operations: []CanvasOperation{{Type: "patch_node", ID: "target",
 		Patch:  map[string]json.RawMessage{"title": json.RawMessage(`"新标题"`)},
 		Before: map[string]json.RawMessage{"title": json.RawMessage(`"旧标题"`)}}}}
 	if _, err := svc.ApplyUserCanvasOperations("user", "canvas", request); err != nil {
@@ -60,7 +60,7 @@ func TestCreateCanvasOperationAdoptsDeclarativeReferences(t *testing.T) {
 		t.Helper()
 		svc := newCanvasOperationTestService(t)
 		operations := append([]CanvasOperation{{Type: "create_canvas", ID: id, Patch: map[string]json.RawMessage{"title": json.RawMessage(`"新画布"`)}}}, extra...)
-		if _, err := svc.ApplyUserCanvasOperations("user", id, CanvasOperationsRequest{MutationID: "create-" + id, Operations: operations}); err != nil {
+		if _, err := svc.ApplyUserCanvasOperations("user", id, CanvasOperationsRequest{MutationID: "create-" + id, ClientCapabilities: []string{CanvasClientCapabilityReferenceFields}, Operations: operations}); err != nil {
 			t.Fatal(err)
 		}
 		project, err := svc.repo.CanvasProjectForUser("user", id)

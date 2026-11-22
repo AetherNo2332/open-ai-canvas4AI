@@ -530,15 +530,17 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。`inten
 
 画布写入统一使用 `PATCH /canvas-projects/:id/operations`。请求只携带对象级或字段级变更，不提交整批画布快照；`mutationId` 是一次写入的幂等身份，客户端在响应丢失、断网、刷新或后台重试时必须复用同一个 ID 和原始 `operations`。`baseRevision` 记录生成请求时的已确认基线版本，用于诊断和响应；字段/对象的 `before`、`expected`、`beforeValue` 是实际并发校验，允许不同字段合并，拒绝同字段覆盖和缺失对象更新。可选顶层字段缺失时必须显式编码为 JSON `null`；服务端仅对早期客户端省略这些可选字段的 `value` 或 `beforeValue` 按 `null` 兼容处理，并继续执行基线校验。
 
+支持字段引用文档的客户端必须发送 `clientCapabilities: ["canvas-reference-fields/v1"]`；该能力不进入 mutation 摘要。旧客户端写已标记 `referenceFieldsVersion: 1` 的文档返回 `409 canvas_client_capability_required`，字段引用文档拒绝连接写操作并返回 `409 canvas_connection_operations_retired`。字段引用文档的 `connections` 只是读取投影，真实关系由节点引用字段生成；`idCounters` 与 `edgePresentation` 分别持久化顺序 ID 高水位和边锚点。无格式标记的旧文档仍可使用连接操作。
+
 | 接口 | 行为 |
 | --- | --- |
 | `GET /canvas-projects/:id` | 返回当前完整画布及权威 `revision`；响应包含基于数据库版本的弱 `ETag` 和 `Cache-Control: private, no-cache`。请求可用 `If-None-Match` 做条件读取，版本未变化时返回 `304`。 |
-| `PATCH /canvas-projects/:id/operations` | 接收 `{ mutationId, baseRevision?, operations[] }`，返回当前项目摘要和 `mutationId`。`create_canvas` 建出的新画布带 `referenceFieldsVersion: 1`（声明式引用）。支持 `create_canvas`、`create_node`、`patch_node`、`remove_node`、`create_connection`、`update_connection`、`remove_connection`、`set_field`。 |
+| `PATCH /canvas-projects/:id/operations` | 接收 `{ mutationId, baseRevision?, clientCapabilities?, operations[] }`，返回当前项目摘要和 `mutationId`。带能力的新客户端可通过 `create_canvas.patch.referenceFieldsVersion: 1` 创建字段引用文档；旧客户端仍可创建旧格式。支持 `create_canvas`、`create_node`、`patch_node`、`remove_node`、`create_connection`、`update_connection`、`remove_connection`、`set_field`；连接操作仅适用于旧格式文档。 |
 | `GET /canvas-projects/:id/reference-migration` | 只读预览旧版画布的引用规范化：返回 `{ revision, required, conflicts[] }`，`required=false` 表示已使用声明式引用。 |
 | `POST /canvas-projects/:id/reference-migration` | 接收 `{ revision, choices }`（冲突作用域 → `fields`／`connections`），一次性写入声明式引用并保留历史快照；`reason` 为 `reference_migration_conflict`、`reference_migration_not_required`、`reference_migration_invalid`。 |
 | `DELETE /canvas-projects/:id` | 显式删除画布。删除后迟到的更新不会重新创建画布；只有新的 `create_canvas` 操作可以显式创建同 ID 画布。 |
 
-`create_node`、`create_connection` 和 `create_canvas` 是唯一的创建语义；更新、删除和连接操作都要求目标存在并通过对象基线校验。当前值已等于本次目标值的补丁、字段、连线更新和同内容的重复新增按已应用处理；整对象基线忽略节点 `updatedAt`，规则见 [画布 operations 同步协议](./canvas-operations-sync)。节点删除会同步移除关联连接，迟到媒体回写或编辑更新返回结构化冲突，不会复活已删除节点。请求摘要与确定性结果写入 `canvas_mutation_receipts`，画布内容、版本递增和 receipt 在同一数据库事务完成；同一 `mutationId` 和相同摘要返回原结果，摘要不同返回 `canvas_mutation_id_reused`。
+`create_node`、`create_connection` 和 `create_canvas` 是唯一的创建语义；更新、删除和连接操作都要求目标存在并通过对象基线校验。当前值已等于本次目标值的补丁、字段、连线更新和同内容的重复新增按已应用处理；整对象基线忽略节点 `updatedAt`，规则见 [画布 operations 同步协议](./canvas-operations-sync)。节点删除会同步移除关联连接，迟到媒体回写或编辑更新返回结构化冲突，不会复活已删除节点。请求摘要与确定性结果写入 `canvas_mutation_receipts`，画布内容、版本递增和 receipt 在同一数据库事务完成；同一 `mutationId` 和相同摘要返回原结果，摘要不同返回 `canvas_mutation_id_reused`。客户端能力变化不改变摘要，因此能力升级后的原请求仍可命中 receipt。
 
 前端先把未确认请求和请求基线写入账号隔离的本地 journal，再发 HTTP 请求。journal 保存已确认基线、原始请求、请求生成时的本地投影和创建时间；刷新后只重放原请求，随后把请求之后的新编辑按新的基线生成下一批 operations。服务端返回完整画布时，客户端只合并仍未确认的本地 mutations，视口仍属于本地视图状态，不进入远端 operations。
 

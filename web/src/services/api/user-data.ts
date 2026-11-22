@@ -3,6 +3,8 @@ import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { compactApiParams, http } from "@/services/api/request";
 import type { CanvasReferenceMigrationChoice, CanvasReferenceMigrationPreview } from "@/lib/canvas/canvas-reference-migration";
 
+export const CANVAS_CLIENT_CAPABILITY_REFERENCE_FIELDS = "canvas-reference-fields/v1";
+
 export type RemoteUserDataSummary = {
     id: string;
     folderId?: string;
@@ -50,13 +52,19 @@ export type CanvasOperation =
     | { type: "create_connection"; connection: CanvasProject["connections"][number] }
     | { type: "update_connection"; id: string; connection: CanvasProject["connections"][number]; expected: CanvasProject["connections"][number] }
     | { type: "remove_connection"; id: string; expected?: CanvasProject["connections"][number] }
-    | { type: "set_field"; field: "title" | "projectId" | "chatSessions" | "activeChatId" | "starterMode" | "appearance" | "backgroundMode" | "showImageInfo" | "previsScenes" | "timeline"; value: unknown; beforeValue: unknown };
+    | {
+          type: "set_field";
+          field: "title" | "projectId" | "chatSessions" | "activeChatId" | "starterMode" | "appearance" | "backgroundMode" | "showImageInfo" | "previsScenes" | "timeline" | "idCounters" | "edgePresentation";
+          value: unknown;
+          beforeValue: unknown;
+      };
 
 export type CanvasOperationsRequest = {
     mutationId: string;
     baseRevision?: number;
     operations: CanvasOperation[];
     editProofs?: CanvasEditProof[];
+    clientCapabilities?: string[];
 };
 
 export type CanvasEditProof = { nodeId: string; sessionId: string; token: string };
@@ -163,7 +171,11 @@ export function getRemoteCanvasProject(id: string, knownProject?: CanvasProject)
 }
 
 export function applyRemoteCanvasOperations(id: string, request: CanvasOperationsRequest) {
-    return http.patch<{ project: RemoteUserDataSummary & { revision: number }; mutationId: string }>(`/canvas-projects/${encodeURIComponent(id)}/operations`, request, { timeout: 15_000 });
+    return http.patch<{ project: RemoteUserDataSummary & { revision: number }; mutationId: string }>(
+        `/canvas-projects/${encodeURIComponent(id)}/operations`,
+        { ...request, clientCapabilities: Array.from(new Set([...(request.clientCapabilities || []), CANVAS_CLIENT_CAPABILITY_REFERENCE_FIELDS])) },
+        { timeout: 15_000 },
+    );
 }
 
 export function deleteRemoteCanvasProject(id: string) {

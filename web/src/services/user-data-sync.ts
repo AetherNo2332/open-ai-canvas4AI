@@ -4,6 +4,7 @@ import { deleteRemoteAssets, deleteRemoteCanvasProject, applyRemoteCanvasOperati
 import type { CanvasOperation, CanvasOperationsRequest } from "@/services/api/user-data";
 import { ApiError } from "@/services/api/request";
 import { canvasContentHash, sameCanvasContent } from "@/lib/canvas/canvas-content";
+import { canvasEdgePresentationFromConnections, type CanvasEdgePresentationMap } from "@/lib/canvas/canvas-edge-presentation";
 import { rebaseCanvasLocalEdits } from "@/lib/canvas/canvas-sync-rebase";
 import { fenceRejectedTaskTimestampMutation, repairLegacyTaskIdFence } from "@/lib/canvas/canvas-task-mutation";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -1214,10 +1215,21 @@ function canvasOperationValue(value: unknown) {
     return value === undefined ? null : value;
 }
 
-const CANVAS_OPERATION_FIELDS = ["title", "projectId", "chatSessions", "activeChatId", "starterMode", "appearance", "backgroundMode", "showImageInfo", "previsScenes", "timeline"] as const;
+const CANVAS_OPERATION_FIELDS = ["title", "projectId", "chatSessions", "activeChatId", "starterMode", "appearance", "backgroundMode", "showImageInfo", "previsScenes", "timeline", "idCounters", "edgePresentation"] as const;
+
+function canvasDocumentUsesReferenceFields(project: CanvasProject | undefined) {
+    return project?.referenceFieldsVersion === 1;
+}
+
+function canvasEdgePresentationForSave(project: CanvasProject | undefined): CanvasEdgePresentationMap | undefined {
+    return project?.edgePresentation ?? (project ? canvasEdgePresentationFromConnections(project.connections) : undefined);
+}
 
 export function buildCanvasOperations(base: CanvasProject | undefined, next: CanvasProject): CanvasOperation[] {
     const operations: CanvasOperation[] = [];
+    const nextEdgePresentation = canvasEdgePresentationForSave(next);
+    const baseEdgePresentation = canvasEdgePresentationForSave(base);
+    const persistsConnections = !canvasDocumentUsesReferenceFields(base) && !canvasDocumentUsesReferenceFields(next);
     if (!base) {
         operations.push({
             type: "create_canvas",
@@ -1233,6 +1245,9 @@ export function buildCanvasOperations(base: CanvasProject | undefined, next: Can
                 showImageInfo: next.showImageInfo,
                 previsScenes: next.previsScenes,
                 timeline: next.timeline,
+                referenceFieldsVersion: next.referenceFieldsVersion,
+                idCounters: next.idCounters,
+                edgePresentation: nextEdgePresentation,
             },
         });
     }
@@ -1257,18 +1272,20 @@ export function buildCanvasOperations(base: CanvasProject | undefined, next: Can
     for (const node of base?.nodes || []) {
         if (!nextNodes.has(node.id)) operations.push({ type: "remove_node", id: node.id, expected: node });
     }
-    const baseConnections = new Map((base?.connections || []).map((connection) => [connection.id, connection]));
-    const nextConnections = new Map(next.connections.map((connection) => [connection.id, connection]));
-    for (const connection of next.connections) {
-        const previous = baseConnections.get(connection.id);
-        if (previous && !canvasOperationValueEqual(previous, connection)) {
-            operations.push({ type: "update_connection", id: connection.id, connection, expected: previous });
-        } else if (!previous) {
-            operations.push({ type: "create_connection", connection });
+    if (persistsConnections) {
+        const baseConnections = new Map((base?.connections || []).map((connection) => [connection.id, connection]));
+        const nextConnections = new Map(next.connections.map((connection) => [connection.id, connection]));
+        for (const connection of next.connections) {
+            const previous = baseConnections.get(connection.id);
+            if (previous && !canvasOperationValueEqual(previous, connection)) {
+                operations.push({ type: "update_connection", id: connection.id, connection, expected: previous });
+            } else if (!previous) {
+                operations.push({ type: "create_connection", connection });
+            }
         }
-    }
-    for (const connection of base?.connections || []) {
-        if (!nextConnections.has(connection.id)) operations.push({ type: "remove_connection", id: connection.id, expected: connection });
+        for (const connection of base?.connections || []) {
+            if (!nextConnections.has(connection.id)) operations.push({ type: "remove_connection", id: connection.id, expected: connection });
+        }
     }
     // 新画布的字段已由 create_canvas.patch 写入；再追加 set_field(beforeValue=null)
     // 会在服务端看到刚创建的字段而判定冲突，所以只有已有基线时才生成字段操作。
@@ -1277,8 +1294,8 @@ export function buildCanvasOperations(base: CanvasProject | undefined, next: Can
         // 服务端用 "" 或缺省表示空值，本地可能是 undefined、null 或空数组；语义相同时不生成写操作。
         if ((field === "projectId" || field === "activeChatId" || field === "starterMode") && !base[field] && !next[field]) continue;
         if ((field === "previsScenes" || field === "chatSessions") && (!base[field] || base[field]?.length === 0) && (!next[field] || next[field]?.length === 0)) continue;
-        const previousValue = canvasOperationValue(base[field]);
-        const nextValue = canvasOperationValue(next[field]);
+        const previousValue = canvasOperationValue(field === "edgePresentation" ? baseEdgePresentation : base[field]);
+        const nextValue = canvasOperationValue(field === "edgePresentation" ? nextEdgePresentation : next[field]);
         if (!canvasOperationValueEqual(previousValue, nextValue)) {
             operations.push({ type: "set_field", field, value: nextValue, beforeValue: previousValue });
         }

@@ -13,17 +13,18 @@ import (
 	"yingce/backend/internal/model"
 )
 
-var canvasOperationFields = []string{"title", "projectId", "chatSessions", "activeChatId", "starterMode", "appearance", "backgroundMode", "showImageInfo", "previsScenes", "timeline"}
-var canvasOptionalOperationFields = map[string]struct{}{"projectId": {}, "starterMode": {}, "appearance": {}, "timeline": {}}
+var canvasOperationFields = []string{"title", "projectId", "chatSessions", "activeChatId", "starterMode", "appearance", "backgroundMode", "showImageInfo", "previsScenes", "timeline", "idCounters", "edgePresentation"}
+var canvasOptionalOperationFields = map[string]struct{}{"projectId": {}, "starterMode": {}, "appearance": {}, "timeline": {}, "edgePresentation": {}}
 
 // CanvasOperationsRequest is the durable write envelope shared by the editor,
 // Agent and media callbacks. MutationID is the retry identity: a lost response
 // must be replayed with the same ID and payload.
 type CanvasOperationsRequest struct {
-	MutationID   string                  `json:"mutationId"`
-	BaseRevision *int64                  `json:"baseRevision,omitempty"`
-	Operations   []CanvasOperation       `json:"operations"`
-	EditProofs   []model.CanvasEditProof `json:"editProofs,omitempty"`
+	MutationID         string                  `json:"mutationId"`
+	BaseRevision       *int64                  `json:"baseRevision,omitempty"`
+	Operations         []CanvasOperation       `json:"operations"`
+	EditProofs         []model.CanvasEditProof `json:"editProofs,omitempty"`
+	ClientCapabilities []string                `json:"clientCapabilities,omitempty"`
 }
 
 var (
@@ -47,6 +48,9 @@ type CanvasOperation struct {
 func CanvasOperationsDigest(req CanvasOperationsRequest) string {
 	// A committed mutation remains replayable after its transient lease expires.
 	req.EditProofs = nil
+	// Client capabilities describe the caller, not the mutation payload. A retry
+	// after a client upgrade must keep the same receipt identity.
+	req.ClientCapabilities = nil
 	raw, _ := json.Marshal(req)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
@@ -77,22 +81,7 @@ func DiffCanvasDocuments(before, after map[string]any) []CanvasOperation {
 			operations = append(operations, CanvasOperation{Type: "remove_node", ID: id, Expected: jsonRawValue(node)})
 		}
 	}
-	beforeEdges := indexedCanvasObjects(before["connections"])
-	afterEdges := indexedCanvasObjects(after["connections"])
-	for _, edge := range orderedCanvasObjects(after["connections"]) {
-		id := canvasString(edge["id"])
-		if previous, exists := beforeEdges[id]; !exists {
-			operations = append(operations, CanvasOperation{Type: "create_connection", Connection: jsonRawValue(edge)})
-		} else if !jsonEqual(previous, edge) {
-			operations = append(operations, CanvasOperation{Type: "update_connection", ID: id, Connection: jsonRawValue(edge), Expected: jsonRawValue(previous)})
-		}
-	}
-	for _, edge := range orderedCanvasObjects(before["connections"]) {
-		id := canvasString(edge["id"])
-		if _, exists := afterEdges[id]; !exists {
-			operations = append(operations, CanvasOperation{Type: "remove_connection", ID: id, Expected: jsonRawValue(edge)})
-		}
-	}
+	operations = append(operations, diffCanvasConnectionsIfLegacy(before, after)...)
 	for _, field := range canvasOperationFields {
 		if !jsonEqual(before[field], after[field]) {
 			operations = append(operations, CanvasOperation{Type: "set_field", Field: field, Value: jsonRawValue(after[field]), BeforeValue: jsonRawValue(before[field])})
@@ -575,4 +564,8 @@ func allowedCanvasOperationField(field string) bool {
 		}
 	}
 	return false
+}
+
+func allowedCreateCanvasOperationField(field string) bool {
+	return field == "referenceFieldsVersion" || allowedCanvasOperationField(field)
 }

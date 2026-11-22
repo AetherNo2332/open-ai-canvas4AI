@@ -12,6 +12,7 @@ import type { CanvasStarterMode } from "@/lib/canvas/canvas-starter";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { PrevisScene } from "@/types/previs";
 import type { TimelineProject } from "@/types/timeline";
+import type { CanvasEdgePresentationMap } from "@/lib/canvas/canvas-edge-presentation";
 import { useSyncProgressStore, type SyncProjectProgress } from "@/stores/use-sync-progress-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
@@ -22,6 +23,10 @@ export type CanvasProject = {
     remoteContentHash?: string;
     /** 声明式引用字段版本（后端 canvas/references）；为 1 时连线由节点引用字段投影。 */
     referenceFieldsVersion?: number;
+    /** 字段引用文档持久化的边锚点；connections 只是运行时投影缓存。 */
+    edgePresentation?: CanvasEdgePresentationMap;
+    /** 服务端顺序 ID 高水位，永不因删除回退。 */
+    idCounters?: Record<string, number>;
     projectId?: string;
     title: string;
     createdAt: string;
