@@ -572,6 +572,12 @@ func TestApplyCanvasOperationsRequiresObjectPreconditions(t *testing.T) {
 
 func newCanvasOperationTestService(t *testing.T) *Service {
 	t.Helper()
+	svc, _ := newCanvasOperationTestServiceWithDB(t)
+	return svc
+}
+
+func newCanvasOperationTestServiceWithDB(t *testing.T) (*Service, *gorm.DB) {
+	t.Helper()
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "canvas-operations.db")), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -581,7 +587,7 @@ func newCanvasOperationTestService(t *testing.T) *Service {
 	}
 	sqlDB, _ := db.DB()
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	return New(repository.New(db), nil)
+	return New(repository.New(db), nil), db
 }
 
 // 另一端（或服务端回写）已经写成同一目标值时，旧基线的补丁按幂等收敛通过；

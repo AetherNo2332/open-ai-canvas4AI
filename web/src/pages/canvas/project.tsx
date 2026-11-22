@@ -29,7 +29,7 @@ import { filterCanvasDisplayConnections, persistCanvasHideNodeConnections, readC
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
 import { flushAssetStorePersistence, useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
-import { flushCanvasStorePersistence } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useCanvasThemeStore, useCanvasThemeScope } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -53,6 +53,7 @@ import { resolveProjectCanvasStyle } from "@/components/canvas/canvas-style-pick
 import { createStyleProfileSnapshot, resolveStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { CanvasNodeToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-toolbar";
 import { CanvasMediaVersionModal } from "@/components/canvas/canvas-media-version-modal";
+import { CanvasVersionHistoryDrawer } from "@/components/canvas/canvas-version-history-drawer";
 import { CanvasSubtitleDialog } from "@/components/canvas/canvas-subtitle-dialog";
 import { CanvasVideoFrameDialog } from "@/components/canvas/canvas-video-frame-dialog";
 import { CanvasVideoSegmentDialog } from "@/components/canvas/canvas-video-segment-dialog";
@@ -333,6 +334,7 @@ function CanvasViewportPage() {
     const [batchScrollById, setBatchScrollById] = useState<Record<string, BatchScroll>>({});
     const [previsNodeId, setPrevisNodeId] = useState<string | null>(null);
     const [libTVImportOpen, setLibTVImportOpen] = useState(false);
+    const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
     const [titleEditing, setTitleEditing] = useState(false);
     const [titleDraft, setTitleDraft] = useState("");
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
@@ -401,6 +403,7 @@ function CanvasViewportPage() {
         },
         [backgroundMode, message],
     );
+    const referenceFieldsVersion = useCanvasStore((state) => state.projects.find((project) => project.id === projectId)?.referenceFieldsVersion);
 
     const { getHistoryCleanupContext, historyPausedRef, historyState, redoCanvas, resetHistory, undoCanvas } = useCanvasHistory({
         projectLoaded,
@@ -411,6 +414,7 @@ function CanvasViewportPage() {
         canvasAppearance,
         backgroundMode,
         showImageInfo,
+        referenceFieldsVersion,
         setNodes,
         setConnections,
         setChatSessions,
@@ -430,37 +434,51 @@ function CanvasViewportPage() {
         [cleanupAssetImages, getHistoryCleanupContext],
     );
 
-    const { loadError, retryLoad, addedSkills, agentFocus, clearCanvasFiles, createAndOpenProject, currentProject, deleteCurrentProject, renameCurrentProject, saveCanvasProject, persistLocalEdits, prepareCanvasForServerAction, updateProject } =
-        useCanvasProjectLifecycle({
-            projectId,
-            projectLoaded,
-            nodes,
-            connections,
-            chatSessions,
-            activeChatId,
-            canvasAppearance,
-            backgroundMode,
-            showImageInfo,
-            viewport,
-            nodesRef,
-            connectionsRef,
-            chatSessionsRef,
-            activeChatIdRef,
-            viewportRef,
-            historyPausedRef,
-            setNodes,
-            setConnections,
-            setChatSessions,
-            setActiveChatId,
-            setCanvasAppearance,
-            setBackgroundMode,
-            setShowImageInfo,
-            setViewport,
-            setProjectLoaded,
-            resetHistory,
-            cleanupAssetImages,
-            cleanupCanvasFiles,
-        });
+    const {
+        loadError,
+        retryLoad,
+        addedSkills,
+        agentFocus,
+        clearCanvasFiles,
+        createAndOpenProject,
+        currentProject,
+        deleteCurrentProject,
+        renameCurrentProject,
+        refreshCanvasAfterHistoryRestore,
+        saveCanvasProject,
+        persistLocalEdits,
+        prepareCanvasForServerAction,
+        updateProject,
+    } = useCanvasProjectLifecycle({
+        projectId,
+        projectLoaded,
+        nodes,
+        connections,
+        chatSessions,
+        activeChatId,
+        canvasAppearance,
+        backgroundMode,
+        showImageInfo,
+        viewport,
+        nodesRef,
+        connectionsRef,
+        chatSessionsRef,
+        activeChatIdRef,
+        viewportRef,
+        historyPausedRef,
+        setNodes,
+        setConnections,
+        setChatSessions,
+        setActiveChatId,
+        setCanvasAppearance,
+        setBackgroundMode,
+        setShowImageInfo,
+        setViewport,
+        setProjectLoaded,
+        resetHistory,
+        cleanupAssetImages,
+        cleanupCanvasFiles,
+    });
 
     const openAgent = useCallback(() => {
         openAssistant();
@@ -2946,6 +2964,7 @@ function CanvasViewportPage() {
                                     onUndo={undoCanvas}
                                     onRedo={redoCanvas}
                                     onShare={() => setShareModalOpen(true)}
+                                    onOpenVersionHistory={() => setVersionHistoryOpen(true)}
                                     shortcutRequestNonce={shortcutRequestNonce}
                                     syncIcon={<CanvasSyncStatus projectId={projectId} />}
                                     onOpenSearch={() => setNodeSearchOpen(true)}
@@ -3003,6 +3022,14 @@ function CanvasViewportPage() {
 
                             {batchReferencePickerModal}
                             <CanvasShareModal projectId={projectId} open={shareModalOpen} onClose={() => setShareModalOpen(false)} beforeCreate={saveCanvasProject} />
+                            <CanvasVersionHistoryDrawer
+                                projectId={projectId}
+                                open={versionHistoryOpen}
+                                currentRevision={currentProject?.revision}
+                                onClose={() => setVersionHistoryOpen(false)}
+                                onBeforeRestore={prepareCanvasForServerAction}
+                                onRestored={refreshCanvasAfterHistoryRestore}
+                            />
                             <LibTVImportDialog open={libTVImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setLibTVImportOpen(false)} onApply={applyImportedCanvas} />
                             <TapNowImportDialog open={tapNowImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setTapNowImportOpen(false)} onApply={applyImportedCanvas} />
 

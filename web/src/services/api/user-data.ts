@@ -71,9 +71,37 @@ export type CanvasEditProof = { nodeId: string; sessionId: string; token: string
 export type CanvasEditLease = { nodeId: string; sessionId: string; expiresAt: string };
 export type CanvasAgentActivity = { runId: string; status: string; cleanupPending: boolean };
 export type CanvasSyncStatus = { revision: number; serverTime: string; leases: CanvasEditLease[]; agent?: CanvasAgentActivity | null };
+export type RemoteCanvasHistorySnapshot = {
+    id: string;
+    canvasId: string;
+    revision: number;
+    title: string;
+    nodeCount: number;
+    connectionCount: number;
+    payloadBytes: number;
+    reason: string;
+    contentUpdatedAt: string;
+    createdAt: string;
+};
+export type RemoteCanvasHistory = {
+    snapshots: RemoteCanvasHistorySnapshot[];
+    currentRevision: number;
+};
 
 export function getCanvasSyncStatus(id: string, signal?: AbortSignal) {
     return http.get<CanvasSyncStatus>(`/canvas-projects/${encodeURIComponent(id)}/sync-status`, { signal, timeout: 8000 });
+}
+
+export function listRemoteCanvasHistory(id: string, signal?: AbortSignal) {
+    return http.get<RemoteCanvasHistory>(`/canvas-projects/${encodeURIComponent(id)}/history`, { signal, timeout: 15_000 });
+}
+
+export function getRemoteCanvasHistorySnapshot(id: string, snapshotId: string, signal?: AbortSignal) {
+    return http.get<{ snapshot: RemoteCanvasHistorySnapshot; project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}/history/${encodeURIComponent(snapshotId)}`, { signal, timeout: 15_000 });
+}
+
+export function restoreRemoteCanvasHistory(id: string, snapshotId: string, revision: number) {
+    return http.post<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}/history/${encodeURIComponent(snapshotId)}/restore`, { revision }, { timeout: 15_000 });
 }
 
 export function changeCanvasEditLease(id: string, proof: CanvasEditProof, action: "acquire" | "renew" | "release") {

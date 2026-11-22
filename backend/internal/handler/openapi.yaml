@@ -1525,6 +1525,84 @@ paths:
           description: 未登录
         "404":
           description: 画布不存在或不属于当前用户
+  /canvas-projects/{id}/history:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 读取当前用户画布的最近版本历史
+      description: 需要登录并拥有画布。只返回最近 20 个版本摘要和当前 revision，不返回快照正文；自动留档按内容变化和五分钟节流执行，恢复、迁移和资源修复前会强制保留快照。
+      responses:
+        "200":
+          description: 信封 data 为 { snapshots, currentRevision }；每项含 id、canvasId、revision、title、nodeCount、connectionCount、payloadBytes、reason、contentUpdatedAt、createdAt
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+  /canvas-projects/{id}/history/{snapshotId}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: snapshotId
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 读取指定画布历史版本的完整内容
+      description: 需要登录并拥有画布，快照必须属于该画布。响应同时返回版本摘要和当时的完整画布文档，供恢复前预览；Cache-Control 为 private, no-store。
+      responses:
+        "200":
+          description: 信封 data 为 { snapshot, project }，project 保留该版本的节点、引用字段和连线投影数据
+        "401":
+          description: 未登录
+        "404":
+          description: 画布或版本不存在、已过期或不属于当前用户
+  /canvas-projects/{id}/history/{snapshotId}/restore:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: snapshotId
+        required: true
+        schema: { type: string }
+    post:
+      tags: [canvas]
+      summary: 恢复指定画布历史版本
+      description: 需要登录并拥有画布。请求必须携带当前 revision 做 CAS；恢复前强制保存当前内容为 reason=before_restore 的快照，再写入历史版本并递增 revision。其他窗口通过画布变更通知刷新。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision:
+                  type: integer
+                  minimum: 0
+      responses:
+        "200":
+          description: 信封 data.project 为恢复后的完整画布及新 revision
+        "400":
+          description: 请求格式错误
+        "401":
+          description: 未登录
+        "404":
+          description: 画布或版本不存在、已过期或不属于当前用户
+        "409":
+          description: 当前画布 revision 已变化，需重新读取历史与画布版本
+        "428":
+          description: 缺少 revision，需刷新画布版本后重试
+        "429":
+          description: 请求超过画布写入频率限制
   /canvas-projects/{id}/sync-status:
     parameters:
       - in: path

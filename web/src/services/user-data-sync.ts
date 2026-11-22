@@ -428,16 +428,16 @@ export async function loadCanvasProjectForEditing(id: string, options: { onLoad?
 }
 
 // Project remote changes into the live editor while retaining authored edits.
-const agentCanvasListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined, source?: "sync" | "agent") => void>();
+const agentCanvasListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined, source?: "sync" | "agent" | "restore") => void>();
 
-export function subscribeAgentCanvasRefresh(listener: (project: CanvasProject, previous: CanvasProject | undefined, source?: "sync" | "agent") => void) {
+export function subscribeAgentCanvasRefresh(listener: (project: CanvasProject, previous: CanvasProject | undefined, source?: "sync" | "agent" | "restore") => void) {
     agentCanvasListeners.add(listener);
     return () => {
         agentCanvasListeners.delete(listener);
     };
 }
 
-export async function refreshCanvasAfterAgent(id: string, source: "sync" | "agent" = "agent") {
+export async function refreshCanvasAfterAgent(id: string, source: "sync" | "agent" | "restore" = "agent") {
     return refreshRemoteCanvas(id, source);
 }
 
@@ -452,7 +452,7 @@ export async function applyAgentCanvasChange(current: CanvasProject, event: { re
     return projected || useCanvasStore.getState().openProject(current.id) || current;
 }
 
-async function refreshRemoteCanvas(id: string, source: "sync" | "agent", minRevision?: number) {
+async function refreshRemoteCanvas(id: string, source: "sync" | "agent" | "restore", minRevision?: number) {
     const epoch = sessionEpoch;
     return withRemoteUserDataSyncExclusive(async () => {
         if (!activeRemoteUserId) throw new Error("请先登录再刷新 Agent 画布结果");

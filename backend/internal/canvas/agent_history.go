@@ -13,6 +13,10 @@ func CaptureDocumentHistory(repo *repository.Repository, before *model.CanvasPro
 	if err != nil {
 		return err
 	}
+	resourceIDs, err = retainReadyCanvasHistoryResources(repo, after.UserID, resourceIDs)
+	if err != nil {
+		return err
+	}
 	current := map[string]struct{}{}
 	if err := assets.CollectOwnedDocumentReferences(after.PayloadJSON, current); err != nil {
 		return err

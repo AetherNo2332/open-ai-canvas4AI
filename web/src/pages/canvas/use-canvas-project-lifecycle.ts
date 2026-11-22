@@ -144,9 +144,7 @@ export function useCanvasProjectLifecycle({
                 createdAt: targetProject.createdAt,
                 updatedAt: targetProject.updatedAt,
             });
-            const projectedConnections = projectReferenceConnections(initialNodes, targetProject.connections, targetProject.referenceFieldsVersion).map((connection) =>
-                withCanvasEdgePresentation(connection, targetProject.edgePresentation),
-            );
+            const projectedConnections = projectReferenceConnections(initialNodes, targetProject.connections, targetProject.referenceFieldsVersion).map((connection) => withCanvasEdgePresentation(connection, targetProject.edgePresentation));
             const snapshot: CanvasHistorySnapshot = {
                 nodes: initialNodes,
                 // Agent 写入的引用字段在打开时投影为可见连线；浏览器 operations 保存不会替编辑器补线。
@@ -156,6 +154,7 @@ export function useCanvasProjectLifecycle({
                 canvasAppearance: restoredAppearance,
                 backgroundMode: targetProject.backgroundMode || DEFAULT_CANVAS_BACKGROUND_MODE,
                 showImageInfo: targetProject.showImageInfo || false,
+                referenceFieldsVersion: targetProject.referenceFieldsVersion,
             };
             observedContentRef.current = snapshot;
             chatSessionsRef.current = snapshot.chatSessions;
@@ -245,7 +244,7 @@ export function useCanvasProjectLifecycle({
         () =>
             subscribeAgentCanvasRefresh((project, previous, source) => {
                 if (!projectLoaded || project.id !== projectId) return;
-                if (source === "sync") {
+                if (source === "sync" || source === "restore") {
                     const fallbackTheme = useCanvasThemeStore.getState().theme;
                     const editor = {
                         ...(previous || project),
@@ -267,6 +266,7 @@ export function useCanvasProjectLifecycle({
                         canvasAppearance: appearance,
                         backgroundMode: merged.backgroundMode || DEFAULT_CANVAS_BACKGROUND_MODE,
                         showImageInfo: merged.showImageInfo || false,
+                        referenceFieldsVersion: merged.referenceFieldsVersion,
                     };
                     observedContentRef.current = {
                         ...snapshot,
@@ -289,6 +289,7 @@ export function useCanvasProjectLifecycle({
                     setCanvasAppearance(snapshot.canvasAppearance);
                     setBackgroundMode(snapshot.backgroundMode);
                     setShowImageInfo(snapshot.showImageInfo);
+                    if (source === "restore") resetHistory(snapshot);
                     setLoadError("");
                     return;
                 }
@@ -332,6 +333,7 @@ export function useCanvasProjectLifecycle({
             setCanvasAppearance,
             setBackgroundMode,
             setShowImageInfo,
+            resetHistory,
         ],
     );
 
@@ -509,6 +511,10 @@ export function useCanvasProjectLifecycle({
         await prepareCanvasForCloudAction(projectId);
     }, [persistLocalEdits, projectId]);
 
+    const refreshCanvasAfterHistoryRestore = useCallback(async () => {
+        await refreshCanvasAfterAgent(projectId, "restore");
+    }, [projectId]);
+
     const clearCanvasFiles = useCallback(() => {
         cleanupCanvasFiles({ projectId, nodes: [], chatSessions: [] });
     }, [cleanupCanvasFiles, projectId]);
@@ -525,6 +531,7 @@ export function useCanvasProjectLifecycle({
         renameCurrentProject,
         saveCanvasProject,
         prepareCanvasForServerAction,
+        refreshCanvasAfterHistoryRestore,
         persistLocalEdits,
         updateProject,
     };
@@ -538,7 +545,8 @@ function sameCanvasHistorySnapshot(left: CanvasHistorySnapshot, right: CanvasHis
         left.activeChatId === right.activeChatId &&
         left.canvasAppearance === right.canvasAppearance &&
         left.backgroundMode === right.backgroundMode &&
-        left.showImageInfo === right.showImageInfo
+        left.showImageInfo === right.showImageInfo &&
+        left.referenceFieldsVersion === right.referenceFieldsVersion
     );
 }
 

@@ -145,6 +145,11 @@ func (s *Service) applyCanvasOperationsInTransaction(tx *repository.Repository, 
 	if err := tx.UpsertCanvasProject(&project); err != nil {
 		return err
 	}
+	if existing != nil {
+		if err := CaptureDocumentHistory(tx, existing, project, "automatic"); err != nil {
+			return err
+		}
+	}
 	*result = UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision,
 		SaveAudit: &CanvasSaveAudit{NodesBefore: canvasNodeCount(existingPayload), NodesAfter: canvasNodeCount(project.PayloadJSON)}}
 	encoded, err := json.Marshal(canvasMutationReceiptResult{Summary: *result})
