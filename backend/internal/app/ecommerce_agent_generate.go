@@ -7,7 +7,6 @@ import (
 	"gorm.io/gorm"
 	"strings"
 	"time"
-	"unicode"
 	"yingce/backend/internal/ecommerceagent"
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
@@ -29,9 +28,9 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 	if err != nil {
 		return nil, err
 	}
-	selected, err := selectEcommerceRecommendation(analysis, req.SelectedRecommendationID)
-	if err != nil {
-		return nil, err
+	selected, found := ecommerceagent.SelectRecommendation(analysis.Recommendations, req.SelectedRecommendationID)
+	if !found {
+		return nil, ecommerceErr("INVALID_INPUT", "设计方向已失效，请重新选择")
 	}
 	pages := ecommerceagent.Plan(req.ImageCount, req.GenerateType, p, selected, analysis.Brief)
 	ecommerceagent.ApplyTextPreference(pages, req.NeedText, req.Language)
@@ -78,7 +77,7 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 	}
 	copyResult := map[string]any{"oneLinePitch": analysis.Brief.Category, "sellingPoints": []any{}, "complianceNotes": []string{"仅使用已确认的商品事实；生成文案需人工核对"}}
 	s.improveEcommerceGenerationPlan(workCtx, cfg, runID, p, req, analysis, copyResult, pages)
-	answer := ecommerceRecommendationMarkup(analysis.Recommendations)
+	answer := ecommerceagent.RecommendationMarkup(analysis.Recommendations)
 	if err = emit(ecommerceagent.Event{Event: "node_finished", Data: map[string]any{"step": map[string]string{"name": "plan_done", "label": "分镜完成"}, "outputs": map[string]any{"answer": answer, "options": analysis.Recommendations}}}); err != nil {
 		return nil, err
 	}
@@ -107,28 +106,23 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 	return view, err
 }
 
+// authorizeEcommerceGenerationProject rejects a foreign or missing project
+// before the analysis call. The reservation transaction repeats the ownership
+// check before associating the run.
+func (s *Service) authorizeEcommerceGenerationProject(userID, projectID string) error {
+	if projectID == "" {
+		return nil
+	}
+	_, err := s.repo.EcommerceProject(userID, projectID)
+	return err
+}
+
 func (s *Service) ecommerceGenerationReference(userID string, cfg ecommerceProviderConfig, req ecommerceagent.Request) ([]byte, string, error) {
 	if cfg.Mode != "live" {
 		return nil, "", nil
 	}
 	_, reference, mime, err := s.ecommerceReference(userID, req.FileInfoList[0].URL)
 	return reference, mime, err
-}
-
-func safeEcommerceImagePrompt(candidate string, req ecommerceagent.Request) bool {
-	if len(candidate) < 40 || len(candidate) > 4000 || !strings.Contains(candidate, "same product as reference image, identical shape/color/logo placement") {
-		return false
-	}
-	lower := strings.ToLower(candidate)
-	for _, forbidden := range []string{"best seller", "no.1", "fda approved", "certified", "guaranteed", "price", "discount", "free shipping", "第一", "最好", "认证", "销量"} {
-		if strings.Contains(lower, forbidden) {
-			return false
-		}
-	}
-	if strings.IndexFunc(candidate, unicode.IsDigit) >= 0 && strings.IndexFunc(req.Query+req.UserSellingPoints, unicode.IsDigit) < 0 {
-		return false
-	}
-	return true
 }
 
 func (s *Service) replayEcommerceAgent(userID string, run *model.EcommerceAgentRun, emit func(ecommerceagent.Event) error) (*EcommerceAgentTaskView, error) {
@@ -149,6 +143,9 @@ func (s *Service) replayEcommerceAgent(userID string, run *model.EcommerceAgentR
 }
 
 func (s *Service) prepareEcommerceGeneration(userID string, req ecommerceagent.Request) (ecommerceagent.Platform, ecommerceProviderConfig, error) {
+	if err := s.authorizeEcommerceGenerationProject(userID, req.ProjectID); err != nil {
+		return ecommerceagent.Platform{}, ecommerceProviderConfig{}, err
+	}
 	if err := s.RequireFeature(FeatureEcommerce); err != nil {
 		return ecommerceagent.Platform{}, ecommerceProviderConfig{}, err
 	}
@@ -176,22 +173,6 @@ func (s *Service) prepareEcommerceGeneration(userID string, req ecommerceagent.R
 	return p, cfg, nil
 }
 
-func selectEcommerceRecommendation(analysis *ecommerceagent.Analysis, id string) (*ecommerceagent.Recommendation, error) {
-	var selected *ecommerceagent.Recommendation
-	if id != "" {
-		for i := range analysis.Recommendations {
-			if analysis.Recommendations[i].ID == id {
-				selected = &analysis.Recommendations[i]
-				break
-			}
-		}
-		if selected == nil {
-			return nil, ecommerceErr("INVALID_INPUT", "设计方向已失效，请重新选择")
-		}
-	}
-	return selected, nil
-}
-
 func (s *Service) improveEcommerceGenerationPlan(ctx context.Context, cfg ecommerceProviderConfig, runID string, p ecommerceagent.Platform, req ecommerceagent.Request, analysis *ecommerceagent.Analysis, copyResult map[string]any, pages []ecommerceagent.Page) {
 	if cfg.Mode == "live" {
 		var proposedCopy map[string]any
@@ -207,7 +188,7 @@ func (s *Service) improveEcommerceGenerationPlan(ctx context.Context, cfg ecomme
 		if e := s.ecommerceChatJSON(ctx, cfg, runID, ecommerceagent.SystemPlanner, planPrompt, nil, &proposed); e == nil && len(proposed) == len(pages) {
 			for i := range pages {
 				candidate := proposed[i].ImagePrompt
-				if safeEcommerceImagePrompt(candidate, req) {
+				if ecommerceagent.SafeGeneratedImagePrompt(candidate, req.Query+req.UserSellingPoints) {
 					pages[i].ImagePrompt = candidate
 					pages[i].NegativePrompt = proposed[i].NegativePrompt
 				}
@@ -288,14 +269,6 @@ func emitEcommerceGenerationStarted(emit func(ecommerceagent.Event) error, run *
 		return err
 	}
 	return nil
-}
-
-func ecommerceRecommendationMarkup(recommendations []ecommerceagent.Recommendation) string {
-	answerParts := make([]string, 0, len(recommendations))
-	for _, r := range recommendations {
-		answerParts = append(answerParts, "<agent-option>"+r.Label+"</agent-option>")
-	}
-	return strings.Join(answerParts, " ")
 }
 
 func (s *Service) persistEcommerceGeneration(run *model.EcommerceAgentRun, brief ecommerceagent.Brief, copyResult map[string]any, canvas ecommerceagent.PosterCanvas) (*model.EcommerceAgentRun, error) {

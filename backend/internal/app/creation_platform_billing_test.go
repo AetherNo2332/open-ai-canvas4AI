@@ -101,6 +101,34 @@ func platformAvailable(t *testing.T, db *gorm.DB, userID string) (int64, int64) 
 	return account.AvailableMicrocredits, account.ReservedMicrocredits
 }
 
+type platformWriteCounts struct {
+	tasks        int64
+	orders       int64
+	submissions  int64
+	reservations int64
+	consumes     int64
+	refunds      int64
+}
+
+func platformWritesFor(t *testing.T, db *gorm.DB, userID string) platformWriteCounts {
+	t.Helper()
+	return platformWriteCounts{
+		tasks:        platformCount(t, db, &model.Task{}, "user_id = ?", userID),
+		orders:       platformCount(t, db, &model.BillingOrder{}, "user_id = ?", userID),
+		submissions:  platformCount(t, db, &model.PlatformSubmission{}, "user_id = ?", userID),
+		reservations: platformCount(t, db, &model.CreditLedgerEntry{}, "user_id = ? AND type = ?", userID, model.CreditLedgerReserve),
+		consumes:     platformCount(t, db, &model.CreditLedgerEntry{}, "user_id = ? AND type = ?", userID, model.CreditLedgerConsume),
+		refunds:      platformCount(t, db, &model.CreditLedgerEntry{}, "user_id = ? AND type = ?", userID, model.CreditLedgerRefund),
+	}
+}
+
+func platformAssertWrites(t *testing.T, db *gorm.DB, userID string, want platformWriteCounts) {
+	t.Helper()
+	if got := platformWritesFor(t, db, userID); got != want {
+		t.Fatalf("writes for %s = %+v, want %+v", userID, got, want)
+	}
+}
+
 // S2-A：20 个并发同键同内容请求只产生 1 个任务、1 份冻结、1 条提交记录，所有成功响应指向同一任务。
 func TestPlatformConcurrentIdempotentSubmit(t *testing.T) {
 	platformDialects(t, func(t *testing.T, f *platformImageFixture) {
@@ -138,15 +166,7 @@ func TestPlatformConcurrentIdempotentSubmit(t *testing.T) {
 		if fresh != 1 {
 			t.Fatalf("fresh receipts = %d, want exactly 1", fresh)
 		}
-		if got := platformCount(t, f.db, &model.Task{}, "user_id = ?", "user-a"); got != 1 {
-			t.Fatalf("tasks = %d", got)
-		}
-		if got := platformCount(t, f.db, &model.BillingOrder{}, "user_id = ?", "user-a"); got != 1 {
-			t.Fatalf("billing orders = %d", got)
-		}
-		if got := platformCount(t, f.db, &model.PlatformSubmission{}, "user_id = ?", "user-a"); got != 1 {
-			t.Fatalf("submissions = %d", got)
-		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{tasks: 1, orders: 1, submissions: 1, reservations: 1})
 		available, reserved := platformAvailable(t, f.db, "user-a")
 		if available != 10_000_000-100_000 || reserved != 100_000 {
 			t.Fatalf("credits available=%d reserved=%d, want one reservation", available, reserved)
@@ -171,6 +191,7 @@ func TestPlatformIdempotencyScopeAndConflict(t *testing.T) {
 		if err != nil || !replay.Replayed || replay.Snapshot.TaskID != first.Snapshot.TaskID {
 			t.Fatalf("lost-response replay: %+v %v", replay, err)
 		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{tasks: 1, orders: 1, submissions: 1, reservations: 1})
 		traced := req
 		traced.TraceID = "another-trace"
 		if receipt, err := p.Submit(ctx, cp.Caller{UserID: "user-a"}, traced); err != nil || receipt.Snapshot.TaskID != first.Snapshot.TaskID {
@@ -185,8 +206,12 @@ func TestPlatformIdempotencyScopeAndConflict(t *testing.T) {
 		} {
 			changed := f.systemRequest("scope-key")
 			mutate(&changed)
+			before := platformWritesFor(t, f.db, "user-a")
 			if _, err := p.Submit(ctx, cp.Caller{UserID: "user-a"}, changed); platformErrorCode(err) != cp.CodeIdempotencyConflict {
 				t.Fatalf("%s change with same key: %v", name, err)
+			}
+			if after := platformWritesFor(t, f.db, "user-a"); after != before {
+				t.Fatalf("%s conflict changed database state: before=%+v after=%+v", name, before, after)
 			}
 		}
 		other, err := p.Submit(ctx, cp.Caller{UserID: "user-b"}, req)
@@ -198,6 +223,8 @@ func TestPlatformIdempotencyScopeAndConflict(t *testing.T) {
 		if receipt, err := p.Submit(ctx, cp.Caller{UserID: "user-a"}, otherApp); err != nil || receipt.Snapshot.TaskID == first.Snapshot.TaskID {
 			t.Fatalf("same key in another application is a separate scope: %+v %v", receipt, err)
 		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{tasks: 2, orders: 2, submissions: 2, reservations: 2})
+		platformAssertWrites(t, f.db, "user-b", platformWriteCounts{tasks: 1, orders: 1, submissions: 1, reservations: 1})
 		if got := platformCount(t, f.db, &model.Task{}, "1 = 1"); got != 3 {
 			t.Fatalf("tasks = %d, want 3", got)
 		}
@@ -214,14 +241,7 @@ func TestPlatformSubmitRollbackAtEachWrite(t *testing.T) {
 				if err == nil {
 					t.Fatal("submit should fail when a write fails")
 				}
-				for _, check := range []struct {
-					value any
-					name  string
-				}{{&model.Task{}, "tasks"}, {&model.BillingOrder{}, "billing_orders"}, {&model.PlatformSubmission{}, "platform_submissions"}, {&model.CreditLedgerEntry{}, "credit_ledger_entries"}} {
-					if got := platformCount(t, f.db, check.value, "user_id = ?", "user-a"); got != 0 {
-						t.Fatalf("%s left %d rows after failure at %s", check.name, got, table)
-					}
-				}
+				platformAssertWrites(t, f.db, "user-a", platformWriteCounts{})
 				available, reserved := platformAvailable(t, f.db, "user-a")
 				if available != 10_000_000 || reserved != 0 {
 					t.Fatalf("credits changed after rollback: available=%d reserved=%d", available, reserved)
@@ -233,6 +253,7 @@ func TestPlatformSubmitRollbackAtEachWrite(t *testing.T) {
 				if _, err := f.svc.CreationPlatform().Submit(context.Background(), cp.Caller{UserID: "user-a"}, f.systemRequest("rollback-"+table)); err != nil {
 					t.Fatalf("same key after rollback must be usable: %v", err)
 				}
+				platformAssertWrites(t, f.db, "user-a", platformWriteCounts{tasks: 1, orders: 1, submissions: 1, reservations: 1})
 				if f.calls.Load() != 0 {
 					t.Fatal("no provider call during submit")
 				}
@@ -263,6 +284,72 @@ func injectInsertFailure(t *testing.T, db *gorm.DB, table string) func() {
 	return func() { db.Exec("DROP TRIGGER " + name) }
 }
 
+// injectUpdateFailure 让指定表的 UPDATE 在数据库层失败，返回撤销函数。
+func injectUpdateFailure(t *testing.T, db *gorm.DB, table string) func() {
+	t.Helper()
+	name := "fail_update_" + table
+	if db.Dialector.Name() == "postgres" {
+		statements := []string{
+			"CREATE OR REPLACE FUNCTION " + name + "() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$ LANGUAGE plpgsql",
+			"CREATE TRIGGER " + name + " BEFORE UPDATE ON " + table + " FOR EACH ROW EXECUTE FUNCTION " + name + "()",
+		}
+		for _, statement := range statements {
+			if err := db.Exec(statement).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		return func() { db.Exec("DROP TRIGGER " + name + " ON " + table) }
+	}
+	if err := db.Exec("CREATE TRIGGER " + name + " BEFORE UPDATE ON " + table + " BEGIN SELECT RAISE(ABORT, 'injected failure'); END").Error; err != nil {
+		t.Fatal(err)
+	}
+	return func() { db.Exec("DROP TRIGGER " + name) }
+}
+
+// S2-C2：短剧作业绑定与任务、订单、平台回执、预留流水同一事务；绑定失败时五类记录都不留下。
+func TestPlatformDramaCommitRollsBackAllWrites(t *testing.T) {
+	platformDialects(t, func(t *testing.T, f *platformImageFixture) {
+		run, job := dramaPlatformRun(t, f)
+		dropTrigger := injectUpdateFailure(t, f.db, "drama_jobs")
+		if _, err := run.createTaskWith(job, run.settings.Models.Image, "image", "text_to_image", "白衣少女", dramaImageInput()); err == nil {
+			t.Fatal("drama submit should fail when the job binding write fails")
+		}
+		dropTrigger()
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{})
+		if available, reserved := platformAvailable(t, f.db, "user-a"); available != 10_000_000 || reserved != 0 {
+			t.Fatalf("credits changed after drama rollback: available=%d reserved=%d", available, reserved)
+		}
+		var stored model.DramaJob
+		if err := f.db.First(&stored, "id = ?", job.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if stored.Status != model.DramaJobQueued || stored.TaskID != "" {
+			t.Fatalf("job changed after rollback: %+v", stored)
+		}
+		if claimed, err := f.svc.repo.ClaimNextTask("probe", time.Minute); err != nil || claimed != nil {
+			t.Fatalf("rolled back drama submit left a claimable task: %+v %v", claimed, err)
+		}
+
+		task, err := run.createTaskWith(job, run.settings.Models.Image, "image", "text_to_image", "白衣少女", dramaImageInput())
+		if err != nil {
+			t.Fatalf("same drama submission after rollback: %v", err)
+		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{tasks: 1, orders: 1, submissions: 1, reservations: 1})
+		if task == nil || task.ProjectID != "drama-project" || task.BillingOrderID == "" {
+			t.Fatalf("drama task after retry: %+v", task)
+		}
+		if err := f.db.First(&stored, "id = ?", job.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if stored.Status != model.DramaJobRunning || stored.TaskID != task.ID {
+			t.Fatalf("job binding after retry: %+v", stored)
+		}
+		if f.calls.Load() != 0 {
+			t.Fatal("drama submit must not call the provider")
+		}
+	})
+}
+
 // S2-D：余额不足、费用上限、报价过期与模型变更在写库前拒绝；报价与冻结价格一致，余额变化不被缓存掩盖。
 func TestPlatformQuoteAuthorizationAndBillingStates(t *testing.T) {
 	platformDialects(t, func(t *testing.T, f *platformImageFixture) {
@@ -280,6 +367,7 @@ func TestPlatformQuoteAuthorizationAndBillingStates(t *testing.T) {
 		if got := platformCount(t, f.db, &model.BillingOrder{}, "1 = 1"); got != 0 {
 			t.Fatal("quote must not reserve credits")
 		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{})
 
 		capped := req
 		capped.IdempotencyKey = "quote-capped"
@@ -287,6 +375,7 @@ func TestPlatformQuoteAuthorizationAndBillingStates(t *testing.T) {
 		if _, err := p.Submit(ctx, caller, capped); platformErrorCode(err) != cp.CodeCostLimitExceeded {
 			t.Fatalf("cap below quote: %v", err)
 		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{})
 
 		authorized := req
 		authorized.IdempotencyKey = "quote-authorized"
@@ -302,6 +391,7 @@ func TestPlatformQuoteAuthorizationAndBillingStates(t *testing.T) {
 		if err := f.db.First(&order, "task_id = ?", receipt.Snapshot.TaskID).Error; err != nil || !order.ChargeLimitSet || order.ChargeLimitMicrocredits != 100_000 {
 			t.Fatalf("billing order must carry the authorized cap: %+v %v", order, err)
 		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{tasks: 1, orders: 1, submissions: 1, reservations: 1})
 
 		// 涨价后旧报价失效：返回 quote_expired，不能静默按新价冻结。
 		if err := f.db.Model(&model.ChannelModelPriceTier{}).Where("id = ?", "platform-tier").Updates(map[string]any{"unit_price_microcredits": 150_000, "price_version": 2}).Error; err != nil {
@@ -314,6 +404,7 @@ func TestPlatformQuoteAuthorizationAndBillingStates(t *testing.T) {
 		if _, err := p.Submit(ctx, caller, stale); platformErrorCode(err) != cp.CodeQuoteExpired {
 			t.Fatalf("stale quote after price change: %v", err)
 		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{tasks: 1, orders: 1, submissions: 1, reservations: 1})
 		fresh, err := p.Quote(ctx, caller, req)
 		if err != nil || fresh.AmountMicrocredits != 150_000 || fresh.QuoteHash == quote.QuoteHash {
 			t.Fatalf("fresh quote after price change: %+v %v", fresh, err)
@@ -338,6 +429,35 @@ func TestPlatformQuoteAuthorizationAndBillingStates(t *testing.T) {
 		}
 		if platformCount(t, f.db, &model.Task{}, "1 = 1") != before {
 			t.Fatal("insufficient credits left a task")
+		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{tasks: 1, orders: 1, submissions: 1, reservations: 1})
+		if available, reserved := platformAvailable(t, f.db, "user-a"); available != 1 || reserved != 100_000 {
+			t.Fatalf("insufficient-credit submit changed credits: available=%d reserved=%d", available, reserved)
+		}
+	})
+}
+
+// S2-D2：容量不足在计费冻结前被拒绝，任务、订单、回执和账本都不留下记录。
+func TestPlatformCapacityRejectionLeavesNoWrites(t *testing.T) {
+	platformDialects(t, func(t *testing.T, f *platformImageFixture) {
+		limit := gigabytes(defaultRuntimePolicy().Resource.StoredFileGB)
+		if err := f.db.Model(&model.Resource{}).Where("id = ?", "ref-a").Update("size", limit).Error; err != nil {
+			t.Fatal(err)
+		}
+		available, reserved := platformAvailable(t, f.db, "user-a")
+		before := platformWritesFor(t, f.db, "user-a")
+		_, err := f.svc.CreationPlatform().Submit(context.Background(), cp.Caller{UserID: "user-a"}, f.systemRequest("capacity-full"))
+		if platformErrorCode(err) != cp.CodeForbidden {
+			t.Fatalf("submit with full storage = %v, want forbidden capacity error", err)
+		}
+		if after := platformWritesFor(t, f.db, "user-a"); after != before {
+			t.Fatalf("capacity rejection changed database state: before=%+v after=%+v", before, after)
+		}
+		if gotAvailable, gotReserved := platformAvailable(t, f.db, "user-a"); gotAvailable != available || gotReserved != reserved {
+			t.Fatalf("capacity rejection changed credits: available=%d reserved=%d, want %d/%d", gotAvailable, gotReserved, available, reserved)
+		}
+		if claimed, err := f.svc.repo.ClaimNextTask("capacity-probe", time.Minute); err != nil || claimed != nil {
+			t.Fatalf("capacity rejection left a claimable task: %+v %v", claimed, err)
 		}
 	})
 }
@@ -402,6 +522,35 @@ func TestPlatformBillingOutcomesAndAggregate(t *testing.T) {
 		}
 		if _, err := p.BillingAggregate(ctx, caller, cp.BusinessRef{}); platformErrorCode(err) != cp.CodeInvalidRequest {
 			t.Fatalf("aggregate without application: %v", err)
+		}
+	})
+}
+
+// S2-F：同一终态重复到达时，结算协调器只保留一次消费流水并保持账户余额不变。
+func TestPlatformRepeatedTerminalSettlementIsIdempotent(t *testing.T) {
+	platformDialects(t, func(t *testing.T, f *platformImageFixture) {
+		p := f.svc.CreationPlatform()
+		receipt, err := p.Submit(context.Background(), cp.Caller{UserID: "user-a"}, f.systemRequest("terminal-replay"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.runQueued(t)
+		var order model.BillingOrder
+		if err := f.db.First(&order, "task_id = ?", receipt.Snapshot.TaskID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if order.Status != model.BillingStatusSettled {
+			t.Fatalf("order not settled after worker: %+v", order)
+		}
+		available, reserved := platformAvailable(t, f.db, "user-a")
+		for _, duplicate := range []string{"duplicate-terminal-1", "duplicate-terminal-2"} {
+			if err := f.svc.taskBilling().SettleBilling(order.ID, duplicate); err != nil {
+				t.Fatalf("duplicate settlement %s: %v", duplicate, err)
+			}
+		}
+		platformAssertWrites(t, f.db, "user-a", platformWriteCounts{tasks: 1, orders: 1, submissions: 1, reservations: 1, consumes: 1})
+		if gotAvailable, gotReserved := platformAvailable(t, f.db, "user-a"); gotAvailable != available || gotReserved != reserved {
+			t.Fatalf("duplicate settlement changed credits: available=%d reserved=%d, want %d/%d", gotAvailable, gotReserved, available, reserved)
 		}
 	})
 }

@@ -110,9 +110,6 @@ func (r *dramaRun) submitSegmentPrompt(job *model.DramaJob) (*model.Task, bool, 
 // dramaPromptCondenseAttempts 是段提示词超出视频模型上限时自动精简的次数上限。
 const dramaPromptCondenseAttempts = 2
 
-// dramaMinPromptBudget 是段提示词正文至少要有的字符数；参考图说明占掉太多时直接报错，不写一段注定被拒的提示词。
-const dramaMinPromptBudget = 300
-
 // segmentPromptBudget 是本段提示词正文的字符上限：视频模型提示词上限减去提交时加在开头的参考图说明。
 // 参考图说明按当前参考图状态预演；之后参考图状态变化导致超长时，提交视频前会退回重写（见 submitSegmentVideo）。返回 0 表示不限。
 func (r *dramaRun) segmentPromptBudget(profile dramaVideoProfile, draft dramaSegmentDraft, segment *model.DramaSegment, rows []model.DramaSegment, casts map[string]model.DramaCast) (int, error) {
@@ -127,12 +124,7 @@ func (r *dramaRun) segmentPromptBudget(profile dramaVideoProfile, draft dramaSeg
 	}
 	// 预演失败（如画幅不符）不阻止撰写：提交视频时会报出同一原因，届时也会再核对一次字数。
 	request, _, _, _ := r.s.prepareDramaSegment(r.settings, draft, *segment, previous, casts)
-	header := utf8.RuneCountInString(request.Header)
-	budget := profile.PromptMaxChars - header - 2
-	if budget < dramaMinPromptBudget {
-		return 0, fmt.Errorf("开头的参考图说明占用 %d 个字符，所选视频模型的提示词上限只有 %d 个字符，放不下本段正文；请减少本段参考图，或换用提示词上限更大的视频模型", header, profile.PromptMaxChars)
-	}
-	return budget, nil
+	return production.SegmentPromptBodyBudget(profile.PromptMaxChars, request.Header)
 }
 
 func (r *dramaRun) applySegmentPrompt(job *model.DramaJob, task *model.Task) error {

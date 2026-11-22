@@ -18,6 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 	"yingce/backend/internal/ecommerceagent"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/outbound/outboundtest"
 	"yingce/backend/internal/repository"
 )
 
@@ -145,6 +146,7 @@ func TestEcommerceAgentLiveTextUsesAdminChannelWithoutEnvKey(t *testing.T) {
 }
 
 func TestEcommerceAgentLiveImageUsesConfiguredChannelModel(t *testing.T) {
+	outboundtest.PublicDNS(t, "example.com")
 	svc, db := mockEcommerceAgentService(t)
 	t.Setenv("AI_MODE", "live")
 	t.Setenv("ECOMMERCE_PROMOTION_CHANNEL_ID", "image-channel")

@@ -47,7 +47,21 @@ export const policy = {
       directory: "backend/internal/production",
       importPath: "yingce/backend/internal/production",
       group: "drama-export",
-      pattern: "^TestDramaJianyingExport",
+      pattern:
+        "^(TestDramaJianyingExport|TestDramaSegmentPromptBudgetFailureKeepsProgressOpen)",
+    },
+    {
+      directory: "backend/internal/ecommerceagent",
+      importPath: "yingce/backend/internal/ecommerceagent",
+      group: "ecommerce",
+      pattern: "^(TestEcommerceGenerationEntry|TestEcommerceWorkbench)",
+    },
+    {
+      directory: "backend/internal/canvas/tasks",
+      importPath: "yingce/backend/internal/canvas/tasks",
+      group: "canvas-agent",
+      pattern:
+        "^(TestCanvasSubmit|TestCloudAgentMediaBatch|TestCloudAgentAdmission)",
     },
     {
       directory: "backend/internal/jianying",

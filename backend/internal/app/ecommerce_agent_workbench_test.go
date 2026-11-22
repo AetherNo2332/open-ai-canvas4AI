@@ -14,6 +14,7 @@ import (
 
 	"yingce/backend/internal/ecommerceagent"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/outbound/outboundtest"
 	"yingce/backend/internal/platform"
 )
 
@@ -149,6 +150,7 @@ func TestEcommerceWorkbenchDirectionsTaskSnapshotReceiptAndOwner(t *testing.T) {
 // recognition stage resolves the administrator's recognition model (or the
 // planning model when none is set), and a client-chosen model is refused.
 func TestEcommerceWorkbenchAnalysisModelsAreFixedByAdministrator(t *testing.T) {
+	outboundtest.PublicDNS(t, "example.com")
 	svc, db, _, _ := ecommerceCreationTestService(t)
 	t.Setenv("AI_MODE", "live")
 	t.Setenv("TEXT_API_KEY", "")

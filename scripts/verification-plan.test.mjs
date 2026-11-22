@@ -218,6 +218,66 @@ test("batch 3 domain packages select their app contract groups", () => {
     for (const name of current.tests) assert.match(name, pattern);
   }
 });
+test("batch 6 domain packages select their app integration groups", () => {
+  const batch6Graph = [
+    {
+      importPath: "yingce/backend/internal/production",
+      imports: [],
+    },
+    {
+      importPath: "yingce/backend/internal/ecommerceagent",
+      imports: [],
+    },
+    {
+      importPath: "yingce/backend/internal/canvas/tasks",
+      imports: [],
+    },
+    {
+      importPath: "yingce/backend/internal/app",
+      imports: [
+        "yingce/backend/internal/production",
+        "yingce/backend/internal/ecommerceagent",
+        "yingce/backend/internal/canvas/tasks",
+      ],
+    },
+  ];
+  const cases = [
+    {
+      file: "backend/internal/production/segment_prompt_budget.go",
+      packageID: "backend:package:yingce/backend/internal/production",
+      appID: "backend:app:drama-export",
+      tests: ["TestDramaSegmentPromptBudgetFailureKeepsProgressOpen"],
+    },
+    {
+      file: "backend/internal/ecommerceagent/generation_rules.go",
+      packageID: "backend:package:yingce/backend/internal/ecommerceagent",
+      appID: "backend:app:ecommerce",
+      tests: ["TestEcommerceGenerationEntryKeepsReplayOnOriginalProject"],
+    },
+    {
+      file: "backend/internal/canvas/tasks/contracts.go",
+      packageID: "backend:package:yingce/backend/internal/canvas/tasks",
+      appID: "backend:app:canvas-agent",
+      tests: ["TestCloudAgentMediaBatchMixedOutcomesStayIndependentAndReplaySafe"],
+    },
+  ];
+  for (const current of cases) {
+    const mapped = buildVerificationPlan({
+      mode: "affected",
+      base: "base",
+      head: "head",
+      changes: [{ status: "M", path: current.file }],
+      goPackages: batch6Graph,
+      policy: verificationPolicy,
+    });
+    const selected = mapped.selectedChecks;
+    assert.ok(selected.some((check) => check.id === current.packageID));
+    const appCheck = selected.find((check) => check.id === current.appID);
+    assert.ok(appCheck, current.file + " missing " + current.appID);
+    const pattern = new RegExp(appCheck.args[appCheck.args.indexOf("-run") + 1]);
+    for (const name of current.tests) assert.match(name, pattern);
+  }
+});
 test("shared, workflow, unknown app, mixed stacks", () => {
   for (const file of [
     "backend/internal/app/service.go",

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"yingce/backend/internal/agentcontext"
 	"yingce/backend/internal/model"
 )
 
@@ -21,20 +22,17 @@ func cloudAgentRestoreTranscript(run *model.CloudAgentExecution, state *cloudAge
 	if err != nil {
 		return err
 	}
-	if len(run.Transcript) != run.MessageCount {
-		return fmt.Errorf("Agent execution transcript is incomplete: rows=%d count=%d", len(run.Transcript), run.MessageCount)
+	if err := agentcontext.ValidateMessageCount(len(run.Transcript), run.MessageCount); err != nil {
+		return err
 	}
 	if c := state.ContextCompaction; c != nil && c.PiNative != nil && len(c.PiNative.Preparation) == 0 {
 		return errors.New("Pi compaction preparation is missing")
 	}
-	events, err := cloudAgentRestoreJournal(run)
+	events, eventSeqBase, err := cloudAgentRestoreJournal(run)
 	if err != nil {
 		return err
 	}
-	state.EventSeqBase = run.EventCount - len(events)
-	if state.EventSeqBase < 0 {
-		return fmt.Errorf("Agent execution journal watermark is invalid: count=%d rows=%d", run.EventCount, len(events))
-	}
+	state.EventSeqBase = eventSeqBase
 	state.Canonical.Messages, state.TextHistory = canonical, history
 	state.Events = events
 	return nil
@@ -83,27 +81,31 @@ func cloudAgentRestoreMessages(run *model.CloudAgentExecution, state *cloudAgent
 	return canonical, history, nil
 }
 
-func cloudAgentRestoreJournal(run *model.CloudAgentExecution) ([]CloudAgentEvent, error) {
+func cloudAgentRestoreJournal(run *model.CloudAgentExecution) ([]CloudAgentEvent, int, error) {
 	events := make([]CloudAgentEvent, 0, len(run.Journal))
+	window := make([]agentcontext.JournalEvent, 0, len(run.Journal))
 	for _, row := range run.Journal {
 		var event CloudAgentEvent
 		if err := json.Unmarshal([]byte(row.EventJSON), &event); err != nil {
-			return nil, fmt.Errorf("decode Agent event: %w", err)
-		}
-		// 事件身份必须自洽：seq/runId/eventId 任何一处与行不一致，就说明记录被动过。
-		if event.Seq != row.Sequence || event.RunID != run.ID || event.EventID != fmt.Sprintf("%s:%d", run.ID, row.Sequence) {
-			return nil, errors.New("Agent event identity is invalid")
+			return nil, 0, fmt.Errorf("decode Agent event: %w", err)
 		}
 		events = append(events, event)
+		journalEvent := agentcontext.JournalEvent{
+			RowSequence: row.Sequence,
+			Sequence:    event.Seq,
+			RunID:       event.RunID,
+			EventID:     event.EventID,
+		}
+		if err := agentcontext.ValidateJournalEvent(run.ID, journalEvent); err != nil {
+			return nil, 0, err
+		}
+		window = append(window, journalEvent)
 	}
-	// 上游修正（#600）：窗口为空但水位非零 = 有行没读到，不能把"一行都没有"当成空日志。
-	if len(events) == 0 && run.EventCount != 0 {
-		return nil, errors.New("Agent execution journal is incomplete")
+	eventSeqBase, err := agentcontext.JournalWatermark(run.EventCount, window)
+	if err != nil {
+		return nil, 0, err
 	}
-	if len(events) > 0 && events[len(events)-1].Seq != run.EventCount {
-		return nil, fmt.Errorf("Agent execution journal is incomplete: lastSeq=%d count=%d", events[len(events)-1].Seq, run.EventCount)
-	}
-	return events, nil
+	return events, eventSeqBase, nil
 }
 
 // cloudAgentSave validates the runtime and writes it into the execution row:
@@ -148,11 +150,17 @@ func cloudAgentValidateSaveState(run *model.CloudAgentExecution, state *cloudAge
 	if err := validateCloudAgentRuntime(run, state); err != nil {
 		return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
 	}
-	for index, event := range state.Events {
-		sequence := state.EventSeqBase + index + 1
-		if event.Seq != sequence || event.RunID != run.ID || event.EventID != fmt.Sprintf("%s:%d", run.ID, sequence) {
-			return fmt.Errorf("%w: Agent event sequence or identity is invalid", errCloudAgentCheckpoint)
-		}
+	window := make([]agentcontext.JournalEvent, 0, len(state.Events))
+	for _, event := range state.Events {
+		window = append(window, agentcontext.JournalEvent{
+			RowSequence: event.Seq,
+			Sequence:    event.Seq,
+			RunID:       event.RunID,
+			EventID:     event.EventID,
+		})
+	}
+	if err := agentcontext.ValidateJournalSequence(run.ID, state.EventSeqBase, window); err != nil {
+		return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
 	}
 	return nil
 }

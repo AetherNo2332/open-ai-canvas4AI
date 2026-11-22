@@ -1,6 +1,6 @@
-// Package document 是用户长期记忆文件的文档行为归属：条目编辑规则、修订历史、
-// 待确认审批、撤销与 Agent 写入。app 保留 run 快照冻结/注入、工具事件适配与
-// 管理员跨用户聚合；本包不接受 canonicalAgentRequest、CloudAgent runtime 或完整 Service。
+// Package document 是用户长期记忆文件的文档行为归属：条目编辑规则、快照渲染与提醒、
+// 修订历史、待确认审批、撤销与 Agent 写入。app 保留 run 快照冻结/注入、工具事件适配
+// 与管理员跨用户聚合；本包不接受 canonicalAgentRequest、CloudAgent runtime 或完整 Service。
 //
 // 依赖方向：document → repository/model/agentmemory/kernel。agentmemory 根包保持纯规则，
 // 不反向依赖本包或 database。

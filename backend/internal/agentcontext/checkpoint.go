@@ -1,8 +1,9 @@
-// Package agentcontext 定义画布 Agent 的**语义检查点**契约：把超预算的会话压缩成一份
-// provider 中立的记忆对象，让下一模型不必读原始历史也能继续工作。
+// Package agentcontext 定义画布 Agent 的检查点契约：语义检查点把超预算的会话压缩成
+// provider 中立的记忆对象；持久化检查点规则校验消息/事件窗口的身份、序号与水位。
 //
-// 它只做编码、解码与提示词组装，不依赖 HTTP、Web、repository 或 app：压缩的触发、暂停、
-// 恢复与降级由 backend/internal/app 决定，这里只保证"检查点长什么样"是稳定合同。
+// 它只做编码、解码、提示词组装与纯窗口规则，不依赖 HTTP、Web、repository 或 app：
+// 压缩触发、持久化写入、恢复调度与降级由 backend/internal/app 决定，这里只保证
+// "检查点长什么样、窗口何时自洽"是稳定合同。
 package agentcontext
 
 import (
