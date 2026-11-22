@@ -1,0 +1,318 @@
+{
+  "id": "legacy-shortplay-001",
+  "title": "旧分镜与批量表样本",
+  "nodes": [
+    {
+      "id": "script-1",
+      "type": "script",
+      "title": "分镜表",
+      "position": { "x": 0, "y": 0 },
+      "width": 960,
+      "height": 620,
+      "metadata": {
+        "storyboard": {
+          "rows": [
+            {
+              "id": "row-1",
+              "shotNumber": 1,
+              "durationSeconds": 4,
+              "plotDescription": "雨夜门口",
+              "dialogue": "你终于来了。",
+              "characters": [
+                {
+                  "characterName": "林夏",
+                  "characterAssetId": "asset-character",
+                  "characterVersionId": "character-v1",
+                  "characterDescription": "湿发、黑色风衣",
+                  "characterImageNodeId": "asset-character"
+                }
+              ],
+              "narrativeIntent": "悬疑开场",
+              "viewerPOV": "第三人称",
+              "performanceBlocking": "林夏停在门口",
+              "shotSize": "中近景",
+              "emotion": "警惕",
+              "lightingAndAtmosphere": "冷蓝霓虹",
+              "audioEffects": "雨声",
+              "camera": "缓慢推进",
+              "motion": "轻微手持",
+              "timeBeats": "0-2s 停顿，2-4s 抬头",
+              "imageGenerationPrompt": "雨夜霓虹下的女主角，湿发，中近景",
+              "videoMotionPrompt": "镜头缓慢推进，雨滴落下",
+              "mustHave": ["雨夜", "霓虹"],
+              "optionalDetails": ["窗面反光"],
+              "continuityOut": "林夏进入室内",
+              "negativePrompt": "文字水印",
+              "assetBindings": [
+                { "nodeId": "asset-character", "role": "character", "priority": 1 }
+              ],
+              "imageNodeId": "image-frame-1",
+              "videoNodeId": "video-existing",
+              "status": "success",
+              "unknown-row-extension": { "keep": true }
+            },
+            {
+              "id": "row-2",
+              "shotNumber": 2,
+              "durationSeconds": 5,
+              "plotDescription": "她推门进入",
+              "dialogue": "这里没有人。",
+              "characters": [],
+              "narrativeIntent": "空间揭示",
+              "viewerPOV": "第三人称",
+              "performanceBlocking": "推门后停步",
+              "shotSize": "全景",
+              "emotion": "迟疑",
+              "lightingAndAtmosphere": "室内暖光",
+              "audioEffects": "门轴声",
+              "camera": "横移",
+              "motion": "稳定器",
+              "timeBeats": "0-1s 推门，1-5s 环顾",
+              "imageGenerationPrompt": "空荡的室内，暖光，门被推开",
+              "videoMotionPrompt": "从门口横移到房间中央",
+              "mustHave": ["空房间"],
+              "optionalDetails": [],
+              "continuityOut": "她发现桌上的信封",
+              "negativePrompt": "人物变形",
+              "assetBindings": [
+                { "nodeId": "asset-character", "role": "character", "priority": 1 }
+              ],
+              "imageNodeId": "image-frame-2",
+              "unknown-row-extension": "second-row-extension"
+            }
+          ],
+          "visibleColumns": ["shotNumber", "plotDescription", "dialogue", "camera"],
+          "referenceNodeIds": ["asset-character"],
+          "unknown-storyboard-extension": "keep-me"
+        },
+        "unknown-node-extension": { "nested": [1, 2, 3] }
+      }
+    },
+    {
+      "id": "text-1",
+      "type": "text",
+      "title": "画面描述",
+      "position": { "x": 1000, "y": 0 },
+      "width": 340,
+      "height": 220,
+      "metadata": {
+        "content": "雨夜、霓虹、中近景",
+        "status": "idle"
+      }
+    },
+    {
+      "id": "text-2",
+      "type": "text",
+      "title": "台词",
+      "position": { "x": 1000, "y": 250 },
+      "width": 340,
+      "height": 220,
+      "metadata": {
+        "content": "你终于来了。",
+        "status": "idle"
+      }
+    },
+    {
+      "id": "image-frame-1",
+      "type": "image",
+      "title": "第一镜首帧",
+      "position": { "x": 400, "y": 700 },
+      "width": 720,
+      "height": 405,
+      "metadata": {
+        "content": "https://legacy.example/frame-1.png",
+        "storageKey": "resource:frame-1",
+        "assetId": "asset-frame-1",
+        "mimeType": "image/png",
+        "status": "success"
+      }
+    },
+    {
+      "id": "image-frame-2",
+      "type": "image",
+      "title": "第二镜首帧",
+      "position": { "x": 1200, "y": 700 },
+      "width": 720,
+      "height": 405,
+      "metadata": {
+        "content": "https://legacy.example/frame-2.png",
+        "storageKey": "resource:frame-2",
+        "assetId": "asset-frame-2",
+        "mimeType": "image/png",
+        "status": "success"
+      }
+    },
+    {
+      "id": "video-existing",
+      "type": "video",
+      "title": "第一镜旧视频",
+      "position": { "x": 400, "y": 1160 },
+      "width": 720,
+      "height": 405,
+      "metadata": {
+        "content": "https://legacy.example/video-1.mp4",
+        "storageKey": "resource:video-1",
+        "assetId": "asset-video-1",
+        "mimeType": "video/mp4",
+        "seconds": "4",
+        "status": "success",
+        "taskId": "task-video-1",
+        "taskStatus": "succeeded"
+      }
+    },
+    {
+      "id": "asset-character",
+      "type": "image",
+      "title": "林夏设定图",
+      "position": { "x": 1760, "y": 0 },
+      "width": 720,
+      "height": 405,
+      "metadata": {
+        "content": "https://legacy.example/character.png",
+        "storageKey": "resource:character-1",
+        "assetId": "asset-character",
+        "mimeType": "image/png",
+        "status": "success",
+        "assetCategory": "character"
+      }
+    },
+    {
+      "id": "batch-table-1",
+      "type": "batch-table",
+      "title": "批量文字列",
+      "position": { "x": 1760, "y": 700 },
+      "width": 900,
+      "height": 460,
+      "metadata": {
+        "batchTable": {
+          "operation": "creative",
+          "concurrency": 2,
+          "contentKind": "storyboard",
+          "storyboardRows": [],
+          "globalPrompt": "保持同一角色",
+          "referenceColumns": [
+            { "id": "col-image", "label": "参考图", "type": "image" }
+          ],
+          "textColumns": [
+            { "id": "col-description", "label": "画面描述", "type": "text" },
+            { "id": "col-dialogue", "label": "台词", "type": "text" }
+          ],
+          "rows": [
+            {
+              "id": "batch-row-1",
+              "enabled": true,
+              "inputNodeIds": ["asset-character"],
+              "referenceOverrides": ["asset-character"],
+              "textNodeIds": ["text-1", "text-2"],
+              "prompt": "按当前列生成",
+              "outputNodeId": "batch-output-image",
+              "cells": {
+                "col-description": "雨夜门口，中近景",
+                "col-dialogue": "你终于来了。"
+              },
+              "unknown-row-extension": "keep-batch-row"
+            },
+            {
+              "id": "batch-row-2",
+              "enabled": false,
+              "inputNodeIds": [],
+              "referenceOverrides": [],
+              "textNodeIds": ["text-2"],
+              "prompt": "第二行保留空覆盖",
+              "cells": {
+                "col-description": "",
+                "col-dialogue": "这里没有人。"
+              }
+            }
+          ],
+          "aiGenerated": true,
+          "referenceMode": "cells",
+          "referenceColumnInputs": {
+            "col-image": ["asset-character"]
+          },
+          "unknown-table-extension": { "keep": true }
+        }
+      }
+    },
+    {
+      "id": "batch-output-image",
+      "type": "image",
+      "title": "批量输出",
+      "position": { "x": 2700, "y": 700 },
+      "width": 720,
+      "height": 405,
+      "metadata": {
+        "content": "https://legacy.example/batch-output.png",
+        "storageKey": "resource:batch-output",
+        "assetId": "asset-batch-output",
+        "mimeType": "image/png",
+        "status": "success"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn-storyboard-1",
+      "fromNodeId": "script-1",
+      "toNodeId": "image-frame-1",
+      "fromHandleId": "row:row-1",
+      "relation": "storyboard-output",
+      "storyboardRowId": "row-1"
+    },
+    {
+      "id": "conn-storyboard-2",
+      "fromNodeId": "script-1",
+      "toNodeId": "video-existing",
+      "fromHandleId": "row:row-1",
+      "relation": "storyboard-output",
+      "storyboardRowId": "row-1"
+    },
+    {
+      "id": "conn-storyboard-3",
+      "fromNodeId": "script-1",
+      "toNodeId": "image-frame-2",
+      "fromHandleId": "row:row-2",
+      "relation": "storyboard-output",
+      "storyboardRowId": "row-2"
+    },
+    {
+      "id": "conn-storyboard-asset-1",
+      "fromNodeId": "asset-character",
+      "toNodeId": "image-frame-1",
+      "relation": "storyboard-asset-reference",
+      "storyboardRowId": "row-1"
+    },
+    {
+      "id": "conn-storyboard-asset-2",
+      "fromNodeId": "asset-character",
+      "toNodeId": "image-frame-2",
+      "relation": "storyboard-asset-reference",
+      "storyboardRowId": "row-2"
+    },
+    {
+      "id": "conn-batch-output",
+      "fromNodeId": "batch-table-1",
+      "toNodeId": "batch-output-image",
+      "relation": "batch-output",
+      "storyboardRowId": "batch-row-1"
+    },
+    {
+      "id": "conn-batch-text-description",
+      "fromNodeId": "text-1",
+      "toNodeId": "batch-table-1",
+      "toHandleId": "batch-text:col-description",
+      "relation": "batch-input"
+    },
+    {
+      "id": "conn-batch-text-dialogue",
+      "fromNodeId": "text-2",
+      "toNodeId": "batch-table-1",
+      "toHandleId": "batch-text:col-dialogue",
+      "relation": "batch-input"
+    }
+  ],
+  "custom": {
+    "legacy-extension": "preserve-at-document-root",
+    "unknown-object": { "keep": [true, "yes"] }
+  }
+}

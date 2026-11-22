@@ -1,0 +1,397 @@
+package app
+
+// S01 fixture collector. This file is copied into the fixed donor worktree by
+// capture_donor_baseline.py; it is not part of the donor repository.
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
+)
+
+const s01DonorCommit = "13731aae6c4cefadc2a1719e3e7e59b22e249f94"
+
+type s01Project struct {
+	ID       string `json:"id"`
+	UserID   string `json:"userId"`
+	Title    string `json:"title"`
+	Revision int64  `json:"revision"`
+}
+
+type s01Node struct {
+	ID                   string   `json:"id"`
+	Type                 string   `json:"type"`
+	Title                string   `json:"title"`
+	ScopeID              string   `json:"scopeId,omitempty"`
+	ParentID             string   `json:"parentId,omitempty"`
+	WorkflowID           string   `json:"workflowId,omitempty"`
+	WorkflowVersion      any      `json:"workflowVersion,omitempty"`
+	Prompt               string   `json:"prompt,omitempty"`
+	Seconds              string   `json:"seconds,omitempty"`
+	StartFrameNodeID     string   `json:"videoStartFrameNodeId,omitempty"`
+	EndFrameNodeID       string   `json:"videoEndFrameNodeId,omitempty"`
+	ReferenceNodeIDs     []string `json:"referenceNodeIds,omitempty"`
+	ReferenceTextNodeIDs []string `json:"referenceTextNodeIds,omitempty"`
+	Position             any      `json:"position,omitempty"`
+}
+
+type s01Edge struct {
+	ID         string `json:"id"`
+	FromNodeID string `json:"fromNodeId"`
+	ToNodeID   string `json:"toNodeId"`
+}
+
+type s01Snapshot struct {
+	Project       s01Project `json:"project"`
+	PayloadJSON   string     `json:"payloadJson"`
+	Document      any        `json:"document"`
+	NodeOrder     []string   `json:"nodeOrder"`
+	Nodes         []s01Node  `json:"nodes"`
+	Connections   any        `json:"connections,omitempty"`
+	ProjectedEdges []s01Edge `json:"projectedEdges"`
+}
+
+type s01Operation struct {
+	Index    int         `json:"index"`
+	Step     string      `json:"step"`
+	Command  string      `json:"command,omitempty"`
+	Kind     string      `json:"kind"`
+	Before   s01Snapshot `json:"before"`
+	After    s01Snapshot `json:"after"`
+	Receipt  any         `json:"receipt,omitempty"`
+}
+
+type s01Output struct {
+	SchemaVersion int            `json:"schemaVersion"`
+	DonorCommit   string         `json:"donorCommit"`
+	Evidence      string         `json:"evidence"`
+	Workflow      string         `json:"workflow"`
+	Operations    []s01Operation `json:"operations"`
+	FieldListing  string         `json:"fieldListing,omitempty"`
+	ReopenEqual   bool           `json:"reopenEqual"`
+	ExternalNodes []string       `json:"externalNodes"`
+	RegistryVersion string       `json:"registryVersion"`
+	RegisteredTypes []map[string]any `json:"registeredTypes"`
+	TypeListing   string         `json:"typeListing"`
+	Notes         []string       `json:"notes"`
+}
+
+func TestS01CaptureDonorBehavior(t *testing.T) {
+	outDir := strings.TrimSpace(os.Getenv("SHORTPLAY_S01_OUT"))
+	if outDir == "" {
+		t.Skip("set SHORTPLAY_S01_OUT to collect the S01 baseline")
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	s, db, _, _ := creationTestService(t)
+	canvas := &model.CanvasProject{
+		ID: "canvas-shortplay-s01", UserID: "user", Title: "shortplay S01",
+		PayloadJSON: `{"nodes":[],"connections":[]}`,
+	}
+	if err := db.Create(canvas).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	empty := s01ReadSnapshot(t, s, canvas.ID)
+	operations := make([]s01Operation, 0, 12)
+	record := func(step, command, kind string, before s01Snapshot, receipt any) s01Snapshot {
+		after := s01ReadSnapshot(t, s, canvas.ID)
+		operations = append(operations, s01Operation{
+			Index: len(operations) + 1, Step: step, Command: command, Kind: kind,
+			Before: before, After: after, Receipt: s01Normalize(receipt),
+		})
+		return after
+	}
+
+	before := empty
+	receipt, err := canvasShellRun(t, s, canvas.ID, "new submap --workflow storyboard 镜头1")
+	if err != nil {
+		t.Fatalf("create storyboard: %v", err)
+	}
+	created := record("create-storyboard", "new submap --workflow storyboard 镜头1", "write", before, receipt)
+
+	before = created
+	receipt, err = canvasShellRun(t, s, canvas.ID, "new image 外部素材")
+	if err != nil {
+		t.Fatalf("create external image: %v", err)
+	}
+	created = record("create-external-image", "new image 外部素材", "write", before, receipt)
+
+	before = created
+	receipt, err = canvasShellRun(t, s, canvas.ID, "new text 外部文本")
+	if err != nil {
+		t.Fatalf("create external text: %v", err)
+	}
+	created = record("create-external-text", "new text 外部文本", "write", before, receipt)
+
+	before = created
+	fieldListing := canvasShellMustExec(t, s, canvas.ID, "ls -l ./submap-1/video-1/")
+	receipt, err = canvasFieldWriteApply(t, s, canvas.ID, `cat > ./submap-1/image-1/prompt.txt <<'EOF'
+雨夜霓虹下的女主角，湿发，近景
+EOF`)
+	if err != nil {
+		t.Fatalf("edit image prompt: %v", err)
+	}
+	created = record("edit-image-prompt", "cat > ./submap-1/image-1/prompt.txt <<'EOF'", "write", before, receipt)
+
+	before = created
+	receipt, err = canvasFieldWriteApply(t, s, canvas.ID, `edit ./submap-1/video-1/videoStartFrameNodeId.txt image-1`)
+	if err != nil {
+		t.Fatalf("edit start frame to external image: %v", err)
+	}
+	created = record("edit-start-frame-external", "edit ./submap-1/video-1/videoStartFrameNodeId.txt image-1", "write", before, receipt)
+
+	before = created
+	receipt, err = canvasFieldWriteApply(t, s, canvas.ID, `edit ./submap-1/video-1/videoStartFrameNodeId.txt submap-1__image-1`)
+	if err != nil {
+		t.Fatalf("restore start frame to scoped image: %v", err)
+	}
+	created = record("edit-start-frame-scoped", "edit ./submap-1/video-1/videoStartFrameNodeId.txt submap-1__image-1", "write", before, receipt)
+
+	before = created
+	receipt, err = canvasFieldWriteApply(t, s, canvas.ID, `cat > ./submap-1/video-1/referenceNodeIds.list <<'EOF'
+submap-1__image-1
+image-1
+EOF`)
+	if err != nil {
+		t.Fatalf("edit video media references: %v", err)
+	}
+	created = record("edit-video-media-references", "cat > ./submap-1/video-1/referenceNodeIds.list <<'EOF'", "write", before, receipt)
+
+	before = created
+	receipt, err = canvasFieldWriteApply(t, s, canvas.ID, `cat > ./submap-1/video-1/referenceTextNodeIds.list <<'EOF'
+submap-1__text-1
+submap-1__text-2
+submap-1__text-3
+text-1
+EOF`)
+	if err != nil {
+		t.Fatalf("edit video text references: %v", err)
+	}
+	editedBeforeDup := record("edit-video-text-references", "cat > ./submap-1/video-1/referenceTextNodeIds.list <<'EOF'", "write", before, receipt)
+
+	before = editedBeforeDup
+	receipt, err = canvasShellRun(t, s, canvas.ID, "dup ./submap-1 镜头2")
+	if err != nil {
+		t.Fatalf("duplicate storyboard: %v", err)
+	}
+	duplicated := record("duplicate-storyboard", "dup ./submap-1 镜头2", "write", before, receipt)
+
+	// Reopen with a fresh repository instance. The database row is the same row;
+	// the raw payload comparison proves the read path did not rebuild the doc.
+	freshRepo := repository.New(db)
+	reopened, err := freshRepo.CanvasProjectForUser("user", canvas.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopenedSnapshot := s01SnapshotFromProject(reopened)
+	reopenEqual := reopenedSnapshot.PayloadJSON == duplicated.PayloadJSON
+
+	output := s01Output{
+		SchemaVersion: 1,
+		DonorCommit:   s01DonorCommit,
+		Evidence:      "runtime",
+		Workflow:      "storyboard",
+		Operations:    operations,
+		FieldListing:  fieldListing,
+		ReopenEqual:   reopenEqual,
+		ExternalNodes: []string{"image-1", "text-1"},
+		RegistryVersion: capability.SetVersion,
+		RegisteredTypes: s01RegisteredTypes(),
+		TypeListing: canvasShellMustExec(t, s, canvas.ID, "ls --types"),
+		Notes: []string{
+			"document snapshots are normalized for dynamic timestamp fields only",
+			"donor submap children use scopeId, not parentId",
+			"persisted connections are omitted by the donor write surface; relations are field-derived",
+			"reopened uses a fresh repository over the same isolated SQLite database",
+		},
+	}
+	s01WriteJSON(t, filepath.Join(outDir, "operations.json"), output)
+	s01WriteJSON(t, filepath.Join(outDir, "initial.json"), empty)
+	s01WriteJSON(t, filepath.Join(outDir, "created.json"), created)
+	s01WriteJSON(t, filepath.Join(outDir, "edited.json"), editedBeforeDup)
+	s01WriteJSON(t, filepath.Join(outDir, "duplicated.json"), duplicated)
+	s01WriteJSON(t, filepath.Join(outDir, "reopened.json"), reopenedSnapshot)
+	s01WriteJSON(t, filepath.Join(outDir, "provenance.json"), map[string]any{
+		"schemaVersion": 1,
+		"donor": map[string]any{
+			"repository": "yyvan1/open-ai-canvas",
+			"commit":     s01DonorCommit,
+			"capture":    "backend/internal/app TestS01CaptureDonorBehavior",
+		},
+		"evidence": "runtime",
+		"notes": []string{
+			"fixture was collected from the fixed donor commit in a temporary SQLite database",
+			"source inference and runtime measurements are recorded separately in the S01 report",
+		},
+	})
+}
+
+func s01RegisteredTypes() []map[string]any {
+	descriptors := canvasCapabilityRegistry.AgentList()
+	result := make([]map[string]any, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		fields := make([]map[string]any, 0, len(descriptor.Fields))
+		for name, field := range descriptor.Fields {
+			fields = append(fields, map[string]any{
+				"name": name, "addressName": field.AddressName, "kind": field.Kind,
+				"writable": field.Writable, "editable": field.Editable, "reference": field.Reference,
+			})
+		}
+		sort.Slice(fields, func(i, j int) bool {
+			return fields[i]["name"].(string) < fields[j]["name"].(string)
+		})
+		result = append(result, map[string]any{
+			"type": descriptor.Type, "version": descriptor.Version, "label": descriptor.Label,
+			"inputKind": descriptor.InputKind, "generationMode": descriptor.GenerationMode,
+			"visualOnly": descriptor.VisualOnly, "fields": fields,
+		})
+	}
+	return result
+}
+
+func s01ReadSnapshot(t *testing.T, s *Service, canvasID string) s01Snapshot {
+	t.Helper()
+	project, err := s.repo.CanvasProjectForUser("user", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s01SnapshotFromProject(project)
+}
+
+func s01SnapshotFromProject(project *model.CanvasProject) s01Snapshot {
+	var doc any
+	if err := json.Unmarshal([]byte(project.PayloadJSON), &doc); err != nil {
+		panic(err)
+	}
+	root, _ := doc.(map[string]any)
+	rawNodes, _ := root["nodes"].([]any)
+	nodes := make([]s01Node, 0, len(rawNodes))
+	nodeOrder := make([]string, 0, len(rawNodes))
+	nodeMaps := make([]map[string]any, 0, len(rawNodes))
+	for _, raw := range rawNodes {
+		node, _ := raw.(map[string]any)
+		if node == nil {
+			continue
+		}
+		nodeMaps = append(nodeMaps, node)
+		nodeOrder = append(nodeOrder, s01String(node["id"]))
+		metadata, _ := node["metadata"].(map[string]any)
+		spec, _ := metadata["generationSpec"].(map[string]any)
+		nodes = append(nodes, s01Node{
+			ID: s01String(node["id"]), Type: s01String(node["type"]), Title: s01String(node["title"]),
+			ScopeID: s01String(node["scopeId"]), ParentID: s01String(node["parentId"]),
+			WorkflowID: s01String(metadata["workflowId"]), WorkflowVersion: metadata["workflowVersion"],
+			Prompt: s01String(spec["prompt"]), Seconds: s01String(metadata["seconds"]),
+			StartFrameNodeID: s01String(metadata["videoStartFrameNodeId"]),
+			EndFrameNodeID: s01String(metadata["videoEndFrameNodeId"]),
+			ReferenceNodeIDs: s01Strings(metadata["referenceNodeIds"]),
+			ReferenceTextNodeIDs: s01Strings(metadata["referenceTextNodeIds"]),
+			Position: node["position"],
+		})
+	}
+	projected := cloudAgentCanvasProjectedEdges(nodeMaps)
+	edges := make([]s01Edge, 0, len(projected))
+	for _, edge := range projected {
+		edges = append(edges, s01Edge{ID: edge.ID, FromNodeID: edge.FromNodeID, ToNodeID: edge.ToNodeID})
+	}
+	return s01Snapshot{
+		Project: s01Project{ID: project.ID, UserID: project.UserID, Title: project.Title, Revision: project.Revision},
+		PayloadJSON: s01CanonicalPayload(project.PayloadJSON),
+		Document: s01Normalize(doc),
+		NodeOrder: nodeOrder,
+		Nodes: nodes,
+		Connections: s01Normalize(root["connections"]),
+		ProjectedEdges: edges,
+	}
+}
+
+func s01WriteJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func s01CanonicalPayload(payload string) string {
+	var value any
+	if err := json.Unmarshal([]byte(payload), &value); err != nil {
+		return payload
+	}
+	raw, err := json.Marshal(s01Normalize(value))
+	if err != nil {
+		return payload
+	}
+	return string(raw)
+}
+
+func s01Normalize(value any) any {
+	switch item := value.(type) {
+	case map[string]any:
+		next := make(map[string]any, len(item))
+		for key, child := range item {
+			if s01TimestampKey(key) && s01TimestampString(child) {
+				next[key] = "<dynamic-timestamp>"
+				continue
+			}
+			next[key] = s01Normalize(child)
+		}
+		return next
+	case []any:
+		next := make([]any, len(item))
+		for index, child := range item {
+			next[index] = s01Normalize(child)
+		}
+		return next
+	default:
+		return value
+	}
+}
+
+func s01TimestampKey(key string) bool {
+	lower := strings.ToLower(key)
+	return strings.Contains(lower, "time") || strings.HasSuffix(lower, "at")
+}
+
+func s01TimestampString(value any) bool {
+	text, _ := value.(string)
+	return len(text) >= 10 && strings.Contains(text, "T") && strings.HasSuffix(text, "Z")
+}
+
+func s01String(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func s01Strings(value any) []string {
+	items, _ := value.([]any)
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok && text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func s01Print(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	return string(raw)
+}

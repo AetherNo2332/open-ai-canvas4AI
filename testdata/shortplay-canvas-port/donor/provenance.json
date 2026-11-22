@@ -1,0 +1,13 @@
+{
+  "donor": {
+    "capture": "backend/internal/app TestS01CaptureDonorBehavior",
+    "commit": "13731aae6c4cefadc2a1719e3e7e59b22e249f94",
+    "repository": "yyvan1/open-ai-canvas"
+  },
+  "evidence": "runtime",
+  "notes": [
+    "fixture was collected from the fixed donor commit in a temporary SQLite database",
+    "source inference and runtime measurements are recorded separately in the S01 report"
+  ],
+  "schemaVersion": 1
+}
