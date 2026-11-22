@@ -17,7 +17,7 @@ type JournalEvent struct {
 // ValidateMessageCount 校验已载入 transcript 是否覆盖执行行声明的水位。
 func ValidateMessageCount(rows, count int) error {
 	if rows != count {
-		return fmt.Errorf("Agent execution transcript is incomplete: rows=%d count=%d", rows, count)
+		return fmt.Errorf("agent execution transcript is incomplete: rows=%d count=%d", rows, count)
 	}
 	return nil
 }
@@ -25,7 +25,7 @@ func ValidateMessageCount(rows, count int) error {
 // ValidateJournalEvent 校验单条持久化事件的 row/body 序号、run 与 event ID 是否自洽。
 func ValidateJournalEvent(runID string, event JournalEvent) error {
 	if !validJournalIdentity(runID, event.RowSequence, event) {
-		return errors.New("Agent event identity is invalid")
+		return errors.New("agent event identity is invalid")
 	}
 	return nil
 }
@@ -45,14 +45,14 @@ func ValidateJournalWindow(runID string, eventCount int, events []JournalEvent) 
 func JournalWatermark(eventCount int, events []JournalEvent) (int, error) {
 	// 窗口为空但水位非零 = 有行没读到，不能把“一行都没有”当成空日志。
 	if len(events) == 0 && eventCount != 0 {
-		return 0, errors.New("Agent execution journal is incomplete")
+		return 0, errors.New("agent execution journal is incomplete")
 	}
 	if len(events) > 0 && events[len(events)-1].Sequence != eventCount {
-		return 0, fmt.Errorf("Agent execution journal is incomplete: lastSeq=%d count=%d", events[len(events)-1].Sequence, eventCount)
+		return 0, fmt.Errorf("agent execution journal is incomplete: lastSeq=%d count=%d", events[len(events)-1].Sequence, eventCount)
 	}
 	base := eventCount - len(events)
 	if base < 0 {
-		return 0, fmt.Errorf("Agent execution journal watermark is invalid: count=%d rows=%d", eventCount, len(events))
+		return 0, fmt.Errorf("agent execution journal watermark is invalid: count=%d rows=%d", eventCount, len(events))
 	}
 	return base, nil
 }
@@ -62,7 +62,7 @@ func ValidateJournalSequence(runID string, eventSeqBase int, events []JournalEve
 	for index, event := range events {
 		sequence := eventSeqBase + index + 1
 		if event.Sequence != sequence || event.RunID != runID || event.EventID != fmt.Sprintf("%s:%d", runID, sequence) {
-			return errors.New("Agent event sequence or identity is invalid")
+			return errors.New("agent event sequence or identity is invalid")
 		}
 	}
 	return nil

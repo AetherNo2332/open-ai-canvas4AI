@@ -22,12 +22,12 @@ func TestAgentContextJournalWindowRules(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := ValidateJournalWindow("run", 3, []JournalEvent{event})
-			if err == nil || err.Error() != "Agent event identity is invalid" {
+			if err == nil || err.Error() != "agent event identity is invalid" {
 				t.Fatalf("identity error = %v", err)
 			}
 		})
 	}
-	if _, err := ValidateJournalWindow("run", 2, nil); err == nil || err.Error() != "Agent execution journal is incomplete" {
+	if _, err := ValidateJournalWindow("run", 2, nil); err == nil || err.Error() != "agent execution journal is incomplete" {
 		t.Fatalf("empty window error = %v", err)
 	}
 	if _, err := ValidateJournalWindow("run", 3, valid[:2]); err == nil || !strings.Contains(err.Error(), "lastSeq=4 count=3") {
@@ -51,7 +51,7 @@ func TestAgentContextJournalSequenceRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	valid[1].Sequence, valid[1].EventID = 5, "run:5"
-	if err := ValidateJournalSequence("run", 2, valid); err == nil || err.Error() != "Agent event sequence or identity is invalid" {
+	if err := ValidateJournalSequence("run", 2, valid); err == nil || err.Error() != "agent event sequence or identity is invalid" {
 		t.Fatalf("sequence error = %v", err)
 	}
 }
@@ -60,7 +60,7 @@ func TestAgentContextMessageCountRule(t *testing.T) {
 	if err := ValidateMessageCount(2, 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateMessageCount(1, 2); err == nil || err.Error() != "Agent execution transcript is incomplete: rows=1 count=2" {
+	if err := ValidateMessageCount(1, 2); err == nil || err.Error() != "agent execution transcript is incomplete: rows=1 count=2" {
 		t.Fatalf("message count error = %v", err)
 	}
 }
