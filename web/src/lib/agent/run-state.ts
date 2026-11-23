@@ -19,6 +19,9 @@ export function reduceAgentRunState(current: AgentRunSnapshot | null, event: Age
             spentCredits: Number(payload.spentCredits || 0),
             step: Number(payload.step || 0),
             approval: payload.approval && typeof payload.approval === "object" ? (payload.approval as AgentRunSnapshot["approval"]) : undefined,
+            waitKind: typeof payload.waitKind === "string" ? payload.waitKind : undefined,
+            waitId: typeof payload.waitId === "string" ? payload.waitId : undefined,
+            pendingDirectorPreview: payload.pendingDirectorPreview && typeof payload.pendingDirectorPreview === "object" ? (payload.pendingDirectorPreview as AgentRunSnapshot["pendingDirectorPreview"]) : undefined,
             contextCompaction: !terminal && compaction && typeof compaction === "object" ? (compaction as AgentContextCompactionState) : undefined,
         };
     }

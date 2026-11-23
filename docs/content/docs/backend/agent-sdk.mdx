@@ -77,6 +77,7 @@ const receipt = await agent.sendMessage(conversationId, {
 | 会话发送及队列 | `POST /agent/conversations/:id/messages` / `GET /agent/conversations/:id/queue` |
 | 读状态及续读事件 | `GET /agent/runs/:id` / `GET /agent/runs/:id/events?after=<seq>` |
 | 列出会话及轮次 | `GET /agent/conversations` / `GET /agent/conversations/:id/runs` |
+| 恢复待录预演 | `GET /agent/director-previews/pending` / `GET /agent/runs/:id` |
 | 审批、取消、归档 | `POST /agent/runs/:id/approvals/:approvalId/decision`、`POST /agent/runs/:id/cancel`、`DELETE /agent/conversations/:id` |
 
 不用 TypeScript 时，调用同一公开 API：使用受支持的登录凭据，创建和续聊的 JSON 带 `scope`；目标接口和 SSE 带 `scopeType`、`scopeId`，指定了配置时也带 `agentDefinitionId`。请求成功需要 HTTP 成功且响应 `code: 0`，业务错误按 `reason` 分类；SSE 用事件 `seq` 作为 `after` 或 `Last-Event-ID`，不是 Run ID。完整字段见 [HTTP API](./http-api.mdx) 和实例的 `/api/openapi.yaml`。
@@ -102,6 +103,10 @@ const receipt = await agent.sendMessage(conversationId, {
 快捷入口遵循同一规则：`⌘/Ctrl+J` 和命令面板只在当前声明可用时打开面板；画布预填还要求当前声明与 `canvasId` 一致且画布上下文已发布。业务加载失败保持错误或等待状态，不回退为平台聊天。切换路由后，旧页面的迟到响应和清理只作用于自己的 owner。
 
 短剧分析保存在同一悬浮面板。旧 `agentProject`、`agentRun` 只作为定位原轮次的提示，前端先通过带短剧 scope 的 SDK 读取运行，再核对持久化的 `scope` 和 Agent 定义；不匹配或缺少归属时拒绝。新会话默认当前集，既有会话显示最近一轮的分析集，切换集只在下一轮请求中显式提交 `dramaEpisodeId`。
+
+画布预演不依赖页面仍挂载时的实时事件窗口。`listPendingDirectorPreviews()` 读取当前账号仍可恢复的持久等待；会话目录的 `waitKind=director_preview` 可用于分页定位原画布。回到目标画布后按 `pendingDirectorPreview` 中的节点、场景、镜头、帧率和 `deadline` 恢复录制。其他页面只能显示返回目标画布的入口，不能代替用户打开目标画布导演台。运行详情的 `pendingDirectorPreview` 在请求结算或过期后省略。
+
+浏览器在上传视频后、回传响应前持久化资源 ID。刷新或重新进入原画布时先读取同一 `runId`、`requestId` 是否仍在等待；仍在等待就只重试回传该资源，不再次录制。结果已确认时清理本机记录；已过期时按 `director_preview_not_found` 结束本次等待。跨标签页继续使用录制锁，后台标签页不录制。
 
 工具注册项绑定 Schema、执行器版本、适用业务和运行条件。短剧只声明 `task_get` 及分集 `read` 适配器，计划、提问、结束属于平台控制能力。画布声明自己的读取、编辑、生成和可选子代理工具。模型、画布上下文、功能开关和执行权限共同决定本轮目录。Skill 文件读取根据实际启用的技能单独授予。
 

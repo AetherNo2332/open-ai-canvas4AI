@@ -27,6 +27,7 @@ type CloudAgentConversation struct {
 	QueueRevision     int64              `json:"queueRevision"`
 	QueuedCount       int                `json:"queuedCount"`
 	QueuePaused       bool               `json:"queuePaused"`
+	WaitKind          string             `json:"waitKind,omitempty"`
 	CreatedAt         time.Time          `json:"createdAt"`
 	UpdatedAt         time.Time          `json:"updatedAt"`
 }
@@ -171,6 +172,7 @@ func (s *Service) ScopedCloudAgentConversations(userID string, selector AgentCon
 			Archived:  run.ConversationArchived,
 			CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
 			QueueRevision: queues[id].Revision, QueuedCount: queues[id].QueuedCount, QueuePaused: queues[id].Paused,
+			WaitKind: run.WaitKind,
 		})
 	}
 	return page, nil

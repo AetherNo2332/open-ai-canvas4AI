@@ -341,6 +341,9 @@ export function subscribeAgentEvents(
                                         step: run.step,
                                         approval: run.approval,
                                         contextCompaction: run.contextCompaction,
+                                        waitKind: run.waitKind,
+                                        waitId: run.waitId,
+                                        pendingDirectorPreview: run.pendingDirectorPreview,
                                     };
                                     const statusKey = JSON.stringify(statusPayload);
                                     if (statusKey !== lastStatusKey) {

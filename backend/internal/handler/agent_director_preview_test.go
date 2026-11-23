@@ -41,3 +41,13 @@ func TestAgentDirectorPreviewHTTPEnvelope(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentPendingDirectorPreviewsRequiresAuthentication(t *testing.T) {
+	call, _, _ := workspaceHTTPFixture(t)
+	if w := call("GET", "/api/agent/director-previews/pending", "", false); w.Code != 401 {
+		t.Fatalf("authentication: %d %s", w.Code, w.Body)
+	}
+	if w := call("GET", "/api/agent/director-previews/pending", "", true); w.Code != 200 {
+		t.Fatalf("pending preview index: %d %s", w.Code, w.Body)
+	}
+}

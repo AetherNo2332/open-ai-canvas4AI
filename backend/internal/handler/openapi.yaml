@@ -1872,7 +1872,7 @@ paths:
           schema: { type: string, maxLength: 512 }
       responses:
         "200":
-          description: 信封 data 为 items（id、canvasId、scope、agentDefinitionId、resumable、title、latestRunId、status、revision、cleanupPending、archived、createdAt、updatedAt）和可选 nextCursor。resumable 为 false 的存量会话仅供查看。
+          description: 信封 data 为 items（id、canvasId、scope、agentDefinitionId、resumable、title、latestRunId、status、revision、cleanupPending、archived、waitKind、createdAt、updatedAt）和可选 nextCursor。resumable 为 false 的存量会话仅供查看；waitKind=director_preview 表示该会话最新轮仍可恢复为浏览器预演录制。
         "400":
           description: 范围参数不完整或冲突、画布 ID、limit 或分页游标无效；范围冲突 reason 为 agent_scope_invalid
         "404":
@@ -1951,7 +1951,7 @@ paths:
     get:
       tags: [agent]
       summary: 读取当前用户的 Agent 轮次
-      description: data.run 只返回一页事件（默认最新 40 条）并带上 eventSeqBase、eventCount、latestSeq、eventsTruncated：eventSeqBase 是本次首条事件之前已入库的条数（不变量 events[i].seq == eventSeqBase + i + 1），latestSeq 可直接作为下次 sinceSeq，eventsTruncated 表示还有更早的记录未随本次返回。读取走 (run_id, sequence) 的 keyset 分页，不使用 offset；升级前把事件放在 state_json 里的轮次在事件表中没有行，读取回退到内存窗口。
+      description: data.run 只返回一页事件（默认最新 40 条）并带上 eventSeqBase、eventCount、latestSeq、eventsTruncated：eventSeqBase 是本次首条事件之前已入库的条数（不变量 events[i].seq == eventSeqBase + i + 1），latestSeq 可直接作为下次 sinceSeq，eventsTruncated 表示还有更早的记录未随本次返回。读取走 (run_id, sequence) 的 keyset 分页，不使用 offset；升级前把事件放在 state_json 里的轮次在事件表中没有行，读取回退到内存窗口。运行仍等待浏览器预演时，视图同时返回 waitKind=director_preview、waitId=requestId 和 pendingDirectorPreview（runId、conversationId、canvasId、nodeId、sceneId、shotId、requestId、duration、fps、deadline）；请求已结算或超过 deadline 后该字段省略。
       parameters:
         - in: query
           name: fromStart
@@ -4172,6 +4172,16 @@ paths:
           description: 未登录
         "404":
           description: "reason=director_preview_not_found：运行不存在或不属于当前用户，或 requestId 未知、已完成、已超时"
+  /agent/director-previews/pending:
+    get:
+      tags: [agent]
+      summary: 列出当前用户待浏览器录制的导演台预演
+      description: 按用户返回仍处于 director_preview 等待、截止时间未到、当前业务对象和注册 Agent 定义仍有权限访问的预演。用于用户在另一画布、短剧或平台页面时显示「返回原画布处理」，不打开目标画布导演台，也不提交或取消原运行。已结算、已过期、非画布或失效授权不进入结果；单次最多 50 项。
+      responses:
+        "200":
+          description: 信封 data.items 为 pendingDirectorPreview 数组，字段与运行详情相同。
+        "401":
+          description: 未登录
   /agent/runs/{id}/permission:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"

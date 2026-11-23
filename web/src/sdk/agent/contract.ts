@@ -97,6 +97,8 @@ export type AgentRunSnapshot = {
     spentCredits?: number;
     step?: number;
     runtimePhase?: "ready" | "advancing" | "waiting_model" | "waiting_tool" | "waiting_approval" | "waiting_compaction" | "waiting_resource" | "retry_delay" | "terminal";
+    waitKind?: string;
+    waitId?: string;
     waitReason?: string;
     model?: string;
     channelId?: string;
@@ -113,7 +115,24 @@ export type AgentRunSnapshot = {
     eventsTruncated?: boolean;
     activeMessage?: { messageId: string; text: string };
     approval?: AgentApprovalSnapshot;
+    pendingDirectorPreview?: AgentPendingDirectorPreview;
     contextCompaction?: AgentContextCompactionState;
+};
+export type AgentPendingDirectorPreview = {
+    runId: string;
+    conversationId: string;
+    canvasId: string;
+    title?: string;
+    nodeId?: string;
+    sceneId: string;
+    shotId?: string;
+    requestId: string;
+    duration: number;
+    fps: number;
+    deadline: string;
+};
+export type AgentPendingDirectorPreviewPage = {
+    items: AgentPendingDirectorPreview[];
 };
 export type AgentRunReceipt<R extends AgentRunSnapshot = AgentRunSnapshot> = { run: R };
 export type AgentConversation = {
@@ -131,6 +150,7 @@ export type AgentConversation = {
     queueRevision?: number;
     queuedCount?: number;
     queuePaused?: boolean;
+    waitKind?: string;
     createdAt: string;
     updatedAt: string;
 };

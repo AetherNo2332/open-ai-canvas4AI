@@ -70,6 +70,19 @@ func registerAgentConversationRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, page)
 	})
+	r.GET("/agent/director-previews/pending", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		page, err := svc.PendingCloudAgentDirectorPreviews(user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, page)
+	})
 	r.GET("/agent/conversations/:id/runs", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

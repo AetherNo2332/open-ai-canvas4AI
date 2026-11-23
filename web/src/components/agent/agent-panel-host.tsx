@@ -5,6 +5,7 @@ import { useAgentPanelAdapter } from "@/services/agent/panel-adapters";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { createAgentClient } from "@/sdk/agent/client";
 import { agentWebTransport } from "@/sdk/agent/http-transport";
+import type { AgentPendingDirectorPreview } from "@/sdk/agent";
 import { useEffectiveConfig, logicalModelIDForConfig, modelOptionName, resolveModelRequestConfig, selectableModelsByCapability } from "@/stores/use-config-store";
 import { dramaAgentAnalysisRequest } from "@/services/api/drama-agent";
 import { AgentConversationPanel, type BuildAgentRequest } from "./agent-conversation-panel";
@@ -28,32 +29,82 @@ export function AgentPanelHost() {
         return () => window.removeEventListener("keydown", openFromShortcut);
     }, [context.declaration.enabled]);
     if (!context.declaration.enabled) return null;
+    const pendingDirectorEntry = (
+        <AgentPendingDirectorEntry ownCanvasId={context.scope?.type === "canvas" ? context.scope.id : undefined} />
+    );
     if (context.declaration.kind === "business" && context.declaration.businessType === "canvas") {
-        if (context.status === "loading") return <AgentEntryStatus label="正在加载画布 Agent" />;
-        if (context.status === "error" || !context.scope) return <AgentEntryStatus label={context.error || "当前画布 Agent 暂不可用"} disabled />;
-        if (!canvasAdapter) return <AgentEntryStatus label="正在加载画布 Agent 面板" />;
+        if (context.status === "loading") return <>{pendingDirectorEntry}<AgentEntryStatus label="正在加载画布 Agent" /></>;
+        if (context.status === "error" || !context.scope) return <>{pendingDirectorEntry}<AgentEntryStatus label={context.error || "当前画布 Agent 暂不可用"} disabled /></>;
+        if (!canvasAdapter) return <>{pendingDirectorEntry}<AgentEntryStatus label="正在加载画布 Agent 面板" /></>;
         const CanvasPanel = canvasAdapter;
         return (
             <Suspense fallback={null}>
+                {pendingDirectorEntry}
                 <CanvasPanel />
             </Suspense>
         );
     }
-    if (context.status === "loading") return <AgentEntryStatus label="正在加载 Agent 接入" />;
-    if (context.status === "error" || !context.scope) return <AgentEntryStatus label={context.error || "当前页面 Agent 暂不可用"} disabled />;
+    if (context.status === "loading") return <>{pendingDirectorEntry}<AgentEntryStatus label="正在加载 Agent 接入" /></>;
+    if (context.status === "error" || !context.scope) return <>{pendingDirectorEntry}<AgentEntryStatus label={context.error || "当前页面 Agent 暂不可用"} disabled /></>;
     if (context.declaration.kind === "platform")
-        return <PlatformAgentPanel scopeLabel={context.displayName || "平台对话"} open={open} onOpen={openAgentPanelSurface} onClose={closeAgentPanelSurface} />;
+        return <>{pendingDirectorEntry}<PlatformAgentPanel scopeLabel={context.displayName || "平台对话"} open={open} onOpen={openAgentPanelSurface} onClose={closeAgentPanelSurface} /></>;
     if (context.declaration.kind === "business" && context.declaration.businessType === "drama")
         return (
-            <DramaAgentPanel
-                context={context}
-                scopeLabel={context.displayName || "短剧分析"}
-                open={open}
-                onOpen={openAgentPanelSurface}
-                onClose={closeAgentPanelSurface}
-            />
+            <>
+                {pendingDirectorEntry}
+                <DramaAgentPanel
+                    context={context}
+                    scopeLabel={context.displayName || "短剧分析"}
+                    open={open}
+                    onOpen={openAgentPanelSurface}
+                    onClose={closeAgentPanelSurface}
+                />
+            </>
         );
-    return <AgentEntryStatus label={`当前业务未注册 Agent 接入：${context.declaration.kind}`} disabled />;
+    return <>{pendingDirectorEntry}<AgentEntryStatus label={`当前业务未注册 Agent 接入：${context.declaration.kind}`} disabled /></>;
+}
+
+function AgentPendingDirectorEntry({ ownCanvasId }: { ownCanvasId?: string }) {
+    const client = useMemo(() => createAgentClient({ transport: agentWebTransport }), []);
+    const [pending, setPending] = useState<AgentPendingDirectorPreview | null>(null);
+    useEffect(() => {
+        let active = true;
+        let controller: AbortController | undefined;
+        const refresh = async () => {
+            if (document.visibilityState === "hidden") return;
+            controller?.abort();
+            controller = new AbortController();
+            try {
+                const page = await client.listPendingDirectorPreviews(controller.signal);
+                if (active) setPending(page.items.find((item) => item.canvasId !== ownCanvasId) || null);
+            } catch {
+                // This entry is optional; a failed poll must not affect the declared Agent surface.
+            }
+        };
+        void refresh();
+        const timer = window.setInterval(() => void refresh(), 5_000);
+        const onVisibility = () => {
+            if (document.visibilityState === "visible") void refresh();
+        };
+        document.addEventListener("visibilitychange", onVisibility);
+        return () => {
+            active = false;
+            controller?.abort();
+            window.clearInterval(timer);
+            document.removeEventListener("visibilitychange", onVisibility);
+        };
+    }, [client, ownCanvasId]);
+    if (!pending) return null;
+    return (
+        <a
+            href={`/canvas/${encodeURIComponent(pending.canvasId)}?agent=1`}
+            data-agent-pending-director
+            className="fixed bottom-24 right-5 z-[69] max-w-72 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2 text-left text-xs text-amber-950 shadow-xl"
+        >
+            <strong className="block">画布预演等待录制</strong>
+            <span className="mt-0.5 block text-amber-800">返回画布处理这次预演请求</span>
+        </a>
+    );
 }
 
 function AgentEntryStatus({ label, disabled = false }: { label: string; disabled?: boolean }) {

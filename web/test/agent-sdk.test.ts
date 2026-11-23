@@ -251,6 +251,7 @@ test("SDK exposes scoped capabilities, complete queue and typed run pagination",
                 if (call.path.includes("/queue/")) return { status: 200, body: { code: 0, data: {} } };
                 if (call.path.includes("/queue")) return { status: 200, body: { code: 0, data: { revision: 2, paused: false, items: [] } } };
                 if (call.path.startsWith("/agent/ui-settings")) return { status: 200, body: { code: 0, data: { revision: 1, defaultSendMode: "queue" } } };
+                if (call.path.startsWith("/agent/director-previews/pending")) return { status: 200, body: { code: 0, data: { items: [] } } };
                 return { status: 200, body: { code: 0, data: { run: { id: "run-1" } } } };
             },
             async openEvents() {
@@ -267,6 +268,7 @@ test("SDK exposes scoped capabilities, complete queue and typed run pagination",
     await client.updateConversationQueue("c1", { revision: 1, action: "pause" });
     await client.getUISettings();
     await client.updateUISettings({ revision: 1, defaultSendMode: "queue" });
+    expect(await client.listPendingDirectorPreviews()).toEqual({ items: [] });
     await client.getRun("r1", undefined, { sinceSeq: 4, eventLimit: 50, fromStart: false });
     expect(calls[0].path).toBe("/agent/capabilities?scopeType=platform&scopeId=self&agentDefinitionId=platform.default");
     expect(calls.at(-1)?.path).toBe("/agent/runs/r1?sinceSeq=4&eventLimit=50&fromStart=false&scopeType=platform&scopeId=self&agentDefinitionId=platform.default");

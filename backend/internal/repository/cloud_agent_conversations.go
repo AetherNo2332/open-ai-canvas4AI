@@ -16,11 +16,11 @@ type CloudAgentHistoryCursor struct {
 const cloudAgentConversationIdentity = "COALESCE(NULLIF(conversation_id, ''), id)"
 
 // Only control columns are needed for directory polling; never hydrate journals.
-const cloudAgentHistoryColumns = "id, user_id, conversation_id, parent_id, title, canvas_id, status, revision, cleanup_pending, created_at, updated_at, scope_type, scope_id, agent_definition_id, agent_context_version"
+const cloudAgentHistoryColumns = "id, user_id, conversation_id, parent_id, title, canvas_id, status, revision, cleanup_pending, runtime_phase, wait_kind, wait_id, wait_reason, created_at, updated_at, scope_type, scope_id, agent_definition_id, agent_context_version"
 
 func (r *Repository) CloudAgentConversations(userID, canvasID string, before *CloudAgentHistoryCursor, limit int, scope ...model.AgentConversationBinding) ([]model.CloudAgentExecution, error) {
 	rows := []model.CloudAgentExecution{}
-	query := r.db.Table("cloud_agent_executions e").Select(`e.id, e.user_id, e.conversation_id, e.parent_id, e.title, e.canvas_id, e.status, e.revision, e.cleanup_pending, e.created_at, e.updated_at,
+	query := r.db.Table("cloud_agent_executions e").Select(`e.id, e.user_id, e.conversation_id, e.parent_id, e.title, e.canvas_id, e.status, e.revision, e.cleanup_pending, e.runtime_phase, e.wait_kind, e.wait_id, e.wait_reason, e.created_at, e.updated_at,
 		e.scope_type, e.scope_id, e.agent_definition_id, e.agent_context_version,
 		EXISTS (SELECT 1 FROM cloud_agent_executions a WHERE a.user_id = e.user_id AND COALESCE(NULLIF(a.conversation_id, ''), a.id) = COALESCE(NULLIF(e.conversation_id, ''), e.id) AND a.archived_at IS NOT NULL) AS conversation_archived`).
 		Where("e.user_id = ?", userID).
@@ -38,6 +38,18 @@ func (r *Repository) CloudAgentConversations(userID, canvasID string, before *Cl
 		query = query.Where("e.created_at < ? OR (e.created_at = ? AND e.id < ?)", before.CreatedAt, before.CreatedAt, before.ID)
 	}
 	err := query.Order("e.created_at DESC, e.id DESC").Limit(limit).Find(&rows).Error
+	return rows, err
+}
+
+// PendingDirectorPreviewRuns returns runs whose durable external wait is a
+// browser viewport recording. The caller still decodes each checkpoint and
+// verifies the request deadline and current business access.
+func (r *Repository) PendingDirectorPreviewRuns(userID string, limit int) ([]model.CloudAgentExecution, error) {
+	rows := []model.CloudAgentExecution{}
+	err := r.db.Where("user_id = ? AND wait_kind = ? AND status IN ? AND cleanup_pending = ?", userID, "director_preview", []string{"running", "queued"}, false).
+		Order("updated_at ASC, id ASC").
+		Limit(limit).
+		Find(&rows).Error
 	return rows, err
 }
 

@@ -12,7 +12,16 @@ export type DirectorOpenEvent = { canvasId: string; nodeId: string; sceneId: str
 /** `seq` 是 director_open 的持久事件序号；宿主只转发 seq>0 的事件，预演挂起查询据此定位请求事件。 */
 export type DirectorOpenRunEvent = DirectorOpenEvent & { runId: string; seq?: number };
 export type DirectorPreviewResult = { videoResourceId: string } | { error: string };
-export type DirectorPreviewJob = { runId: string; requestId: string; sceneId: string; shotId?: string; openSeq?: number };
+export type DirectorPreviewJob = {
+    runId: string;
+    requestId: string;
+    sceneId: string;
+    shotId?: string;
+    openSeq?: number;
+    canvasId?: string;
+    nodeId?: string;
+    deadline?: string;
+};
 
 const DIRECTOR_PREVIEW_ERROR_MAX = 500;
 /** 与后端 CANVAS_AGENT_DIRECTOR_PREVIEW_TIMEOUT 默认值一致：更早的事件只可能是回放。 */
@@ -138,6 +147,23 @@ export function directorPreviewPending(run: Pick<AgentRun, "status" | "events"> 
     return !events.slice(index + 1).some((event) => (event.type === "tool_completed" || event.type === "tool_failed") && event.payload?.callId === callId);
 }
 
+/**
+ * Prefer the durable backend wait projection. Older servers without it fall
+ * back to the event window so an in-flight worker can still finish this turn.
+ */
+export function directorPreviewSnapshotPending(
+    run: Pick<AgentRun, "status" | "events" | "pendingDirectorPreview"> | null | undefined,
+    requestId: string,
+    now = Date.now(),
+) {
+    if (!run || !["running", "queued"].includes(run.status)) return false;
+    if (run.pendingDirectorPreview !== undefined) {
+        const pending = run.pendingDirectorPreview;
+        return Boolean(pending && pending.requestId === requestId && Number.isFinite(Date.parse(pending.deadline)) && Date.parse(pending.deadline) > now);
+    }
+    return directorPreviewPending(run, requestId);
+}
+
 /** 与后端 agentRunEventQueryLimit 一致的单页事件上限。 */
 const DIRECTOR_PREVIEW_EVENT_PAGE = 500;
 type DirectorRunFetchOptions = { sinceSeq?: number; eventLimit?: number; fromStart?: boolean };
@@ -152,8 +178,12 @@ export function directorPreviewRunQuery(job: Pick<DirectorPreviewJob, "openSeq">
     return sinceSeq > 0 ? { sinceSeq, eventLimit: DIRECTOR_PREVIEW_EVENT_PAGE } : { fromStart: true, eventLimit: DIRECTOR_PREVIEW_EVENT_PAGE };
 }
 
-export async function directorPreviewJobPending(job: Pick<DirectorPreviewJob, "runId" | "requestId" | "openSeq">, fetchRun: (runId: string, options: DirectorRunFetchOptions) => Promise<{ run: Pick<AgentRun, "status" | "events"> }>) {
-    return directorPreviewPending((await fetchRun(job.runId, directorPreviewRunQuery(job))).run, job.requestId);
+export async function directorPreviewJobPending(
+    job: Pick<DirectorPreviewJob, "runId" | "requestId" | "openSeq">,
+    fetchRun: (runId: string, options: DirectorRunFetchOptions) => Promise<{ run: Pick<AgentRun, "status" | "events" | "pendingDirectorPreview"> }>,
+) {
+    const run = (await fetchRun(job.runId, directorPreviewRunQuery(job))).run;
+    return directorPreviewSnapshotPending(run as Pick<AgentRun, "status" | "events" | "pendingDirectorPreview">, job.requestId);
 }
 
 type SyncStorage = { getItem(key: string): string | null; setItem(key: string, value: string): void };
@@ -189,6 +219,14 @@ export function directorPreviewHandledStore(storage: SyncStorage | undefined = s
                 storage?.setItem(HANDLED_STORAGE_KEY, JSON.stringify([...read().filter((id) => id !== requestId), requestId].slice(-HANDLED_LIMIT)));
             } catch {
                 // 隐私模式或存储被禁用：保留内存记录即可。
+            }
+        },
+        unmarkHandled: (requestId: string) => {
+            memory.delete(requestId);
+            try {
+                storage?.setItem(HANDLED_STORAGE_KEY, JSON.stringify(read().filter((id) => id !== requestId)));
+            } catch {
+                // 隐私模式或存储被禁用：内存记录已清除。
             }
         },
     };
@@ -270,32 +308,113 @@ export async function runDirectorPreview(input: {
     submit: (runId: string, requestId: string, result: DirectorPreviewResult) => Promise<void>;
     isHidden?: () => boolean;
     isPending?: () => Promise<boolean>;
-    handled?: { isHandled(requestId: string): boolean; markHandled(requestId: string): void };
+    handled?: { isHandled(requestId: string): boolean; markHandled(requestId: string): void; unmarkHandled?(requestId: string): void };
     withLock?: DirectorPreviewLock;
+    resultStore?: DirectorPreviewResultStore;
 }): Promise<DirectorPreviewOutcome> {
     if (input.isHidden?.()) return "abandoned";
-    if (input.handled?.isHandled(input.requestId)) return "skipped";
+    const storedBeforeLock = input.resultStore?.load(input.runId, input.requestId);
+    if (!storedBeforeLock && input.handled?.isHandled(input.requestId)) return "skipped";
     const lock: DirectorPreviewLock = input.withLock ?? (async (_name, fn) => ({ acquired: true, value: await fn() }));
     const locked = await lock(input.requestId, async (): Promise<DirectorPreviewOutcome> => {
-        if (input.isPending && !(await input.isPending())) return "skipped";
-        if (input.handled?.isHandled(input.requestId)) return "skipped";
+        if (input.isPending && !(await input.isPending())) {
+            if (storedBeforeLock) input.resultStore?.clear(input.requestId);
+            return "skipped";
+        }
+        let stored = input.resultStore?.load(input.runId, input.requestId);
+        if (!stored && input.handled?.isHandled(input.requestId)) return "skipped";
+        if (stored) {
+            try {
+                await input.submit(input.runId, input.requestId, { videoResourceId: stored.videoResourceId });
+                input.resultStore?.clear(input.requestId);
+                return "submitted";
+            } catch (cause) {
+                if (cause instanceof ApiError && cause.reason === API_ERROR_REASONS.directorPreviewNotFound) {
+                    input.resultStore?.clear(input.requestId);
+                    return "expired";
+                }
+                throw cause;
+            }
+        }
         input.handled?.markHandled(input.requestId);
         let result: DirectorPreviewResult;
         try {
             result = { videoResourceId: await input.record() };
         } catch (cause) {
-            if (cause instanceof DirectorPreviewAbandonedError) return "abandoned";
+            if (cause instanceof DirectorPreviewAbandonedError) {
+                input.handled?.unmarkHandled?.(input.requestId);
+                return "abandoned";
+            }
             result = { error: directorPreviewErrorMessage(cause) };
         }
+        if ("videoResourceId" in result) input.resultStore?.save(input.runId, input.requestId, result.videoResourceId);
         try {
             await input.submit(input.runId, input.requestId, result);
+            input.resultStore?.clear(input.requestId);
             return "error" in result ? "submitted_error" : "submitted";
         } catch (cause) {
-            if (cause instanceof ApiError && cause.reason === API_ERROR_REASONS.directorPreviewNotFound) return "expired";
+            if (cause instanceof ApiError && cause.reason === API_ERROR_REASONS.directorPreviewNotFound) {
+                input.resultStore?.clear(input.requestId);
+                return "expired";
+            }
             throw cause;
         }
     });
     return locked.acquired ? locked.value : "skipped";
+}
+
+type StoredDirectorPreviewResult = { runId: string; requestId: string; videoResourceId: string; savedAt: number };
+export type DirectorPreviewResultStore = {
+    load(runId: string, requestId: string): StoredDirectorPreviewResult | null;
+    save(runId: string, requestId: string, videoResourceId: string): void;
+    clear(requestId: string): void;
+};
+
+const RESULT_STORAGE_KEY = "director-preview-uploaded-result";
+const RESULT_LIMIT = 32;
+
+/** Persist the uploaded resource before submission so a refresh retries the same video instead of recording again. */
+export function directorPreviewResultStore(storage: LeaseStorage | undefined = safeLocalStorage()): DirectorPreviewResultStore {
+    const memory = new Map<string, StoredDirectorPreviewResult>();
+    const read = () => {
+        try {
+            const parsed = JSON.parse(storage?.getItem(RESULT_STORAGE_KEY) || "[]");
+            if (!Array.isArray(parsed)) return [];
+            return parsed.filter(
+                (item): item is StoredDirectorPreviewResult =>
+                    Boolean(item && typeof item.runId === "string" && typeof item.requestId === "string" && typeof item.videoResourceId === "string" && Number.isFinite(item.savedAt)),
+            );
+        } catch {
+            return [];
+        }
+    };
+    const all = () => {
+        const values = new Map(read().map((item) => [item.requestId, item] as const));
+        for (const [requestId, item] of memory) values.set(requestId, item);
+        return [...values.values()];
+    };
+    const write = (items: StoredDirectorPreviewResult[]) => {
+        try {
+            storage?.setItem(RESULT_STORAGE_KEY, JSON.stringify(items.slice(-RESULT_LIMIT)));
+        } catch {
+            // Keep the in-memory copy when storage is blocked.
+        }
+    };
+    return {
+        load(runId, requestId) {
+            const item = memory.get(requestId) || read().find((value) => value.requestId === requestId);
+            return item && item.runId === runId && item.videoResourceId ? item : null;
+        },
+        save(runId, requestId, videoResourceId) {
+            const item = { runId, requestId, videoResourceId, savedAt: Date.now() };
+            memory.set(requestId, item);
+            write([...all().filter((value) => value.requestId !== requestId), item]);
+        },
+        clear(requestId) {
+            memory.delete(requestId);
+            write(all().filter((value) => value.requestId !== requestId));
+        },
+    };
 }
 
 export type DirectorPreviewOutcome = "submitted" | "submitted_error" | "expired" | "abandoned" | "skipped";

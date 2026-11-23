@@ -8,6 +8,7 @@ import type {
     AgentEvent,
     AgentMessageInput,
     AgentMessageReceipt,
+    AgentPendingDirectorPreviewPage,
     AgentQueuedMessage,
     AgentRunQuery,
     AgentRunReceipt,
@@ -275,6 +276,8 @@ export function createAgentClient<R extends AgentRunSnapshot = AgentRunSnapshot>
                 },
                 true,
             ),
+        listPendingDirectorPreviews: (signal?: AbortSignal) =>
+            request<AgentPendingDirectorPreviewPage>({ method: "GET", path: "/agent/director-previews/pending", signal }, true),
         listConversationRuns: (id: string, page: { after?: string; limit?: number } = {}, signal?: AbortSignal) =>
             request<AgentConversationPage<R>>(
                 {

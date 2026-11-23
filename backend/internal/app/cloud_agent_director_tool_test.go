@@ -797,6 +797,74 @@ func TestDirectorPreviewResultResumesCall(t *testing.T) {
 	}
 }
 
+func TestDirectorPreviewProjectionSupportsCrossPageRecovery(t *testing.T) {
+	call := directorTestCall("director-preview-recovery", map[string]any{"action": "preview", "sceneId": "scene", "shotId": "scene-shot-1"})
+	s, run, state := directorFixture(t, "auto", directorSceneDocument(t), call)
+	if err := s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		current.ScopeType, current.ScopeID, current.AgentDefinitionID = "canvas", run.CanvasID, "canvas.default"
+		return cloudAgentSave(current, state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	requestID := state.DirectorPreview.RequestID
+
+	conversations, err := s.ScopedCloudAgentConversations("user", AgentConversationSelector{
+		Scope:             AgentBusinessScope{Type: run.ScopeType, ID: run.ScopeID},
+		AgentDefinitionID: run.AgentDefinitionID,
+	}, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conversations.Items) != 1 || conversations.Items[0].WaitKind != cloudAgentDirectorPreviewWaitKind || conversations.Items[0].LatestRunID != run.ID {
+		t.Fatalf("directory did not expose the durable preview wait: %+v", conversations.Items)
+	}
+
+	view, err := s.CloudAgentRun("user", run.ID, CloudAgentRunViewOptions{EventLimit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.WaitKind != cloudAgentDirectorPreviewWaitKind || view.WaitID != requestID || view.PendingDirectorPreview == nil {
+		t.Fatalf("run projection missing preview wait: kind=%s id=%s pending=%+v", view.WaitKind, view.WaitID, view.PendingDirectorPreview)
+	}
+	if view.PendingDirectorPreview.CanvasID != run.CanvasID || view.PendingDirectorPreview.RequestID != requestID || view.PendingDirectorPreview.NodeID == "" {
+		t.Fatalf("pending preview projection = %+v", view.PendingDirectorPreview)
+	}
+
+	page, err := s.PendingCloudAgentDirectorPreviews("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].RunID != run.ID || page.Items[0].RequestID != requestID {
+		t.Fatalf("cross-page pending index = %+v", page.Items)
+	}
+	if other, err := s.PendingCloudAgentDirectorPreviews("other"); err != nil || len(other.Items) != 0 {
+		t.Fatalf("foreign account saw a pending preview: %+v %v", other, err)
+	}
+
+	state.DirectorPreview.Deadline = time.Now().Add(-time.Second)
+	if err := s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expired, err := s.CloudAgentRun("user", run.ID, CloudAgentRunViewOptions{EventLimit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.PendingDirectorPreview != nil {
+		t.Fatalf("expired preview remained recoverable: %+v", expired.PendingDirectorPreview)
+	}
+	expiredPending, err := s.PendingCloudAgentDirectorPreviews("user")
+	if err != nil || len(expiredPending.Items) != 0 {
+		t.Fatalf("expired preview remained in cross-page index: %+v %v", expiredPending, err)
+	}
+}
+
 // The Pi worker drives tools through PiToolAdvance: a waiting preview must stay
 // pending (no receipt, no duplicate open event) until the browser result lands.
 func TestDirectorPreviewThroughPiToolAdvance(t *testing.T) {

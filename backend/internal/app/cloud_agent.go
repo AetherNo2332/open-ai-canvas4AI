@@ -99,6 +99,8 @@ type CloudAgentRun struct {
 	Status                 string              `json:"status"`
 	Revision               int64               `json:"revision"`
 	RuntimePhase           string              `json:"runtimePhase"`
+	WaitKind               string              `json:"waitKind,omitempty"`
+	WaitID                 string              `json:"waitId,omitempty"`
 	WaitReason             string              `json:"waitReason,omitempty"`
 	CleanupPending         bool                `json:"cleanupPending,omitempty"`
 	FailureMessage         string              `json:"failureMessage,omitempty"`
@@ -116,15 +118,34 @@ type CloudAgentRun struct {
 	// 增量读取的 sinceSeq，EventsTruncated 表示还有更早的记录没随本次返回。
 	// 这四个字段**不用 omitempty**：零值本身是有信息的位置读数（例如首条之前无记录、
 	// 没有更早的记录），省略会让客户端无法区分"为 0"与"服务端没给"。
-	EventSeqBase    int                 `json:"eventSeqBase"`
-	EventCount      int                 `json:"eventCount"`
-	LatestSeq       int                 `json:"latestSeq"`
-	EventsTruncated bool                `json:"eventsTruncated"`
-	Skills          []cloudAgentSkill   `json:"skills,omitempty"`
-	Approval        *cloudAgentApproval `json:"approval,omitempty"`
-	SpentCredits    float64             `json:"spentCredits"`
-	Step            int                 `json:"step"`
-	ActiveMessage   map[string]string   `json:"activeMessage,omitempty"`
+	EventSeqBase           int                               `json:"eventSeqBase"`
+	EventCount             int                               `json:"eventCount"`
+	LatestSeq              int                               `json:"latestSeq"`
+	EventsTruncated        bool                              `json:"eventsTruncated"`
+	Skills                 []cloudAgentSkill                 `json:"skills,omitempty"`
+	Approval               *cloudAgentApproval               `json:"approval,omitempty"`
+	SpentCredits           float64                           `json:"spentCredits"`
+	Step                   int                               `json:"step"`
+	ActiveMessage          map[string]string                 `json:"activeMessage,omitempty"`
+	PendingDirectorPreview *CloudAgentPendingDirectorPreview `json:"pendingDirectorPreview,omitempty"`
+}
+
+type CloudAgentPendingDirectorPreview struct {
+	RunID          string    `json:"runId"`
+	ConversationID string    `json:"conversationId"`
+	CanvasID       string    `json:"canvasId"`
+	Title          string    `json:"title,omitempty"`
+	NodeID         string    `json:"nodeId,omitempty"`
+	SceneID        string    `json:"sceneId"`
+	ShotID         string    `json:"shotId,omitempty"`
+	RequestID      string    `json:"requestId"`
+	Duration       float64   `json:"duration"`
+	FPS            int       `json:"fps"`
+	Deadline       time.Time `json:"deadline"`
+}
+
+type CloudAgentPendingDirectorPreviewPage struct {
+	Items []CloudAgentPendingDirectorPreview `json:"items"`
 }
 
 // CloudAgentRunViewOptions 是运行详情的读取选项：SinceSeq 只取该序号之后的增量，
