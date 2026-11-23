@@ -67,11 +67,12 @@ export function applyAgentConversationEvent(view: AgentConversationView, event: 
                   .filter((option) => option.label)
             : [];
         if (options.length >= 2) {
+            const questionId = `${event.runId}:${event.seq || event.eventId}`;
             messages = appendUnique(messages, {
-                id: `question-${event.runId}:${event.seq || event.eventId}`,
+                id: questionId,
                 role: "assistant",
                 text: "",
-                question: { id: `question-${event.runId}:${event.seq || event.eventId}`, question: payload.question, options, allowFreeform: payload.allowFreeform !== false },
+                question: { id: questionId, question: payload.question, options, allowFreeform: payload.allowFreeform !== false },
                 runId: event.runId,
             });
         }
