@@ -21,6 +21,7 @@ export function AgentConversationPanel({
     scopeLabel,
     userScope,
     headerExtra,
+    intro,
     capabilities,
     initialRunId,
     onActiveContextChange,
@@ -34,6 +35,7 @@ export function AgentConversationPanel({
     scopeLabel: string;
     userScope: string;
     headerExtra?: ReactNode | ((header: AgentPanelHeader) => ReactNode);
+    intro?: ReactNode;
     capabilities?: AgentCapabilities | null;
     initialRunId?: string;
     onActiveContextChange?: (header: AgentPanelHeader) => void;
@@ -164,6 +166,7 @@ export function AgentConversationPanel({
                     </div>
                 ) : null}
                 <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+                    {intro ? <div className="text-[11px] text-neutral-500">{intro}</div> : null}
                     {capabilities?.defaultSkills?.skills.length ? (
                         <p className="text-[11px] text-neutral-500">
                             默认技能：{capabilities.defaultSkills.skills.map((skill) => skill.skillName).join("、")}

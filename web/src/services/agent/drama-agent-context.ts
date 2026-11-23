@@ -1,4 +1,19 @@
 import type { AgentRunSnapshot } from "@/sdk/agent";
+import type { DramaModelChoice } from "@/services/api/drama";
+
+function hasDramaModelRoute(model?: DramaModelChoice) {
+    return Boolean(model?.logicalModelId || (model?.channelId && model?.modelKey));
+}
+
+/**
+ * The script-specific model is optional. An empty override object must not
+ * shadow the project's configured text model.
+ */
+export function dramaAgentTextModel(models?: { scriptText?: DramaModelChoice; text?: DramaModelChoice }) {
+    if (hasDramaModelRoute(models?.scriptText)) return models?.scriptText;
+    if (hasDramaModelRoute(models?.text)) return models?.text;
+    return undefined;
+}
 
 /**
  * Legacy drama links are only a pointer to a server-owned run. Validate the

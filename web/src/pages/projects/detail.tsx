@@ -52,7 +52,7 @@ import { useAgentPageDeclaration } from "@/services/agent/business-context";
 import { openAgentPanelSurface } from "@/stores/use-agent-panel-surface";
 import { createAgentClient } from "@/sdk/agent/client";
 import { agentWebTransport } from "@/sdk/agent/http-transport";
-import { validatedDramaAgentRunId } from "@/services/agent/drama-agent-context";
+import { dramaAgentTextModel, validatedDramaAgentRunId } from "@/services/agent/drama-agent-context";
 import "./drama.css";
 
 type Tab = "board" | "script" | "final";
@@ -97,7 +97,7 @@ export default function DramaStudioPage() {
     const { cast, byId: castById } = useDramaCast(projectId, Boolean(running));
     const shots = useMemo(() => detail?.shots || [], [detail]);
     const currentShot = shots.find((shot) => shot.id === shotParam);
-    const agentTextModel = summary?.production.settings.models.scriptText || summary?.production.settings.models.text;
+    const agentTextModel = dramaAgentTextModel(summary?.production.settings.models);
     const legacyAgentRun = searchParams.get("agentRun") || "";
     const legacyAgentProject = searchParams.get("agentProject") || "";
     const [openedLegacyRun, setOpenedLegacyRun] = useState<{ projectId: string; runId: string } | null>(null);

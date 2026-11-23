@@ -223,6 +223,11 @@ function DramaAgentPanel({
             capabilities={capability.capabilities}
             initialRunId={context.target?.openedRunId}
             onActiveContextChange={syncActiveEpisode}
+            intro={
+                <span>
+                    只读分析 · 文本模型 <b>{context.target?.model?.label || "未配置"}</b>
+                </span>
+            }
             open={open}
             onOpen={onOpen}
             onClose={onClose}

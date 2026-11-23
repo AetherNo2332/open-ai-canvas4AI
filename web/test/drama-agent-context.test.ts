@@ -1,5 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { validatedDramaAgentRunId } from "@/services/agent/drama-agent-context";
+import { dramaAgentTextModel, validatedDramaAgentRunId } from "@/services/agent/drama-agent-context";
+
+describe("drama Agent text model", () => {
+    const text = { channelId: "channel-default", modelKey: "text-default", label: "默认文本" };
+
+    test("uses the project default when the optional script override is empty", () => {
+        expect(dramaAgentTextModel({ text, scriptText: {} })).toEqual(text);
+    });
+
+    test("uses a complete script override before the project default", () => {
+        const scriptText = { channelId: "channel-script", modelKey: "text-script", label: "剧本文本" };
+        expect(dramaAgentTextModel({ text, scriptText })).toEqual(scriptText);
+    });
+
+    test("returns no route instead of sending an empty model choice", () => {
+        expect(dramaAgentTextModel({ text: {}, scriptText: {} })).toBeUndefined();
+    });
+});
 
 describe("legacy drama Agent links", () => {
     test("accepts a drama run from the addressed project", () => {
