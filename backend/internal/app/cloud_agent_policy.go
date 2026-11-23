@@ -208,6 +208,15 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 		context["referenceCandidates"] = anchors[0].ReferenceAssets
 		context["visualInspectionPolicy"] = "observationStatus 只描述已有观察；关系梳理无需识图，判断外观或一致性时再看图。cached_needs_validation 须由识图工具核对当前资源。"
 	}
+	if businessType == "drama" && req.DramaEpisodeID != "" {
+		// A continued Pi session keeps earlier episode snapshots in its transcript.
+		// The current run's target must remain an authoritative system fact so a
+		// newly selected episode is not shadowed by the previous turn.
+		context["drama"] = map[string]string{
+			"episodeId": req.DramaEpisodeID,
+			"readPath":  "drama:episode/" + req.DramaEpisodeID,
+		}
+	}
 	context["skillRuntimeMode"] = skillMode
 	encoded, err := json.Marshal(context)
 	if err != nil {
