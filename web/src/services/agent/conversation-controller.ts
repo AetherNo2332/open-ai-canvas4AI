@@ -1,25 +1,9 @@
-import type {
-    AgentApprovalDecision,
-    AgentApprovalSnapshot,
-    AgentBusinessScope,
-    AgentConversation,
-    AgentConversationQueue,
-    AgentEvent,
-    AgentMessageInput,
-    AgentQueuedMessage,
-    AgentRunRequest,
-    AgentRunSnapshot,
-} from "@/sdk/agent";
+import type { AgentApprovalDecision, AgentApprovalSnapshot, AgentBusinessScope, AgentConversation, AgentConversationQueue, AgentEvent, AgentMessageInput, AgentQueuedMessage, AgentRunRequest, AgentRunSnapshot } from "@/sdk/agent";
 import type { createAgentClient } from "@/sdk/agent/client";
 import { defaultAgentConversationStore, type AgentConversationStore } from "./conversation-storage";
-import type {
-    AgentConversationDocument,
-    AgentConversationIdentity,
-    AgentConversationRecord,
-    AgentConversationView,
-    AgentPendingSubmission,
-} from "./conversation-types";
+import type { AgentConversationDocument, AgentConversationIdentity, AgentConversationRecord, AgentConversationView, AgentPendingSubmission } from "./conversation-types";
 import { applyAgentConversationEvent, projectAgentConversation } from "@/lib/agent/conversation-events";
+import { emptyAgentContextUsage, reduceAgentContextUsage, type AgentContextUsage } from "@/lib/agent/context-usage";
 
 type ScopedClient = ReturnType<typeof createAgentClient>;
 
@@ -36,6 +20,11 @@ export type AgentConversationControllerState = {
     queue?: AgentConversationQueue;
     pending?: AgentPendingSubmission | null;
     draft: string;
+    contextUsage: AgentContextUsage;
+    model: string;
+    reasoningMode: NonNullable<AgentRunRequest["reasoningMode"]>;
+    skillIds: string[];
+    sendMode: AgentMessageInput["mode"];
 };
 
 export type AgentConversationSubmitOptions = {
@@ -52,6 +41,7 @@ type ControllerOptions = {
     prepare?: () => Promise<void>;
     createId?: () => string;
     now?: () => string;
+    initial?: Partial<Pick<AgentConversationControllerState, "model" | "reasoningMode" | "skillIds" | "sendMode">>;
 };
 
 const terminal = new Set<AgentRunSnapshot["status"]>(["completed", "failed", "cancelled", "rejected"]);
@@ -76,7 +66,10 @@ function recordFromConversation(summary: AgentConversation, existing?: AgentConv
         draft: existing?.draft,
         permissionMode: existing?.permissionMode || "read_only",
         model: existing?.model,
+        reasoningMode: existing?.reasoningMode,
         skillIds: existing?.skillIds,
+        contextUsage: existing?.contextUsage,
+        sendMode: existing?.sendMode,
         archived: summary.archived,
         createdAt: existing?.createdAt || summary.createdAt,
         updatedAt: summary.updatedAt,
@@ -97,6 +90,7 @@ export class AgentConversationController {
     private readonly createId: () => string;
     private readonly now: () => string;
     private listeners = new Set<() => void>();
+    private eventListeners = new Set<(event: AgentEvent) => void>();
     private stateValue: AgentConversationControllerState;
     private document: AgentConversationDocument = { version: 2, activeId: null, conversations: [] };
     private eventController: AbortController | null = null;
@@ -114,6 +108,7 @@ export class AgentConversationController {
         this.prepare = options.prepare;
         this.createId = options.createId || (() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
         this.now = options.now || (() => new Date().toISOString());
+        const initial: Partial<Pick<AgentConversationControllerState, "model" | "reasoningMode" | "skillIds" | "sendMode">> = options.initial || {};
         this.stateValue = {
             status: "loading",
             error: "",
@@ -125,12 +120,26 @@ export class AgentConversationController {
             run: null,
             approval: null,
             draft: "",
+            contextUsage: emptyAgentContextUsage(""),
+            model: initial.model || "",
+            reasoningMode: initial.reasoningMode || "off",
+            skillIds: initial.skillIds || [],
+            sendMode: initial.sendMode || "queue",
         };
     }
 
     subscribe = (listener: () => void) => {
         this.listeners.add(listener);
-        return () => this.listeners.delete(listener);
+        return () => {
+            this.listeners.delete(listener);
+        };
+    };
+
+    subscribeEvent = (listener: (event: AgentEvent) => void) => {
+        this.eventListeners.add(listener);
+        return () => {
+            this.eventListeners.delete(listener);
+        };
     };
 
     getSnapshot = () => this.stateValue;
@@ -156,6 +165,11 @@ export class AgentConversationController {
                 conversations: document.conversations,
                 draft,
                 pending,
+                contextUsage: active?.contextUsage || emptyAgentContextUsage(active?.run?.id || ""),
+                model: active?.model || active?.run?.model || this.stateValue.model,
+                reasoningMode: active?.reasoningMode || this.stateValue.reasoningMode,
+                skillIds: active?.skillIds || this.stateValue.skillIds,
+                sendMode: active?.sendMode || this.stateValue.sendMode,
             });
             if (!active) await this.ensureActiveRecord();
             if (active?.serverConversationId || active?.run?.conversationId) await this.loadHistory(active.serverConversationId || active.run!.conversationId!);
@@ -213,6 +227,11 @@ export class AgentConversationController {
             draft: draft || record.draft || "",
             pending,
             error: "",
+            contextUsage: record.contextUsage || emptyAgentContextUsage(record.run?.id || ""),
+            model: record.model || record.run?.model || "",
+            reasoningMode: record.reasoningMode || "off",
+            skillIds: record.skillIds || [],
+            sendMode: record.sendMode || this.stateValue.sendMode,
         });
         if (record.serverConversationId || record.run?.conversationId) await this.loadHistory(record.serverConversationId || record.run!.conversationId!);
         this.schedulePersist();
@@ -243,9 +262,7 @@ export class AgentConversationController {
         this.document = {
             version: 2,
             activeId: recordId,
-            conversations: existing
-                ? this.document.conversations.map((item) => (item.id === recordId ? record : item))
-                : [record, ...this.document.conversations],
+            conversations: existing ? this.document.conversations.map((item) => (item.id === recordId ? record : item)) : [record, ...this.document.conversations],
         };
         this.set({
             activeConversationId: recordId,
@@ -256,6 +273,11 @@ export class AgentConversationController {
             pending: await this.store.loadPending(this.identity, recordId),
             error: "",
             conversations: this.document.conversations,
+            contextUsage: record.contextUsage || emptyAgentContextUsage(run.id),
+            model: record.model || run.model || "",
+            reasoningMode: record.reasoningMode || "off",
+            skillIds: record.skillIds || run.skills?.map((skill) => skill.id) || [],
+            sendMode: record.sendMode || this.stateValue.sendMode,
         });
         await this.store.saveDocument(this.identity, this.document);
         await this.loadHistory(conversationId);
@@ -271,6 +293,11 @@ export class AgentConversationController {
             messages: [],
             run: null,
             permissionMode: "read_only",
+            model: this.stateValue.model || undefined,
+            reasoningMode: this.stateValue.reasoningMode,
+            skillIds: [],
+            contextUsage: emptyAgentContextUsage(""),
+            sendMode: this.stateValue.sendMode,
             createdAt: this.now(),
             updatedAt: this.now(),
         };
@@ -286,6 +313,11 @@ export class AgentConversationController {
             error: "",
             busy: false,
             connection: "connected",
+            contextUsage: emptyAgentContextUsage(""),
+            model: this.stateValue.model,
+            reasoningMode: this.stateValue.reasoningMode,
+            skillIds: [],
+            sendMode: this.stateValue.sendMode,
         });
         await this.store.clearDraft(this.identity, id);
         await this.store.saveDocument(this.identity, this.document);
@@ -294,6 +326,35 @@ export class AgentConversationController {
     setDraft(draft: string) {
         this.set({ draft });
         void this.store.saveDraft(this.identity, this.stateValue.activeConversationId, draft);
+        this.schedulePersist();
+    }
+
+    setModel(model: string) {
+        if (this.stateValue.model === model) return;
+        this.set({ model });
+        this.updateRecord({ model });
+        this.schedulePersist();
+    }
+
+    setReasoningMode(reasoningMode: NonNullable<AgentRunRequest["reasoningMode"]>) {
+        if (this.stateValue.reasoningMode === reasoningMode) return;
+        this.set({ reasoningMode });
+        this.updateRecord({ reasoningMode });
+        this.schedulePersist();
+    }
+
+    setSkillIds(skillIds: string[]) {
+        const next = [...new Set(skillIds.filter(Boolean))];
+        if (JSON.stringify(this.stateValue.skillIds) === JSON.stringify(next)) return;
+        this.set({ skillIds: next });
+        this.updateRecord({ skillIds: next });
+        this.schedulePersist();
+    }
+
+    setSendMode(sendMode: AgentMessageInput["mode"]) {
+        if (this.stateValue.sendMode === sendMode) return;
+        this.set({ sendMode });
+        this.updateRecord({ sendMode });
         this.schedulePersist();
     }
 
@@ -313,23 +374,22 @@ export class AgentConversationController {
             this.stateValue.run && conversationId
                 ? {
                       conversationId,
-                      mode: options.mode || (this.stateValue.queue?.awaitingQuestionId ? "interject" : "queue"),
+                      mode: options.mode || (this.stateValue.queue?.awaitingQuestionId ? "interject" : this.stateValue.sendMode),
                       expectedRunId: this.stateValue.run.id,
                       ...(options.replyToQuestionId ? { replyToQuestionId: options.replyToQuestionId } : {}),
                   }
                 : undefined;
-        const pending: AgentPendingSubmission =
-            previous?.request
-                ? previous
-                : {
-                      fingerprint: JSON.stringify({ scope: this.identity.scope, parent: parentRunId, request, conversationMessage }),
-                      key: request.idempotencyKey,
-                      request,
-                      ...(parentRunId ? { parentRunId } : {}),
-                      messageId: `user-${request.idempotencyKey}`,
-                      ...(!options.preserveDraft ? { composerDraft: this.stateValue.draft } : {}),
-                      ...(conversationMessage ? { conversationMessage } : {}),
-                  };
+        const pending: AgentPendingSubmission = previous?.request
+            ? previous
+            : {
+                  fingerprint: JSON.stringify({ scope: this.identity.scope, parent: parentRunId, request, conversationMessage }),
+                  key: request.idempotencyKey,
+                  request,
+                  ...(parentRunId ? { parentRunId } : {}),
+                  messageId: `user-${request.idempotencyKey}`,
+                  ...(!options.preserveDraft ? { composerDraft: this.stateValue.draft } : {}),
+                  ...(conversationMessage ? { conversationMessage } : {}),
+              };
         this.set({ busy: true, error: "", ...(previous?.request ? {} : { pending }) });
         try {
             await this.prepare?.();
@@ -363,15 +423,17 @@ export class AgentConversationController {
             if (this.disposed) return false;
             await this.store.clearPending(this.identity, this.stateValue.activeConversationId);
             if (nextRun) {
-                const messages = this.stateValue.messages.map((message) =>
-                    message.id === pending.messageId ? { ...message, id: `user-${nextRun!.id}`, runId: nextRun!.id } : message,
-                );
+                const messages = this.stateValue.messages.map((message) => (message.id === pending.messageId ? { ...message, id: `user-${nextRun!.id}`, runId: nextRun!.id } : message));
                 const conversationId = nextRun.conversationId || receiptConversationId;
                 this.set({ messages, run: nextRun, approval: nextRun.approval || null, pending: null, connection: "connecting", ...(conversationDelta ? { queue: conversationDelta } : {}) });
                 this.updateRecord({
                     messages,
                     run: nextRun,
                     pending: null,
+                    model: nextRun.model || this.stateValue.model || undefined,
+                    reasoningMode: this.stateValue.reasoningMode,
+                    skillIds: this.stateValue.skillIds,
+                    sendMode: this.stateValue.sendMode,
                     ...(conversationId ? { serverConversationId: conversationId } : {}),
                     ...(conversationDelta ? { queue: conversationDelta } : {}),
                 });
@@ -380,7 +442,13 @@ export class AgentConversationController {
                 await this.refreshQueue();
                 if (receiptConversationId) this.updateRecord({ serverConversationId: receiptConversationId });
                 this.set({ pending: null });
-                this.updateRecord({ pending: null });
+                this.updateRecord({
+                    pending: null,
+                    model: this.stateValue.model || undefined,
+                    reasoningMode: this.stateValue.reasoningMode,
+                    skillIds: this.stateValue.skillIds,
+                    sendMode: this.stateValue.sendMode,
+                });
             }
             if (!options.preserveDraft) this.setDraft("");
             this.schedulePersist();
@@ -471,6 +539,18 @@ export class AgentConversationController {
         return true;
     }
 
+    async changePermission(permissionMode: AgentRunSnapshot["permissionMode"]) {
+        const run = this.stateValue.run;
+        if (!run) return false;
+        const receipt = await this.client.changePermission(run.id, { permissionMode, requestId: this.createId() }, this.signal());
+        if (receipt.changed) {
+            const next = { ...run, permissionMode: receipt.permissionMode };
+            this.set({ run: next });
+            this.updateRecord({ run: next });
+        }
+        return receipt.changed;
+    }
+
     async archiveConversation(id: string) {
         const record = this.document.conversations.find((item) => item.id === id);
         if (!record) return false;
@@ -488,6 +568,7 @@ export class AgentConversationController {
         this.stopEvents();
         if (this.persistTimer) clearTimeout(this.persistTimer);
         this.listeners.clear();
+        this.eventListeners.clear();
     }
 
     private signal() {
@@ -497,7 +578,13 @@ export class AgentConversationController {
     private normalizeRequest(request: AgentRunRequest): AgentRunRequest {
         const scope = this.identity.scope;
         if (request.scope && !sameScope(request.scope, scope)) throw new Error("请求范围与当前页面不一致");
-        const normalized = { ...request, scope } as AgentRunRequest;
+        const normalized = {
+            ...request,
+            scope,
+            ...(request.reasoningMode ? {} : { reasoningMode: this.stateValue.reasoningMode }),
+            ...(request.skillIds?.length || !this.stateValue.skillIds.length ? {} : { skillIds: [...this.stateValue.skillIds] }),
+            ...(request.model || !this.stateValue.model ? {} : { model: this.stateValue.model }),
+        } as AgentRunRequest;
         if (scope.type === "canvas") normalized.canvasId = scope.id;
         else normalized.canvasId = "";
         if (!normalized.idempotencyKey) normalized.idempotencyKey = `${this.identityKey}:${this.now()}`;
@@ -520,15 +607,18 @@ export class AgentConversationController {
                   messages,
                   run: this.stateValue.run,
                   permissionMode: "read_only",
+                  model: this.stateValue.model || undefined,
+                  reasoningMode: this.stateValue.reasoningMode,
+                  skillIds: this.stateValue.skillIds,
+                  contextUsage: this.stateValue.contextUsage,
+                  sendMode: this.stateValue.sendMode,
                   createdAt: this.now(),
                   updatedAt: this.now(),
               };
         this.document = {
             version: 2,
             activeId,
-            conversations: existing
-                ? this.document.conversations.map((item) => (item.id === activeId ? record : item))
-                : [record, ...this.document.conversations],
+            conversations: existing ? this.document.conversations.map((item) => (item.id === activeId ? record : item)) : [record, ...this.document.conversations],
         };
         this.set({ activeConversationId: activeId, conversations: this.document.conversations });
         await this.store.saveDocument(this.identity, this.document);
@@ -553,11 +643,21 @@ export class AgentConversationController {
             const restored: AgentRunSnapshot[] = [];
             for (const run of runs) restored.push(await this.loadFullRun(run));
             const view = projectAgentConversation(conversationId, restored);
+            const contextUsage = restored.reduce((usage, run) => [...(run.events || [])].sort((left, right) => left.seq - right.seq).reduce((next, event) => reduceAgentContextUsage(next, event), usage), emptyAgentContextUsage(restored.at(-1)?.id || ""));
             const record = this.document.conversations.find((item) => item.id === this.stateValue.activeConversationId);
             if (!record) return;
-            const merged = this.mergeRecord(record, view, restored, conversationId);
+            const merged = { ...this.mergeRecord(record, view, restored, conversationId), contextUsage };
             this.replaceRecord(merged);
-            this.set({ messages: merged.messages, run: merged.run, approval: merged.run?.approval || null, connection: activeRun(merged.run) ? "connecting" : "connected" });
+            this.set({
+                messages: merged.messages,
+                run: merged.run,
+                approval: merged.run?.approval || null,
+                contextUsage,
+                model: merged.model || merged.run?.model || this.stateValue.model,
+                reasoningMode: merged.reasoningMode || this.stateValue.reasoningMode,
+                skillIds: merged.skillIds || this.stateValue.skillIds,
+                connection: activeRun(merged.run) ? "connecting" : "connected",
+            });
             await this.refreshQueue();
             if (activeRun(merged.run)) this.connectRun(merged.run!);
         } catch (cause) {
@@ -608,13 +708,16 @@ export class AgentConversationController {
                         lastSeq = event.seq;
                     }
                     const next = applyAgentConversationEvent({ messages: this.stateValue.messages, run: this.stateValue.run, approval: this.stateValue.approval }, event);
-                    this.set({ ...next, connection: "connected" });
+                    const contextUsage = reduceAgentContextUsage(this.stateValue.contextUsage, event);
+                    this.set({ ...next, contextUsage, connection: "connected" });
                     this.updateRecord({
                         messages: next.messages,
                         run: next.run,
+                        contextUsage,
                         lastEventSeq: lastSeq,
                         eventCursors: { ...(record?.eventCursors || {}), [run.id]: lastSeq },
                     });
+                    for (const listener of this.eventListeners) listener(event);
                     this.schedulePersist();
                     if (["user_question", "run_completed", "run_failed", "run_cancelled"].includes(event.type)) void this.refreshQueue();
                 },
@@ -643,11 +746,7 @@ export class AgentConversationController {
         const remoteUserMessages = new Set(view.messages.filter((message) => message.role === "user").map((message) => message.text.trim()));
         const remoteMessageIds = new Set(view.messages.map((message) => message.id));
         const kept = local.messages.filter(
-            (message) =>
-                !remoteMessageIds.has(message.id) &&
-                !(message.role === "user" && remoteUserMessages.has(message.text.trim())) &&
-                !message.runId?.startsWith("local-") &&
-                ![...remoteIds].some((id) => message.id.includes(id)),
+            (message) => !remoteMessageIds.has(message.id) && !(message.role === "user" && remoteUserMessages.has(message.text.trim())) && !message.runId?.startsWith("local-") && ![...remoteIds].some((id) => message.id.includes(id)),
         );
         const eventCursors = { ...(local.eventCursors || {}) };
         for (const run of runs) {
@@ -665,7 +764,10 @@ export class AgentConversationController {
             updatedAt: view.run?.updatedAt || local.updatedAt,
             permissionMode: view.run?.permissionMode || local.permissionMode,
             model: view.run?.model || local.model,
-            skillIds: view.run?.skills?.map((skill) => skill.id) || local.skillIds,
+            reasoningMode: local.reasoningMode,
+            skillIds: local.skillIds || view.run?.skills?.map((skill) => skill.id),
+            contextUsage: local.contextUsage,
+            sendMode: local.sendMode,
             historyState: local.historyState,
             draft: local.draft,
         };
@@ -699,6 +801,11 @@ export class AgentConversationController {
                 record.draft = this.stateValue.draft;
                 record.messages = this.stateValue.messages;
                 record.run = this.stateValue.run;
+                record.model = this.stateValue.model || undefined;
+                record.reasoningMode = this.stateValue.reasoningMode;
+                record.skillIds = this.stateValue.skillIds;
+                record.contextUsage = this.stateValue.contextUsage;
+                record.sendMode = this.stateValue.sendMode;
                 record.updatedAt = this.now();
             }
             this.document = { version: 2, activeId: this.stateValue.activeConversationId, conversations: this.document.conversations };

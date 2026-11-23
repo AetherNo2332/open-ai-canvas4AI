@@ -110,6 +110,26 @@ const receipt = await agent.sendMessage(conversationId, {
 
 工具注册项绑定 Schema、执行器版本、适用业务和运行条件。短剧只声明 `task_get` 及分集 `read` 适配器，计划、提问、结束属于平台控制能力。画布声明自己的读取、编辑、生成和可选子代理工具。模型、画布上下文、功能开关和执行权限共同决定本轮目录。Skill 文件读取根据实际启用的技能单独授予。
 
+## 公共面板配置与业务适配
+
+三个业务渲染同一个 `web/src/components/agent/agent-panel.tsx`，业务不再注册整套聊天组件。`AgentPanelHost` 只负责页面声明、能力查询和装配；标题、欢迎语、占位文案、模型来源、公共控件、扩展槽位和停靠方式来自 `web/src/services/agent/panel-config.ts` 与 `web/src/services/agent/configs/{canvas,drama,platform}.ts`。
+
+| 配置项 | 作用 | 当前实例 |
+| --- | --- | --- |
+| `agentDefinitionId` | 服务端定义 ID；页面声明可以覆盖 | `canvas.default`、`drama.analysis`、`platform.default` |
+| `modelSource` | 新会话模型初值来源 | 画布 `canvas`、短剧 `project-text`、平台 `user-text` |
+| `controls` | 模型、推理、Skill、上下文环、发送方式五个公共控件 | 三业务均启用，运行时按 capabilities 降级 |
+| `extensions` | 业务目标区、引用、审批、预演等有限扩展 | 画布上下文/审批/预演，短剧剧集目标 |
+| `docking` | 浮窗或浮窗加停靠 | 画布支持停靠，短剧和平台仅浮窗 |
+
+`web/src/services/agent/panel-adapters.ts` 的注册项只保留配置 ID、owner、`buildRequest` 和 `useBindings`。适配器可以注入引用、附件、发送前保存、节点定位、撤销、审批附件、设置扩展和输入编辑器，但不能替换消息列表、输入器、历史、队列或模型控件。页面提供动态 `scope` 与目标；Go capabilities 决定权限。最终可用能力取配置、页面声明和服务端授权的交集。
+
+模型选择器按 `capabilities.modelRequirements` 过滤。服务端声明 `toolCalling`、`vision` 或 `streamOutput` 时，本地模型能力明确不支持对应项会被禁用；旧会话中已失效的模型会回退到第一个兼容模型并写回会话。`allowUserSkills` 缺失时按保守规则禁止用户自选技能；默认技能仍可只读展示。默认技能与用户自选技能在设置和 Skill 弹窗中分组呈现，发送前仍由服务端校验 `skillIds`。
+
+运行中切换执行权限调用 `POST /agent/runs/:id/permission`，请求携带新的 `permissionMode` 与幂等 `requestId`。SDK 方法为 `changePermission`，控制器在服务端确认后更新运行快照；失败时保留原权限并提示下一次运行生效。审批图片生成时，公共审批卡可调整本次模型、尺寸和质量，批准请求通过 `mediaSettings` 提交，服务端重新校验最终规格。
+
+公共控制器拥有一个活动会话的提交、订阅、队列、草稿、模型、推理、Skill、发送偏好和上下文用量。提交时冻结本次请求；排队项使用提交时的模型、业务目标和幂等键，切换模型、剧集、路由或账号不会改写已提交请求。旧画布 `cloud-agent-conversations-v1` 记录通过 `web/src/services/agent/conversation-storage.ts` 迁移，重复迁移结果一致。
+
 ## 运行目录与预算
 
 Run 准入对发给模型的规范化工具目录检查 **64,000 字节总量**与**单工具 12,000 字节**上限。`TOOL_SCHEMA.json` 是 CI 校验的离线合同全集。模型和 Pi 执行器使用当前 Run 冻结的目录子集。

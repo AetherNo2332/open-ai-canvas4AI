@@ -4,22 +4,13 @@ import type { createAgentClient } from "@/sdk/agent/client";
 
 type Client = ReturnType<typeof createAgentClient>;
 
-export function useAgentCapabilities({
-    active,
-    client,
-    scope,
-    agentDefinitionId,
-}: {
-    active: boolean;
-    client: Client;
-    scope: AgentBusinessScope | null;
-    agentDefinitionId: string;
-}) {
+export function useAgentCapabilities({ active, client, scope, agentDefinitionId }: { active: boolean; client: Client; scope: AgentBusinessScope | null; agentDefinitionId: string }) {
     const [state, setState] = useState<{
         status: "idle" | "loading" | "ready" | "error";
         capabilities: AgentCapabilities | null;
         error: string;
     }>({ status: "idle", capabilities: null, error: "" });
+    const [retryKey, setRetryKey] = useState(0);
 
     useEffect(() => {
         if (!active || !scope) {
@@ -39,7 +30,7 @@ export function useAgentCapabilities({
                 }
             });
         return () => controller.abort();
-    }, [active, agentDefinitionId, client, scope?.type, scope?.id]);
+    }, [active, agentDefinitionId, client, retryKey, scope?.type, scope?.id]);
 
-    return state;
+    return { ...state, retry: () => setRetryKey((value) => value + 1) };
 }

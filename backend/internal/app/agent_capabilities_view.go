@@ -21,6 +21,7 @@ type AgentCapabilitiesView struct {
 	PermissionModes         []string                   `json:"permissionModes"`
 	ContextScopes           []string                   `json:"contextScopes"`
 	Skills                  bool                       `json:"skills"`
+	AllowUserSkills         bool                       `json:"allowUserSkills"`
 	WriteTools              bool                       `json:"writeTools"`
 	BusinessTools           []string                   `json:"businessTools"`
 	Tools                   []string                   `json:"tools"`
@@ -102,7 +103,8 @@ func (s *Service) AgentCapabilities(userID string, scope AgentBusinessScope, def
 		Version: 3, Scope: PublicAgentBusinessScope(canonical),
 		AgentDefinitionID: definition.ID, AgentDefinitionVersion: definition.Version,
 		PermissionModes: permissionModes, ContextScopes: []string{canonical.Type},
-		Skills:     definition.AllowUserSkills || len(definition.DefaultSkillScopes) > 0 || len(definition.SkillIDs) > 0,
+		Skills:          definition.AllowUserSkills || len(definition.DefaultSkillScopes) > 0 || len(definition.SkillIDs) > 0,
+		AllowUserSkills: definition.AllowUserSkills,
 		WriteTools: len(capabilities.WriteTools) > 0, BusinessTools: slices.Clone(definition.BusinessTools),
 		Tools: names, DefaultSkills: defaultSkills,
 		ModelRequirements: AgentModelRequirements{Text: true, ToolCalling: true, StreamOutput: true},

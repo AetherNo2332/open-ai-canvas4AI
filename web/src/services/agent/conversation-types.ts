@@ -1,27 +1,8 @@
-import type {
-    AgentApprovalSnapshot,
-    AgentBusinessScope,
-    AgentMessageInput,
-    AgentPermissionMode,
-    AgentRunRequest,
-    AgentRunSnapshot,
-} from "@/sdk/agent";
+import type { AgentApprovalSnapshot, AgentBusinessScope, AgentMessageInput, AgentPermissionMode, AgentRunRequest, AgentRunSnapshot } from "@/sdk/agent";
+import type { AgentContextUsage } from "@/lib/agent/context-usage";
+import type { AgentChatMessage } from "@/lib/agent/chat-types";
 
-export type AgentConversationMessage = {
-    id: string;
-    role: "user" | "assistant" | "system" | "tool" | "error";
-    title?: string;
-    text: string;
-    streaming?: boolean;
-    reasoning?: boolean;
-    final?: boolean;
-    planItems?: Array<{ id: string; title: string; status: "pending" | "doing" | "done" }>;
-    question?: { id?: string; question: string; options: Array<{ label: string; detail?: string }>; allowFreeform?: boolean };
-    meta?: string;
-    runId?: string;
-    detail?: unknown;
-    interjection?: "sent" | "delivered" | "undelivered" | "withdrawn";
-};
+export type AgentConversationMessage = AgentChatMessage;
 
 export type AgentConversationHistoryState = {
     status: "partial" | "unavailable";
@@ -42,7 +23,10 @@ export type AgentConversationRecord = {
     run: AgentRunSnapshot | null;
     permissionMode: AgentPermissionMode;
     model?: string;
+    reasoningMode?: NonNullable<AgentRunRequest["reasoningMode"]>;
     skillIds?: string[];
+    contextUsage?: AgentContextUsage;
+    sendMode?: AgentMessageInput["mode"];
     createdAt: string;
     updatedAt: string;
     /** Canvas-only presentation metadata belongs to the canvas adapter. */

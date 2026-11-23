@@ -188,6 +188,12 @@ export type AgentSkillDefaultsSummary = {
     count: number;
     skills: Array<{ skillId: string; skillName: string }>;
 };
+export type AgentModelRequirements = {
+    text: boolean;
+    toolCalling: boolean;
+    vision: boolean;
+    streamOutput: boolean;
+};
 export type AgentCapabilities = {
     version: number;
     scope?: AgentBusinessScope;
@@ -196,10 +202,13 @@ export type AgentCapabilities = {
     permissionModes: AgentPermissionMode[];
     contextScopes: string[];
     skills: boolean;
+    /** Missing on older servers; absence must be treated as no user-selectable skills. */
+    allowUserSkills?: boolean;
     writeTools: boolean;
     businessTools?: string[];
     tools?: string[];
     defaultSkills?: AgentSkillDefaultsSummary;
+    modelRequirements?: AgentModelRequirements;
     interactionPolicy?: string;
     memoryPolicy?: string;
     availability: { configured: boolean; readyWorkers: number; queueReason: string; reason: string };

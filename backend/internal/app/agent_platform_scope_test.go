@@ -83,6 +83,7 @@ func TestPlatformScopedCapabilitiesAndPermissionBoundary(t *testing.T) {
 	}
 	if view.Scope != (AgentBusinessScope{Type: AgentPlatformBusinessType, ID: AgentPlatformSelfScopeID}) || view.AgentDefinitionID != "platform.default" ||
 		strings.Join(view.PermissionModes, ",") != "read_only" || view.Skills || view.WriteTools || view.MemoryPolicy != "off" ||
+		view.AllowUserSkills || !view.ModelRequirements.Text || !view.ModelRequirements.ToolCalling || !view.ModelRequirements.StreamOutput ||
 		len(view.Tools) != 3 || !slices.Contains(view.Tools, "ask_user") || !slices.Contains(view.Tools, "finish_run") || !slices.Contains(view.Tools, "plan_update") {
 		t.Fatalf("wrong platform capabilities: %+v", view)
 	}
@@ -107,6 +108,20 @@ func TestPlatformScopedCapabilitiesAndPermissionBoundary(t *testing.T) {
 	skill.IdempotencyKey = "platform-skill-denied"
 	if _, err := s.CreateCloudAgentRun("user", skill, ""); err == nil {
 		t.Fatal("platform account skill was admitted")
+	}
+}
+
+func TestCanvasCapabilitiesKeepUserSkillPermissionSeparateFromDefaultSkills(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: `{"nodes":[]}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	view, err := s.AgentCapabilities("user", AgentBusinessScope{Type: "canvas", ID: "agent-canvas"}, "canvas.default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.Skills || !view.AllowUserSkills || !view.ModelRequirements.Vision {
+		t.Fatalf("canvas user-skill or vision capability was lost: %+v", view)
 	}
 }
 

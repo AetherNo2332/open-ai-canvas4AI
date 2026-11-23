@@ -53,6 +53,8 @@
 - `web/src/lib/`：纯函数、画布算法、协议转换、设计 token 和可独立测试的基础能力。
 - `web/src/styles/globals.css`：变量、重置和必要的第三方覆盖；页面样式优先使用现有 token 或页面样式。
 
+公共 Agent 面板只有一套完整 UI：`web/src/components/agent/agent-panel.tsx`。画布、短剧和平台通过 `web/src/services/agent/panel-config.ts`、`configs/*` 与 `panel-adapters.ts` 声明标题、文案、模型来源、公共控件和有限扩展；禁止重新注册整套聊天组件或复制消息列表、输入器、历史、队列。业务副作用放适配器，公共目录不得 import 画布 store、画布类型或 `previs` 模块。模型筛选以服务端 `modelRequirements` 为准，默认技能与用户自选技能权限分开处理。
+
 ### 后端
 
 - `backend/internal/handler/`：HTTP 入参、鉴权上下文、调用 service、返回统一响应；不放业务判断和数据库查询。

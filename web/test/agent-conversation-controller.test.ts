@@ -3,15 +3,8 @@ import type { AgentEvent, AgentRunSnapshot } from "@/sdk/agent";
 import type { createAgentClient } from "@/sdk/agent/client";
 import { AgentConversationController } from "@/services/agent/conversation-controller";
 import type { AgentConversationStore } from "@/services/agent/conversation-storage";
-import {
-    migrateLegacyCanvasConversationDocument,
-    migrateLegacyCanvasPendingSubmission,
-} from "@/services/agent/conversation-storage";
-import type {
-    AgentConversationDocument,
-    AgentConversationIdentity,
-    AgentPendingSubmission,
-} from "@/services/agent/conversation-types";
+import { migrateLegacyCanvasConversationDocument, migrateLegacyCanvasPendingSubmission } from "@/services/agent/conversation-storage";
+import type { AgentConversationDocument, AgentConversationIdentity, AgentPendingSubmission } from "@/services/agent/conversation-types";
 
 type Client = ReturnType<typeof createAgentClient>;
 
@@ -116,6 +109,9 @@ function fakeClient(overrides: Record<string, unknown> = {}): Client {
         async decideApproval() {
             return { accepted: true };
         },
+        async changePermission(_id: string, input: { permissionMode: AgentRunSnapshot["permissionMode"] }) {
+            return { permissionMode: input.permissionMode, changed: true };
+        },
         async archiveConversation() {
             return { archived: true };
         },
@@ -134,6 +130,45 @@ function fakeClient(overrides: Record<string, unknown> = {}): Client {
 }
 
 describe("AgentConversationController", () => {
+    test("changes a running run permission through the SDK and persists the confirmed mode", async () => {
+        const seed: AgentConversationDocument = {
+            version: 2,
+            activeId: "local-permission",
+            conversations: [
+                {
+                    id: "local-permission",
+                    serverConversationId: "conversation-1",
+                    title: "权限测试",
+                    messages: [],
+                    run: run({ id: "run-permission", conversationId: "conversation-1", status: "running", permissionMode: "read_only" }),
+                    permissionMode: "read_only",
+                    createdAt: "2026-11-23T00:00:00Z",
+                    updatedAt: "2026-11-23T00:00:01Z",
+                },
+            ],
+        };
+        const memory = memoryStore(seed);
+        const calls: Array<{ id: string; mode: string }> = [];
+        const client = fakeClient({
+            async listConversationRuns() {
+                return { items: [run({ id: "run-permission", conversationId: "conversation-1", status: "running", permissionMode: "read_only" })] };
+            },
+            async getRun() {
+                return { run: run({ id: "run-permission", conversationId: "conversation-1", status: "running", permissionMode: "read_only" }) };
+            },
+            async changePermission(id: string, input: { permissionMode: AgentRunSnapshot["permissionMode"] }) {
+                calls.push({ id, mode: input.permissionMode });
+                return { permissionMode: input.permissionMode, changed: true };
+            },
+        });
+        const controller = new AgentConversationController({ identity, client, store: memory.store });
+        await controller.hydrate();
+        expect(await controller.changePermission("auto")).toBe(true);
+        expect(calls).toEqual([{ id: "run-permission", mode: "auto" }]);
+        expect(controller.getSnapshot().run?.permissionMode).toBe("auto");
+        controller.dispose();
+    });
+
     test("persists the original request before transport and replays the same key after response loss", async () => {
         const memory = memoryStore();
         let calls = 0;
@@ -216,6 +251,83 @@ describe("AgentConversationController", () => {
         expect(after).toBe(0);
         expect(controller.getSnapshot().messages.filter((message) => message.role === "assistant")).toHaveLength(1);
         expect(controller.getSnapshot().conversations[0].eventCursors?.["run-1"]).toBe(1);
+        controller.dispose();
+    });
+
+    test("persists model, reasoning, skills, send mode and context usage across hydration", async () => {
+        const seed: AgentConversationDocument = {
+            version: 2,
+            activeId: "local-1",
+            conversations: [
+                {
+                    id: "local-1",
+                    serverConversationId: "conversation-1",
+                    title: "状态",
+                    messages: [],
+                    run: null,
+                    permissionMode: "read_only",
+                    createdAt: "2026-11-23T00:00:00Z",
+                    updatedAt: "2026-11-23T00:00:00Z",
+                },
+            ],
+        };
+        const memory = memoryStore(seed);
+        const controller = new AgentConversationController({ identity, client: fakeClient(), store: memory.store });
+        await controller.hydrate();
+        controller.setModel("deepseek-v3");
+        controller.setReasoningMode("high");
+        controller.setSkillIds(["skill-a", "skill-b", "skill-a"]);
+        controller.setSendMode("interject");
+        await new Promise((resolve) => setTimeout(resolve, 220));
+        controller.dispose();
+
+        const restored = new AgentConversationController({ identity, client: fakeClient(), store: memory.store });
+        await restored.hydrate();
+        expect(restored.getSnapshot().model).toBe("deepseek-v3");
+        expect(restored.getSnapshot().reasoningMode).toBe("high");
+        expect(restored.getSnapshot().skillIds).toEqual(["skill-a", "skill-b"]);
+        expect(restored.getSnapshot().sendMode).toBe("interject");
+        restored.dispose();
+    });
+
+    test("projects context pressure into the shared snapshot and emits raw events once", async () => {
+        const memory = memoryStore({
+            version: 2,
+            activeId: "local-1",
+            conversations: [
+                {
+                    id: "local-1",
+                    serverConversationId: "conversation-1",
+                    title: "上下文",
+                    messages: [],
+                    run: run({ status: "running" }),
+                    permissionMode: "read_only",
+                    createdAt: "2026-11-23T00:00:00Z",
+                    updatedAt: "2026-11-23T00:00:00Z",
+                },
+            ],
+        });
+        const seen: string[] = [];
+        const client = fakeClient({
+            async listConversationRuns() {
+                return { items: [run({ status: "running", eventCount: 2 })] };
+            },
+            async getRun() {
+                return { run: run({ status: "running", eventCount: 2 }) };
+            },
+            async readEvents(_id: string, onEvent: (item: AgentEvent) => void, options: { onSnapshot?: (snapshot: AgentRunSnapshot) => void }) {
+                onEvent(event(1, { type: "context_pressure", payload: { modelLimitConfigured: true, inputBudgetTokens: 1000, estimatedInputTokens: 250 } }));
+                onEvent(event(2, { type: "context_compacted", payload: { sourceBytes: 100 } }));
+                options.onSnapshot?.(run({ status: "running", latestSeq: 2 }));
+            },
+        });
+        const controller = new AgentConversationController({ identity, client, store: memory.store });
+        controller.subscribeEvent((item) => seen.push(item.type));
+        await controller.hydrate();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(seen).toEqual(["context_pressure", "context_compacted"]);
+        expect(controller.getSnapshot().contextUsage.reading).toMatchObject({ inputBudgetTokens: 1000 });
+        expect(controller.getSnapshot().contextUsage.readingStale).toBe(true);
         controller.dispose();
     });
 
@@ -339,6 +451,10 @@ describe("legacy canvas conversation migration", () => {
                         updatedAt: "2026-11-20T00:00:01Z",
                         messages: [{ id: "message-1", role: "user", text: "旧消息" }],
                         run: run({ id: "legacy-run", canvasId: "canvas-a", latestSeq: 4 }),
+                        contextUsage: { runId: "legacy-run", reading: { estimatedInputTokens: 12 }, readingSeq: 3, readingStale: false, compactionPending: null, lastCompaction: null },
+                        reasoningMode: "medium",
+                        sendMode: "interject",
+                        storyboardDisabled: true,
                     },
                 ],
             }),
@@ -349,6 +465,10 @@ describe("legacy canvas conversation migration", () => {
         expect(migrated.conversations[0].draft).toBe("未发送草稿");
         expect(migrated.conversations[0].messages[0].text).toBe("旧消息");
         expect(migrated.conversations[0].eventCursors?.["legacy-run"]).toBe(4);
+        expect(migrated.conversations[0].contextUsage?.reading?.estimatedInputTokens).toBe(12);
+        expect(migrated.conversations[0].reasoningMode).toBe("medium");
+        expect(migrated.conversations[0].sendMode).toBe("interject");
+        expect(migrated.conversations[0].adapterData).toEqual({ storyboardDisabled: true });
     });
 
     test("migrates canvas pending identity and rejects another canvas", () => {

@@ -169,6 +169,7 @@ import { useCanvasOperationHistory } from "./use-canvas-operation-history";
 import { useCanvasAssistantVisibility } from "./use-canvas-assistant-visibility";
 import { useAgentPageDeclaration } from "@/services/agent/business-context";
 import { registerAgentPanelAdapter } from "@/services/agent/panel-adapters";
+import { canvasAgentPanelAdapter } from "@/components/canvas/agent/canvas-agent-adapter";
 
 import { useCanvasActiveTasks } from "./use-canvas-active-tasks";
 import { useCanvasStyleWorkflow } from "./use-canvas-style-workflow";
@@ -220,8 +221,7 @@ import { copyImageToSystemClipboard } from "./canvas-clipboard";
 
 const CanvasPrevisWorkbench = lazy(() => import("@/components/canvas/previs/canvas-previs-workbench").then((module) => ({ default: module.CanvasPrevisWorkbench })));
 const CanvasDrawingEditorModal = lazy(() => import("@/components/canvas/canvas-drawing-editor-modal").then((module) => ({ default: module.CanvasDrawingEditorModal })));
-const CanvasAgentPanelAdapter = lazy(() => import("@/components/canvas/agent/canvas-agent-adapter").then((module) => ({ default: module.CanvasAgentAdapter })));
-registerAgentPanelAdapter("canvas", "canvas-project", CanvasAgentPanelAdapter);
+registerAgentPanelAdapter("canvas", canvasAgentPanelAdapter);
 
 const NODE_STATUS_SUCCESS = "success" as const;
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];

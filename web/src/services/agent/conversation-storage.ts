@@ -1,14 +1,9 @@
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import type { AgentRunSnapshot } from "@/sdk/agent";
-import type {
-    AgentConversationDocument,
-    AgentConversationIdentity,
-    AgentConversationMessage,
-    AgentConversationRecord,
-    AgentPendingSubmission,
-} from "./conversation-types";
+import type { AgentConversationDocument, AgentConversationIdentity, AgentConversationMessage, AgentConversationRecord, AgentPendingSubmission } from "./conversation-types";
 import { emptyAgentConversationDocument } from "./conversation-types";
+import type { AgentContextUsage } from "@/lib/agent/context-usage";
 
 export type AgentConversationStore = {
     loadDocument: (identity: AgentConversationIdentity) => Promise<AgentConversationDocument>;
@@ -133,9 +128,7 @@ export function migrateLegacyCanvasConversationDocument(value: string, canvasId:
 
 async function loadLegacyCanvasPendingSubmission(identity: AgentConversationIdentity, conversationId: string): Promise<AgentPendingSubmission | null> {
     if (identity.scope.type !== "canvas") return null;
-    const value = await storage(identity).getItem(
-        `cloud-agent-conversations-v1:pending:${encodeURIComponent(identity.scope.id)}:${encodeURIComponent(conversationId)}`,
-    );
+    const value = await storage(identity).getItem(`cloud-agent-conversations-v1:pending:${encodeURIComponent(identity.scope.id)}:${encodeURIComponent(conversationId)}`);
     if (value === null || value === undefined) return null;
     return migrateLegacyCanvasPendingSubmission(value, identity.scope.id);
 }
@@ -193,7 +186,9 @@ function isPendingSubmission(value: unknown): value is AgentPendingSubmission {
             !delivery.conversationId ||
             (delivery.mode !== "interject" && delivery.mode !== "queue") ||
             typeof delivery.expectedRunId !== "string" ||
-            delivery.expectedRunId !== pending.parentRunId
+            delivery.expectedRunId !== pending.parentRunId ||
+            (delivery.inheritRunConfiguration !== undefined && typeof delivery.inheritRunConfiguration !== "boolean") ||
+            (delivery.replyToQuestionId !== undefined && (typeof delivery.replyToQuestionId !== "string" || delivery.mode !== "interject"))
         )
             return false;
     }
@@ -208,6 +203,10 @@ type LegacyConversation = {
     lastEventSeq?: number;
     historyState?: { status: "partial" | "unavailable"; message: string };
     draft?: string;
+    contextUsage?: AgentContextUsage;
+    reasoningMode?: AgentConversationRecord["reasoningMode"];
+    sendMode?: AgentConversationRecord["sendMode"];
+    storyboardDisabled?: boolean;
     title: string;
     messages: AgentConversationMessage[];
     run: unknown;
@@ -255,12 +254,16 @@ function legacyConversation(value: LegacyConversation): AgentConversationRecord 
         eventCursors,
         historyState: value.historyState,
         draft: value.draft,
+        contextUsage: value.contextUsage,
+        reasoningMode: value.reasoningMode,
+        sendMode: value.sendMode,
         title: value.title,
         messages: value.messages,
         run,
         permissionMode: value.permissionMode,
         model: value.model,
         skillIds: value.skillIds,
+        adapterData: value.storyboardDisabled === true ? { storyboardDisabled: true } : undefined,
         archived: value.archived,
         createdAt: value.createdAt,
         updatedAt: value.updatedAt,

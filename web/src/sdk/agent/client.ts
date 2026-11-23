@@ -276,8 +276,7 @@ export function createAgentClient<R extends AgentRunSnapshot = AgentRunSnapshot>
                 },
                 true,
             ),
-        listPendingDirectorPreviews: (signal?: AbortSignal) =>
-            request<AgentPendingDirectorPreviewPage>({ method: "GET", path: "/agent/director-previews/pending", signal }, true),
+        listPendingDirectorPreviews: (signal?: AbortSignal) => request<AgentPendingDirectorPreviewPage>({ method: "GET", path: "/agent/director-previews/pending", signal }, true),
         listConversationRuns: (id: string, page: { after?: string; limit?: number } = {}, signal?: AbortSignal) =>
             request<AgentConversationPage<R>>(
                 {
@@ -301,11 +300,12 @@ export function createAgentClient<R extends AgentRunSnapshot = AgentRunSnapshot>
             query.set("revision", String(revision));
             return request<AgentMessageReceipt>({ method: "DELETE", path: `${pathname}?${query}`, signal });
         },
-        updateConversationQueue: (id: string, input: { revision: number; action: "pause" | "resume" }, signal?: AbortSignal) =>
-            request<AgentConversationQueue>({ method: "PATCH", path: `${conversationPath(id)}/queue`, body: input, signal }),
+        updateConversationQueue: (id: string, input: { revision: number; action: "pause" | "resume" }, signal?: AbortSignal) => request<AgentConversationQueue>({ method: "PATCH", path: `${conversationPath(id)}/queue`, body: input, signal }),
         archiveConversation: (id: string, signal?: AbortSignal) => request<{ archived: boolean }>({ method: "DELETE", path: conversationPath(id), signal }),
         getRun: (id: string, signal?: AbortSignal, query: string | AgentRunQuery = "") => request<AgentRunReceipt<R>>({ method: "GET", path: runPath(id) + runQuery(query), signal }, true),
         cancelRun: (id: string, signal?: AbortSignal) => request<{ accepted: boolean }>({ method: "POST", path: `${runPath(id)}/cancel`, signal }),
+        changePermission: (id: string, input: { permissionMode: AgentRunSnapshot["permissionMode"]; requestId: string }, signal?: AbortSignal) =>
+            request<{ permissionMode: AgentRunSnapshot["permissionMode"]; changed: boolean }>({ method: "POST", path: `${runPath(id)}/permission`, body: input, signal }),
         decideApproval: (id: string, approvalId: string, input: AgentApprovalDecision, signal?: AbortSignal) =>
             request<{ accepted: boolean }>({ method: "POST", path: `${runPath(id)}/approvals/${encodeURIComponent(approvalId)}/decision`, body: input, signal }),
         getCapabilities: (input: { scope?: AgentBusinessScope; agentDefinitionId?: string } = {}, signal?: AbortSignal) => {
@@ -317,11 +317,14 @@ export function createAgentClient<R extends AgentRunSnapshot = AgentRunSnapshot>
             });
         },
         getSkillDefaults: (input: { scopeType: string; agentDefinitionId?: string }, signal?: AbortSignal) =>
-            request<AgentSkillDefaultsSummary>({
-                method: "GET",
-                path: `/agent/skill-defaults?${new URLSearchParams({ scopeType: input.scopeType, ...(input.agentDefinitionId ? { agentDefinitionId: input.agentDefinitionId } : {}) })}`,
-                signal,
-            }, true),
+            request<AgentSkillDefaultsSummary>(
+                {
+                    method: "GET",
+                    path: `/agent/skill-defaults?${new URLSearchParams({ scopeType: input.scopeType, ...(input.agentDefinitionId ? { agentDefinitionId: input.agentDefinitionId } : {}) })}`,
+                    signal,
+                },
+                true,
+            ),
         getUISettings: (signal?: AbortSignal) => request<AgentUISettings>({ method: "GET", path: "/agent/ui-settings", signal }, true),
         updateUISettings: (input: AgentUISettings, signal?: AbortSignal) => request<AgentUISettings>({ method: "PATCH", path: "/agent/ui-settings", body: input, signal }),
         readEvents,

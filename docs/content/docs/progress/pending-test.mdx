@@ -78,9 +78,22 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 - 已实现上游输入区、图片附件、节点引用、消息复制、批量生成进度和模型推理强度选择。对话继续使用服务端消息队列、幂等提交、审批与独立 Pi Worker，批量制作工具合同已同步到 Worker 制品。
 - [ ] 在明暗主题中检查图片粘贴、拖入、上传失败后重试、引用移除和复制消息。
+
+## 公共 Agent 面板配置化复用
+
+- 已实现：画布、短剧、平台共用 `AgentPanel` 与 `AgentConversationController`；业务配置集中在 `web/src/services/agent/configs/`，适配器只注入目标、引用、审批和页面副作用。模型按 `modelRequirements` 过滤，默认技能与用户自选技能分开呈现，运行中权限变更走 `POST /agent/runs/:id/permission`。
+- 自动化：`agent-panel-config.test.ts` 校验三业务公共控件合同；`agent-panel-shared-ui.test.tsx` 通过公共入口渲染三业务；`agent-dependency-boundary.test.ts` 阻止公共目录反向依赖画布；`agent-conversation-events.test.ts` 覆盖工具、媒体批次、上下文压缩、权限和记忆事件归并。
+- 本机 Docker 验收（2026-11-24）：Web `previs-web-dev` 监听 `127.0.0.1:3100`，后端 `previs-backend-dev` 监听 `127.0.0.1:8080`，健康检查 schema 110。浏览器使用真实 Chrome 访问 Docker Web，不以宿主机 Vite 代替。
+- [x] 画布 `N8Kne7ZLaFM7xGmJsQ8U-`：只有一个 `AgentPanel` 和一个入口；打开后标题为“画布助手”，可停靠到右侧，停靠宽度 420px 且出现 resize；Skills 弹窗显示默认 2 个技能；capabilities 的 `tools` 包含 `director`，`allowUserSkills=true`，`modelRequirements.vision=true`。
+- [x] 短剧项目 `e31bbd703f6460558bc60d8c11fc60ca`：页面只有一个“短剧 Agent”入口和一套面板，旧“本集分析建议”内嵌聊天不存在；本轮剧集下拉包含第 1、2 集，实际切换到第 2 集成功；capabilities 为只读，`allowUserSkills=false`，工具为 `ask_user`、`finish_run`、`plan_update`、`read`、`task_get`。
+- [x] 创作首页 `/`：只有一个“平台对话”入口和一套面板；capabilities 为只读、无 Skills，工具仅 `ask_user`、`finish_run`、`plan_update`。
+- [x] 未接入页面 `/settings`：无面板、无入口；按 `Ctrl+J` 后面板数量仍为 0。
+- [ ] 首句、续聊、模型切换、推理、Skill 实际读取、插话/排队、上下文压缩、历史恢复和窄屏布局仍需真实 Agent Worker 与真实模型。当前 Worker 未配置，页面明确提示 `CANVAS_AGENT_INTERNAL_TOKEN` 缺失，发送被禁用。
+- [ ] 使用真实模型检查运行中权限收紧、放宽、图片审批规格调整和队列冻结；确定性测试不代表真实模型验收。
 - [ ] 运行中分别发送插队和排队消息，关闭再打开面板，确认草稿、待发编辑和阅读位置保留，浮层关闭。
 - [ ] 批量图片与视频分别完成审批、试跑、继续、取消和 Worker 重启恢复，确认任务、扣费、节点回写与进度条一致。
 - [ ] 为支持多档推理的模型选择不同强度，续聊及 Worker 重启后仍沿用本轮冻结的设置。
+- 本轮自动化结果：Web `bun run typecheck` 退出 0；8 个 Agent 专项文件 23 pass / 0 fail / 143 expect；Web `bun run build` 退出 0（16115 modules）；docs `bun run types:check` 与 `bun run build` 均退出 0；Docker 内 Go `internal/app`、`internal/prompts` 通过；Docker 内 `internal/canvas/previs` 通过；`internal/canvas/commands` 在宿主机通过（11.1s），在 Docker 全包运行出现 SQLite 迁移阻塞，单独运行命中的 `TestFieldMergePreservesDifferentFieldsAcrossWriters/host` 通过（10.2s）。该差异属于测试环境，未改生产代码。
 
 ## 创作平台 SDK（PR #130 阻塞修复）
 

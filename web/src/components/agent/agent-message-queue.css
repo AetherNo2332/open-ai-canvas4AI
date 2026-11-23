@@ -1,0 +1,137 @@
+.agent-send-mode {
+    width: 28px;
+    height: 28px;
+    justify-content: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--button-radius);
+    font-size: 12px;
+    color: var(--site-text);
+}
+.agent-send-mode:hover {
+    background: color-mix(in oklab, var(--site-text) 8%, transparent);
+}
+/* 与上游面板的输入区托盘一致：待发队列落在输入外壳里、输入卡片之上，无边框与外边距，
+   和输入卡片合成一张整卡（外壳样式见 canvas-cloud-agent.css 的 .agent-composer-shell）。 */
+.agent-message-queue {
+    flex: 0 0 auto;
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    background: transparent;
+    color: var(--agent-caption, color-mix(in oklab, var(--site-text) 60%, transparent));
+    font-size: var(--fs-label, 12px);
+}
+.agent-message-queue-items li,
+.agent-message-queue-content p {
+    color: var(--agent-ink, var(--site-text));
+}
+.agent-message-queue-header,
+.agent-message-queue-expand,
+.agent-message-queue-actions,
+.agent-message-queue-error {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+.agent-message-queue-expand {
+    margin-right: auto;
+}
+.agent-message-queue-status {
+    color: var(--agent-caption, color-mix(in oklab, var(--site-text) 60%, transparent));
+}
+.agent-message-queue-items {
+    max-height: min(240px, 30dvh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    margin: 0;
+}
+.agent-message-queue-items li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding-block: var(--space-1);
+    border-top: 1px solid color-mix(in srgb, var(--agent-ink, var(--site-text)) 8%, transparent);
+}
+.agent-message-queue-items li:first-child {
+    border-top: 0;
+}
+.agent-message-queue-index {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.5;
+}
+.agent-message-queue-content {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-2);
+}
+.agent-message-queue-content[data-editing] {
+    display: block;
+}
+.agent-message-queue-item-error {
+    grid-column: 1 / -1;
+}
+.agent-message-queue-content p {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    line-height: 1.6;
+}
+.agent-message-queue-actions {
+    gap: 0;
+}
+.agent-message-queue-content[data-editing] .agent-message-queue-actions {
+    justify-content: flex-end;
+    margin-top: var(--space-1);
+}
+.agent-message-queue[data-expanded] .agent-message-queue-content p {
+    -webkit-line-clamp: 2;
+}
+.agent-message-queue button {
+    min-height: 28px;
+    min-width: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--button-radius);
+}
+.agent-message-queue button:hover:not(:disabled) {
+    background: var(--agent-surface-hover, color-mix(in oklab, var(--site-text) 8%, transparent));
+}
+.agent-message-queue-content textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: var(--space-2);
+    resize: vertical;
+    border: 1px solid var(--site-border);
+    border-radius: var(--input-radius);
+    background: var(--site-surface);
+    color: var(--site-text);
+    line-height: 1.6;
+}
+.agent-message-queue-error {
+    margin-top: var(--space-2);
+    flex-wrap: wrap;
+}
+.agent-message-queue button:focus-visible,
+.agent-send-mode:focus-visible,
+.agent-message-queue-content textarea:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+.agent-message-queue button:disabled,
+.agent-send-mode:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
