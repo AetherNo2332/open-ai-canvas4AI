@@ -83,6 +83,12 @@ const receipt = await agent.sendMessage(conversationId, {
 
 队列对象同时受 `revision` 保护：`updateQueuedMessage` 编辑正文或提升为插话，`cancelQueuedMessage` 移除未派发项，`updateConversationQueue` 暂停或恢复。客户端应使用最新队列 revision；冲突后先重读，不能覆盖他人的编辑。`getRun` 的分页参数是 `{ sinceSeq, eventLimit, fromStart }`，字符串 query 仍兼容旧调用。UI 发送偏好用 `getUISettings` / `updateUISettings` 读取和按 revision 保存。
 
+### 客户端草稿与恢复
+
+公共 Web 控制器按 `userScope + scope.type + scope.id + agentDefinitionId` 隔离本地文档，再按 `conversationId` 保存草稿和待确认提交。发首句前必须先同步保存原请求、幂等键、父轮或会话提交参数；只有收到明确回执后才清理待确认记录。网络失败或回执丢失时保留原请求并允许原样重试，明确 400/401/403/404/422 或范围/父轮冲突才释放该记录。
+
+事件游标按 Run 保存，不用会话级“最新 seq”续接新 Run；重复 seq 只应用一次。刷新时先读目录，再按会话轮次和 `getRun` 分页补齐历史；正在运行的轮次重新订阅 SSE。画布旧 `cloud-agent-conversations-v1` 与旧 pending 键只在同账号同画布迁移读取，不改写或合并已经拆散的历史。离开已接入页面会停止该页订阅和轮询，已受理运行仍由服务端继续。
+
 ## 注册业务 Agent
 
 业务在调用 Agent 前，由 Go 服务端注册默认配置。配置声明业务类型、配置 ID、版本、对象授权、业务工具、读取适配器、记忆和交互策略。`businessTools: []` 表示明确禁用业务工具。服务端仍可按配置提供结束本轮、计划和提问等控制能力。普通业务接口无需注册。
