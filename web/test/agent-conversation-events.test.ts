@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyAgentConversationEvent } from "@/lib/agent/conversation-events";
+import { applyAgentConversationEvent, pendingAgentQuestion } from "@/lib/agent/conversation-events";
 import type { AgentEvent } from "@/sdk/agent";
 
 describe("Agent conversation event projection", () => {
@@ -17,5 +17,14 @@ describe("Agent conversation event projection", () => {
         };
         const view = applyAgentConversationEvent({ messages: [], run: null, approval: null }, event);
         expect(view.messages[0]?.question?.id).toBe("run-1:44");
+    });
+
+    test("only the queue's current question is actionable", () => {
+        const messages = [
+            { id: "run-1:44", role: "assistant" as const, text: "", question: { id: "run-1:44", question: "旧问题", options: [{ label: "是" }, { label: "否" }] } },
+            { id: "run-2:8", role: "assistant" as const, text: "", question: { id: "run-2:8", question: "新问题", options: [{ label: "演员" }, { label: "摄影机" }] } },
+        ];
+        expect(pendingAgentQuestion(messages, "run-2:8")?.question).toBe("新问题");
+        expect(pendingAgentQuestion(messages, "")).toBeUndefined();
     });
 });

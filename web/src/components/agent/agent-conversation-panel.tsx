@@ -8,6 +8,7 @@ import type { AgentPageContext } from "@/services/agent/business-context";
 import type { AgentCapabilities, AgentRunRequest } from "@/sdk/agent";
 import type { createAgentClient } from "@/sdk/agent/client";
 import { createClientUUID } from "@/lib/client-id";
+import { pendingAgentQuestion } from "@/lib/agent/conversation-events";
 
 type ScopedClient = ReturnType<typeof createAgentClient>;
 
@@ -60,7 +61,7 @@ export function AgentConversationPanel({
     const activeRecord = state.conversations.find((item) => item.id === state.activeConversationId);
     const activeRun = state.run;
     const running = Boolean(activeRun && (activeRun.cleanupPending || ["queued", "running", "waiting_approval"].includes(activeRun.status)));
-    const question = [...state.messages].reverse().find((item) => item.question)?.question;
+    const question = pendingAgentQuestion(state.messages, state.queue?.awaitingQuestionId);
 
     useEffect(() => {
         if (state.draft !== draft && state.status === "ready") setDraft(state.draft);

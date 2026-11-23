@@ -118,6 +118,11 @@ export function applyAgentConversationEvent(view: AgentConversationView, event: 
     return { messages, run, approval };
 }
 
+export function pendingAgentQuestion(messages: AgentConversationMessage[], awaitingQuestionId?: string) {
+    if (!awaitingQuestionId) return undefined;
+    return [...messages].reverse().find((message) => message.question?.id === awaitingQuestionId)?.question;
+}
+
 export function projectAgentConversation(conversationId: string, runs: AgentRunSnapshot[]): AgentConversationView {
     const ordered = [...runs].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     let view: AgentConversationView = { messages: [], run: null, approval: null };
