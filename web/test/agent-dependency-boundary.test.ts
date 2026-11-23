@@ -26,4 +26,11 @@ describe("unified Agent dependency boundary", () => {
         }
         expect(violations).toEqual([]);
     });
+
+    test("the drama script keeps only the global Agent entry", async () => {
+        const script = await Bun.file("src/pages/projects/studio/script-view.tsx").text();
+        expect(script).not.toContain("DramaAgentAnalysis");
+        expect(script).not.toContain("本集分析建议");
+        expect(await Bun.file("src/pages/projects/studio/agent-analysis.tsx").exists()).toBe(false);
+    });
 });

@@ -36,6 +36,7 @@ const { setActiveUserScope } = await import("@/lib/user-scope");
 const { useUserStore } = await import("@/stores/use-user-store");
 const { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } = await import("@/stores/use-config-store");
 const { requestAgentPrefill, useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
+const { publishAgentPageContext } = await import("@/services/agent/business-context");
 
 let local: CloudAgentConversation[] = [];
 let remote: CloudAgentConversation[] = [];
@@ -254,6 +255,15 @@ async function mount(initial: CloudAgentConversation[] = [], initialPending: Clo
     const root = createRoot(host);
     // 面板从全局 store 读画布上下文；外部发送改为 prefillRequest（autoSubmit）投递。
     useGlobalAgentStore.setState({ open: true, prefillRequest: null, canvas: { canvasId: "canvas", nodeCount: 1, selectedNodeIds: [], references: [] } });
+    publishAgentPageContext({
+        owner: "cloud-agent-panel-sync",
+        routeKey: "/canvas/canvas",
+        declaration: { enabled: true, kind: "business", businessType: "canvas", agentDefinitionId: "canvas.default" },
+        status: "ready",
+        scope: { type: "canvas", id: "canvas" },
+        agentDefinitionId: "canvas.default",
+        displayName: "画布",
+    });
     const handle = { current: { sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => sendExternal(request) } };
     await act(async () => {
         root.render(<CanvasCloudAgentPanel />);

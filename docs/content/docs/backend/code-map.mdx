@@ -23,7 +23,7 @@ description: 从产品功能快速定位主要代码入口
 - 服务端范围与能力：`backend/internal/app/agent_definition_registry.go` 注册 `canvas.default`、`drama.analysis`、`platform.default`；`agent_platform_scope.go` 规范化 `platform/self`；`agent_capabilities_view.go` 按对象授权和注册合同生成 scoped capabilities。HTTP 入口在 `handler/agent.go`、`handler/agent_conversation_scope.go`，运行与冻结快照在 `cloud_agent_*.go`。
 - 提示词与工具：`backend/internal/prompts/agent-system-policy.md` 与 `agent-media-policy.md` 只服务画布；`agent-general-policy.md` 服务短剧和平台。业务装配在 `cloud_agent_policy.go`、`cloud_agent_run_create.go`；权威工具目录在 `cloud_agent_tools.go`、`agent_tool_registry.go`。
 - TypeScript SDK：`web/src/sdk/agent/contract.ts`、`client.ts`、`transport.ts` 保持 UI 无关；业务页面通过 `web/src/sdk/agent/http-transport.ts` 注入浏览器传输。合同样例在 `agent/contracts/agent-sdk-v1.json`。
-- 公共会话与宿主：`web/src/services/agent/conversation-controller.ts`、`conversation-storage.ts`、`business-context.ts` 管理草稿、待确认提交、事件恢复和页面声明；`web/src/components/agent/agent-panel-host.tsx` 是布局层唯一宿主。画布专属交互继续在 `web/src/components/canvas/`，平台与短剧请求适配分别在 `services/agent/platform-context.ts` 与 `pages/projects/studio/`。
+- 公共会话与宿主：`web/src/services/agent/conversation-controller.ts`、`conversation-storage.ts`、`business-context.ts` 管理草稿、待确认提交、事件恢复和页面声明；`web/src/components/agent/agent-panel-host.tsx` 是布局层唯一宿主。画布专属交互继续在 `web/src/components/canvas/`，平台适配在 `services/agent/platform-context.ts`，短剧旧链接校验在 `services/agent/drama-agent-context.ts`，剧集目标由 `pages/projects/detail.tsx` 声明。
 
 ## 电商 Agent 与后台知识库
 

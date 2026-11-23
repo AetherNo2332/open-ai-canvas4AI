@@ -218,6 +218,50 @@ export class AgentConversationController {
         this.schedulePersist();
     }
 
+    async openRun(runId: string) {
+        if (!runId) return false;
+        const { run } = await this.client.getRun(runId, this.signal(), { eventLimit: 1 });
+        if (run.scope && !sameScope(run.scope, this.identity.scope)) {
+            throw new Error("该运行不属于当前页面范围");
+        }
+        this.stopEvents();
+        const conversationId = run.conversationId || run.id;
+        const existing = this.document.conversations.find((item) => item.serverConversationId === conversationId || item.run?.conversationId === conversationId);
+        const recordId = existing?.id || conversationId;
+        const record: AgentConversationRecord = existing
+            ? { ...existing, run }
+            : {
+                  id: recordId,
+                  serverConversationId: conversationId,
+                  title: run.userPrompt || "历史对话",
+                  messages: [],
+                  run,
+                  permissionMode: run.permissionMode,
+                  createdAt: run.createdAt,
+                  updatedAt: run.updatedAt,
+              };
+        this.document = {
+            version: 2,
+            activeId: recordId,
+            conversations: existing
+                ? this.document.conversations.map((item) => (item.id === recordId ? record : item))
+                : [record, ...this.document.conversations],
+        };
+        this.set({
+            activeConversationId: recordId,
+            messages: record.messages,
+            run,
+            approval: run.approval || null,
+            draft: (await this.store.loadDraft(this.identity, recordId)) || record.draft || "",
+            pending: await this.store.loadPending(this.identity, recordId),
+            error: "",
+            conversations: this.document.conversations,
+        });
+        await this.store.saveDocument(this.identity, this.document);
+        await this.loadHistory(conversationId);
+        return true;
+    }
+
     async newConversation() {
         this.stopEvents();
         const id = this.createId();

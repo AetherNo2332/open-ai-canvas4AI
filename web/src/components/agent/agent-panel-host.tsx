@@ -1,4 +1,5 @@
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { InputNumber } from "antd";
 import { useAgentPageContext } from "@/services/agent/business-context";
 import { useAgentPanelAdapter } from "@/services/agent/panel-adapters";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -9,11 +10,23 @@ import { dramaAgentAnalysisRequest } from "@/services/api/drama-agent";
 import { AgentConversationPanel, type BuildAgentRequest } from "./agent-conversation-panel";
 import { createClientUUID } from "@/lib/client-id";
 import { useAgentCapabilities } from "./use-agent-capabilities";
+import { closeAgentPanelSurface, openAgentPanelSurface, useAgentPanelSurfaceOpen } from "@/stores/use-agent-panel-surface";
+import type { AgentConversationRecord } from "@/services/agent/conversation-types";
 
 export function AgentPanelHost() {
     const context = useAgentPageContext();
-    const [open, setOpen] = useState(false);
+    const open = useAgentPanelSurfaceOpen();
     const canvasAdapter = useAgentPanelAdapter("canvas");
+    useEffect(() => {
+        if (!context.declaration.enabled) return;
+        const openFromShortcut = (event: KeyboardEvent) => {
+            if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "j") return;
+            event.preventDefault();
+            openAgentPanelSurface();
+        };
+        window.addEventListener("keydown", openFromShortcut);
+        return () => window.removeEventListener("keydown", openFromShortcut);
+    }, [context.declaration.enabled]);
     if (!context.declaration.enabled) return null;
     if (context.declaration.kind === "business" && context.declaration.businessType === "canvas") {
         if (context.status === "loading") return <AgentEntryStatus label="正在加载画布 Agent" />;
@@ -29,15 +42,15 @@ export function AgentPanelHost() {
     if (context.status === "loading") return <AgentEntryStatus label="正在加载 Agent 接入" />;
     if (context.status === "error" || !context.scope) return <AgentEntryStatus label={context.error || "当前页面 Agent 暂不可用"} disabled />;
     if (context.declaration.kind === "platform")
-        return <PlatformAgentPanel scopeLabel={context.displayName || "平台对话"} open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} />;
+        return <PlatformAgentPanel scopeLabel={context.displayName || "平台对话"} open={open} onOpen={openAgentPanelSurface} onClose={closeAgentPanelSurface} />;
     if (context.declaration.kind === "business" && context.declaration.businessType === "drama")
         return (
             <DramaAgentPanel
                 context={context}
                 scopeLabel={context.displayName || "短剧分析"}
                 open={open}
-                onOpen={() => setOpen(true)}
-                onClose={() => setOpen(false)}
+                onOpen={openAgentPanelSurface}
+                onClose={closeAgentPanelSurface}
             />
         );
     return <AgentEntryStatus label={`当前业务未注册 Agent 接入：${context.declaration.kind}`} disabled />;
@@ -115,9 +128,11 @@ function DramaAgentPanel({
     const scope = context.scope!;
     const client = useMemo(() => createAgentClient({ transport: agentWebTransport, scope, agentDefinitionId: context.agentDefinitionId || "drama.analysis" }), [scope.type, scope.id, context.agentDefinitionId]);
     const [episodeId, setEpisodeId] = useState(context.target?.dramaEpisodeId || "");
+    const [credits, setCredits] = useState<number | null>(20);
+    const routeEpisodeId = context.target?.dramaEpisodeId || "";
     useEffect(() => {
-        setEpisodeId(context.target?.dramaEpisodeId || "");
-    }, [context.routeKey, context.target?.dramaEpisodeId]);
+        setEpisodeId(routeEpisodeId);
+    }, [context.routeKey, routeEpisodeId]);
     const capability = useAgentCapabilities({
         active: context.status === "ready",
         client,
@@ -133,11 +148,18 @@ function DramaAgentPanel({
             episodeId: targetEpisode,
             model: { logicalModelId: model.logicalModelId, channelId: model.channelId, modelKey: model.modelKey, label: model.label },
             prompt,
-            maxCredits: 20,
+            maxCredits: credits ?? 0,
             idempotencyKey: createClientUUID(),
         });
     };
     const options = context.target?.episodeOptions || [];
+    const syncActiveEpisode = useCallback(
+        ({ run }: { run: AgentConversationRecord["run"] }) => {
+            setEpisodeId(run?.dramaEpisodeId || routeEpisodeId);
+        },
+        [routeEpisodeId],
+    );
+    const selectedLabel = options.find((option) => option.id === episodeId)?.label || context.target?.displayLabel || "本轮剧集";
     if (capability.status === "loading" || capability.status === "idle") return <AgentEntryStatus label="正在校验短剧 Agent 能力" />;
     if (capability.status === "error") return <AgentEntryStatus label={capability.error || "短剧 Agent 暂不可用"} disabled />;
     return (
@@ -148,15 +170,18 @@ function DramaAgentPanel({
             scopeLabel={scopeLabel}
             userScope={userScope}
             capabilities={capability.capabilities}
+            initialRunId={context.target?.openedRunId}
+            onActiveContextChange={syncActiveEpisode}
             open={open}
             onOpen={onOpen}
             onClose={onClose}
-            headerExtra={
-                options.length ? (
+            headerExtra={() => (
+                <div className="flex items-center gap-1">
                     <select
                         aria-label="本轮分析剧集"
-                        className="max-w-28 rounded border border-black/10 bg-white px-1 py-1 text-[11px]"
-                        value={episodeId || context.target?.dramaEpisodeId}
+                        title={selectedLabel}
+                        className="max-w-32 rounded border border-black/10 bg-white px-1 py-1 text-[11px]"
+                        value={episodeId}
                         onChange={(event) => setEpisodeId(event.target.value)}
                     >
                         {options.map((option) => (
@@ -165,8 +190,9 @@ function DramaAgentPanel({
                             </option>
                         ))}
                     </select>
-                ) : null
-            }
+                    <InputNumber aria-label="分析积分上限" size="small" min={0.01} max={1_000_000} value={credits} onChange={setCredits} className="w-20" />
+                </div>
+            )}
         />
     );
 }

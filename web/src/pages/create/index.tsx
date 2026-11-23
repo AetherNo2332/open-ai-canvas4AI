@@ -85,6 +85,8 @@ import { CreationRecentCanvases } from "./creation-recent-canvases";
 import { CreationAgentEntry } from "./creation-agent-entry";
 import { createCreationSubmitGate } from "./creation-submit-gate";
 import { creationVideoConfig } from "./creation-generation-config";
+import { useAgentPageDeclaration } from "@/services/agent/business-context";
+import { platformAgentPageContext } from "@/services/agent/platform-context";
 
 const AssetLibraryPickerModal = lazy(() => import("@/components/assets/asset-library-picker-modal").then((module) => ({ default: module.AssetLibraryPickerModal })));
 const InspirationHall = lazy(() => import("@/pages/inspirations"));
@@ -129,6 +131,7 @@ function writeComposerPref(key: string, value: boolean) {
 }
 
 export default function CreatePage() {
+    useAgentPageDeclaration(platformAgentPageContext());
     const { t } = useTranslation();
     const [agentMode, setAgentMode] = useState(false);
     const { message: toast, modal } = App.useApp();

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, App, Button, Input, Select, Tag } from "antd";
 import { Archive, CircleStop, History, MessageSquarePlus, RotateCcw, Send, X } from "lucide-react";
 import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
@@ -12,6 +12,7 @@ import { createClientUUID } from "@/lib/client-id";
 type ScopedClient = ReturnType<typeof createAgentClient>;
 
 export type BuildAgentRequest = (input: { prompt: string; conversation: AgentConversationRecord | null }) => AgentRunRequest;
+export type AgentPanelHeader = { conversation: AgentConversationRecord | null; run: AgentConversationRecord["run"] };
 
 export function AgentConversationPanel({
     context,
@@ -21,6 +22,8 @@ export function AgentConversationPanel({
     userScope,
     headerExtra,
     capabilities,
+    initialRunId,
+    onActiveContextChange,
     open,
     onOpen,
     onClose,
@@ -30,8 +33,10 @@ export function AgentConversationPanel({
     buildRequest: BuildAgentRequest;
     scopeLabel: string;
     userScope: string;
-    headerExtra?: ReactNode;
+    headerExtra?: ReactNode | ((header: AgentPanelHeader) => ReactNode);
     capabilities?: AgentCapabilities | null;
+    initialRunId?: string;
+    onActiveContextChange?: (header: AgentPanelHeader) => void;
     open: boolean;
     onOpen: () => void;
     onClose: () => void;
@@ -49,6 +54,7 @@ export function AgentConversationPanel({
     const [editingQueuedId, setEditingQueuedId] = useState("");
     const [queuedDraft, setQueuedDraft] = useState("");
     const [queueBusy, setQueueBusy] = useState(false);
+    const openedInitialRun = useRef("");
     const activeRecord = state.conversations.find((item) => item.id === state.activeConversationId);
     const activeRun = state.run;
     const running = Boolean(activeRun && (activeRun.cleanupPending || ["queued", "running", "waiting_approval"].includes(activeRun.status)));
@@ -65,6 +71,19 @@ export function AgentConversationPanel({
         setDraft(value);
         controller?.setDraft(value);
     };
+
+    useEffect(() => {
+        if (!controller || state.status !== "ready" || !initialRunId || openedInitialRun.current === initialRunId) return;
+        openedInitialRun.current = initialRunId;
+        void controller.openRun(initialRunId).catch((cause) => {
+            if (openedInitialRun.current === initialRunId) openedInitialRun.current = "";
+            message.error(cause instanceof Error ? cause.message : "历史运行读取失败");
+        });
+    }, [controller, initialRunId, message, state.status]);
+
+    useEffect(() => {
+        onActiveContextChange?.({ conversation: activeRecord || null, run: activeRun });
+    }, [activeRecord?.id, activeRecord?.serverConversationId, activeRun?.id, activeRun?.dramaEpisodeId]);
 
     const submit = async (value = draft, replyToQuestionId?: string) => {
         if (!controller || !value.trim() || sending || state.busy) return;
@@ -104,6 +123,7 @@ export function AgentConversationPanel({
     const title = activeRecord?.title || "新对话";
     const status = state.status === "loading" ? "加载中" : activeRun?.status === "running" ? "运行中" : activeRun?.status === "waiting_approval" ? "等待审批" : "待命";
     const workerUnavailable = capabilities && (!capabilities.availability.configured || capabilities.availability.readyWorkers < 1);
+    const renderedHeaderExtra = typeof headerExtra === "function" ? headerExtra({ conversation: activeRecord || null, run: activeRun }) : headerExtra;
     return (
         <>
             {!open ? (
@@ -120,7 +140,7 @@ export function AgentConversationPanel({
                             {title} · {status}
                         </span>
                     </div>
-                    {headerExtra}
+                    {renderedHeaderExtra}
                     <Button type="text" size="small" aria-label="新对话" icon={<MessageSquarePlus className="size-4" />} onClick={() => void controller?.newConversation()} />
                     <Button type="text" size="small" aria-label="历史" icon={<History className="size-4" />} onClick={() => setHistoryOpen((value) => !value)} />
                     <Button type="text" size="small" aria-label="关闭" icon={<X className="size-4" />} onClick={onClose} />
@@ -144,6 +164,11 @@ export function AgentConversationPanel({
                     </div>
                 ) : null}
                 <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+                    {capabilities?.defaultSkills?.skills.length ? (
+                        <p className="text-[11px] text-neutral-500">
+                            默认技能：{capabilities.defaultSkills.skills.map((skill) => skill.skillName).join("、")}
+                        </p>
+                    ) : null}
                     {workerUnavailable ? (
                         <Alert
                             type="warning"

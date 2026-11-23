@@ -277,6 +277,49 @@ describe("AgentConversationController", () => {
         expect(queueActions).toEqual([{ revision: 7, action: "pause" }]);
         controller.dispose();
     });
+
+    test("opens a historical run only inside the controller scope and restores its turns", async () => {
+        const memory = memoryStore();
+        let historyReads = 0;
+        const client = fakeClient({
+            async getRun(id: string) {
+                return { run: run({ id, conversationId: "conversation-historical", scope: { type: "drama", id: "project-1" }, userPrompt: "历史分析" }) };
+            },
+            async listConversationRuns() {
+                historyReads += 1;
+                return { items: [run({ id: "historical-run", conversationId: "conversation-historical", scope: { type: "drama", id: "project-1" }, status: "completed" })] };
+            },
+        });
+        const controller = new AgentConversationController({
+            identity: { ...identity, scope: { type: "drama", id: "project-1" }, agentDefinitionId: "drama.analysis" },
+            client,
+            store: memory.store,
+        });
+        await controller.hydrate();
+        expect(await controller.openRun("historical-run")).toBe(true);
+        expect(controller.getSnapshot().activeConversationId).toBe("conversation-historical");
+        expect(historyReads).toBe(1);
+        controller.dispose();
+    });
+
+    test("rejects a historical run from another scope without changing the active conversation", async () => {
+        const memory = memoryStore();
+        const client = fakeClient({
+            async getRun(id: string) {
+                return { run: run({ id, scope: { type: "drama", id: "project-2" } }) };
+            },
+        });
+        const controller = new AgentConversationController({
+            identity: { ...identity, scope: { type: "drama", id: "project-1" }, agentDefinitionId: "drama.analysis" },
+            client,
+            store: memory.store,
+        });
+        await controller.hydrate();
+        const before = controller.getSnapshot().activeConversationId;
+        await expect(controller.openRun("foreign-run")).rejects.toThrow("该运行不属于当前页面范围");
+        expect(controller.getSnapshot().activeConversationId).toBe(before);
+        controller.dispose();
+    });
 });
 
 describe("legacy canvas conversation migration", () => {

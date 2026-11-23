@@ -10,6 +10,8 @@ export type AgentPageDeclaration =
 export type AgentPageTarget = {
     dramaEpisodeId?: string;
     displayLabel?: string;
+    openedRunId?: string;
+    openedConversationId?: string;
     episodeOptions?: Array<{ id: string; label: string }>;
     model?: {
         logicalModelId?: string;
@@ -58,6 +60,11 @@ export function clearAgentPageContext(owner: string) {
 
 export function getAgentPageContext() {
     return current;
+}
+
+/** Entry points such as shortcuts and the command palette use the same declaration as the floating host. */
+export function agentPageEntryAvailable() {
+    return current.declaration.enabled;
 }
 
 export function subscribeAgentPageContext(listener: () => void) {

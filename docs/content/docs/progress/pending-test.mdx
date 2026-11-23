@@ -5674,7 +5674,9 @@ URL 使用归属校验后的资源访问地址，本地存储也可签发厂商�
 - 已通过：控制器测试覆盖发包前落盘、回执丢失后同键重放、跨 Run 游标、重复 seq、队列 revision、旧画布迁移与页面声明 owner 清理；公共 `components/agent`、`services/agent`、`lib/agent`、`sdk/agent` 依赖守卫通过。
 - 已实现（第三分片）：布局层唯一 `AgentPanelHost`、页面显式声明、未声明隐藏、加载/错误等待态和业务能力查询；画布通过注册的 `canvas-agent-adapter` 接入，公共宿主、控制器和 SDK 不再直接导入画布组件、store、节点或预演模块。
 - 已通过：宿主隐藏/加载/错误/适配器解析测试、迟到页面 owner 清理、公共依赖守卫和 Web 类型检查。
-- 进行中：平台/短剧页面声明、短剧内嵌聊天移除、旧会话与换集迁移。
-- [ ] 在真实登录态画布、短剧和创作首页验收首句、续聊、刷新、切页、短剧换集及唯一入口。
+- 已实现（第四分片）：创作首页显式接入平台 Agent；短剧项目页声明 `drama / projectId + drama.analysis`，面板提供当前集、剧集选项、文本模型和积分上限，既有运行恢复其实际剧集。剧本视图已移除「本集分析建议」内嵌聊天，旧 `agentProject`、`agentRun` 链接经运行归属校验后打开全局面板。
+- 已实现（第四分片）：`⌘/Ctrl+J`、命令面板和画布预填统一检查页面声明与画布上下文；未声明页面、错误画布和离开画布后的迟到预填均返回未接入。控制器按 scope 校验历史运行，短剧换集请求继续显式携带 `dramaEpisodeId`。
+- 已通过：`bun test test/agent-conversation-controller.test.ts test/agent-page-declaration.test.ts test/agent-dependency-boundary.test.ts test/agent-panel-host.test.tsx test/agent-global-panel-store.test.ts test/drama-agent-context.test.ts`、`bun test test/agent-chat-ux.test.tsx test/cloud-agent-panel-sync.test.ts`、`bun run typecheck` 和 Web 构建。
+- [ ] 在真实登录态画布、短剧和创作首页验收首句、续聊、刷新、切页、短剧换集及唯一入口；自动化通过不等于真实模型页面已验收。
 - [ ] 使用真实模型与 Worker 验证平台、短剧和画布的策略、工具、Skill 目录与跨范围隔离；当前模型请求证据来自本地确定性 HTTP 上游。
 - [ ] 验证运行中断网、原 POST 回执丢失后的幂等重放、双标签续轮冲突、短剧失效剧集和画布预演跨页恢复。

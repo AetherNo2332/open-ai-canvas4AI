@@ -95,6 +95,14 @@ const receipt = await agent.sendMessage(conversationId, {
 
 当前配置为 `canvas.default` v1、`drama.analysis` v1/v2 和 `platform.default` v1。短剧配置允许提问并保持业务只读；平台配置同样只读、关闭业务记忆，只暴露运行控制工具。Run 冻结配置版本、工具版本、读取适配器版本和能力上限。Go 在运行和工具执行时检查当前对象权限，遇到部署不支持的冻结版本时拒绝执行。
 
+## 页面声明与共享宿主
+
+应用布局只挂载一个 `AgentPanelHost`。页面通过 `useAgentPageDeclaration` 发布 `platform` 或业务声明；未声明、显式关闭和路由清理后不渲染入口，也不会创建该页的会话请求或轮询。画布声明 `canvas / canvasId`，短剧声明 `drama / projectId + drama.analysis` 并在 `target.dramaEpisodeId` 冻结本轮剧集，创作首页显式声明 `platform / self`。
+
+快捷入口遵循同一规则：`⌘/Ctrl+J` 和命令面板只在当前声明可用时打开面板；画布预填还要求当前声明与 `canvasId` 一致且画布上下文已发布。业务加载失败保持错误或等待状态，不回退为平台聊天。切换路由后，旧页面的迟到响应和清理只作用于自己的 owner。
+
+短剧分析保存在同一悬浮面板。旧 `agentProject`、`agentRun` 只作为定位原轮次的提示，前端先通过带短剧 scope 的 SDK 读取运行，再核对持久化的 `scope` 和 Agent 定义；不匹配或缺少归属时拒绝。新会话默认当前集，既有会话显示最近一轮的分析集，切换集只在下一轮请求中显式提交 `dramaEpisodeId`。
+
 工具注册项绑定 Schema、执行器版本、适用业务和运行条件。短剧只声明 `task_get` 及分集 `read` 适配器，计划、提问、结束属于平台控制能力。画布声明自己的读取、编辑、生成和可选子代理工具。模型、画布上下文、功能开关和执行权限共同决定本轮目录。Skill 文件读取根据实际启用的技能单独授予。
 
 ## 运行目录与预算
