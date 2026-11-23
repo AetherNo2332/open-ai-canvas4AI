@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { resolveTimelineExportFps, TIMELINE_DEFAULT_EXPORT_FPS } from "../src/lib/timeline/timeline-export-spec";
+import type { CanvasNodeMetadata } from "../src/types/canvas";
 import type { TimelineProject } from "../src/types/timeline";
 
 function timeline(...nodeIds: string[]): TimelineProject {
@@ -33,6 +34,20 @@ describe("timeline export frame rate", () => {
         expect(resolveTimelineExportFps(timeline("second-video"), nodes, scenes)).toBe(25);
         expect(resolveTimelineExportFps(timeline("clay"), nodes, scenes)).toBe(25);
         expect(resolveTimelineExportFps(timeline("depth"), nodes, scenes)).toBe(25);
+    });
+
+    test("keeps each recorded video's FPS when composition output rebinds the workstation to another shot", () => {
+        const reboundNodes: { id: string; metadata: CanvasNodeMetadata }[] = [
+            { id: "shot", metadata: { previsSceneId: "scene", previsShotId: "third", previsClayVideoNodeId: "clay", previsDepthVideoNodeId: "depth" } },
+            { id: "clay", metadata: { previsCaptureFps: 24 } },
+            { id: "depth", metadata: { previsCaptureFps: 25 } },
+        ];
+        const updatedScenes = [{ id: "scene", shots: [...scenes[1].shots, { id: "third", fps: 30 }] }];
+
+        expect(resolveTimelineExportFps(timeline("clay"), reboundNodes, updatedScenes)).toBe(24);
+        expect(resolveTimelineExportFps(timeline("depth"), reboundNodes, updatedScenes)).toBe(25);
+        expect(resolveTimelineExportFps(timeline("shot"), reboundNodes, updatedScenes)).toBe(30);
+        expect(resolveTimelineExportFps(timeline("clay"), reboundNodes.slice(1), [])).toBe(24);
     });
 
     test("mixed timelines follow the first linked clip in playback order", () => {

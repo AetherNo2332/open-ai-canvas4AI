@@ -201,6 +201,7 @@ export function useCanvasPrevis({
                     metadata: {
                         ...existingVideo?.metadata,
                         ...videoMetadata(videoUpload),
+                        previsCaptureFps: output.shot.fps,
                         prompt: output.prompt,
                         workflowKind: "reference_video",
                         assetTags: ["预演台白膜", `镜头:${sourceNode.title}`],
@@ -255,6 +256,7 @@ export function useCanvasPrevis({
                     metadata: {
                         ...existingDepthVideo?.metadata,
                         ...videoMetadata(depthVideoUpload),
+                        previsCaptureFps: output.shot.fps,
                         prompt: output.prompt,
                         workflowKind: "reference_video",
                         assetTags: ["预演台深度", `镜头:${sourceNode.title}`],

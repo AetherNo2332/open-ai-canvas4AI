@@ -1,9 +1,11 @@
+import { groundPrevisObject, isPrevisUprightObject } from "@/lib/canvas/previs/previs-grounding";
 import { simplifyPrevisPath } from "@/lib/canvas/previs/previs-path";
-import type { PrevisActorTravel, PrevisKeyframe, PrevisMotionPath, PrevisPathEasing, PrevisSketchPath, PrevisTransform, PrevisVec3 } from "@/types/previs";
+import { PREVIS_KEYFRAME_EPSILON, upsertPrevisKeyframe } from "@/lib/canvas/previs/previs-scene";
+import type { PrevisActorTravel, PrevisCamera, PrevisKeyframe, PrevisMotionPath, PrevisObject, PrevisPathEasing, PrevisScene, PrevisSketchPath, PrevisTransform, PrevisVec3 } from "@/types/previs";
 
 /**
  * 路径动画：途经点（带离地高度）+ 速率 + 每段速度倍率 + 停留 + 运动规律 + 折线 / 平滑曲线，
- * 展开成 transform 关键帧。关键帧是渲染、录制、Agent 读取的唯一时间真源。
+ * 展开成 transform 关键帧。写入时保留关键帧供 Agent 读取，工作台按当前镜头派生播放用的路径关键帧。
  *
  * 后端 cloud_agent_previs_path.go 用完全相同的规则展开 Agent 写入的路径，两边改动需同步；
  * web/test/previs-motion-path.test.ts 与 cloud_agent_previs_path_test.go 用同一组数值互相校对。
@@ -250,6 +252,46 @@ export function buildPrevisMotionPathKeyframes(input: { id: string; base: Previs
 /** 关键帧是否由路径展开（时间轴把它们收成一段，不逐帧显示）。 */
 export function isPrevisPathKeyframe(keyframe: Pick<PrevisKeyframe, "id">, ownerId: string) {
     return keyframe.id.startsWith(`${ownerId}-path-`);
+}
+
+type PrevisMotionPathOwner = Pick<PrevisCamera, "id" | "transform" | "keyframes" | "motionPath">;
+
+function resolvePrevisOwnerMotionPath<T extends PrevisObject | PrevisCamera>(owner: T, shotDuration: number): T {
+    if (!owner.motionPath) return owner;
+    const stored = owner.keyframes.filter((key) => isPrevisPathKeyframe(key, owner.id));
+    if (!stored.length) return owner;
+
+    let generated: PrevisKeyframe[];
+    try {
+        generated = buildPrevisMotionPathKeyframes({ id: owner.id, base: owner.transform, path: owner.motionPath, shotDuration, locked: "kind" in owner && isPrevisUprightObject(owner) });
+    } catch (error) {
+        // 无效的历史路径仍可用存量关键帧播放，也可以在工作台编辑修复。
+        console.warn("无法重新计算运动路径，继续使用已有关键帧", error);
+        return owner;
+    }
+
+    const authored = owner.keyframes.filter((key) => !isPrevisPathKeyframe(key, owner.id));
+    const sameTiming = generated.length === stored.length && generated.every((key, index) => key.id === stored[index].id && key.time === stored[index].time);
+    const frames = sameTiming ? stored : "kind" in owner ? groundPrevisObject({ ...owner, keyframes: generated }).keyframes : generated;
+    const pathKeys = frames.filter((key) => !authored.some((manual) => Math.abs(key.time - manual.time) < PREVIS_KEYFRAME_EPSILON));
+    if (sameTiming && pathKeys.length === stored.length) return owner;
+    return { ...owner, keyframes: [...pathKeys, ...authored].sort((a, b) => a.time - b.time) };
+}
+
+/** 对象和摄影机共享场景路径，各镜头只派生自己的播放关键帧。 */
+export function resolvePrevisSceneMotionPaths(scene: PrevisScene, shotDuration: number): PrevisScene {
+    const objects = scene.objects.map((object) => resolvePrevisOwnerMotionPath(object, shotDuration));
+    const cameras = scene.cameras.map((camera) => resolvePrevisOwnerMotionPath(camera, shotDuration));
+    if (objects.every((object, index) => object === scene.objects[index]) && cameras.every((camera, index) => camera === scene.cameras[index])) return scene;
+    return { ...scene, objects, cameras };
+}
+
+/** 在生成帧的位置手动写帧时，保留为独立关键帧，避免下次重新展开时丢失。 */
+export function upsertPrevisMotionPathOverride(owner: PrevisMotionPathOwner, time: number, transform: PrevisTransform) {
+    if (!owner.motionPath) return upsertPrevisKeyframe(owner.keyframes, time, transform);
+    const pathKeys = owner.keyframes.filter((key) => isPrevisPathKeyframe(key, owner.id));
+    const authored = owner.keyframes.filter((key) => !isPrevisPathKeyframe(key, owner.id));
+    return [...pathKeys, ...upsertPrevisKeyframe(authored, time, transform)].sort((a, b) => a.time - b.time);
 }
 
 export type PrevisMotionPathEdit = {

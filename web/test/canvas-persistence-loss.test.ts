@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
-import { rebaseCanvasProjects, parseCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
+import { rebaseCanvasProjects, parseCanvasStorageDocument, serializeCanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
+import { canvasPersistentNodes } from "@/lib/canvas/canvas-persistent-nodes";
 import { commitCanvasGenerationResult } from "@/lib/canvas/canvas-generation-result";
 import { buildCanvasOperations, mergeRemoteAssetsWithLocalPending, remoteUserDataRetryDelay } from "@/services/user-data-sync";
 import type { Asset } from "@/stores/use-asset-store";
@@ -109,4 +110,25 @@ test("new revision-zero canvas produces an explicit create mutation instead of a
 
     expect(operations[0]).toMatchObject({ type: "create_canvas", id: "canvas" });
     expect(operations.some((operation) => operation.type === "create_node")).toBe(true);
+});
+
+test("previs capture FPS survives a local reload and is synced on video creation and replacement", () => {
+    const capture: CanvasNodeData = { ...node("clay"), type: CanvasNodeType.Video, metadata: { content: "/api/resources/clay/file", previsCaptureFps: 24 } };
+    const firstRecording = project(canvasPersistentNodes([capture]));
+    const document = parseCanvasStorageDocument(null, [firstRecording]);
+    const reloaded = parseCanvasStorageDocument(serializeCanvasStorageDocument(document)).state.projects[0]!;
+
+    expect(reloaded.nodes[0]?.metadata?.previsCaptureFps).toBe(24);
+    expect(buildCanvasOperations(project([]), reloaded)).toContainEqual({ type: "create_node", node: capture });
+
+    const nextCapture: CanvasNodeData = { ...capture, metadata: { content: "/api/resources/new-clay/file", previsCaptureFps: 25 } };
+    const secondRecording = { ...reloaded, nodes: canvasPersistentNodes([nextCapture], reloaded.nodes) };
+    expect(buildCanvasOperations(reloaded, secondRecording)).toEqual([
+        {
+            type: "patch_node",
+            id: "clay",
+            before: { "metadata.content": "/api/resources/clay/file", "metadata.previsCaptureFps": 24 },
+            patch: { "metadata.content": "/api/resources/new-clay/file", "metadata.previsCaptureFps": 25 },
+        },
+    ]);
 });

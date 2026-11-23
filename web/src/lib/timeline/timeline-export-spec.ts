@@ -45,26 +45,33 @@ export function defaultTimelineExportPreset(dramaAspectRatio?: string): Timeline
 
 type TimelinePrevisNode = {
     id: string;
-    metadata?: Pick<CanvasNodeMetadata, "previsSceneId" | "previsShotId" | "previsClayVideoNodeId" | "previsDepthVideoNodeId">;
+    metadata?: Pick<CanvasNodeMetadata, "previsSceneId" | "previsShotId" | "previsClayVideoNodeId" | "previsDepthVideoNodeId" | "previsCaptureFps">;
 };
 type TimelinePrevisScene = { id: string; shots: readonly { id: string; fps: number }[] };
 
-/** 混合帧率沿用播放顺序中第一个关联预演镜头的片段。 */
+function isPrevisFps(fps: number | undefined) {
+    return fps === 24 || fps === 25 || fps === 30;
+}
+
+/** 混合帧率沿用播放顺序中第一个可解析的预演片段；录制产物优先使用自己的帧率。 */
 export function resolveTimelineExportFps(timeline: TimelineProject, nodes: readonly TimelinePrevisNode[], scenes: readonly TimelinePrevisScene[]): number {
     const shotsByScene = new Map(scenes.map((scene) => [scene.id, new Map(scene.shots.map((shot) => [shot.id, shot.fps]))]));
+    const captureFpsByNode = new Map<string, number>();
     const shotFpsByNode = new Map<string, number>();
     const shotFpsByOutput = new Map<string, number>();
     for (const { id, metadata } of nodes) {
+        const captureFps = metadata?.previsCaptureFps;
+        if (isPrevisFps(captureFps)) captureFpsByNode.set(id, captureFps);
         if (!metadata?.previsSceneId || !metadata.previsShotId) continue;
         const fps = shotsByScene.get(metadata.previsSceneId)?.get(metadata.previsShotId);
-        if (fps !== 24 && fps !== 25 && fps !== 30) continue;
+        if (!isPrevisFps(fps)) continue;
         shotFpsByNode.set(id, fps);
         if (metadata.previsClayVideoNodeId) shotFpsByOutput.set(metadata.previsClayVideoNodeId, fps);
         if (metadata.previsDepthVideoNodeId) shotFpsByOutput.set(metadata.previsDepthVideoNodeId, fps);
     }
     for (const { nodeId, directMedia } of getOrderedVideoClips(timeline)) {
         if (directMedia) continue;
-        const fps = shotFpsByOutput.get(nodeId) ?? shotFpsByNode.get(nodeId);
+        const fps = captureFpsByNode.get(nodeId) ?? shotFpsByOutput.get(nodeId) ?? shotFpsByNode.get(nodeId);
         if (fps !== undefined) return fps;
     }
     return TIMELINE_DEFAULT_EXPORT_FPS;

@@ -1,5 +1,5 @@
 import { cameraMoveOptions, poseEditBones, BoneRotationFields, shotSizeOptions, ObjectInspector, LightInspector, ShotInspector } from "./previs-inspectors";
-import { snapPrevisTime, advancePrevisPlayhead, resolvePrevisKeyframeRecord, resolvePrevisObjectTransformEdit, resolvePrevisCameraAlignment } from "@/lib/canvas/previs/previs-animation-semantics";
+import { snapPrevisTime, advancePrevisPlayhead, resolvePrevisObjectTransformEdit, resolvePrevisCameraAlignment } from "@/lib/canvas/previs/previs-animation-semantics";
 import { evaluatePrevisCamera } from "@/lib/canvas/previs/previs-camera-moves";
 import {
     interpolatePrevisKeyframeLift,
@@ -96,7 +96,17 @@ import { transcodeVideoToMp4 } from "@/lib/canvas/canvas-video-merge";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { type PrevisTransaction, createPrevisTransaction, installPrevisTerminalListeners } from "@/lib/canvas/previs/previs-gesture-transaction";
 import { movePrevisPathKeyframe } from "@/lib/canvas/previs/previs-path";
-import { applyPrevisMotionPath, resolvePrevisMotionPathEdit, insertPrevisPathPoint, nextPrevisSketchPathLabel, previsPathPointsFromStroke, removePrevisPathPoint, updatePrevisPathPoint } from "@/lib/canvas/previs/previs-motion-path";
+import {
+    applyPrevisMotionPath,
+    resolvePrevisMotionPathEdit,
+    insertPrevisPathPoint,
+    nextPrevisSketchPathLabel,
+    previsPathPointsFromStroke,
+    removePrevisPathPoint,
+    resolvePrevisSceneMotionPaths,
+    updatePrevisPathPoint,
+    upsertPrevisMotionPathOverride,
+} from "@/lib/canvas/previs/previs-motion-path";
 import { recordPrevisDiagnostic } from "@/lib/canvas/previs/previs-diagnostics-recorder";
 import { shouldReinitializePrevisSession, isPrevisOutputSnapshotCurrent } from "@/lib/canvas/previs/previs-session";
 import { isPrevisPreviewRequestForWorkbench, previsPreviewRequestKey } from "@/lib/canvas/previs/previs-preview";
@@ -358,6 +368,9 @@ export function CanvasPrevisWorkbench({
 
     const activeShot = draft?.shots?.find((item) => item.id === draft.activeShotId) || draft?.shots?.[0] || null;
     const activeCamera = draft?.cameras?.find((item) => item.id === activeShot?.cameraId) || draft?.cameras?.[0] || null;
+    const shotDuration = activeShot?.duration;
+    const playbackScene = useMemo(() => (draft && shotDuration !== undefined ? resolvePrevisSceneMotionPaths(draft, shotDuration) : draft), [draft, shotDuration]);
+    const playbackCamera = playbackScene?.cameras.find((item) => item.id === activeCamera?.id);
     useEffect(() => {
         const cameras = draft?.cameras || [];
         if (!cameras.length) {
@@ -371,6 +384,9 @@ export function CanvasPrevisWorkbench({
     useEffect(() => {
         if (activeShot?.id) setSelectedCameraId(activeShot.cameraId || null);
     }, [activeShot?.id]);
+    useEffect(() => {
+        if (shotDuration !== undefined && usePrevisWorkbenchStore.getState().playhead > shotDuration) setPlayhead(shotDuration);
+    }, [setPlayhead, shotDuration]);
     const compiledPrompt = useMemo(() => (draft && activeShot ? compilePrevisPrompt(draft, activeShot) : ""), [activeShot, draft]);
     const selectedObject = draft?.objects?.find((item) => item.id === selectedObjectId) || null;
     const selectedLight = draft?.lights?.find((item) => item.id === selectedLightId) || null;
@@ -379,7 +395,8 @@ export function CanvasPrevisWorkbench({
     // 写入关键帧的目的时间用吸附值；取值/显示/手势起点一律用 raw playhead，
     // 否则处在两个帧格之间时 AutoKey OFF 的增量会从错误起点计算而产生漂移。
     const snappedPlayhead = snapPrevisTime(playhead, activeShot?.fps || 24);
-    const selectedObjectRendered = selectedObject ? interpolatePrevisTransform(selectedObject.transform, selectedObject.keyframes, playhead) : null;
+    const playbackObject = playbackScene?.objects.find((item) => item.id === selectedObjectId);
+    const selectedObjectRendered = playbackObject ? interpolatePrevisTransform(playbackObject.transform, playbackObject.keyframes, playhead) : null;
 
     useEffect(() => {
         if (!playing || !activeShot) return;
@@ -770,17 +787,17 @@ export function CanvasPrevisWorkbench({
     };
 
     const addObjectKeyframe = () => {
-        if (!selectedObject) return;
+        if (!selectedObject || !selectedObjectRendered) return;
         // 取值用 raw playhead（视口真正渲染的时间），写入用 snapped 目的时间。
-        const record = resolvePrevisKeyframeRecord({ base: selectedObject.transform, keyframes: selectedObject.keyframes, rawTime: playhead, snappedTime: snappedPlayhead });
-        updateObject(selectedObject.id, { keyframes: record.keyframes });
+        updateObject(selectedObject.id, { keyframes: upsertPrevisMotionPathOverride(selectedObject, snappedPlayhead, selectedObjectRendered) });
     };
 
     const addCameraKeyframe = () => {
-        if (!activeCamera) return;
+        if (!playbackCamera) return;
+        const rendered = interpolatePrevisTransform(playbackCamera.transform, playbackCamera.keyframes, playhead);
         commit((current) => ({
             ...current,
-            cameras: current.cameras.map((item) => (item.id === activeCamera.id ? { ...item, keyframes: resolvePrevisKeyframeRecord({ base: item.transform, keyframes: item.keyframes, rawTime: playhead, snappedTime: snappedPlayhead }).keyframes } : item)),
+            cameras: current.cameras.map((item) => (item.id === playbackCamera.id ? { ...item, keyframes: upsertPrevisMotionPathOverride(item, snappedPlayhead, rendered) } : item)),
         }));
     };
 
@@ -932,7 +949,7 @@ export function CanvasPrevisWorkbench({
                     if (item.id !== id) return item;
                     const edit = resolvePrevisObjectTransformEdit({
                         base: item.transform,
-                        keyframes: item.keyframes,
+                        keyframes: autoKey && playbackObject?.id === id ? playbackObject.keyframes : item.keyframes,
                         motionPath: item.motionPath,
                         locked: item.kind === "actor" || item.primitive === "character",
                         rendered: from,
@@ -944,7 +961,7 @@ export function CanvasPrevisWorkbench({
                 }),
             }));
         },
-        [autoKey, commit, snappedPlayhead],
+        [autoKey, commit, playbackObject, snappedPlayhead],
     );
 
     /** 摄影机 transform gizmo 写入：直接覆盖摄影机 transform（不走 object autoKey 逻辑）。 */
@@ -1008,7 +1025,14 @@ export function CanvasPrevisWorkbench({
         if (!activeCamera) return;
         const transform = viewportRef.current?.readCameraTransform();
         if (!transform) return;
-        commit((current) => ({ ...current, cameras: current.cameras.map((item) => (item.id === activeCamera.id ? resolvePrevisCameraAlignment(item, transform, snappedPlayhead) : item)) }));
+        commit((current) => ({
+            ...current,
+            cameras: current.cameras.map((item) => {
+                if (item.id !== activeCamera.id) return item;
+                if (!item.motionPath) return resolvePrevisCameraAlignment(item, transform, snappedPlayhead);
+                return { ...item, keyframes: upsertPrevisMotionPathOverride(item, snappedPlayhead, transform) };
+            }),
+        }));
         message.success("摄影机已对齐当前视图");
     };
 
@@ -1113,9 +1137,11 @@ export function CanvasPrevisWorkbench({
 
     /** 当前镜头深度范围：整段镜头固定一次，深度视频不闪烁。运镜会在镜头中途改变机位，按五个时刻采样。 */
     const resolveShotDepthRange = (shot = activeShot) => {
-        const current = draftRef.current;
-        const camera = current?.cameras.find((item) => item.id === shot?.cameraId) || current?.cameras[0];
-        if (!current || !camera || !shot) return { near: 0, far: 30 };
+        const snapshot = draftRef.current;
+        if (!snapshot || !shot) return { near: 0, far: 30 };
+        const current = resolvePrevisSceneMotionPaths(snapshot, shot.duration);
+        const camera = current.cameras.find((item) => item.id === shot.cameraId) || current.cameras[0];
+        if (!camera) return { near: 0, far: 30 };
         const cameraPositions = [0, 0.25, 0.5, 0.75, 1].map((ratio) => evaluatePrevisCamera(current, camera, ratio * shot.duration).position);
         const objectPositions = current.objects.filter((item) => item.visible).flatMap((item) => [0, shot.duration].map((time) => interpolatePrevisTransform(item.transform, item.keyframes, time).position));
         return resolvePrevisDepthRange({ cameraPositions, objectPositions });
@@ -1390,7 +1416,8 @@ export function CanvasPrevisWorkbench({
 
     // 画给谁：选中的人物或道具优先（布景不能整体移动），其次是选中的摄影机；都没有时保存为参考轨迹。
     // 视口里点道具不会取消摄影机选中，所以对象必须排在摄影机前面，否则道具的「画路径」会画成运镜。
-    const trajectoryObject = selectedObject && selectedObject.kind !== "layout" ? selectedObject : null;
+    const trajectoryObject = playbackObject && playbackObject.kind !== "layout" ? playbackObject : null;
+    const trajectoryCamera = playbackScene?.cameras.find((item) => item.id === selectedCameraId) || null;
     const trajectoryTarget = trajectoryObject
         ? { kind: trajectoryObject.kind === "actor" || trajectoryObject.primitive === "character" ? ("actor" as const) : ("object" as const), id: trajectoryObject.id, name: trajectoryObject.name }
         : selectedCamera
@@ -1458,7 +1485,7 @@ export function CanvasPrevisWorkbench({
             if (!waypoints.length) return;
             // 重画是替换原路径：沿用原来的开始时间。否则上一笔画完自动播放、播放头停在中途，
             // 新路径会从那里起步，被压进镜头末尾很短的一段。
-            const replacedStart = (trajectoryObject ?? selectedCamera)?.motionPath?.startDelay;
+            const replacedStart = (trajectoryObject ?? trajectoryCamera)?.motionPath?.startDelay;
             const start = replacedStart !== undefined ? Math.min(replacedStart, Math.max(0, shot.duration - 0.5)) : capabilities.timeline ? Math.min(snappedPlayhead, Math.max(0, shot.duration - 0.5)) : 0;
             const curve = tool === "brush" && waypoints.length > 2;
             try {
@@ -1469,10 +1496,10 @@ export function CanvasPrevisWorkbench({
                     const origin: PrevisVec3 = locked ? [at[0], interpolatePrevisKeyframeLift(trajectoryObject.keyframes, start), at[2]] : at;
                     const edit = resolvePrevisMotionPathEdit(trajectoryObject, { points: [origin, ...waypoints], speed: "walk", metersPerSecond: locked ? 1.4 : 1.2, startDelay: start, orientToPath: locked, curve }, shot.duration, locked);
                     commit((scene) => ({ ...scene, objects: scene.objects.map((object) => (object.id === trajectoryObject.id ? { ...object, ...edit } : object)) }));
-                } else if (selectedCamera) {
-                    const origin = interpolatePrevisTransform(selectedCamera.transform, selectedCamera.keyframes, start).position;
-                    const updated = applyPrevisMotionPath(selectedCamera, { points: [origin, ...waypoints], speed: "walk", metersPerSecond: 1.2, startDelay: start, orientToPath: false, curve }, shot.duration, false);
-                    commit((scene) => ({ ...scene, cameras: scene.cameras.map((camera) => (camera.id === selectedCamera.id ? { ...camera, keyframes: updated.keyframes, motionPath: updated.motionPath } : camera)) }));
+                } else if (trajectoryCamera) {
+                    const origin = interpolatePrevisTransform(trajectoryCamera.transform, trajectoryCamera.keyframes, start).position;
+                    const updated = applyPrevisMotionPath(trajectoryCamera, { points: [origin, ...waypoints], speed: "walk", metersPerSecond: 1.2, startDelay: start, orientToPath: false, curve }, shot.duration, false);
+                    commit((scene) => ({ ...scene, cameras: scene.cameras.map((camera) => (camera.id === trajectoryCamera.id ? { ...camera, keyframes: updated.keyframes, motionPath: updated.motionPath } : camera)) }));
                 }
             } catch (error) {
                 message.warning(error instanceof Error ? error.message : "轨迹无效");
@@ -1486,7 +1513,7 @@ export function CanvasPrevisWorkbench({
             setPlaying(true);
             message.success(`${PREVIS_TRAJECTORY_LABELS[trajectoryTarget.kind]}已生成（${waypoints.length + 1} 个途经点），可在属性面板调速率、运动规律与每个点的高度，也能在那里删除`);
         },
-        [capabilities.timeline, commit, message, selectedCamera, setMode, setPlayhead, setPlaying, setSequencerVisible, snappedPlayhead, trajectoryHeight, trajectoryObject, trajectoryTarget],
+        [capabilities.timeline, commit, message, setMode, setPlayhead, setPlaying, setSequencerVisible, snappedPlayhead, trajectoryCamera, trajectoryHeight, trajectoryObject, trajectoryTarget],
     );
     const handleTrajectoryComplete = useCallback((points: PrevisGroundPoint[]) => finishTrajectory(points, "brush"), [finishTrajectory]);
     const handleTrajectoryPoint = useCallback((point: PrevisGroundPoint) => setTrajectoryDraft((points) => [...points, point]), []);
@@ -1676,7 +1703,7 @@ export function CanvasPrevisWorkbench({
         });
     }, [activeShot?.id, commit, directorPreview, draft, effectiveCanvasId, message, onDirectorPreview, open]);
 
-    if (!open || !draft || !activeShot) return null;
+    if (!open || !draft || !playbackScene || !activeShot) return null;
 
     const saveStatusClass = saveIndicator.tone === "danger" ? "is-danger" : saveIndicator.busy ? "is-busy" : "";
     // 预演台固定浅色：白色磨砂面板悬浮在世界视口上，不跟随应用暗色模式。
@@ -2064,7 +2091,7 @@ export function CanvasPrevisWorkbench({
                     <main className="pv-viewport-area">
                         <PrevisViewport
                             ref={viewportRef}
-                            scene={draft}
+                            scene={playbackScene}
                             selectedObjectId={selectedObjectId}
                             selectedBone={null}
                             transformMode={transformMode}
@@ -2383,10 +2410,10 @@ export function CanvasPrevisWorkbench({
                 {capabilities.timeline ? (
                     <section className={`pv-inline-timeline ${sequencerVisible ? "" : "is-collapsed"}`}>
                         <PrevisSequencer
-                            scene={draft}
+                            scene={playbackScene}
                             shot={activeShot}
-                            camera={activeCamera}
-                            objects={draft.objects}
+                            camera={playbackCamera ?? null}
+                            objects={playbackScene.objects}
                             selectedObjectId={selectedObjectId}
                             selectedBone={selectedBone}
                             playhead={playhead}

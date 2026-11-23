@@ -1,12 +1,98 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyPrevisMotionPath, buildPrevisMotionPathKeyframes, insertPrevisPathPoint, normalizePrevisMotionPath, planPrevisMotionPath, previsPathEase, previsPathPointsFromStroke, removePrevisPathPoint } from "@/lib/canvas/previs/previs-motion-path";
+import {
+    applyPrevisMotionPath,
+    buildPrevisMotionPathKeyframes,
+    insertPrevisPathPoint,
+    normalizePrevisMotionPath,
+    planPrevisMotionPath,
+    previsPathEase,
+    previsPathPointsFromStroke,
+    removePrevisPathPoint,
+    resolvePrevisSceneMotionPaths,
+    upsertPrevisMotionPathOverride,
+} from "@/lib/canvas/previs/previs-motion-path";
 import { evaluatePrevisActorPose } from "@/lib/canvas/previs/previs-motion";
-import { createPrevisActor, interpolatePrevisKeyframeLift, interpolatePrevisTransform, previsIdentityTransform } from "@/lib/canvas/previs/previs-scene";
-import { resolvePrevisSubjectState } from "@/lib/canvas/previs/previs-camera-moves";
+import { createPrevisActor, createPrevisScene, interpolatePrevisKeyframeLift, interpolatePrevisTransform, previsIdentityTransform } from "@/lib/canvas/previs/previs-scene";
+import { evaluatePrevisCamera, resolvePrevisSubjectState } from "@/lib/canvas/previs/previs-camera-moves";
 import type { PrevisKeyframe, PrevisMotionPath, PrevisVec3 } from "@/types/previs";
 
 const base = previsIdentityTransform([0, 0, 0]);
+
+function sceneWithMotionPaths(shotDuration: number) {
+    const scene = createPrevisScene();
+    const path: PrevisMotionPath = {
+        points: [
+            [0, 0, 0],
+            [8, 0, 0],
+        ],
+        speed: "walk",
+        metersPerSecond: 1,
+        startDelay: 1,
+        orientToPath: false,
+    };
+    const actor = applyPrevisMotionPath(scene.objects[0], path, shotDuration, true);
+    const camera = applyPrevisMotionPath(
+        scene.cameras[0],
+        {
+            ...path,
+            points: [
+                [0, 2, 6],
+                [8, 2, 6],
+            ],
+        },
+        shotDuration,
+        false,
+    );
+    return { ...scene, objects: [actor], cameras: [camera], shots: [{ ...scene.shots[0], duration: shotDuration }] };
+}
+
+describe("motion paths for the active shot", () => {
+    test("shortening a shot lets the actor and camera reach the end of their paths", () => {
+        const scene = sceneWithMotionPaths(10);
+        const shot = { ...scene.shots[0], duration: 3 };
+        const playback = resolvePrevisSceneMotionPaths({ ...scene, shots: [shot] }, shot.duration);
+        const actor = playback.objects[0];
+        expect(interpolatePrevisTransform(actor.transform, actor.keyframes, 3).position).toEqual([8, 0, 0]);
+        expect(evaluatePrevisCamera(playback, playback.cameras[0], 3).position).toEqual([8, 2, 6]);
+        expect(scene.objects[0].keyframes.at(-1)?.time).toBe(9);
+    });
+
+    test("a longer shot sharing the same path restores the original speed and delay", () => {
+        const scene = sceneWithMotionPaths(1);
+        const longShot = { ...scene.shots[0], id: "long-shot", duration: 12 };
+        const playback = resolvePrevisSceneMotionPaths({ ...scene, shots: [...scene.shots, longShot], activeShotId: longShot.id }, longShot.duration);
+        const actor = playback.objects[0];
+        expect(interpolatePrevisTransform(actor.transform, actor.keyframes, 5).position).toEqual([4, 0, 0]);
+        expect(evaluatePrevisCamera(playback, playback.cameras[0], 5).position).toEqual([4, 2, 6]);
+        expect(actor.keyframes.at(-1)?.time).toBe(9);
+        expect(scene.objects[0].keyframes.map((frame) => frame.time)).toEqual([1]);
+    });
+
+    test("retiming keeps manual keys at their original times and gives them priority at a collision", () => {
+        const scene = sceneWithMotionPaths(10);
+        const actor = scene.objects[0];
+        const manual: PrevisKeyframe = { id: "manual", time: 3, transform: previsIdentityTransform([5, 0, 0]), easing: "smooth" };
+        const later: PrevisKeyframe = { id: "later", time: 11, transform: previsIdentityTransform([10, 0, 0]) };
+        actor.keyframes = [...actor.keyframes.slice(0, -1), manual, actor.keyframes.at(-1)!, later];
+        const playback = resolvePrevisSceneMotionPaths(scene, 3);
+        const evaluated = playback.objects[0];
+        expect(evaluated.keyframes.map((frame) => frame.time)).toEqual([0, 1, 3, 11]);
+        expect(evaluated.keyframes[2]).toBe(manual);
+        expect(evaluated.keyframes[3]).toBe(later);
+        expect(interpolatePrevisTransform(evaluated.transform, evaluated.keyframes, 3).position).toEqual([5, 0, 0]);
+    });
+
+    test("recording a manual camera key on a generated key keeps the manual time after retiming", () => {
+        const scene = sceneWithMotionPaths(3);
+        const camera = scene.cameras[0];
+        const transform = previsIdentityTransform([6, 2, 6]);
+        const keyframes = upsertPrevisMotionPathOverride(camera, 3, transform);
+        const playback = resolvePrevisSceneMotionPaths({ ...scene, cameras: [{ ...camera, keyframes }] }, 12);
+        expect(evaluatePrevisCamera(playback, playback.cameras[0], 3).position).toEqual([6, 2, 6]);
+        expect(playback.cameras[0].keyframes.at(-1)?.time).toBe(9);
+    });
+});
 
 /**
  * 与 backend/internal/app/cloud_agent_previs_path_test.go 共用的三组路径：同一输入在前后端展开出同样的关键帧。
