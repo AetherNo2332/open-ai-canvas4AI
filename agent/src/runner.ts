@@ -261,6 +261,43 @@ function lastUserText(snapshot: PiSnapshot): string {
   return snapshot.request.prompt;
 }
 
+/**
+ * Go appends business facts such as the selected drama episode immediately
+ * before the current user prompt. A restored Pi branch already contains the
+ * older transcript but not that new envelope, so carry any adjacent sourced
+ * user messages into the resumed prompt.
+ */
+export function withCanonicalRunContext(
+  snapshot: Pick<PiSnapshot, "canonical" | "request">,
+  prompt: string,
+  history: readonly AgentMessage[] = [],
+): string {
+  const messages = snapshot.canonical?.messages || [];
+  let promptIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === "user" && textContent(messages[index]?.content) === prompt) {
+      promptIndex = index;
+      break;
+    }
+  }
+  if (promptIndex < 0) return prompt;
+  const existing = new Set(history.flatMap((message) => {
+    const content = (message as unknown as { content?: unknown }).content;
+    const text = textContent(content);
+    return text ? [text] : [];
+  }));
+  const context: string[] = [];
+  for (let index = promptIndex - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (!message || message.role !== "user") break;
+    const source = String(message.agentContextSource || "");
+    if (!source || source === "runtime" || source === "continuation" || source === "user_interjection") break;
+    const content = textContent(message.content);
+    if (content && !existing.has(content)) context.unshift(content);
+  }
+  return [...context, prompt].filter((part) => part.trim() !== "").join("\n\n");
+}
+
 /** 隔离工作目录：不读操作者的 ~/.pi，也不写任何真实项目文件。 */
 function createWorkspace(): { cwd: string; agentDir: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "canvas-pi-run-"));
@@ -381,6 +418,7 @@ async function resumePoint(
   const history = snapshot.skillRuntimeMode === "pi-native" && hasCurrentEntries
     ? buildSessionContext(snapshot.piSessionEntries!.map(({ entry }) => entry as unknown as SessionEntry), snapshot.piActiveLeafId).messages
     : fromCanonical(snapshot, model);
+  const contextualPrompt = (prompt: string) => withCanonicalRunContext(snapshot, prompt, history);
   if (snapshot.pendingContextCompaction) {
     // Compaction was started by the previous worker. Do not let normal recovery
     // call PiModelStep while Go's ActiveTaskID belongs to the compaction task.
@@ -392,14 +430,14 @@ async function resumePoint(
       : snapshot.piMessages?.length ? CONTINUATION_PROMPT : snapshot.request.prompt;
     const entries = storedEntries.length ? storedEntries : sessionEntriesFromMessages(snapshot.runId,
       tail?.role === "user" ? history.slice(0, -1) : history);
-    return { entries, prompt, activeLeafId: snapshot.pendingContextCompaction.activeLeafId };
+    return { entries, prompt: contextualPrompt(prompt), activeLeafId: snapshot.pendingContextCompaction.activeLeafId };
   }
   await recoverToolResults(bridge, snapshot, history, disclosure, checkpoint, signal, recoverNativeRead);
 
   if (!snapshot.activeTaskId && snapshot.lastTaskId === snapshot.modelFailureTaskId && snapshot.modelFailureNudge) {
     const entries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
     return { entries: entries.length ? entries : sessionEntriesFromMessages(snapshot.runId, history),
-      prompt: snapshot.modelFailureNudge, activeLeafId: snapshot.piActiveLeafId };
+      prompt: contextualPrompt(snapshot.modelFailureNudge), activeLeafId: snapshot.piActiveLeafId };
   }
 
   const storedEntries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
@@ -422,7 +460,7 @@ async function resumePoint(
       failed.message.errorMessage === "context_length_exceeded" &&
       snapshot.piSessionEntries?.some(item => item.runId === snapshot.runId && item.entry.id === failed.id) &&
       edits.every(entry => entry.type === "context_edit" && entry.targetId === failed.id && entry.replacement === null)) {
-      return { entries: storedEntries, prompt: CONTINUATION_PROMPT, activeLeafId: failed.id };
+      return { entries: storedEntries, prompt: contextualPrompt(CONTINUATION_PROMPT), activeLeafId: failed.id };
     }
     let prompt = snapshot.piMessages?.length ? CONTINUATION_PROMPT : snapshot.request.prompt;
     let activeLeafId = snapshot.piActiveLeafId || undefined;
@@ -445,7 +483,7 @@ async function resumePoint(
         if (decision.nudge) prompt = decision.nudge;
       }
     }
-    return { entries: storedEntries, prompt, activeLeafId };
+    return { entries: storedEntries, prompt: contextualPrompt(prompt), activeLeafId };
   }
   const tail = history.at(-1);
   if (tail?.role === "user") {
