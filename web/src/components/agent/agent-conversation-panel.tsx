@@ -5,7 +5,7 @@ import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
 import { useAgentConversation } from "./use-agent-conversation";
 import type { AgentConversationRecord } from "@/services/agent/conversation-types";
 import type { AgentPageContext } from "@/services/agent/business-context";
-import type { AgentRunRequest } from "@/sdk/agent";
+import type { AgentCapabilities, AgentRunRequest } from "@/sdk/agent";
 import type { createAgentClient } from "@/sdk/agent/client";
 import { createClientUUID } from "@/lib/client-id";
 
@@ -20,6 +20,7 @@ export function AgentConversationPanel({
     scopeLabel,
     userScope,
     headerExtra,
+    capabilities,
     open,
     onOpen,
     onClose,
@@ -30,6 +31,7 @@ export function AgentConversationPanel({
     scopeLabel: string;
     userScope: string;
     headerExtra?: ReactNode;
+    capabilities?: AgentCapabilities | null;
     open: boolean;
     onOpen: () => void;
     onClose: () => void;
@@ -101,6 +103,7 @@ export function AgentConversationPanel({
 
     const title = activeRecord?.title || "新对话";
     const status = state.status === "loading" ? "加载中" : activeRun?.status === "running" ? "运行中" : activeRun?.status === "waiting_approval" ? "等待审批" : "待命";
+    const workerUnavailable = capabilities && (!capabilities.availability.configured || capabilities.availability.readyWorkers < 1);
     return (
         <>
             {!open ? (
@@ -141,6 +144,14 @@ export function AgentConversationPanel({
                     </div>
                 ) : null}
                 <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+                    {workerUnavailable ? (
+                        <Alert
+                            type="warning"
+                            showIcon
+                            message="Agent Worker 暂不可用"
+                            description={capabilities?.availability.reason || capabilities?.availability.queueReason || "请求仍会由服务端受理，Worker 恢复后继续执行。"}
+                        />
+                    ) : null}
                     {state.status === "error" ? <Alert type="error" message={state.error || "会话加载失败"} showIcon /> : null}
                     {activeRecord?.historyState?.status === "unavailable" ? <Alert type="warning" message={activeRecord.historyState.message} showIcon /> : null}
                     {state.messages.length ? (
