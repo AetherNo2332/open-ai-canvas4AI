@@ -1,6 +1,6 @@
 import { Euler, Quaternion } from "three";
 
-import type { PrevisBoneKeyframe, PrevisCamera, PrevisKeyframe, PrevisQuat, PrevisTransform, PrevisVec3 } from "../../../types/previs";
+import type { PrevisBoneKeyframe, PrevisCamera, PrevisKeyframe, PrevisMotionPath, PrevisQuat, PrevisTransform, PrevisVec3 } from "../../../types/previs";
 import { interpolatePrevisBoneRotation, interpolatePrevisTransform, upsertPrevisKeyframe } from "./previs-scene";
 
 // 缩放为 0 时无法用比例表达增量，改用绝对偏移；阈值同时兼顾数值噪声。
@@ -50,6 +50,7 @@ export function snapPrevisTime(time: number, fps: number) {
 export type PrevisObjectTransformEdit = {
     transform: PrevisTransform;
     keyframes: PrevisKeyframe[];
+    motionPath?: PrevisMotionPath;
 };
 
 /**
@@ -58,14 +59,33 @@ export type PrevisObjectTransformEdit = {
  * autoKey 关闭：把「渲染值 -> 编辑值」的增量整体搬到 base 和所有已有关键帧，
  * 使编辑在存在关键帧时依然可见，且不改变未被编辑场景的既有渲染结果。
  */
-export function resolvePrevisObjectTransformEdit(input: { base: PrevisTransform; keyframes: PrevisKeyframe[]; rendered: PrevisTransform; edited: PrevisTransform; autoKey: boolean; time: number }): PrevisObjectTransformEdit {
-    const { base, keyframes, rendered, edited, autoKey, time } = input;
-    if (autoKey) return { transform: base, keyframes: upsertPrevisKeyframe(keyframes, time, edited) };
+export function resolvePrevisObjectTransformEdit(input: {
+    base: PrevisTransform;
+    keyframes: PrevisKeyframe[];
+    motionPath?: PrevisMotionPath;
+    locked?: boolean;
+    rendered: PrevisTransform;
+    edited: PrevisTransform;
+    autoKey: boolean;
+    time: number;
+}): PrevisObjectTransformEdit {
+    const { base, keyframes, motionPath, locked, rendered, edited, autoKey, time } = input;
+    // 单帧手工改动已不再由原路径完整表达，保留关键帧并解除生成器，避免后续改速率覆盖手工编辑。
+    if (autoKey) return { transform: base, keyframes: upsertPrevisKeyframe(keyframes, time, edited), ...(motionPath ? { motionPath: undefined } : {}) };
     if (!keyframes.length) return { transform: edited, keyframes };
     const delta = previsTransformDelta(rendered, edited);
     return {
         transform: applyPrevisTransformDelta(base, delta),
         keyframes: keyframes.map((keyframe) => ({ ...keyframe, transform: applyPrevisTransformDelta(keyframe.transform, delta) })),
+        ...(motionPath
+            ? {
+                  motionPath: {
+                      ...motionPath,
+                      // 演员的路径 Y 是 lift；支撑面高度已由 base 与关键帧一起平移，不能再叠到 lift。
+                      points: motionPath.points.map(([x, y, z]) => [x + delta.position[0], locked ? y : y + delta.position[1], z + delta.position[2]] as PrevisVec3),
+                  },
+              }
+            : {}),
     };
 }
 

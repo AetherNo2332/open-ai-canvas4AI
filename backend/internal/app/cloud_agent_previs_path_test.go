@@ -2,6 +2,7 @@ package app
 
 import (
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -205,5 +206,130 @@ func TestCloudAgentPrevisActorKeepsFootHeightWhenReusingCameraPath(t *testing.T)
 		if position[1] != 0.8 || numberValue(frame["lift"], 0) != 1.5 {
 			t.Fatalf("height override must be relative to the foot: %#v", frame)
 		}
+	}
+}
+
+func TestCloudAgentPrevisPointEditKeepsExistingMotionSettings(t *testing.T) {
+	scene := previsCameraTestScene(t)
+	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), "s-actor-1")
+	actor["motionPath"] = map[string]any{
+		"points": []any{[]any{0.0, 0.0, 0.0}, []any{2.0, 0.0, 0.0}, []any{4.0, 0.0, 0.0}},
+		"speed": "run", "metersPerSecond": 2.5, "duration": 2.0,
+		"startDelay": 0.5, "easing": "smooth", "curve": true,
+		"orientToPath": false, "speeds": []any{1.0, 2.0}, "holds": []any{0.0, 0.4, 0.0},
+	}
+	if err := cloudAgentPrevisValidateMotionPath(actor["motionPath"].(map[string]any)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cloudAgentPrevisSetMotionPath(scene, actor, cloudAgentPrevisPatchOperation{
+		PathPoints: [][]float64{{0, 0, 0}, {2, 0, 1}, {4, 0, 0}},
+	}, 8, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := actor["motionPath"].(map[string]any)
+	for key, want := range map[string]any{
+		"speed": "run", "metersPerSecond": 2.5, "duration": 2.0,
+		"startDelay": 0.5, "easing": "smooth", "curve": true, "orientToPath": false,
+		"speeds": []any{1.0, 2.0}, "holds": []any{0.0, 0.4, 0.0},
+	} {
+		if !reflect.DeepEqual(path[key], want) {
+			t.Errorf("%s = %#v, want %#v", key, path[key], want)
+		}
+	}
+	points := creationAnyList(path["points"])
+	moved, _ := cloudAgentPrevisNumberVec3(points[1])
+	if !reflect.DeepEqual(moved, []float64{2, 0, 1}) || len(creationMaps(actor["keyframes"])) < 2 {
+		t.Fatalf("point edit did not rebuild the path: %#v", actor)
+	}
+}
+
+func TestCloudAgentPrevisPathTopologyEditDropsIndexedSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		points [][]float64
+	}{
+		{"added point", [][]float64{{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {4, 0, 0}}},
+		{"reordered points", [][]float64{{0, 0, 0}, {4, 0, 0}, {2, 0, 0}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scene := previsCameraTestScene(t)
+			actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), "s-actor-1")
+			actor["motionPath"] = map[string]any{
+				"points": []any{[]any{0.0, 0.0, 0.0}, []any{2.0, 0.0, 0.0}, []any{4.0, 0.0, 0.0}},
+				"speed": "run", "metersPerSecond": 2.5, "duration": 2.0,
+				"startDelay": 0.5, "easing": "smooth", "curve": true,
+				"speeds": []any{1.0, 2.0}, "holds": []any{0.0, 0.4, 0.0},
+			}
+			if _, err := cloudAgentPrevisSetMotionPath(scene, actor, cloudAgentPrevisPatchOperation{PathPoints: tc.points}, 8, true); err != nil {
+				t.Fatal(err)
+			}
+			path := actor["motionPath"].(map[string]any)
+			if path["speeds"] != nil || path["holds"] != nil {
+				t.Fatalf("indexed settings cannot follow changed topology: %#v", path)
+			}
+			for key, want := range map[string]any{
+				"speed": "run", "metersPerSecond": 2.5, "duration": 2.0,
+				"startDelay": 0.5, "easing": "smooth", "curve": true,
+			} {
+				if !reflect.DeepEqual(path[key], want) {
+					t.Errorf("%s = %#v, want %#v", key, path[key], want)
+				}
+			}
+		})
+	}
+}
+
+func TestCloudAgentPrevisPointEditHonorsExplicitOverrides(t *testing.T) {
+	scene := previsCameraTestScene(t)
+	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), "s-actor-1")
+	actor["motionPath"] = map[string]any{
+		"points": []any{[]any{0.0, 0.0, 0.0}, []any{2.0, 0.0, 0.0}, []any{4.0, 0.0, 0.0}},
+		"speed": "run", "metersPerSecond": 2.5, "duration": 2.0,
+		"startDelay": 0.5, "easing": "smooth", "curve": true,
+		"orientToPath": false, "speeds": []any{1.0, 2.0}, "holds": []any{0.0, 0.4, 0.0},
+	}
+	delay, duration, orient := 1.0, 3.0, true
+	if _, err := cloudAgentPrevisSetMotionPath(scene, actor, cloudAgentPrevisPatchOperation{
+		PathPoints: [][]float64{{0, 0, 0}, {2, 0, 1}, {4, 0, 0}},
+		PathSpeed: "slow", Easing: "ease_out", StartDelay: &delay, Duration: &duration, OrientToPath: &orient,
+	}, 8, true); err != nil {
+		t.Fatal(err)
+	}
+	path := actor["motionPath"].(map[string]any)
+	for key, want := range map[string]any{
+		"speed": "slow", "startDelay": 1.0, "duration": 3.0,
+		"easing": "ease_out", "orientToPath": true, "curve": true,
+		"speeds": []any{1.0, 2.0}, "holds": []any{0.0, 0.4, 0.0},
+	} {
+		if !reflect.DeepEqual(path[key], want) {
+			t.Errorf("%s = %#v, want %#v", key, path[key], want)
+		}
+	}
+	if path["metersPerSecond"] != nil {
+		t.Fatalf("explicit speed must clear inherited custom speed: %#v", path)
+	}
+}
+
+func TestCloudAgentPrevisPathIDUsesReferencedPathInsteadOfTargetSettings(t *testing.T) {
+	scene := previsCameraTestScene(t)
+	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), "s-actor-1")
+	camera := cloudAgentPrevisFindByID(creationMaps(scene["cameras"]), "s-camera-1")
+	actor["motionPath"] = map[string]any{"speed": "run", "duration": 4.0}
+	camera["motionPath"] = map[string]any{
+		"points": []any{[]any{0.0, 2.0, 0.0}, []any{4.0, 2.0, 0.0}},
+		"speed": "slow", "duration": 2.0, "startDelay": 0.0, "speeds": []any{2.0},
+	}
+	ref := "s-camera-1"
+	if _, err := cloudAgentPrevisSetMotionPath(scene, actor, cloudAgentPrevisPatchOperation{PathID: &ref}, 8, true); err != nil {
+		t.Fatal(err)
+	}
+	path := actor["motionPath"].(map[string]any)
+	if path["speed"] != "slow" || path["duration"] != 2.0 || !reflect.DeepEqual(path["speeds"], []any{2.0}) {
+		t.Fatalf("pathId must use referenced settings: %#v", path)
+	}
+	first, _ := cloudAgentPrevisNumberVec3(creationAnyList(path["points"])[0])
+	if first[1] != 0 {
+		t.Fatalf("copied actor path should stay at ground height: %#v", path)
 	}
 }

@@ -76,126 +76,148 @@ func cloudAgentPrevisArraySpacing(propID string, params map[string]any) float64 
 
 // cloudAgentPrevisApplyArrayAdd 展开为 N 个独立 prop 对象，ID 为 `${id}-1..N`。
 func cloudAgentPrevisApplyArrayAdd(objects *[]map[string]any, operation cloudAgentPrevisPatchOperation, index int) (cloudAgentApprovalPreviewItem, error) {
-	if operation.Kind != "" && operation.Kind != "prop" {
-		return cloudAgentApprovalPreviewItem{}, BadAuthRequest("object_array_add 只支持 kind=prop")
-	}
-	count := 3
-	if operation.Count != nil {
-		count = *operation.Count
-	}
-	if count < 1 || count > cloudAgentPrevisArrayMax {
-		return cloudAgentApprovalPreviewItem{}, BadAuthRequest(fmt.Sprintf("object_array_add count 范围 1-%d", cloudAgentPrevisArrayMax))
-	}
-	if len(*objects)+count > cloudAgentPrevisMaxObjects {
-		return cloudAgentApprovalPreviewItem{}, BadAuthRequest(fmt.Sprintf("场景对象最多 %d 个；成片建筑请改用 kind=layout", cloudAgentPrevisMaxObjects))
-	}
-	pattern := operation.Pattern
-	if pattern == "" {
-		pattern = "line"
-	}
-	if err := cloudAgentPrevisValidateEnum(pattern, "pattern", "line", "grid", "ring", "scatter"); err != nil {
-		return cloudAgentApprovalPreviewItem{}, err
-	}
-	facing := operation.Facing
-	if facing == "" {
-		facing = "same"
-		if pattern == "ring" {
-			facing = "center"
-		}
-	}
-	if err := cloudAgentPrevisValidateEnum(facing, "facing", "same", "center", "outward"); err != nil {
-		return cloudAgentApprovalPreviewItem{}, err
-	}
-	vary := 0.0
-	if operation.Vary != nil {
-		vary = *operation.Vary
-	}
-	if err := cloudAgentPrevisFiniteInRange(vary, "vary", 0, 1); err != nil {
-		return cloudAgentApprovalPreviewItem{}, err
-	}
-	params, err := cloudAgentPrevisNormalizeParams(operation.PropID, nil, operation.Params)
+	config, err := cloudAgentPrevisPrepareArrayAdd(len(*objects), operation)
 	if err != nil {
 		return cloudAgentApprovalPreviewItem{}, err
 	}
-	spacing := cloudAgentPrevisArraySpacing(operation.PropID, params)
-	if operation.Spacing != nil {
-		spacing = *operation.Spacing
-	}
-	if err := cloudAgentPrevisFiniteInRange(spacing, "spacing", 0.2, 500); err != nil {
+	items, err := cloudAgentPrevisBuildArrayItems(*objects, operation, index, config)
+	if err != nil {
 		return cloudAgentApprovalPreviewItem{}, err
 	}
-	columns := 0
+	*objects = items
+	return cloudAgentApprovalPreviewItem{Operation: operation.Type, NodeID: operation.ID, NodeTitle: truncateRunes(config.name, cloudAgentPrevisTextLimit), Summary: fmt.Sprintf("批量新增 %d 个《%s》（%s）", config.count, config.name, config.pattern)}, nil
+}
+
+type cloudAgentPrevisArrayConfig struct {
+	count, columns        int
+	pattern, facing, name string
+	vary, spacing, yaw    float64
+	params                map[string]any
+	center                []float64
+	seed                  int64
+}
+
+func cloudAgentPrevisPrepareArrayAdd(existingCount int, operation cloudAgentPrevisPatchOperation) (cloudAgentPrevisArrayConfig, error) {
+	config := cloudAgentPrevisArrayConfig{count: 3, pattern: operation.Pattern, facing: operation.Facing, center: []float64{0, 0, 0}, seed: 1}
+	if operation.Kind != "" && operation.Kind != "prop" {
+		return config, BadAuthRequest("object_array_add 只支持 kind=prop")
+	}
+	if operation.Count != nil {
+		config.count = *operation.Count
+	}
+	if config.count < 1 || config.count > cloudAgentPrevisArrayMax {
+		return config, BadAuthRequest(fmt.Sprintf("object_array_add count 范围 1-%d", cloudAgentPrevisArrayMax))
+	}
+	if existingCount+config.count > cloudAgentPrevisMaxObjects {
+		return config, BadAuthRequest(fmt.Sprintf("场景对象最多 %d 个；成片建筑请改用 kind=layout", cloudAgentPrevisMaxObjects))
+	}
+	if config.pattern == "" {
+		config.pattern = "line"
+	}
+	if err := cloudAgentPrevisValidateEnum(config.pattern, "pattern", "line", "grid", "ring", "scatter"); err != nil {
+		return config, err
+	}
+	if config.facing == "" {
+		config.facing = "same"
+		if config.pattern == "ring" {
+			config.facing = "center"
+		}
+	}
+	if err := cloudAgentPrevisValidateEnum(config.facing, "facing", "same", "center", "outward"); err != nil {
+		return config, err
+	}
+	if operation.Vary != nil {
+		config.vary = *operation.Vary
+	}
+	if err := cloudAgentPrevisFiniteInRange(config.vary, "vary", 0, 1); err != nil {
+		return config, err
+	}
+	params, err := cloudAgentPrevisNormalizeParams(operation.PropID, nil, operation.Params)
+	if err != nil {
+		return config, err
+	}
+	config.params = params
+	config.spacing = cloudAgentPrevisArraySpacing(operation.PropID, params)
+	if operation.Spacing != nil {
+		config.spacing = *operation.Spacing
+	}
+	if err := cloudAgentPrevisFiniteInRange(config.spacing, "spacing", 0.2, 500); err != nil {
+		return config, err
+	}
+	return cloudAgentPrevisArrayPlacement(config, operation)
+}
+
+func cloudAgentPrevisArrayPlacement(config cloudAgentPrevisArrayConfig, operation cloudAgentPrevisPatchOperation) (cloudAgentPrevisArrayConfig, error) {
 	if operation.Columns != nil {
-		columns = *operation.Columns
+		config.columns = *operation.Columns
 	}
-	center := []float64{0, 0, 0}
 	if operation.Position != nil {
-		center = *operation.Position
+		config.center = *operation.Position
 	}
-	baseYaw := 0.0
 	if operation.Rotation != nil {
 		if err := cloudAgentPrevisValidateVec3(*operation.Rotation, "rotation"); err != nil {
-			return cloudAgentApprovalPreviewItem{}, err
+			return config, err
 		}
-		baseYaw = (*operation.Rotation)[1]
+		config.yaw = (*operation.Rotation)[1]
 	}
-	seed := int64(1)
 	if operation.Seed != nil {
-		seed = int64(*operation.Seed)
+		config.seed = int64(*operation.Seed)
 	}
-	random := rand.New(rand.NewSource(seed ^ 0x5bd1e995))
-	baseName := ""
 	if operation.Name != nil {
-		baseName = *operation.Name
+		config.name = *operation.Name
 	}
-	if baseName == "" {
+	if config.name == "" {
 		if prop, ok := cloudAgentPrevisFindProp(operation.PropID); ok {
-			baseName = prop.Name
+			config.name = prop.Name
 		}
 	}
+	return config, nil
+}
+
+func cloudAgentPrevisBuildArrayItems(objects []map[string]any, operation cloudAgentPrevisPatchOperation, index int, config cloudAgentPrevisArrayConfig) ([]map[string]any, error) {
+	random := rand.New(rand.NewSource(config.seed ^ 0x5bd1e995))
 	existing := map[string]bool{}
-	for _, object := range *objects {
+	for _, object := range objects {
 		existing[stringValue(object["id"])] = true
 	}
-	offsets := cloudAgentPrevisArrayOffsets(pattern, count, columns, spacing, seed)
-	items := *objects
+	offsets := cloudAgentPrevisArrayOffsets(config.pattern, config.count, config.columns, config.spacing, config.seed)
+	items := objects
 	for itemIndex, offset := range offsets {
 		id := operation.ID
-		name := baseName
-		if count > 1 {
+		name := config.name
+		if config.count > 1 {
 			id = fmt.Sprintf("%s-%d", operation.ID, itemIndex+1)
-			name = fmt.Sprintf("%s %d", baseName, itemIndex+1)
+			name = fmt.Sprintf("%s %d", config.name, itemIndex+1)
 		}
 		if existing[id] {
-			return cloudAgentApprovalPreviewItem{}, BadAuthRequest("批量对象 ID 已存在：" + id)
+			return nil, BadAuthRequest("批量对象 ID 已存在：" + id)
 		}
 		if err := validateCloudAgentID(id, fmt.Sprintf("operations[%d].id", index), 80); err != nil {
-			return cloudAgentApprovalPreviewItem{}, err
+			return nil, err
 		}
-		yaw := baseYaw
-		if facing == "center" && (offset[0] != 0 || offset[1] != 0) {
+		yaw := config.yaw
+		if config.facing == "center" && (offset[0] != 0 || offset[1] != 0) {
 			yaw = math.Atan2(-offset[0], -offset[1])
-		} else if facing == "outward" && (offset[0] != 0 || offset[1] != 0) {
+		} else if config.facing == "outward" && (offset[0] != 0 || offset[1] != 0) {
 			yaw = math.Atan2(offset[0], offset[1])
 		}
 		single := operation
 		single.ID = id
 		single.Kind = "prop"
-		single.Params = cloudAgentPrevisVaryParams(operation.PropID, params, vary, random)
-		if vary > 0 && params == nil {
+		single.Params = cloudAgentPrevisVaryParams(operation.PropID, config.params, config.vary, random)
+		if config.vary > 0 && config.params == nil {
 			variant := random.Intn(8)
 			single.Variant = &variant
 		}
-		position := []float64{center[0] + offset[0], 0, center[2] + offset[1]}
+		position := []float64{config.center[0] + offset[0], 0, config.center[2] + offset[1]}
 		item, _, err := cloudAgentPrevisAddCatalogObject(single, name, position, []float64{0, yaw, 0}, []float64{1, 1, 1})
 		if err != nil {
-			return cloudAgentApprovalPreviewItem{}, err
+			return nil, err
 		}
 		items = append(items, item)
 		existing[id] = true
 	}
-	*objects = items
-	return cloudAgentApprovalPreviewItem{Operation: operation.Type, NodeID: operation.ID, NodeTitle: truncateRunes(baseName, cloudAgentPrevisTextLimit), Summary: fmt.Sprintf("批量新增 %d 个《%s》（%s）", count, baseName, pattern)}, nil
+	return items, nil
 }
 
 func cloudAgentPrevisVaryParams(propID string, params map[string]any, vary float64, random *rand.Rand) map[string]any {

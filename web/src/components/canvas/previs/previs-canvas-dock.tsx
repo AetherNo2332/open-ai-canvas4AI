@@ -226,13 +226,7 @@ export function PrevisCanvasDock(props: PrevisCanvasDockProps) {
                     })}
                 </div>
                 <span className="pv-dock__divider" />
-                <button
-                    type="button"
-                    aria-pressed={props.trajectoryDrawing}
-                    title={trajectoryTitle}
-                    className={`pv-dock__tool ${props.trajectoryDrawing ? "is-active is-accent" : ""}`}
-                    onClick={props.onToggleTrajectory}
-                >
+                <button type="button" aria-pressed={props.trajectoryDrawing} title={trajectoryTitle} className={`pv-dock__tool ${props.trajectoryDrawing ? "is-active is-accent" : ""}`} onClick={props.onToggleTrajectory}>
                     <Route aria-hidden />
                     <span>{trajectoryLabel}</span>
                 </button>

@@ -1,8 +1,6 @@
 package commands
 
 import (
-	"math"
-	"strconv"
 	"strings"
 	"time"
 	"yingce/backend/internal/assets"
@@ -12,9 +10,9 @@ import (
 // controls absent from the older convenience operations. Unknown stored fields
 // survive; clients cannot use an entity patch to write runtime/task state.
 var previsFields = map[string]map[string]string{
-	"settings":     {"title": "text", "background": "color", "environmentIntensity": "range:0:100", "environment": "environment", "gridVisible": "bool", "activeShotId": "id"},
-	"object":       {"name": "text", "kind": "enum:primitive,model,actor,billboard", "primitive": "enum:box,sphere,cylinder,plane,character", "transform": "transform", "color": "color", "visible": "bool", "castShadow": "bool", "receiveShadow": "bool", "pose": "pose", "archetype": "enum:adult,child,elderly,man,woman,monster", "actorProfile": "actorProfile", "rig": "rig", "motionClips": "array:motionClip", "activeMotionClipId": "id", "characterBinding": "binding", "boneOverrides": "boneQuats", "boneTracks": "array:boneTrack", "sourceNodeId": "id", "assetId": "id", "storageKey": "locator", "url": "modelLocator", "mimeType": "text", "keyframes": "array:keyframe", "motionPath": "motionPath"},
-	"camera":       {"name": "text", "transform": "transform", "target": "vec3", "focalLength": "range:1:300", "fov": "range:0.1:179", "aperture": "range:0.1:128", "focusDistance": "range:0.001:1000000", "near": "range:0.00001:1000000", "far": "range:0.00001:1000000", "keyframes": "array:keyframe", "motionPath": "motionPath"},
+	"settings":     {"title": "text", "background": "color", "environmentIntensity": "range:0:100", "environment": "environment", "gridVisible": "bool", "activeShotId": "id", "world": "world", "markers": "list:0:64:marker", "paths": "list:0:32:sketchPath"},
+	"object":       {"name": "text", "kind": "enum:primitive,model,actor,billboard,prop,layout", "primitive": "enum:box,sphere,cylinder,plane,character", "transform": "transform", "color": "color", "visible": "bool", "castShadow": "bool", "receiveShadow": "bool", "pose": "pose", "archetype": "enum:adult,child,elderly,man,woman,monster", "actorProfile": "actorProfile", "rig": "rig", "motionClips": "array:motionClip", "activeMotionClipId": "id", "characterBinding": "binding", "boneOverrides": "boneQuats", "boneTracks": "array:boneTrack", "sourceNodeId": "id", "assetId": "id", "storageKey": "locator", "url": "modelLocator", "mimeType": "text", "keyframes": "array:keyframe", "motionPath": "motionPath", "propId": previsPropRule, "variant": "int:0:7", "params": "params", "layout": "layout", "setId": "id", "motions": "list:0:32:actorMotion", "travels": "array:travel"},
+	"camera":       {"name": "text", "transform": "transform", "target": "vec3", "focalLength": "range:1:300", "fov": "range:0.1:179", "aperture": "range:0.1:128", "focusDistance": "range:0.001:1000000", "near": "range:0.00001:1000000", "far": "range:0.00001:1000000", "keyframes": "array:keyframe", "motionPath": "motionPath", "moves": "list:0:24:cameraMove"},
 	"light":        {"name": "text", "type": "enum:directional,point,spot,ambient", "transform": "transform", "color": "color", "intensity": "range:0:100", "angle": "range:0:6.29", "penumbra": "range:0:1", "castShadow": "bool"},
 	"shot":         {"name": "text", "cameraId": "id", "duration": "range:0.1:60", "fps": "enumNumber:24,25,30", "aspectRatio": "enum:9:16,16:9,2.39:1", "shotSize": "enum:extreme_wide,wide,full,medium,close_up,extreme_close_up", "cameraMove": "enum:static,push_in,pull_out,pan_left,pan_right,tilt_up,tilt_down,orbit_left,orbit_right,handheld", "prompt": "prompt", "previewNodeId": "id", "clayVideoNodeId": "id", "depthNodeId": "id", "normalNodeId": "id"},
 	"environment":  {"mode": "enum:color,panorama", "url": "locator", "storageKey": "locator", "sourceNodeId": "id", "rotationY": "range:-1000000:1000000", "opacity": "range:0:1", "exposure": "range:-100:100", "useAsLighting": "bool", "lightingIntensity": "range:0:100"},
@@ -25,8 +23,15 @@ var previsFields = map[string]map[string]string{
 	"binding":      {"characterAssetId": "id", "characterVersionId": "id", "referenceNodeId": "id", "characterName": "text"},
 	"boneTrack":    {"bone": "bone", "keyframes": "array:boneKeyframe"},
 	"boneKeyframe": {"id": "id", "time": "range:0:60", "rotation": "quat", "easing": "enum:step,linear,smooth"},
-	"keyframe":     {"id": "id", "time": "range:0:60", "transform": "transform", "easing": "enum:step,linear,smooth"},
-	"motionPath":   {"points": "array:vec3", "speed": "enum:slow,walk,run", "startDelay": "range:0:60", "orientToPath": "bool"},
+	"keyframe":     {"id": "id", "time": "range:0:60", "transform": "transform", "easing": "enum:step,linear,smooth", "lift": "range:0:50"},
+	"motionPath":   {"points": "list:2:64:vec3", "speed": "enum:slow,walk,run", "startDelay": "range:0:60", "orientToPath": "bool", "metersPerSecond": "range:0.05:100", "duration": "range:0.1:60", "easing": previsPathEasingRule, "curve": "bool", "speeds": "array:range:0.1:10", "holds": "array:range:0:60"},
+	"world":        {"timeOfDay": "range:0:24", "weather": "enum:clear,cloudy,overcast,rain,storm,snow,fog", "ground": "enum:grass,forest,sand,redsoil,snow,water,city,warm,white,gray", "groundSize": "groundSize", "horizon": "bool"},
+	"marker":       {"id": "id", "label": "textRange:1:8", "position": "vec3"},
+	"sketchPath":   {"id": "id", "label": "textRange:1:16", "points": "list:2:64:vec3"},
+	"layout":       {"template": "enum:ancient_city,ancient_street,modern_city,modern_street,village,garden,forest", "seed": "int:0:999999999", "size": "range:50:1200", "density": "range:0.2:1", "crowd": "bool", "removed": "list:0:6000:int:0:5999"},
+	"actorMotion":  {"id": "id", "motion": "enum:idle,walk,run,talk,wave,nod,shake_head,look_around,point,phone_call,sit_idle,clap,fight_idle,punch,jump,fall,cry,cheer,slap,hold_hand,hit_react", "start": "range:0:60", "duration": "range:0.2:60", "intensity": "range:0.2:2"},
+	"travel":       {"id": "id", "style": "enum:walk,run,dash,jump,fly,sword_fly,float,teleport", "start": "range:0:60", "duration": "range:0.1:60", "height": "range:0:50"},
+	"cameraMove":   {"id": "id", "technique": previsCameraTechniqueRule, "start": "range:0:60", "duration": "range:0.05:60", "easing": previsPathEasingRule, "subjectId": "id", "params": "params"},
 }
 
 var previsRequired = map[string][]string{
@@ -35,6 +40,11 @@ var previsRequired = map[string][]string{
 	"binding": {"characterAssetId", "characterVersionId", "referenceNodeId"}, "boneTrack": {"bone", "keyframes"},
 	"boneKeyframe": {"id", "time", "rotation"}, "keyframe": {"id", "time", "transform"},
 	"motionPath": {"points", "speed", "startDelay", "orientToPath"}, "environment": {"mode"},
+	"world":  {"timeOfDay", "weather", "ground", "groundSize", "horizon"},
+	"marker": {"id", "label", "position"}, "sketchPath": {"id", "label", "points"},
+	"layout":      {"template", "seed", "size", "density", "crowd"},
+	"actorMotion": {"id", "motion", "start", "duration"}, "travel": {"id", "style", "start", "duration"},
+	"cameraMove": {"id", "technique", "start", "duration"},
 }
 
 func validatePrevisRequired(object map[string]any, kind string) error {
@@ -49,7 +59,7 @@ func validatePrevisRequired(object map[string]any, kind string) error {
 			return BadAuthRequest("运动路径需要 2 至 64 个点")
 		}
 	}
-	return nil
+	return validatePrevisWorldRecord(object, kind)
 }
 
 func previsBone(value string) bool {
@@ -66,157 +76,6 @@ func previsBone(value string) bool {
 		}
 	}
 	return false
-}
-
-func (p *planner) validatePrevisValue(value any, rule string) error {
-	bad := func() error { return BadAuthRequest("预演字段类型或范围无效：" + rule) }
-	if fields, ok := previsFields[rule]; ok {
-		object, ok := value.(map[string]any)
-		if !ok {
-			return bad()
-		}
-		if err := validatePrevisRequired(object, rule); err != nil {
-			return err
-		}
-		for key, v := range object {
-			r, ok := fields[key]
-			if !ok {
-				return BadAuthRequest("预演字段不可编辑：" + key)
-			}
-			if v == nil {
-				continue
-			}
-			if err := p.validatePrevisValue(v, r); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if strings.HasPrefix(rule, "array:") {
-		values, ok := value.([]any)
-		if !ok || len(values) > 10000 {
-			return bad()
-		}
-		seen := map[string]bool{}
-		for _, v := range values {
-			if err := p.validatePrevisValue(v, strings.TrimPrefix(rule, "array:")); err != nil {
-				return err
-			}
-			if m, ok := v.(map[string]any); ok {
-				id := text(m["id"])
-				if id == "" {
-					id = text(m["bone"])
-				}
-				if id != "" {
-					if seen[id] {
-						return bad()
-					}
-					seen[id] = true
-				}
-			}
-		}
-		return nil
-	}
-	if strings.HasPrefix(rule, "enum:") {
-		for _, s := range strings.Split(strings.TrimPrefix(rule, "enum:"), ",") {
-			if value == s {
-				return nil
-			}
-		}
-		return bad()
-	}
-	if strings.HasPrefix(rule, "range:") {
-		parts := strings.Split(rule, ":")
-		low, _ := strconv.ParseFloat(parts[1], 64)
-		high, _ := strconv.ParseFloat(parts[2], 64)
-		n, ok := value.(float64)
-		if !ok || math.IsNaN(n) || math.IsInf(n, 0) || n < low || n > high {
-			return bad()
-		}
-		return nil
-	}
-	switch rule {
-	case "enumNumber:24,25,30":
-		if value != float64(24) && value != float64(25) && value != float64(30) {
-			return bad()
-		}
-	case "text", "prompt":
-		s, ok := value.(string)
-		if !ok || len(s) > 20000 {
-			return bad()
-		}
-	case "id":
-		s, ok := value.(string)
-		if !ok {
-			return bad()
-		}
-		if s != "" {
-			return validateCanvasID(s, "预演引用", 128)
-		}
-	case "bool":
-		if _, ok := value.(bool); !ok {
-			return bad()
-		}
-	case "color":
-		return p.canvasPrevisValidateColor(text(value), "预演颜色")
-	case "pose":
-		return p.canvasPrevisValidatePose(text(value))
-	case "bone":
-		if !previsBone(text(value)) {
-			return bad()
-		}
-	case "locator", "modelLocator":
-		s, ok := value.(string)
-		if !ok {
-			return bad()
-		}
-		if rule == "modelLocator" && s == previsDefaultActorURL {
-			return nil
-		}
-		if s != "" && assets.ResourceID(s) == "" {
-			return failure("resource_not_owned", "预演只接受已上传资源")
-		}
-	case "vec3", "quat":
-		a, ok := value.([]any)
-		size := 3
-		if rule == "quat" {
-			size = 4
-		}
-		if !ok || len(a) != size {
-			return bad()
-		}
-		norm := 0.0
-		for _, v := range a {
-			n, ok := v.(float64)
-			if !ok || math.IsNaN(n) || math.IsInf(n, 0) || math.Abs(n) > 1e6 {
-				return bad()
-			}
-			norm += n * n
-		}
-		if rule == "quat" && math.Abs(norm-1) > 0.01 {
-			return bad()
-		}
-	case "boneQuats", "boneNames":
-		m, ok := value.(map[string]any)
-		if !ok {
-			return bad()
-		}
-		for bone, v := range m {
-			if !previsBone(bone) {
-				return bad()
-			}
-			r := "quat"
-			if rule == "boneNames" {
-				r = "text"
-			}
-			if err := p.validatePrevisValue(v, r); err != nil {
-				return err
-			}
-		}
-	default:
-		return bad()
-	}
-	return nil
 }
 
 func (p *planner) patchPrevisEntity(target, patch map[string]any, kind string) error {

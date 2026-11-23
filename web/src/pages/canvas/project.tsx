@@ -3505,7 +3505,7 @@ function CanvasViewportPage() {
                                     open={Boolean(timelineNode)}
                                     nodes={nodes}
                                     timeline={currentProject?.timeline || null}
-                                    previsFps={currentProject?.previsScenes?.find((scene) => nodes.some((node) => node.metadata?.previsSceneId === scene.id))?.shots[0]?.fps}
+                                    previsScenes={currentProject?.previsScenes}
                                     selectedNodeIds={selectedNodeIds}
                                     dramaAspectRatio={drama.active ? drama.summary?.production.settings.aspectRatio : undefined}
                                     onClose={() => setTimelineNodeId(null)}

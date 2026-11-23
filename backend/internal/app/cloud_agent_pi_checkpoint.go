@@ -468,41 +468,46 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 			if block.Type != "toolCall" || block.ID != callID || block.Name != "read" {
 				continue
 			}
-			var arguments struct {
-				Path string `json:"path"`
-			}
-			_ = json.Unmarshal(block.Arguments, &arguments)
-			// 系统提示给的是相对路径 skills/<name>/SKILL.md；补一个前导斜杠，
-			// 让相对与绝对路径都能按同一标记定位到技能目录。
-			path := "/" + strings.TrimLeft(strings.ReplaceAll(arguments.Path, "\\", "/"), "/")
-			const marker = "/skills/"
-			position := strings.LastIndex(path, marker)
-			if position >= 0 {
-				rest := path[position+len(marker):]
-				if slash := strings.Index(rest, "/"); slash > 0 {
-					skill := nativeSkillReadAlias(state, rest[:slash])
-					relativePath, err := normalizeNativeSkillReadPath(rest[slash+1:])
-					if err == nil && skill != nil {
-						for _, file := range skill.NativeFiles {
-							if file.Path == relativePath && file.Text {
-								return skill, relativePath, nil
-							}
-						}
-					}
-					if err != nil && requireFile {
-						return nil, "", err
-					}
-				}
-			}
-			// Rejected reads still need a paired durable result. Never publish an
-			// unvalidated model path (or its error text) in the public event.
-			if !requireFile {
-				return nil, "", nil
-			}
+			return nativeReadCheckpointFile(state, block.Arguments, requireFile)
 		}
 		return nil, "", kernel.Forbidden("native Skill read call is not paired with an enabled file")
 	}
 	return nil, "", kernel.Forbidden("native Skill read result has no assistant call")
+}
+
+// Resolve only enabled text files from a paired read call. Failed reads may
+// checkpoint without publishing the unvalidated model path.
+func nativeReadCheckpointFile(state *cloudAgentRuntime, raw json.RawMessage, requireFile bool) (*cloudAgentSkill, string, error) {
+	var arguments struct {
+		Path string `json:"path"`
+	}
+	_ = json.Unmarshal(raw, &arguments)
+	// 系统提示给的是相对路径 skills/<name>/SKILL.md；补一个前导斜杠，
+	// 让相对与绝对路径都能按同一标记定位到技能目录。
+	path := "/" + strings.TrimLeft(strings.ReplaceAll(arguments.Path, "\\", "/"), "/")
+	const marker = "/skills/"
+	position := strings.LastIndex(path, marker)
+	if position >= 0 {
+		rest := path[position+len(marker):]
+		if slash := strings.Index(rest, "/"); slash > 0 {
+			skill := nativeSkillReadAlias(state, rest[:slash])
+			relativePath, err := normalizeNativeSkillReadPath(rest[slash+1:])
+			if err == nil && skill != nil {
+				for _, file := range skill.NativeFiles {
+					if file.Path == relativePath && file.Text {
+						return skill, relativePath, nil
+					}
+				}
+			}
+			if err != nil && requireFile {
+				return nil, "", err
+			}
+		}
+	}
+	if !requireFile {
+		return nil, "", nil
+	}
+	return nil, "", kernel.Forbidden("native Skill read call is not paired with an enabled file")
 }
 
 // nativeSkillReadAlias mirrors the worker's unique alias resolution so a

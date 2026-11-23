@@ -159,16 +159,32 @@ func cloudAgentPrevisExpandCameraRecipe(recipe cloudAgentPrevisCameraRecipe, sta
 
 // cloudAgentPrevisApplyCameraRecipe 处理 camera_move + recipe：校验总时间与主体后逐段走 camera_move 的同一套校验写入。
 func cloudAgentPrevisApplyCameraRecipe(scene map[string]any, camera map[string]any, operation cloudAgentPrevisPatchOperation) (string, error) {
+	recipe, start, duration, subjectID, subjectName, err := cloudAgentPrevisPrepareCameraRecipe(scene, camera, operation)
+	if err != nil {
+		return "", err
+	}
+	parts, err := cloudAgentPrevisWriteCameraRecipe(scene, camera, operation, recipe, start, duration, subjectID)
+	if err != nil {
+		return "", err
+	}
+	summary := fmt.Sprintf("摄影机《%s》%.1f–%.1fs 大师手法「%s」", truncateRunes(stringValue(camera["name"]), 40), start, start+duration, recipe.Label)
+	if subjectName != "" {
+		summary += "，主体《" + subjectName + "》"
+	}
+	return summary + fmt.Sprintf("，展开 %d 段：%s", len(parts), strings.Join(parts, "、")), nil
+}
+
+func cloudAgentPrevisPrepareCameraRecipe(scene map[string]any, camera map[string]any, operation cloudAgentPrevisPatchOperation) (cloudAgentPrevisCameraRecipe, float64, float64, string, string, error) {
 	id := strings.TrimSpace(operation.Recipe)
 	recipe, ok := cloudAgentPrevisFindCameraRecipe(id)
 	if !ok {
-		return "", BadAuthRequest(fmt.Sprintf("大师手法 %q 不存在；可用：%s（说明见 catalog.cameraRecipes）", id, cloudAgentPrevisCameraRecipeIDs()))
+		return recipe, 0, 0, "", "", BadAuthRequest(fmt.Sprintf("大师手法 %q 不存在；可用：%s（说明见 catalog.cameraRecipes）", id, cloudAgentPrevisCameraRecipeIDs()))
 	}
 	if strings.TrimSpace(operation.Technique) != "" {
-		return "", BadAuthRequest("camera_move 的 recipe 与 technique 二选一：recipe 写整套大师手法，technique 写单段运镜")
+		return recipe, 0, 0, "", "", BadAuthRequest("camera_move 的 recipe 与 technique 二选一：recipe 写整套大师手法，technique 写单段运镜")
 	}
 	if len(operation.Params) > 0 || operation.Easing != "" || (operation.KeyframeID != nil && strings.TrimSpace(*operation.KeyframeID) != "") {
-		return "", BadAuthRequest("recipe 的每段参数是固定配方，不接受 params、easing 或 keyframeId；要调整某一段，写入后用 camera_move 的 keyframeId 覆盖那一段，或改用 technique 逐段写")
+		return recipe, 0, 0, "", "", BadAuthRequest("recipe 的每段参数是固定配方，不接受 params、easing 或 keyframeId；要调整某一段，写入后用 camera_move 的 keyframeId 覆盖那一段，或改用 technique 逐段写")
 	}
 	shotDuration := cloudAgentPrevisCameraDuration(scene, stringValue(camera["id"]))
 	start := 0.0
@@ -176,42 +192,54 @@ func cloudAgentPrevisApplyCameraRecipe(scene map[string]any, camera map[string]a
 		start = *operation.Time
 	}
 	if err := cloudAgentPrevisFiniteInRange(start, "time", 0, shotDuration); err != nil {
-		return "", err
+		return recipe, 0, 0, "", "", err
 	}
 	duration := shotDuration - start
 	if operation.Duration != nil {
 		duration = *operation.Duration
 	}
 	if math.IsNaN(duration) || math.IsInf(duration, 0) || duration < cloudAgentPrevisCameraRecipeMinDuration-1e-9 {
-		return "", BadAuthRequest(fmt.Sprintf("大师手法至少需要 %.0f 秒；提前开始或先用 shot_update 加长镜头", cloudAgentPrevisCameraRecipeMinDuration))
+		return recipe, 0, 0, "", "", BadAuthRequest(fmt.Sprintf("大师手法至少需要 %.0f 秒；提前开始或先用 shot_update 加长镜头", cloudAgentPrevisCameraRecipeMinDuration))
 	}
 	if start+duration > shotDuration+1e-6 {
-		return "", BadAuthRequest(fmt.Sprintf("大师手法 %.1f–%.1fs 超出镜头时长 %.1fs；缩短 duration 或先用 shot_update 加长镜头", start, start+duration, shotDuration))
+		return recipe, 0, 0, "", "", BadAuthRequest(fmt.Sprintf("大师手法 %.1f–%.1fs 超出镜头时长 %.1fs；缩短 duration 或先用 shot_update 加长镜头", start, start+duration, shotDuration))
 	}
+	subjectID, subjectName, err := cloudAgentPrevisCameraRecipeSubject(scene, recipe, operation.SubjectID)
+	if err != nil {
+		return recipe, 0, 0, "", "", err
+	}
+	if existing := len(creationMaps(camera["moves"])); existing+len(recipe.Segments) > cloudAgentPrevisMaxCameraMoves {
+		return recipe, 0, 0, "", "", BadAuthRequest(fmt.Sprintf("大师手法 %s 要写入 %d 段，摄影机已有 %d 段，超过 %d 段上限；先用 camera_move_remove 删除或清空", recipe.Recipe, len(recipe.Segments), existing, cloudAgentPrevisMaxCameraMoves))
+	}
+	return recipe, start, duration, subjectID, subjectName, nil
+}
+
+func cloudAgentPrevisCameraRecipeSubject(scene map[string]any, recipe cloudAgentPrevisCameraRecipe, requested *string) (string, string, error) {
 	subjectID := ""
-	if operation.SubjectID != nil {
-		subjectID = strings.TrimSpace(*operation.SubjectID)
+	if requested != nil {
+		subjectID = strings.TrimSpace(*requested)
 	}
 	switch {
 	case recipe.Subject == "required" && subjectID == "":
-		return "", BadAuthRequest(fmt.Sprintf("大师手法 %s 需要 subjectId：被跟随的演员 ID", recipe.Recipe))
+		return "", "", BadAuthRequest(fmt.Sprintf("大师手法 %s 需要 subjectId：被跟随的演员 ID", recipe.Recipe))
 	case recipe.Subject == "none" && subjectID != "":
-		return "", BadAuthRequest(fmt.Sprintf("大师手法 %s 不需要 subjectId", recipe.Recipe))
+		return "", "", BadAuthRequest(fmt.Sprintf("大师手法 %s 不需要 subjectId", recipe.Recipe))
 	}
 	subjectName := ""
 	if subjectID != "" {
 		if err := validateCloudAgentID(subjectID, "subjectId", 80); err != nil {
-			return "", err
+			return "", "", err
 		}
 		subject := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), subjectID)
 		if subject == nil {
-			return "", BadAuthRequest("subjectId 指向的对象不存在；用 director read 返回的 objects[].id")
+			return "", "", BadAuthRequest("subjectId 指向的对象不存在；用 director read 返回的 objects[].id")
 		}
 		subjectName = truncateRunes(stringValue(subject["name"]), 40)
 	}
-	if existing := len(creationMaps(camera["moves"])); existing+len(recipe.Segments) > cloudAgentPrevisMaxCameraMoves {
-		return "", BadAuthRequest(fmt.Sprintf("大师手法 %s 要写入 %d 段，摄影机已有 %d 段，超过 %d 段上限；先用 camera_move_remove 删除或清空", recipe.Recipe, len(recipe.Segments), existing, cloudAgentPrevisMaxCameraMoves))
-	}
+	return subjectID, subjectName, nil
+}
+
+func cloudAgentPrevisWriteCameraRecipe(scene map[string]any, camera map[string]any, operation cloudAgentPrevisPatchOperation, recipe cloudAgentPrevisCameraRecipe, start, duration float64, subjectID string) ([]string, error) {
 	// 先在一份摄影机副本上展开全部段，任何一段失败都不污染真实场景。
 	trialCamera := make(map[string]any, len(camera))
 	for key, value := range camera {
@@ -231,16 +259,12 @@ func cloudAgentPrevisApplyCameraRecipe(scene map[string]any, camera map[string]a
 			segment.SubjectID = &subject
 		}
 		if _, err := cloudAgentPrevisApplyCameraMove(scene, trialCamera, segment); err != nil {
-			return "", BadAuthRequest(fmt.Sprintf("大师手法 %s 展开 %s 失败：%v", recipe.Recipe, move.Technique, err))
+			return nil, BadAuthRequest(fmt.Sprintf("大师手法 %s 展开 %s 失败：%v", recipe.Recipe, move.Technique, err))
 		}
 		parts = append(parts, fmt.Sprintf("%s %.1f–%.1fs", move.Technique, move.Start, move.Start+move.Duration))
 	}
 	camera["moves"] = trialCamera["moves"]
-	summary := fmt.Sprintf("摄影机《%s》%.1f–%.1fs 大师手法「%s」", truncateRunes(stringValue(camera["name"]), 40), start, start+duration, recipe.Label)
-	if subjectName != "" {
-		summary += "，主体《" + subjectName + "》"
-	}
-	return summary + fmt.Sprintf("，展开 %d 段：%s", len(parts), strings.Join(parts, "、")), nil
+	return parts, nil
 }
 
 // cloudAgentPrevisCameraRecipesGuide 生成 catalog.cameraRecipes：配方 ID、名称、出处与逐段构成。* 表示必须给 subjectId，° 表示可选。

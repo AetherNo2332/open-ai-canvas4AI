@@ -1,5 +1,5 @@
 import { simplifyPrevisPath } from "@/lib/canvas/previs/previs-path";
-import type { PrevisKeyframe, PrevisMotionPath, PrevisPathEasing, PrevisSketchPath, PrevisTransform, PrevisVec3 } from "@/types/previs";
+import type { PrevisActorTravel, PrevisKeyframe, PrevisMotionPath, PrevisPathEasing, PrevisSketchPath, PrevisTransform, PrevisVec3 } from "@/types/previs";
 
 /**
  * 路径动画：途经点（带离地高度）+ 速率 + 每段速度倍率 + 停留 + 运动规律 + 折线 / 平滑曲线，
@@ -252,11 +252,22 @@ export function isPrevisPathKeyframe(keyframe: Pick<PrevisKeyframe, "id">, owner
     return keyframe.id.startsWith(`${ownerId}-path-`);
 }
 
-/** 写入路径：生成关键帧并替换对象的全部 transform 关键帧（与画走位一致）。失败抛错，调用方提示。 */
-export function applyPrevisMotionPath<T extends { id: string; transform: PrevisTransform; keyframes: PrevisKeyframe[]; motionPath?: PrevisMotionPath }>(item: T, path: PrevisMotionPath, shotDuration: number, locked: boolean): T {
+export type PrevisMotionPathEdit = {
+    keyframes: PrevisKeyframe[];
+    motionPath: PrevisMotionPath;
+    travels?: PrevisActorTravel[];
+};
+
+/** 替换整条运动路径时同步生成关键帧，并清掉已被替换的演员位移效果。 */
+export function resolvePrevisMotionPathEdit(item: { id: string; transform: PrevisTransform }, path: PrevisMotionPath, shotDuration: number, locked: boolean): PrevisMotionPathEdit {
     const normalized = normalizePrevisMotionPath(path, locked);
     const keyframes = buildPrevisMotionPathKeyframes({ id: item.id, base: item.transform, path: normalized, shotDuration, locked });
-    return { ...item, keyframes, motionPath: normalized };
+    return { keyframes, motionPath: normalized, ...(locked ? { travels: undefined } : {}) };
+}
+
+/** 写入路径：替换全部 transform 关键帧（与画走位一致）。失败抛错，调用方提示。 */
+export function applyPrevisMotionPath<T extends { id: string; transform: PrevisTransform; keyframes: PrevisKeyframe[]; motionPath?: PrevisMotionPath }>(item: T, path: PrevisMotionPath, shotDuration: number, locked: boolean): T {
+    return { ...item, ...resolvePrevisMotionPathEdit(item, path, shotDuration, locked) };
 }
 
 /** 清掉多余的数组项、截断数值；演员与道具高度不低于地面。 */

@@ -933,7 +933,7 @@ function PrevisSceneContent({
             <PrevisShotCameraSync camera={camCamera} framing={camFraming} />
             <PrevisOrthoCameraSync camera={orthoCamera} framing={orthoFraming} aspect={size.width / Math.max(size.height, 1)} />
             <PrevisEnvironmentView environment={scene.environment} fallbackColor={backgroundColor} />
-            {world ? <PrevisWorldView world={world} renderMode={renderMode} /> : <ambientLight intensity={scene.environmentIntensity * 0.35} />}
+            {world ? <PrevisWorldView world={world} environment={scene.environment} renderMode={renderMode} /> : <ambientLight intensity={scene.environmentIntensity * 0.35} />}
             {/* 世界环境由太阳与天光照明：场景里的方向光、环境光暂停，点光与聚光保留。 */}
             {scene.lights
                 .filter((light) => !world || (light.type !== "directional" && light.type !== "ambient"))

@@ -289,29 +289,7 @@ func cloudAgentPrevisBuildPathKeyframes(id string, basePosition, rotation, scale
 				push(current+cumulative[vertex-item.from], vertices[vertex], vertexYaw(vertex), "")
 			}
 		} else {
-			samples := max(2, int(math.Ceil(legTime*rate)))
-			edge := 0
-			for step := 1; step <= samples; step++ {
-				w := float64(step) / float64(samples)
-				target := cloudAgentPrevisPathEase(easing, w) * legTime
-				for edge < item.to-item.from-1 && cumulative[edge+1] < target {
-					edge++
-				}
-				span := cumulative[edge+1] - cumulative[edge]
-				k := 1.0
-				if span > 1e-9 {
-					k = cloudAgentPrevisClamp((target-cumulative[edge])/span, 0, 1)
-				}
-				a, b := vertices[item.from+edge], vertices[item.from+edge+1]
-				point := []float64{a[0] + (b[0]-a[0])*k, a[1] + (b[1]-a[1])*k, a[2] + (b[2]-a[2])*k}
-				var yaw float64
-				if step == samples {
-					yaw = vertexYaw(item.from + edge + 1)
-				} else {
-					yaw = heading(a, b)
-				}
-				push(current+w*legTime, point, yaw, "")
-			}
+			cloudAgentPrevisSamplePathLeg(item.from, item.to, vertices, cumulative, legTime, rate, current, easing, heading, vertexYaw, push)
 		}
 		current += legTime
 		if hold := plan.holds[item.waypoint]; hold > 0 {
@@ -380,22 +358,7 @@ func cloudAgentPrevisPathSource(scene map[string]any, ref string) (cloudAgentPre
 			if !ok {
 				return cloudAgentPrevisPathSpec{}, true, BadAuthRequest(fmt.Sprintf("《%s》没有路径动画，不能作为 pathId", truncateRunes(stringValue(item["name"]), 40)))
 			}
-			spec := cloudAgentPrevisPathSpec{
-				Speed: stringValue(motionPath["speed"]), MetersPerSecond: numberValue(motionPath["metersPerSecond"], 0), Duration: numberValue(motionPath["duration"], 0),
-				StartDelay: numberValue(motionPath["startDelay"], 0), Easing: stringValue(motionPath["easing"]), Curve: boolValue(motionPath["curve"], false),
-			}
-			for _, raw := range creationAnyList(motionPath["points"]) {
-				if point, ok := cloudAgentPrevisNumberVec3(raw); ok {
-					spec.Points = append(spec.Points, point)
-				}
-			}
-			for _, raw := range creationAnyList(motionPath["speeds"]) {
-				spec.Speeds = append(spec.Speeds, numberValue(raw, 1))
-			}
-			for _, raw := range creationAnyList(motionPath["holds"]) {
-				spec.Holds = append(spec.Holds, numberValue(raw, 0))
-			}
-			return spec, true, nil
+			return cloudAgentPrevisDecodePath(motionPath), true, nil
 		}
 	}
 	_, err := cloudAgentPrevisSketchPath(scene, wanted)
@@ -410,141 +373,11 @@ func cloudAgentPrevisPathSource(scene map[string]any, ref string) (cloudAgentPre
 // 高度：height 给了就把整条路径放到这个离地高度；否则参考轨迹与 pathPoints 保留各点高度，
 // 把别人的路径（例如摄影机的运镜轨迹）交给演员时默认贴地行走。
 func cloudAgentPrevisSetMotionPath(scene map[string]any, item map[string]any, operation cloudAgentPrevisPatchOperation, duration float64, locked bool) (string, error) {
-	spec := cloudAgentPrevisPathSpec{Points: operation.PathPoints}
-	copied := false
-	if operation.PathID != nil && strings.TrimSpace(*operation.PathID) != "" {
-		if len(operation.PathPoints) > 0 {
-			return "", cloudAgentFieldError("pathId", "conflict", "pathPoints 与 pathId 只能给一个")
-		}
-		source, fromOwner, err := cloudAgentPrevisPathSource(scene, *operation.PathID)
-		if err != nil {
-			return "", &cloudAgentFieldArgumentError{error: &cloudAgentArgumentError{err}, Field: "pathId", Issue: "invalid_value"}
-		}
-		spec, copied = source, fromOwner
-	}
-	if operation.Height != nil {
-		if err := cloudAgentPrevisFiniteInRange(*operation.Height, "height", 0, 50); err != nil {
-			return "", err
-		}
-	}
-	points := make([][]float64, 0, len(spec.Points))
-	for _, point := range spec.Points {
-		if len(point) != 3 {
-			return "", BadAuthRequest("路径点必须包含 3 个数字")
-		}
-		next := []float64{point[0], point[1], point[2]}
-		switch {
-		case operation.Height != nil:
-			next[1] = *operation.Height
-		case copied && locked:
-			next[1] = 0
-		}
-		points = append(points, next)
-	}
-	spec.Points = points
-	if operation.PathSpeed != "" || spec.Speed == "" {
-		spec.Speed = operation.PathSpeed
-		if spec.Speed == "" {
-			spec.Speed = "walk"
-		}
-		if operation.PathSpeed != "" {
-			spec.MetersPerSecond = 0
-		}
-	}
-	if err := cloudAgentPrevisValidateEnum(spec.Speed, "pathSpeed", "slow", "walk", "run"); err != nil {
-		return "", err
-	}
-	if operation.Easing != "" {
-		spec.Easing = operation.Easing
-	}
-	if spec.Easing == "" {
-		spec.Easing = "linear"
-	}
-	if err := cloudAgentPrevisValidateEnum(spec.Easing, "路径运动规律 easing", cloudAgentPrevisPathEasings...); err != nil {
-		return "", BadAuthRequest("路径 easing 只能是 linear（匀速）/ease_in（加速）/ease_out（减速）/smooth（缓入缓出）")
-	}
-	if operation.StartDelay != nil {
-		spec.StartDelay = *operation.StartDelay
-	} else if !copied {
-		spec.StartDelay = 0
-	}
-	if err := cloudAgentPrevisFiniteInRange(spec.StartDelay, "startDelay", 0, duration); err != nil {
-		return "", err
-	}
-	if operation.Duration != nil {
-		if err := cloudAgentPrevisFiniteInRange(*operation.Duration, "duration", 0.1, cloudAgentPrevisPathMaxDuration); err != nil {
-			return "", err
-		}
-		spec.Duration = *operation.Duration
-	}
-	spec.Orient = locked
-	if operation.OrientToPath != nil {
-		spec.Orient = *operation.OrientToPath
-	}
-	if locked {
-		for index, point := range points {
-			if point[1] < 0 {
-				return "", BadAuthRequest(fmt.Sprintf("pathPoints[%d] 的高度不能低于地面 0 米", index))
-			}
-		}
-	}
-	transform := cloudAgentPrevisMapTransform(item)
-	position, ok := cloudAgentPrevisNumberVec3(transform["position"])
-	if !ok {
-		position = []float64{0, 0, 0}
-	}
-	rotation, ok := cloudAgentPrevisNumberVec3(transform["rotation"])
-	if !ok {
-		rotation = []float64{0, 0, 0}
-	}
-	scale, ok := cloudAgentPrevisNumberVec3(transform["scale"])
-	if !ok {
-		scale = []float64{1, 1, 1}
-	}
-	keyframes, err := cloudAgentPrevisBuildPathKeyframes(stringValue(item["id"]), position, rotation, scale, spec, duration, locked)
+	spec, copied, err := cloudAgentPrevisResolveMotionPath(scene, item, operation, duration, locked)
 	if err != nil {
 		return "", err
 	}
-	stored := make([]any, 0, len(points))
-	top := 0.0
-	for _, point := range points {
-		stored = append(stored, cloudAgentPrevisVec3(point))
-		top = math.Max(top, point[1])
-	}
-	motionPath := map[string]any{"points": stored, "speed": spec.Speed, "startDelay": spec.StartDelay, "orientToPath": spec.Orient}
-	if spec.Easing != "linear" {
-		motionPath["easing"] = spec.Easing
-	}
-	if spec.Duration > 0 {
-		motionPath["duration"] = spec.Duration
-	}
-	if spec.MetersPerSecond > 0 {
-		motionPath["metersPerSecond"] = spec.MetersPerSecond
-	}
-	if spec.Curve && len(points) > 2 {
-		motionPath["curve"] = true
-	}
-	if len(spec.Speeds) == len(points)-1 {
-		motionPath["speeds"] = cloudAgentPrevisFloatList(spec.Speeds)
-	}
-	if len(spec.Holds) == len(points) {
-		motionPath["holds"] = cloudAgentPrevisFloatList(spec.Holds)
-	}
-	item["motionPath"] = motionPath
-	// 与 UI 画走位一致：整条路径接管 transform 轨道，避免走完后跳回旧手工帧。
-	item["keyframes"] = keyframes
-	plan, _ := cloudAgentPrevisPlanPath(spec, duration)
-	summary := fmt.Sprintf("《%s》沿 %d 个途经点的路径移动 %.1f–%.1fs，约 %.1f 米，%s", truncateRunes(stringValue(item["name"]), 40), len(points), plan.start, plan.end, plan.length, spec.Easing)
-	if top > 0.05 {
-		summary += fmt.Sprintf("，最高离地 %.1f 米", top)
-	}
-	if copied {
-		summary += "，路线复用自 " + truncateRunes(strings.TrimSpace(*operation.PathID), 40)
-	}
-	if plan.compressed {
-		summary += "；镜头时长不够，已整体加速压缩"
-	}
-	return summary, nil
+	return cloudAgentPrevisApplyMotionPath(item, spec, operation, duration, locked, copied)
 }
 
 func cloudAgentPrevisFloatList(values []float64) []any {
@@ -573,18 +406,9 @@ func cloudAgentPrevisValidateNumberList(value any, label string, length int, low
 
 // cloudAgentPrevisValidateMotionPath 校验对象与摄影机的路径（含浏览器写入的速率、运动规律、停留）。
 func cloudAgentPrevisValidateMotionPath(motionPath map[string]any) error {
-	points, pointsOK := motionPath["points"].([]any)
-	if !pointsOK || len(points) < 2 || len(points) > cloudAgentPrevisPathMaxPoints {
-		return BadAuthRequest("世界引擎 motionPath 点数无效")
-	}
-	for index, point := range points {
-		value, ok := cloudAgentPrevisNumberVec3(point)
-		if !ok {
-			return BadAuthRequest(fmt.Sprintf("世界引擎 motionPath 点 %d 无效", index))
-		}
-		if err := cloudAgentPrevisValidateVec3(value, "motionPath point"); err != nil {
-			return err
-		}
+	points, err := cloudAgentPrevisValidateMotionPathPoints(motionPath["points"])
+	if err != nil {
+		return err
 	}
 	if err := cloudAgentPrevisValidateEnum(stringValue(motionPath["speed"]), "motionPath speed", "slow", "walk", "run"); err != nil {
 		return err

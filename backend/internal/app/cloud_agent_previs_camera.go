@@ -139,27 +139,8 @@ func cloudAgentPrevisApplyCameraMove(scene map[string]any, camera map[string]any
 	cameraName := truncateRunes(stringValue(camera["name"]), 40)
 	moves := creationMaps(camera["moves"])
 	if operation.Type == "camera_move_remove" {
-		if operation.KeyframeID == nil || strings.TrimSpace(*operation.KeyframeID) == "" {
-			delete(camera, "moves")
-			return fmt.Sprintf("清空摄影机《%s》的运镜（%d 段）", cameraName, len(moves)), nil
-		}
-		kept := make([]map[string]any, 0, len(moves))
-		for _, move := range moves {
-			if stringValue(move["id"]) != *operation.KeyframeID {
-				kept = append(kept, move)
-			}
-		}
-		if len(kept) == len(moves) {
-			return "", BadAuthRequest("目标运镜不存在；运镜 id 见 director read 的 cameras[].moves")
-		}
-		if len(kept) == 0 {
-			delete(camera, "moves")
-		} else {
-			camera["moves"] = kept
-		}
-		return fmt.Sprintf("删除摄影机《%s》的一段运镜", cameraName), nil
+		return cloudAgentPrevisRemoveCameraMove(camera, moves, operation.KeyframeID, cameraName)
 	}
-
 	if strings.TrimSpace(operation.Recipe) != "" {
 		return cloudAgentPrevisApplyCameraRecipe(scene, camera, operation)
 	}
@@ -167,93 +148,26 @@ func cloudAgentPrevisApplyCameraMove(scene map[string]any, camera map[string]any
 	if !ok {
 		return "", BadAuthRequest(fmt.Sprintf("运镜手法 %q 不受支持；先按需读取已启用的 yingce-previs-world-guide Skill 的 references/moves.md", operation.Technique))
 	}
-	shotDuration := cloudAgentPrevisCameraDuration(scene, cameraID)
-	start := 0.0
-	if operation.Time != nil {
-		start = *operation.Time
-	}
-	if err := cloudAgentPrevisFiniteInRange(start, "time", 0, shotDuration); err != nil {
+	start, duration, err := cloudAgentPrevisCameraMoveTiming(scene, cameraID, technique, operation)
+	if err != nil {
 		return "", err
-	}
-	remaining := shotDuration - start
-	if remaining < 0.1-1e-9 {
-		return "", BadAuthRequest(fmt.Sprintf("运镜开始时间 %.1fs 离镜头结束不足 0.1 秒；提前开始或先用 shot_update 加长镜头", start))
-	}
-	duration := remaining
-	if technique.Duration > 0 && technique.Duration < remaining {
-		duration = technique.Duration
-	}
-	if operation.Duration != nil {
-		duration = *operation.Duration
-	}
-	if err := cloudAgentPrevisFiniteInRange(duration, "duration", 0.1, 60); err != nil {
-		return "", err
-	}
-	if start+duration > shotDuration+1e-6 {
-		return "", BadAuthRequest(fmt.Sprintf("运镜 %.1f–%.1fs 超出镜头时长 %.1fs；缩短 duration 或先用 shot_update 加长镜头", start, start+duration, shotDuration))
 	}
 	if operation.Easing != "" {
 		if err := cloudAgentPrevisValidateEnum(operation.Easing, "运镜 easing", cloudAgentPrevisPathEasings...); err != nil {
 			return "", BadAuthRequest("运镜 easing 只能是 linear（匀速）/ease_in（加速）/ease_out（减速）/smooth（缓入缓出）")
 		}
 	}
-	subjectID := ""
-	if operation.SubjectID != nil {
-		subjectID = strings.TrimSpace(*operation.SubjectID)
-	}
-	switch {
-	case technique.Subject == "required" && subjectID == "":
-		return "", BadAuthRequest(fmt.Sprintf("%s 需要 subjectId：被跟随的演员或物体 ID", technique.ID))
-	case technique.Subject == "none" && subjectID != "":
-		return "", BadAuthRequest(fmt.Sprintf("%s 不需要 subjectId；跟拍用 follow，围绕主体用 orbit_left/orbit_right，要对准某人先用 camera_update 把 target 设到该人物或叠加 look_at", technique.ID))
-	}
-	subjectName := ""
-	if subjectID != "" {
-		if err := validateCloudAgentID(subjectID, "subjectId", 80); err != nil {
-			return "", err
-		}
-		subject := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), subjectID)
-		if subject == nil {
-			return "", BadAuthRequest("subjectId 指向的对象不存在；用 director read 返回的 objects[].id")
-		}
-		subjectName = truncateRunes(stringValue(subject["name"]), 40)
+	subjectID, subjectName, err := cloudAgentPrevisCameraMoveSubject(scene, technique, operation.SubjectID)
+	if err != nil {
+		return "", err
 	}
 	params, err := cloudAgentPrevisNormalizeCameraParams(technique, operation.Params)
 	if err != nil {
 		return "", err
 	}
-
-	moveID := ""
-	if operation.KeyframeID != nil && strings.TrimSpace(*operation.KeyframeID) != "" {
-		if err := validateCloudAgentID(*operation.KeyframeID, "keyframeId", 120); err != nil {
-			return "", err
-		}
-		moveID = *operation.KeyframeID
-	}
-	replace := -1
-	if moveID != "" {
-		for index, move := range moves {
-			if stringValue(move["id"]) == moveID {
-				replace = index
-				break
-			}
-		}
-	}
-	if replace < 0 && len(moves) >= cloudAgentPrevisMaxCameraMoves {
-		return "", BadAuthRequest(fmt.Sprintf("每台摄影机最多 %d 段运镜；先用 camera_move_remove 删除或清空", cloudAgentPrevisMaxCameraMoves))
-	}
-	if moveID == "" {
-		used := make(map[string]bool, len(moves))
-		for _, move := range moves {
-			used[stringValue(move["id"])] = true
-		}
-		for index := len(moves) + 1; ; index++ {
-			candidate := fmt.Sprintf("%s-move-%d", cameraID, index)
-			if !used[candidate] {
-				moveID = candidate
-				break
-			}
-		}
+	moveID, replace, err := cloudAgentPrevisCameraMoveSlot(cameraID, moves, operation.KeyframeID)
+	if err != nil {
+		return "", err
 	}
 	move := map[string]any{"id": moveID, "technique": technique.ID, "start": math.Round(start*1000) / 1000, "duration": math.Round(duration*1000) / 1000}
 	if operation.Easing != "" {
@@ -272,7 +186,122 @@ func cloudAgentPrevisApplyCameraMove(scene map[string]any, camera map[string]any
 	}
 	sort.SliceStable(moves, func(i, j int) bool { return numberValue(moves[i]["start"], 0) < numberValue(moves[j]["start"], 0) })
 	camera["moves"] = moves
+	return cloudAgentPrevisCameraMoveSummary(cameraName, start, duration, technique, subjectName, params), nil
+}
 
+func cloudAgentPrevisRemoveCameraMove(camera map[string]any, moves []map[string]any, keyframeID *string, cameraName string) (string, error) {
+	if keyframeID == nil || strings.TrimSpace(*keyframeID) == "" {
+		delete(camera, "moves")
+		return fmt.Sprintf("清空摄影机《%s》的运镜（%d 段）", cameraName, len(moves)), nil
+	}
+	kept := make([]map[string]any, 0, len(moves))
+	for _, move := range moves {
+		if stringValue(move["id"]) != *keyframeID {
+			kept = append(kept, move)
+		}
+	}
+	if len(kept) == len(moves) {
+		return "", BadAuthRequest("目标运镜不存在；运镜 id 见 director read 的 cameras[].moves")
+	}
+	if len(kept) == 0 {
+		delete(camera, "moves")
+	} else {
+		camera["moves"] = kept
+	}
+	return fmt.Sprintf("删除摄影机《%s》的一段运镜", cameraName), nil
+}
+
+func cloudAgentPrevisCameraMoveTiming(scene map[string]any, cameraID string, technique cloudAgentPrevisCameraTechnique, operation cloudAgentPrevisPatchOperation) (float64, float64, error) {
+	shotDuration := cloudAgentPrevisCameraDuration(scene, cameraID)
+	start := 0.0
+	if operation.Time != nil {
+		start = *operation.Time
+	}
+	if err := cloudAgentPrevisFiniteInRange(start, "time", 0, shotDuration); err != nil {
+		return 0, 0, err
+	}
+	remaining := shotDuration - start
+	if remaining < 0.1-1e-9 {
+		return 0, 0, BadAuthRequest(fmt.Sprintf("运镜开始时间 %.1fs 离镜头结束不足 0.1 秒；提前开始或先用 shot_update 加长镜头", start))
+	}
+	duration := remaining
+	if technique.Duration > 0 && technique.Duration < remaining {
+		duration = technique.Duration
+	}
+	if operation.Duration != nil {
+		duration = *operation.Duration
+	}
+	if err := cloudAgentPrevisFiniteInRange(duration, "duration", 0.1, 60); err != nil {
+		return 0, 0, err
+	}
+	if start+duration > shotDuration+1e-6 {
+		return 0, 0, BadAuthRequest(fmt.Sprintf("运镜 %.1f–%.1fs 超出镜头时长 %.1fs；缩短 duration 或先用 shot_update 加长镜头", start, start+duration, shotDuration))
+	}
+	return start, duration, nil
+}
+
+func cloudAgentPrevisCameraMoveSubject(scene map[string]any, technique cloudAgentPrevisCameraTechnique, requested *string) (string, string, error) {
+	subjectID := ""
+	if requested != nil {
+		subjectID = strings.TrimSpace(*requested)
+	}
+	switch {
+	case technique.Subject == "required" && subjectID == "":
+		return "", "", BadAuthRequest(fmt.Sprintf("%s 需要 subjectId：被跟随的演员或物体 ID", technique.ID))
+	case technique.Subject == "none" && subjectID != "":
+		return "", "", BadAuthRequest(fmt.Sprintf("%s 不需要 subjectId；跟拍用 follow，围绕主体用 orbit_left/orbit_right，要对准某人先用 camera_update 把 target 设到该人物或叠加 look_at", technique.ID))
+	}
+	subjectName := ""
+	if subjectID != "" {
+		if err := validateCloudAgentID(subjectID, "subjectId", 80); err != nil {
+			return "", "", err
+		}
+		subject := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), subjectID)
+		if subject == nil {
+			return "", "", BadAuthRequest("subjectId 指向的对象不存在；用 director read 返回的 objects[].id")
+		}
+		subjectName = truncateRunes(stringValue(subject["name"]), 40)
+	}
+	return subjectID, subjectName, nil
+}
+
+func cloudAgentPrevisCameraMoveSlot(cameraID string, moves []map[string]any, keyframeID *string) (string, int, error) {
+	moveID := ""
+	if keyframeID != nil && strings.TrimSpace(*keyframeID) != "" {
+		if err := validateCloudAgentID(*keyframeID, "keyframeId", 120); err != nil {
+			return "", 0, err
+		}
+		moveID = *keyframeID
+	}
+	replace := -1
+	if moveID != "" {
+		for index, move := range moves {
+			if stringValue(move["id"]) == moveID {
+				replace = index
+				break
+			}
+		}
+	}
+	if replace < 0 && len(moves) >= cloudAgentPrevisMaxCameraMoves {
+		return "", 0, BadAuthRequest(fmt.Sprintf("每台摄影机最多 %d 段运镜；先用 camera_move_remove 删除或清空", cloudAgentPrevisMaxCameraMoves))
+	}
+	if moveID == "" {
+		used := make(map[string]bool, len(moves))
+		for _, move := range moves {
+			used[stringValue(move["id"])] = true
+		}
+		for index := len(moves) + 1; ; index++ {
+			candidate := fmt.Sprintf("%s-move-%d", cameraID, index)
+			if !used[candidate] {
+				moveID = candidate
+				break
+			}
+		}
+	}
+	return moveID, replace, nil
+}
+
+func cloudAgentPrevisCameraMoveSummary(cameraName string, start, duration float64, technique cloudAgentPrevisCameraTechnique, subjectName string, params map[string]any) string {
 	summary := fmt.Sprintf("摄影机《%s》%.1f–%.1fs %s %s", cameraName, start, start+duration, technique.ID, technique.shortName())
 	if subjectName != "" {
 		summary += "，主体《" + subjectName + "》"
@@ -289,7 +318,7 @@ func cloudAgentPrevisApplyCameraMove(scene map[string]any, camera map[string]any
 		}
 		summary += "（" + strings.Join(parts, ", ") + "）"
 	}
-	return summary, nil
+	return summary
 }
 
 // cloudAgentPrevisValidateCameraMoves 是整场景校验的一部分：浏览器写入的运镜同样要过白名单。

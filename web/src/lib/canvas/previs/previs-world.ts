@@ -1,6 +1,6 @@
 import { Color, Vector3 } from "three";
 
-import type { PrevisGroundSize, PrevisGroundType, PrevisWeather, PrevisWorld } from "@/types/previs";
+import type { PrevisEnvironment, PrevisGroundSize, PrevisGroundType, PrevisWeather, PrevisWorld } from "@/types/previs";
 
 /** 世界模式下相机远裁剪面：4km 地面 + 远山 + 天空盒都要在视锥内。 */
 export const PREVIS_WORLD_CAMERA_FAR = 12000;
@@ -98,7 +98,7 @@ const WEATHER_PARAMS: Record<PrevisWeather, { sun: number; fog: number; tint: st
  * 时间 → 太阳方位：6 点日出（东，+X），12 点最高（偏南 -Z 方向抬升 62°），18 点日落（西）。
  * 夜间保留弱月光，避免画面全黑看不清白膜。
  */
-export function resolvePrevisWorldLighting(world: PrevisWorld): PrevisWorldLighting {
+export function resolvePrevisWorldLighting(world: PrevisWorld, environment?: PrevisEnvironment): PrevisWorldLighting {
     const params = WEATHER_PARAMS[world.weather];
     const dayPhase = ((world.timeOfDay - 6) / 12) * Math.PI;
     const elevation = Math.sin(dayPhase) * ((62 * Math.PI) / 180);
@@ -123,7 +123,7 @@ export function resolvePrevisWorldLighting(world: PrevisWorld): PrevisWorldLight
         hemisphereIntensity: 0.35 + daylight * 0.85 * (0.55 + (1 - params.sun) * 0.6),
         fogColor,
         fogDensity: params.fog * (1000 / Math.max(1000, world.groundSize)) ** 0.5,
-        physicalSky: params.physical && elevation > -0.05,
+        physicalSky: params.physical && elevation > -0.05 && !(environment?.mode === "panorama" && environment.url),
         turbidity: params.turbidity,
         rayleigh: world.weather === "clear" ? 1.2 + golden * 1.6 : 2.4,
     };

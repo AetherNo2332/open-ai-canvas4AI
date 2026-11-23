@@ -96,7 +96,7 @@ import { transcodeVideoToMp4 } from "@/lib/canvas/canvas-video-merge";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { type PrevisTransaction, createPrevisTransaction, installPrevisTerminalListeners } from "@/lib/canvas/previs/previs-gesture-transaction";
 import { movePrevisPathKeyframe } from "@/lib/canvas/previs/previs-path";
-import { applyPrevisMotionPath, insertPrevisPathPoint, nextPrevisSketchPathLabel, previsPathPointsFromStroke, removePrevisPathPoint, updatePrevisPathPoint } from "@/lib/canvas/previs/previs-motion-path";
+import { applyPrevisMotionPath, resolvePrevisMotionPathEdit, insertPrevisPathPoint, nextPrevisSketchPathLabel, previsPathPointsFromStroke, removePrevisPathPoint, updatePrevisPathPoint } from "@/lib/canvas/previs/previs-motion-path";
 import { recordPrevisDiagnostic } from "@/lib/canvas/previs/previs-diagnostics-recorder";
 import { shouldReinitializePrevisSession, isPrevisOutputSnapshotCurrent } from "@/lib/canvas/previs/previs-session";
 import { isPrevisPreviewRequestForWorkbench, previsPreviewRequestKey } from "@/lib/canvas/previs/previs-preview";
@@ -930,8 +930,17 @@ export function CanvasPrevisWorkbench({
                 ...current,
                 objects: current.objects.map((item) => {
                     if (item.id !== id) return item;
-                    const edit = resolvePrevisObjectTransformEdit({ base: item.transform, keyframes: item.keyframes, rendered: from, edited: to, autoKey, time: snappedPlayhead });
-                    return { ...item, transform: edit.transform, keyframes: edit.keyframes };
+                    const edit = resolvePrevisObjectTransformEdit({
+                        base: item.transform,
+                        keyframes: item.keyframes,
+                        motionPath: item.motionPath,
+                        locked: item.kind === "actor" || item.primitive === "character",
+                        rendered: from,
+                        edited: to,
+                        autoKey,
+                        time: snappedPlayhead,
+                    });
+                    return { ...item, ...edit };
                 }),
             }));
         },
@@ -1458,8 +1467,8 @@ export function CanvasPrevisWorkbench({
                     const locked = trajectoryTarget.kind === "actor";
                     const at = interpolatePrevisTransform(trajectoryObject.transform, trajectoryObject.keyframes, start).position;
                     const origin: PrevisVec3 = locked ? [at[0], interpolatePrevisKeyframeLift(trajectoryObject.keyframes, start), at[2]] : at;
-                    const updated = applyPrevisMotionPath(trajectoryObject, { points: [origin, ...waypoints], speed: "walk", metersPerSecond: locked ? 1.4 : 1.2, startDelay: start, orientToPath: locked, curve }, shot.duration, locked);
-                    commit((scene) => ({ ...scene, objects: scene.objects.map((object) => (object.id === trajectoryObject.id ? { ...object, keyframes: updated.keyframes, motionPath: updated.motionPath } : object)) }));
+                    const edit = resolvePrevisMotionPathEdit(trajectoryObject, { points: [origin, ...waypoints], speed: "walk", metersPerSecond: locked ? 1.4 : 1.2, startDelay: start, orientToPath: locked, curve }, shot.duration, locked);
+                    commit((scene) => ({ ...scene, objects: scene.objects.map((object) => (object.id === trajectoryObject.id ? { ...object, ...edit } : object)) }));
                 } else if (selectedCamera) {
                     const origin = interpolatePrevisTransform(selectedCamera.transform, selectedCamera.keyframes, start).position;
                     const updated = applyPrevisMotionPath(selectedCamera, { points: [origin, ...waypoints], speed: "walk", metersPerSecond: 1.2, startDelay: start, orientToPath: false, curve }, shot.duration, false);

@@ -36,6 +36,7 @@ import { exportTimelineToMp4, type TimelineExportResult } from "@/lib/timeline/t
 import { defaultTimelineExportPreset, resolveTimelineExportFps, resolveTimelineExportSize, summarizeTimelineFitModes, timelineExportPresetOptions, timelineFitModeLabel, type TimelineExportPreset } from "@/lib/timeline/timeline-export-spec";
 import { buildSubtitleSrt, getOrderedSubtitleClips, getOrderedVideoClips, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
 import type { CanvasNodeData } from "@/types/canvas";
+import type { PrevisScene } from "@/types/previs";
 import type { SrtEntry, TimelineClip, TimelineDirectMedia, TimelineProject } from "@/types/timeline";
 
 const MIN_CLIP_DURATION_MS = 100;
@@ -50,8 +51,7 @@ type CanvasTimelineDialogProps = {
     open: boolean;
     nodes: CanvasNodeData[];
     timeline: TimelineProject | null;
-    /** 当前画布关联预演场景的镜头帧率；普通画布不传。 */
-    previsFps?: number;
+    previsScenes?: readonly PrevisScene[];
     /** 画布当前多选；选中多于 1 个视频时可切换到「选中视频」来源 */
     selectedNodeIds?: ReadonlySet<string>;
     /** 画布关联短剧时的作品画幅（如 9:16），作为默认导出规格 */
@@ -87,7 +87,7 @@ export function CanvasTimelineDialog({
     open,
     nodes,
     timeline,
-    previsFps,
+    previsScenes = [],
     selectedNodeIds,
     dramaAspectRatio,
     onClose,
@@ -573,7 +573,6 @@ export function CanvasTimelineDialog({
     const firstClipSize = orderedVideoClips[0] ? clipFrameSize(orderedVideoClips[0]) : null;
     const exportPresetOptions = timelineExportPresetOptions({ firstClipSize, dramaAspectRatio });
     const exportSize = resolveTimelineExportSize(exportPreset, { firstClipSize, dramaAspectRatio });
-    const exportFps = resolveTimelineExportFps(previsFps);
     const exportFitLabel = timelineFitModeLabel(summarizeTimelineFitModes(orderedVideoClips.map(clipFrameSize), exportSize));
 
     // 组装导出：把当前草稿按片段顺序合成一个 MP4（导出下载与生成新片段共用），所有片段统一到所选导出规格。
@@ -600,7 +599,7 @@ export function CanvasTimelineDialog({
         setExportDetail("准备导出");
         try {
             return await exportTimelineToMp4(normalizeTimelineProject(draft), sources, {
-                context: { width: exportSize.width, height: exportSize.height, fps: exportFps },
+                context: { width: exportSize.width, height: exportSize.height, fps: resolveTimelineExportFps(draft, nodes, previsScenes) },
                 onProgress: ({ percent, detail }) => {
                     setExportPercent(percent);
                     setExportDetail(detail);
