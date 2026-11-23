@@ -214,7 +214,7 @@ func TestCloudAgentPrevisPointEditKeepsExistingMotionSettings(t *testing.T) {
 	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), "s-actor-1")
 	actor["motionPath"] = map[string]any{
 		"points": []any{[]any{0.0, 0.0, 0.0}, []any{2.0, 0.0, 0.0}, []any{4.0, 0.0, 0.0}},
-		"speed": "run", "metersPerSecond": 2.5, "duration": 2.0,
+		"speed":  "run", "metersPerSecond": 2.5, "duration": 2.0,
 		"startDelay": 0.5, "easing": "smooth", "curve": true,
 		"orientToPath": false, "speeds": []any{1.0, 2.0}, "holds": []any{0.0, 0.4, 0.0},
 	}
@@ -257,7 +257,7 @@ func TestCloudAgentPrevisPathTopologyEditDropsIndexedSettings(t *testing.T) {
 			actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), "s-actor-1")
 			actor["motionPath"] = map[string]any{
 				"points": []any{[]any{0.0, 0.0, 0.0}, []any{2.0, 0.0, 0.0}, []any{4.0, 0.0, 0.0}},
-				"speed": "run", "metersPerSecond": 2.5, "duration": 2.0,
+				"speed":  "run", "metersPerSecond": 2.5, "duration": 2.0,
 				"startDelay": 0.5, "easing": "smooth", "curve": true,
 				"speeds": []any{1.0, 2.0}, "holds": []any{0.0, 0.4, 0.0},
 			}
@@ -285,14 +285,14 @@ func TestCloudAgentPrevisPointEditHonorsExplicitOverrides(t *testing.T) {
 	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), "s-actor-1")
 	actor["motionPath"] = map[string]any{
 		"points": []any{[]any{0.0, 0.0, 0.0}, []any{2.0, 0.0, 0.0}, []any{4.0, 0.0, 0.0}},
-		"speed": "run", "metersPerSecond": 2.5, "duration": 2.0,
+		"speed":  "run", "metersPerSecond": 2.5, "duration": 2.0,
 		"startDelay": 0.5, "easing": "smooth", "curve": true,
 		"orientToPath": false, "speeds": []any{1.0, 2.0}, "holds": []any{0.0, 0.4, 0.0},
 	}
 	delay, duration, orient := 1.0, 3.0, true
 	if _, err := cloudAgentPrevisSetMotionPath(scene, actor, cloudAgentPrevisPatchOperation{
 		PathPoints: [][]float64{{0, 0, 0}, {2, 0, 1}, {4, 0, 0}},
-		PathSpeed: "slow", Easing: "ease_out", StartDelay: &delay, Duration: &duration, OrientToPath: &orient,
+		PathSpeed:  "slow", Easing: "ease_out", StartDelay: &delay, Duration: &duration, OrientToPath: &orient,
 	}, 8, true); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestCloudAgentPrevisPathIDUsesReferencedPathInsteadOfTargetSettings(t *test
 	actor["motionPath"] = map[string]any{"speed": "run", "duration": 4.0}
 	camera["motionPath"] = map[string]any{
 		"points": []any{[]any{0.0, 2.0, 0.0}, []any{4.0, 2.0, 0.0}},
-		"speed": "slow", "duration": 2.0, "startDelay": 0.0, "speeds": []any{2.0},
+		"speed":  "slow", "duration": 2.0, "startDelay": 0.0, "speeds": []any{2.0},
 	}
 	ref := "s-camera-1"
 	if _, err := cloudAgentPrevisSetMotionPath(scene, actor, cloudAgentPrevisPatchOperation{PathID: &ref}, 8, true); err != nil {
