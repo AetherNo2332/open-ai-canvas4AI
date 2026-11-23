@@ -174,7 +174,7 @@ func cloudAgentTaskIdentity(task *model.Task) cloudAgentRunIdentity {
 
 func agentRunOutput(identity cloudAgentRunIdentity, state cloudAgentState) *CloudAgentRun {
 	view := &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model,
-		ContractVersion: AgentSDKContractVersion, Scope: agentBusinessScope(state.Request), Rules: state.Rules,
+		ContractVersion: AgentSDKContractVersion, Scope: PublicAgentBusinessScope(agentBusinessScope(state.Request)), Rules: state.Rules,
 		DramaEpisodeID: state.Request.DramaEpisodeID,
 		UserPrompt:     state.Request.Prompt, IdempotencyKey: state.Request.IdempotencyKey,
 		ChannelID: state.Request.ChannelID, ChannelModelKey: state.Request.ChannelModelKey, LogicalModelID: state.Request.LogicalModelID,
@@ -341,6 +341,9 @@ func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64, opti
 // is deterministic per user/key. Competing requests may race, but task creation
 // and credit reservation share a transaction: only one can commit.
 func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, parentID string) (*CloudAgentRun, error) {
+	if err := normalizeAgentRequestScope(userID, &req); err != nil {
+		return nil, err
+	}
 	return s.createCloudAgentRunScoped(userID, req, parentID, nil)
 }
 

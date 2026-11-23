@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-//go:embed agent-system-policy.md agent-media-policy.md
+//go:embed agent-system-policy.md agent-general-policy.md agent-media-policy.md
 var policyFiles embed.FS
 
 type Policy struct {
@@ -49,6 +49,40 @@ func LoadAgentPolicies() (system Policy, media Policy, err error) {
 		system.Hash = policyHash(system.ID, system.Version, system.Text+"\n\n"+workspace)
 	}
 	return system, media, nil
+}
+
+// LoadAgentPoliciesForBusiness selects the system policy variant that matches
+// the admitted business. Canvas keeps the full canvas contract; drama and
+// platform use the general runtime contract without canvas instructions.
+func LoadAgentPoliciesForBusiness(businessType string) (system Policy, media Policy, err error) {
+	if businessType == "canvas" {
+		return LoadAgentPolicies()
+	}
+	system, err = loadPolicy("agent-general-policy.md")
+	if err != nil {
+		return Policy{}, Policy{}, err
+	}
+	media, err = loadPolicy("agent-media-policy.md")
+	if err != nil {
+		return Policy{}, Policy{}, err
+	}
+	if system.ID != "cloud-agent-general" || media.ID != "cloud-agent-media" {
+		return Policy{}, Policy{}, fmt.Errorf("agent policy identities are invalid")
+	}
+	return system, media, nil
+}
+
+// LoadAgentGeneralPolicy exposes the current non-canvas policy for durable
+// snapshot validation without duplicating the embedded document in app code.
+func LoadAgentGeneralPolicy() (Policy, error) {
+	policy, err := loadPolicy("agent-general-policy.md")
+	if err != nil {
+		return Policy{}, err
+	}
+	if policy.ID != "cloud-agent-general" {
+		return Policy{}, fmt.Errorf("general agent policy identity is invalid")
+	}
+	return policy, nil
 }
 
 // Workspace documents supply operator instructions, never tool permissions.

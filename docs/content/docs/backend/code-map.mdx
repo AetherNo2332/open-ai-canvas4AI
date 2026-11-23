@@ -18,6 +18,13 @@ description: 从产品功能快速定位主要代码入口
 - 验证计划：`scripts/verification-plan.mjs`（纯计划与 Git/Go 图收集），归属声明 `scripts/verification-policy.mjs`；本地 runner 和 PR CI 按同一计划执行 affected，主干 push、未知路径及共享核心变动保留 full。真实 CI 切换验收见待测试清单。
 - Web 测试：`web/scripts/run-tests.mjs` 发现真实测试并分配唯一组；原隔离组保留进程边界，普通集合不再重复运行。
 
+## 统一创作 Agent
+
+- 服务端范围与能力：`backend/internal/app/agent_definition_registry.go` 注册 `canvas.default`、`drama.analysis`、`platform.default`；`agent_platform_scope.go` 规范化 `platform/self`；`agent_capabilities_view.go` 按对象授权和注册合同生成 scoped capabilities。HTTP 入口在 `handler/agent.go`、`handler/agent_conversation_scope.go`，运行与冻结快照在 `cloud_agent_*.go`。
+- 提示词与工具：`backend/internal/prompts/agent-system-policy.md` 与 `agent-media-policy.md` 只服务画布；`agent-general-policy.md` 服务短剧和平台。业务装配在 `cloud_agent_policy.go`、`cloud_agent_run_create.go`；权威工具目录在 `cloud_agent_tools.go`、`agent_tool_registry.go`。
+- TypeScript SDK：`web/src/sdk/agent/contract.ts`、`client.ts`、`transport.ts` 保持 UI 无关；业务页面通过 `web/src/sdk/agent/http-transport.ts` 注入浏览器传输。合同样例在 `agent/contracts/agent-sdk-v1.json`。
+- 公共会话与宿主：`web/src/services/agent/conversation-controller.ts`、`conversation-storage.ts`、`business-context.ts` 管理草稿、待确认提交、事件恢复和页面声明；`web/src/components/agent/agent-panel-host.tsx` 是布局层唯一宿主。画布专属交互继续在 `web/src/components/canvas/`，平台与短剧请求适配分别在 `services/agent/platform-context.ts` 与 `pages/projects/studio/`。
+
 ## 电商 Agent 与后台知识库
 
 - 页面：`web/src/pages/ecommerce/`；后台：`web/src/pages/admin/ecommerce-agent-config-page.tsx`（上线检查、阶段模型 `ecommerce-stage-models.tsx` 与目录换算 `ecommerce-model-catalog.ts`）；`ecommerce-management-page.tsx`（知识与技能标签页：`ecommerce-knowledge-page.tsx`、`ecommerce-skills-page.tsx`、`ecommerce-categories-page.tsx`，内容头 `ecommerce-library-panel.tsx`）；`knowledge-domain-coverage.ts`。

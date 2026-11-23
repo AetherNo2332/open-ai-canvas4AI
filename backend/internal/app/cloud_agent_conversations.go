@@ -78,6 +78,11 @@ func (s *Service) agentConversationBinding(userID string, selector AgentConversa
 	if userID == "" {
 		return binding, kernel.Unauthorized("请先登录")
 	}
+	var err error
+	selector, err = s.NormalizeAgentConversationSelector(userID, selector)
+	if err != nil {
+		return binding, err
+	}
 	scope := selector.Scope
 	if validateCloudAgentID(scope.Type, "业务类型", 40) != nil || validateCloudAgentID(scope.ID, "业务对象 ID", 80) != nil {
 		return binding, BadAuthRequest("需要有效的业务类型和对象 ID")
@@ -160,7 +165,7 @@ func (s *Service) ScopedCloudAgentConversations(userID string, selector AgentCon
 		}
 		page.Items = append(page.Items, CloudAgentConversation{
 			ID: id, CanvasID: run.CanvasID, Title: run.Title, LatestRunID: run.ID,
-			Scope:             AgentBusinessScope{Type: run.ScopeType, ID: run.ScopeID},
+			Scope:             PublicAgentBusinessScope(AgentBusinessScope{Type: run.ScopeType, ID: run.ScopeID}),
 			AgentDefinitionID: run.AgentDefinitionID, Resumable: run.AgentContextVersion == agentContextVersion,
 			Status: run.Status, Revision: run.Revision, CleanupPending: run.CleanupPending,
 			Archived:  run.ConversationArchived,

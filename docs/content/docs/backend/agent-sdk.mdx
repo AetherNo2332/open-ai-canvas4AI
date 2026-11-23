@@ -7,7 +7,7 @@ description: 新业务接入 Agent API 的服务端注册、TypeScript 调用、
 
 ## 新业务接入步骤
 
-1. **选定会话归属对象。** 例如短剧用 `{ type: "drama", id: projectId }` 绑定项目，将 `dramaEpisodeId` 作为本轮分析目标。整个会话的历史、发送、审批、取消与事件读取都用同一 `scope` 和 Agent 配置 ID。
+1. **选定会话归属对象。** 例如短剧用 `{ type: "drama", id: projectId }` 绑定项目，将 `dramaEpisodeId` 作为本轮分析目标；普通平台页用 `{ type: "platform", id: "self" }`，由登录态解析为当前账号。整个会话的历史、发送、审批、取消与事件读取都用同一 `scope` 和 Agent 配置 ID。
 2. **注册 Go 配置。** 在 `backend/internal/app/agent_definition_registry.go` 的服务端注册表声明稳定的 `BusinessType`、`ID` 和 `Version`；为该业务注册 `IsDefault`，并在对象授权函数中检查登录用户、对象归属和子对象关联。新业务不能仅在前端自定义 `scope.type`；未注册的业务不会获得 Agent 能力。参考 `drama.analysis` 的只读模式与 `agent_definition_registry_test.go` 的第三业务注册示例。
 3. **从最小目录开始。** 首版可用 `BusinessTools: []string{}`、`MemoryPolicy: "off"`。确需读取时再接入独立命名空间，声明适用业务和版本，并在读取函数中复查对象归属。新工具在服务端注册 Schema、执行器和版本，再由定义显式选择。平台控制与技能读取不用伪装成业务写工具。
 4. **在 Web 做业务适配。** 用 `web/src/sdk/agent` 的 `createAgentClient` 与 `agentWebTransport`；业务适配器负责把对象、模型选择、预算和用户消息映射成请求。不要让页面直接访问 `/internal-agent`、拼接工具参数授权或替用户决定审批结果。
@@ -42,6 +42,18 @@ await agent.readEvents(run.id, onEvent, { after: lastAppliedSeq, signal, onSnaps
 
 `firstTurnKey` 在一次用户发送开始时生成并保留，同一次提交的网络重试复用原键；`lastAppliedSeq` 按 Run 保存，新 Run 从 `0` 开始。`onEvent` 按 `seq` 应用事件，`onSnapshot` 更新状态。取消订阅只断开事件读取，不等于 `cancelRun`。
 
+已绑定的 `createAgentClient({ scope, agentDefinitionId })` 会自动给首轮、续聊和会话发送补齐同一 `scope` 与配置 ID。显式传入不一致范围会在 Transport 前报 `agent_scope_invalid`，不会把请求静默改投另一业务。画布可以继续只传 `canvasId`；显式非画布请求传 `scope` 并保持 `canvasId: ""`。平台对外只使用 `platform/self`，不会在响应中暴露内部用户 ID。
+
+页面能力使用同一范围查询：
+
+```ts
+const capability = await agent.getCapabilities();
+// capability.scope、agentDefinitionId、permissionModes、tools、
+// defaultSkills、modelRequirements 和 availability
+```
+
+平台 `platform.default` 固定只读、无业务工具、无 Skill，目录只包含 `plan_update`、`ask_user`、`finish_run`。短剧 `drama.analysis` 保留分集只读分析和运行控制；画布 `canvas.default` 才拥有画布读写、媒体与预演能力。完整目录由 Go 的注册定义、对象授权和本轮冻结合同决定，前端不能用自定义 `scope.type` 扩权。
+
 ### 续聊、忙时插话与提问
 
 从 Run 回执或会话列表取实际的 `conversationId`，不要用项目 ID 或 Run ID 代替会话 ID。活跃会话用 `sendMessage` 进入当前队列；终态且可续聊的 Run 也可用 `continueRun` 创建下一轮。不要在忙时另行调用 `startRun`。
@@ -69,11 +81,13 @@ const receipt = await agent.sendMessage(conversationId, {
 
 不用 TypeScript 时，调用同一公开 API：使用受支持的登录凭据，创建和续聊的 JSON 带 `scope`；目标接口和 SSE 带 `scopeType`、`scopeId`，指定了配置时也带 `agentDefinitionId`。请求成功需要 HTTP 成功且响应 `code: 0`，业务错误按 `reason` 分类；SSE 用事件 `seq` 作为 `after` 或 `Last-Event-ID`，不是 Run ID。完整字段见 [HTTP API](./http-api.mdx) 和实例的 `/api/openapi.yaml`。
 
+队列对象同时受 `revision` 保护：`updateQueuedMessage` 编辑正文或提升为插话，`cancelQueuedMessage` 移除未派发项，`updateConversationQueue` 暂停或恢复。客户端应使用最新队列 revision；冲突后先重读，不能覆盖他人的编辑。`getRun` 的分页参数是 `{ sinceSeq, eventLimit, fromStart }`，字符串 query 仍兼容旧调用。UI 发送偏好用 `getUISettings` / `updateUISettings` 读取和按 revision 保存。
+
 ## 注册业务 Agent
 
 业务在调用 Agent 前，由 Go 服务端注册默认配置。配置声明业务类型、配置 ID、版本、对象授权、业务工具、读取适配器、记忆和交互策略。`businessTools: []` 表示明确禁用业务工具。服务端仍可按配置提供结束本轮、计划和提问等控制能力。普通业务接口无需注册。
 
-当前配置为 `canvas.default` v1 和 `drama.analysis` v2。短剧配置允许提问并保持业务只读。Run 冻结配置版本、工具版本、读取适配器版本和能力上限。Go 在运行和工具执行时检查当前对象权限，遇到部署不支持的冻结版本时拒绝执行。
+当前配置为 `canvas.default` v1、`drama.analysis` v1/v2 和 `platform.default` v1。短剧配置允许提问并保持业务只读；平台配置同样只读、关闭业务记忆，只暴露运行控制工具。Run 冻结配置版本、工具版本、读取适配器版本和能力上限。Go 在运行和工具执行时检查当前对象权限，遇到部署不支持的冻结版本时拒绝执行。
 
 工具注册项绑定 Schema、执行器版本、适用业务和运行条件。短剧只声明 `task_get` 及分集 `read` 适配器，计划、提问、结束属于平台控制能力。画布声明自己的读取、编辑、生成和可选子代理工具。模型、画布上下文、功能开关和执行权限共同决定本轮目录。Skill 文件读取根据实际启用的技能单独授予。
 

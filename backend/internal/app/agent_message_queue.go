@@ -112,6 +112,9 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 	if err := s.requireAgentQueueOwner(userID, conversationID); err != nil {
 		return nil, err
 	}
+	if err := normalizeAgentRequestScope(userID, &input.Request); err != nil {
+		return nil, err
+	}
 	if input.Mode != "interject" && input.Mode != "queue" {
 		return nil, BadAuthRequest("发送方式无效")
 	}

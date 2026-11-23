@@ -52,7 +52,11 @@ func registerAgentConversationRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		selector, provided := agentTargetScope(c)
+		selector, provided, err := normalizedAgentTargetScope(c, svc, user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
 		if !provided {
 			selector.Scope = service.AgentBusinessScope{Type: "canvas", ID: c.Query("canvasId")}
 		} else if canvasID := c.Query("canvasId"); canvasID != "" && (selector.Scope.Type != "canvas" || selector.Scope.ID != canvasID) {
@@ -150,8 +154,23 @@ func registerAgentSettingsRoutes(r *gin.RouterGroup, svc *service.Service) {
 		ok(c, view)
 	})
 	r.GET("/agent/capabilities", func(c *gin.Context) {
-		if _, err := currentUser(c, svc); err != nil {
+		user, err := currentUser(c, svc)
+		if err != nil {
 			failService(c, err)
+			return
+		}
+		selector, provided := agentTargetScope(c)
+		if provided {
+			if selector.Scope.Type == "" || selector.Scope.ID == "" {
+				fail(c, http.StatusBadRequest, errors.New("scoped capabilities 需要 scopeType 和 scopeId"))
+				return
+			}
+			view, err := svc.AgentCapabilities(user.ID, selector.Scope, selector.AgentDefinitionID)
+			if err != nil {
+				failService(c, err)
+				return
+			}
+			ok(c, view)
 			return
 		}
 		capabilities := service.CloudAgentCapabilitySetInfo()
@@ -207,6 +226,10 @@ func createAgentRunHandler(svc *service.Service) gin.HandlerFunc {
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if err := normalizeAgentRequestScopeFromQuery(c, svc, user.ID, &req); err != nil {
+			failService(c, err)
 			return
 		}
 		if err := decoder.Decode(&struct{}{}); err != io.EOF {

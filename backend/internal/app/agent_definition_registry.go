@@ -54,6 +54,11 @@ func init() {
 	interactiveDrama := drama
 	interactiveDrama.Version = 2
 	interactiveDrama.InteractionPolicy = "ask_user"
+	platform := AgentDefinition{
+		ID: "platform.default", Version: 1, BusinessType: AgentPlatformBusinessType, IsDefault: true, ReadOnly: true,
+		BusinessTools: []string{}, ReadAdapters: []string{}, AllowUserSkills: false,
+		InteractionPolicy: "ask_user", MemoryPolicy: "off",
+	}
 	registry, err := newAgentDefinitionRegistry([]AgentDefinition{
 		{
 			ID: "canvas.default", Version: 1, BusinessType: "canvas", IsDefault: true,
@@ -68,7 +73,7 @@ func init() {
 			ReadAdapters: []string{"canvas:text", "canvas:image"}, AllowUserSkills: true, InteractionPolicy: "ask_user", MemoryPolicy: "off",
 			DefaultSkillScopes: []string{"global", "canvas"},
 		},
-		drama, interactiveDrama,
+		drama, interactiveDrama, platform,
 	})
 	if err != nil {
 		panic(err)

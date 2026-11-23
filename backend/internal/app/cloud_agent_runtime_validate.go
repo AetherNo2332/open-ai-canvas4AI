@@ -263,12 +263,18 @@ func validateCloudAgentPolicySnapshot(snapshot cloudAgentPolicySnapshot) error {
 	if err != nil {
 		return fmt.Errorf("load Agent runtime policies: %w", err)
 	}
-	if snapshot.SystemPolicyID != system.ID || snapshot.SystemPolicyVersion != system.Version || snapshot.MediaPolicyID != media.ID || snapshot.MediaPolicyVersion != media.Version {
+	general, err := prompts.LoadAgentGeneralPolicy()
+	if err != nil {
+		return fmt.Errorf("load general Agent policy: %w", err)
+	}
+	systemMatches := snapshot.SystemPolicyID == system.ID && snapshot.SystemPolicyVersion == system.Version && snapshot.SystemPolicyHash == system.Hash
+	generalMatches := snapshot.SystemPolicyID == general.ID && snapshot.SystemPolicyVersion == general.Version && snapshot.SystemPolicyHash == general.Hash
+	if (!systemMatches && !generalMatches) || snapshot.MediaPolicyID != media.ID || snapshot.MediaPolicyVersion != media.Version {
 		return errors.New("Agent runtime policy version is unsupported")
 	}
 	// An existing run keeps its admitted prompt and tool schema. Never resume it
 	// against changed policies or capabilities under an unchanged version label.
-	if snapshot.SystemPolicyHash != system.Hash || snapshot.MediaPolicyHash != media.Hash || snapshot.CapabilitySetHash != cloudAgentCapabilitySetHash() {
+	if snapshot.MediaPolicyHash != media.Hash || snapshot.CapabilitySetHash != cloudAgentCapabilitySetHash() {
 		return errors.New("Agent runtime policy or capability contract has changed")
 	}
 	return nil

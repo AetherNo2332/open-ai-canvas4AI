@@ -25,6 +25,16 @@
       "name": "drama write denied",
       "request": { "scope": { "type": "drama", "id": "sdk-drama" }, "canvasId": "", "prompt": "禁止越过业务采用", "channelId": "sdk-text", "channelModelKey": "text-e2e", "permissionMode": "auto", "budget": { "maxCredits": 20 }, "idempotencyKey": "fixture-drama-write" },
       "accepted": false, "reason": "agent_scope_invalid"
+    },
+    {
+      "name": "platform self",
+      "request": { "scope": { "type": "platform", "id": "self" }, "canvasId": "", "prompt": "你好", "channelId": "sdk-text", "channelModelKey": "text-e2e", "permissionMode": "read_only", "budget": { "maxCredits": 20 }, "idempotencyKey": "fixture-platform-self" },
+      "accepted": true, "scope": { "type": "platform", "id": "self" }
+    },
+    {
+      "name": "platform write denied",
+      "request": { "scope": { "type": "platform", "id": "self" }, "canvasId": "", "prompt": "直接写入", "channelId": "sdk-text", "channelModelKey": "text-e2e", "permissionMode": "auto", "budget": { "maxCredits": 20 }, "idempotencyKey": "fixture-platform-write" },
+      "accepted": false, "reason": "agent_scope_invalid"
     }
   ]
 }

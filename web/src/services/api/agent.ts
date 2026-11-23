@@ -2,10 +2,20 @@ import { http, apiBaseURL, compactApiParams, ApiError } from "@/services/api/req
 import { consumeTaskTextStream, createTaskTextStreamParser } from "@/services/api/task-text-stream";
 import { createAgentClient, AgentRequestError } from "@/sdk/agent/client";
 import { agentWebTransport } from "@/sdk/agent/http-transport";
-import type { AgentRunRequest, AgentRunSnapshot, AgentEvent as SDKAgentEvent } from "@/sdk/agent/contract";
+import type {
+    AgentBusinessScope,
+    AgentCapabilities,
+    AgentConversationQueue,
+    AgentEvent as SDKAgentEvent,
+    AgentQueuedMessage,
+    AgentRunRequest,
+    AgentRunSnapshot,
+    AgentUISettings,
+} from "@/sdk/agent/contract";
 
 const agentClient = createAgentClient<AgentRun>({ transport: agentWebTransport });
 const canvasAgentClient = (canvasId?: string) => (canvasId ? createAgentClient<AgentRun>({ transport: agentWebTransport, scope: { type: "canvas", id: canvasId } }) : agentClient);
+const scopedAgentClient = (scope?: AgentBusinessScope, agentDefinitionId?: string) => (scope ? createAgentClient<AgentRun>({ transport: agentWebTransport, scope, agentDefinitionId }) : agentClient);
 function rethrowAgentApiError(error: unknown): never {
     if (error instanceof AgentRequestError) {
         throw new ApiError(error.message, { status: error.status, code: error.code, reason: error.reason, retryable: error.retryable, retryAfterMs: error.retryAfterMs, details: error.details, cause: error });
@@ -144,90 +154,56 @@ export function sendAgentInterjection(runId: string, input: { text: string; mess
 export type AgentSendMode = "interject" | "queue";
 export type AgentConversationMessageInput = import("@/sdk/agent/contract").AgentMessageInput;
 export type AgentMessageReceipt = import("@/sdk/agent/contract").AgentMessageReceipt;
-export type AgentQueuedMessage = {
-    id: string;
-    conversationId: string;
-    canvasId: string;
-    mode: AgentSendMode;
-    sequence: number;
-    revision: number;
-    prompt: string;
-    status: "queued" | "dispatching";
-    runId?: string;
-    error?: string;
-    createdAt: string;
-    updatedAt: string;
-};
-export type AgentMessageQueue = { conversationId: string; canvasId: string; revision: number; paused: boolean; pauseReason?: string; awaitingQuestionId?: string; questionRunId?: string; latestRunId: string; items: AgentQueuedMessage[] };
-export type AgentUISettings = { defaultSendMode: AgentSendMode; revision: number };
+export type { AgentQueuedMessage, AgentUISettings };
+export type AgentMessageQueue = AgentConversationQueue;
 
 export function sendAgentConversationMessage(conversationId: string, input: AgentConversationMessageInput, signal?: AbortSignal) {
-    return canvasAgentClient(input.request.canvasId).sendMessage(conversationId, input, signal).catch(rethrowAgentApiError);
+    const scope = input.request.scope ?? (input.request.canvasId ? { type: "canvas" as const, id: input.request.canvasId } : undefined);
+    return scopedAgentClient(scope, input.request.agentDefinitionId).sendMessage(conversationId, input, signal).catch(rethrowAgentApiError);
 }
 export function getAgentMessageQueue(conversationId: string, canvasId: string, signal?: AbortSignal) {
-    return http.get<AgentMessageQueue>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue`, { params: { scopeType: "canvas", scopeId: canvasId }, signal, timeout: 15_000 });
+    return getAgentMessageQueueForScope(conversationId, { type: "canvas", id: canvasId }, signal);
+}
+export function getAgentMessageQueueForScope(conversationId: string, scope: AgentBusinessScope, signal?: AbortSignal, agentDefinitionId?: string) {
+    return scopedAgentClient(scope, agentDefinitionId).getConversationQueue(conversationId, signal).catch(rethrowAgentApiError);
 }
 export function updateAgentQueuedMessage(conversationId: string, messageId: string, input: { revision: number; prompt?: string; action?: "interject" }, canvasId: string) {
-    return http.patch<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(messageId)}`, input, { params: { scopeType: "canvas", scopeId: canvasId }, timeout: 15_000 });
+    return scopedAgentClient({ type: "canvas", id: canvasId }).updateQueuedMessage(conversationId, messageId, input).catch(rethrowAgentApiError);
 }
 export function cancelAgentQueuedMessage(conversationId: string, messageId: string, revision: number, canvasId: string) {
-    return http.delete<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(messageId)}`, { params: { revision, scopeType: "canvas", scopeId: canvasId }, timeout: 15_000 });
+    return scopedAgentClient({ type: "canvas", id: canvasId }).cancelQueuedMessage(conversationId, messageId, revision).catch(rethrowAgentApiError);
 }
 export function updateAgentMessageQueue(conversationId: string, input: { revision: number; action: "pause" | "resume" }, canvasId: string) {
-    return http.patch<AgentMessageQueue>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue`, input, { params: { scopeType: "canvas", scopeId: canvasId }, timeout: 15_000 });
+    return scopedAgentClient({ type: "canvas", id: canvasId }).updateConversationQueue(conversationId, input).catch(rethrowAgentApiError);
 }
 export function getAgentUISettings(signal?: AbortSignal) {
-    return http.get<AgentUISettings>("/agent/ui-settings", { signal, timeout: 15_000 });
+    return agentClient.getUISettings(signal).catch(rethrowAgentApiError);
 }
 export function updateAgentUISettings(input: AgentUISettings) {
-    return http.patch<AgentUISettings>("/agent/ui-settings", input, { timeout: 15_000 });
+    return agentClient.updateUISettings(input).catch(rethrowAgentApiError);
 }
 
-export function getAgentCapabilities() {
-    return http.get<{
-        version: number;
-        permissionModes: AgentPermissionMode[];
-        contextScopes: string[];
-        skills: boolean;
-        writeTools: boolean;
-        availability: { configured: boolean; readyWorkers: number; queueReason: string; reason: string };
-        historyPolicy?: "server_compacted";
-        contextCompaction?: { enabled: boolean; strategy: "structured_checkpoint"; thresholdBytes: number; thresholdHistoryMessages: number; retainedRecentPairs: number };
-        capabilitySetVersion?: string;
-        capabilitySetHash?: string;
-        nodeTypes?: string[];
-    }>("/agent/capabilities", { timeout: 15_000 });
+export function getAgentCapabilities(options: { scope?: AgentBusinessScope; agentDefinitionId?: string } = {}, signal?: AbortSignal) {
+    return scopedAgentClient(options.scope, options.agentDefinitionId).getCapabilities(options, signal).catch(rethrowAgentApiError) as Promise<AgentCapabilities>;
 }
 
 export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sinceSeq?: number; eventLimit?: number; fromStart?: boolean; canvasId?: string }) {
-    const params = new URLSearchParams();
-    if (options?.sinceSeq) params.set("sinceSeq", String(options.sinceSeq));
-    if (options?.eventLimit) params.set("eventLimit", String(options.eventLimit));
-    if (options?.fromStart !== undefined) params.set("fromStart", String(options.fromStart));
-    const query = params.toString();
     return canvasAgentClient(options?.canvasId)
-        .getRun(runId, signal, query ? `?${query}` : "")
+        .getRun(runId, signal, {
+            sinceSeq: options?.sinceSeq,
+            eventLimit: options?.eventLimit,
+            fromStart: options?.fromStart,
+        })
         .catch(rethrowAgentApiError);
 }
 
-export type AgentConversationSummary = {
-    archived?: boolean;
-    id: string;
-    canvasId: string;
-    title: string;
-    latestRunId: string;
-    status: AgentRun["status"];
-    revision: number;
-    cleanupPending?: boolean;
-    createdAt: string;
-    updatedAt: string;
-};
+export type AgentConversationSummary = import("@/sdk/agent/contract").AgentConversation;
 
-export function listAgentConversations(options: { canvasId: string; before?: string; limit?: number; signal?: AbortSignal }) {
-    return http.get<{ items: AgentConversationSummary[]; nextCursor?: string }>("/agent/conversations", {
-        params: compactApiParams({ canvasId: options.canvasId, before: options.before, limit: options.limit }),
-        signal: options.signal,
-    });
+export function listAgentConversations(options: { canvasId?: string; scope?: AgentBusinessScope; agentDefinitionId?: string; before?: string; limit?: number; signal?: AbortSignal }) {
+    const scope = options.scope ?? (options.canvasId ? { type: "canvas" as const, id: options.canvasId } : undefined);
+    return scopedAgentClient(scope, options.agentDefinitionId)
+        .listConversations({ before: options.before, limit: options.limit }, options.signal)
+        .catch(rethrowAgentApiError) as Promise<{ items: AgentConversationSummary[]; nextCursor?: string }>;
 }
 
 export function archiveAgentConversation(conversationId: string, canvasId?: string) {

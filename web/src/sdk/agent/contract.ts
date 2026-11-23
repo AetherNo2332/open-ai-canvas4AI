@@ -2,12 +2,11 @@
 export const AGENT_CONTRACT_VERSION = "agent-sdk/v1" as const;
 export type AgentBusinessScope = { type: string; id: string };
 export type AgentPermissionMode = "read_only" | "auto" | "request_approval";
-export type AgentRunRequest = {
-    scope?: AgentBusinessScope;
-    agentDefinitionId?: string;
-    dramaEpisodeId?: string;
-    canvasId: string;
+export type AgentCanvasScope = { type: "canvas"; id: string };
+export type AgentPlatformScope = { type: "platform"; id: "self" };
+export type AgentRunRequestBase = {
     prompt: string;
+    agentDefinitionId?: string;
     model?: string;
     logicalModelId?: string;
     channelId?: string;
@@ -23,6 +22,17 @@ export type AgentRunRequest = {
     budget?: { maxCredits?: number; maxGenerationTasks?: number; maxVideoSeconds?: number; maxSteps?: number };
     idempotencyKey: string;
 };
+export type AgentCanvasRunRequest = AgentRunRequestBase & {
+    scope?: AgentCanvasScope;
+    canvasId: string;
+    dramaEpisodeId?: never;
+};
+export type AgentExplicitRunRequest = AgentRunRequestBase & {
+    scope: AgentBusinessScope;
+    canvasId?: "";
+    dramaEpisodeId?: string;
+};
+export type AgentRunRequest = AgentCanvasRunRequest | AgentExplicitRunRequest;
 export type AgentMessageInput = {
     expectedRunId: string;
     mode: "queue" | "interject";
@@ -108,6 +118,7 @@ export type AgentRunSnapshot = {
 export type AgentRunReceipt<R extends AgentRunSnapshot = AgentRunSnapshot> = { run: R };
 export type AgentConversation = {
     id: string;
+    canvasId: string;
     title: string;
     latestRunId: string;
     status: AgentRunSnapshot["status"];
@@ -115,6 +126,11 @@ export type AgentConversation = {
     agentDefinitionId: string;
     resumable: boolean;
     archived: boolean;
+    revision: number;
+    cleanupPending?: boolean;
+    queueRevision?: number;
+    queuedCount?: number;
+    queuePaused?: boolean;
     createdAt: string;
     updatedAt: string;
 };
@@ -122,8 +138,64 @@ export type AgentConversationPage<T> = { items: T[]; nextCursor?: string };
 export type AgentConversationQueue = {
     conversationId: string;
     latestRunId: string;
+    canvasId?: string;
+    revision: number;
+    paused: boolean;
+    pauseReason?: string;
     awaitingQuestionId?: string;
     questionRunId?: string;
+    items: AgentQueuedMessage[];
+};
+export type AgentQueuedMessage = {
+    id: string;
+    conversationId: string;
+    canvasId?: string;
+    mode: "interject" | "queue";
+    sequence: number;
+    revision: number;
+    prompt: string;
+    status: "queued" | "dispatching" | "interjected" | "cancelled" | "failed";
+    runId?: string;
+    error?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+export type AgentUISettings = {
+    defaultSendMode: "interject" | "queue";
+    revision: number;
+};
+export type AgentSkillDefaultsSummary = {
+    count: number;
+    skills: Array<{ skillId: string; skillName: string }>;
+};
+export type AgentCapabilities = {
+    version: number;
+    scope?: AgentBusinessScope;
+    agentDefinitionId?: string;
+    agentDefinitionVersion?: number;
+    permissionModes: AgentPermissionMode[];
+    contextScopes: string[];
+    skills: boolean;
+    writeTools: boolean;
+    businessTools?: string[];
+    tools?: string[];
+    defaultSkills?: AgentSkillDefaultsSummary;
+    interactionPolicy?: string;
+    memoryPolicy?: string;
+    availability: { configured: boolean; readyWorkers: number; queueReason: string; reason: string };
+    capabilitySetVersion?: string;
+    capabilitySetHash?: string;
+    nodeTypes?: string[];
+    historyPolicy?: "server_compacted";
+    contextCompaction?: { enabled: boolean; strategy: "structured_checkpoint"; thresholdBytes: number; thresholdHistoryMessages: number; retainedRecentPairs: number };
+    maxHistoryPairs?: number;
+    maxHistoryBytes?: number;
+    maxSteps?: number;
+};
+export type AgentRunQuery = {
+    sinceSeq?: number;
+    eventLimit?: number;
+    fromStart?: boolean;
 };
 export type AgentApprovalDecision = {
     decision: "approve" | "reject";

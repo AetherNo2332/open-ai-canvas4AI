@@ -574,7 +574,7 @@ operations 的结构化配额在提交事务内实时统计账号的素材/画�
 
 从头恢复事件可用运行详情的 `fromStart=true`、`sinceSeq`、`eventLimit`，运行中继续沿SSE游标增量消费。前端保留本地草稿和未知POST身份，目录刷新不能回退刚提交的新轮次；缺失旧事件的历史明确标记不完整，不伪造完整聊天。这里同步的是已有会话与展示事件，Agent记忆、长期偏好和压缩算法继续独立设计。
 
-所有 `/agent` 路径都需要登录 Cookie。`GET /agent/capabilities` 返回当前版本（2）、权限模式、上下文范围、技能和工具清单；跨轮历史仍按可恢复事实和发送预算整理，不把某个固定字节数当作模型窗口。Agent 运行由服务端任务 Worker 驱动，浏览器断开不会停止运行。
+所有 `/agent` 路径都需要登录 Cookie。`GET /agent/capabilities` 省略范围参数时保留旧版画布全局响应；显式传 `scopeType`、`scopeId` 和可选 `agentDefinitionId` 时返回该范围注册的权限模式、工具、默认 Skill、模型要求和 Worker 可用性，当前版本为 3。平台范围只接受 `platform/self`，响应不暴露内部用户 ID。请求体与查询参数同时带范围时必须解析到同一归属，否则返回 `agent_scope_invalid`。跨轮历史仍按可恢复事实和发送预算整理，不把某个固定字节数当作模型窗口。Agent 运行由服务端任务 Worker 驱动，浏览器断开不会停止运行。
 
 文本模型能力合同包含 `contextWindowTokens`（模型总上下文窗口）、`reservedOutputTokens`（为输出预留的窗口）、`maxOutputTokens`（单次调用输出上限）与 `thinking`（该模型是否暴露用户可选的推理/思考模式；缺省表示未声明，面板隐藏推理选项且不发送 reasoning 参数）。Agent 每轮根据实际执行的渠道模型计算输入预算，并预留工具 schema、协议包装与兜底轮空间；逻辑模型按候选文本线路取安全交集。窗口未声明（0）时不猜默认窗口，判据退回字节口径，不做 128K / 16K 之类的猜测回退。1M 模型可通过后台能力配置使用更大输入预算。前后端的 Token 估算用于提前压缩和拒绝病态请求，最终仍以上游 tokenizer 和响应为准。运行 checkpoint 的 512KB 持久化上限只约束恢复状态，不限制模型上下文窗口。
 
