@@ -311,10 +311,12 @@ export async function runDirectorPreview(input: {
     handled?: { isHandled(requestId: string): boolean; markHandled(requestId: string): void; unmarkHandled?(requestId: string): void };
     withLock?: DirectorPreviewLock;
     resultStore?: DirectorPreviewResultStore;
+    /** 页面恢复时仍挂起的请求允许重新录制；跨标签锁和运行等待校验继续防重。 */
+    recover?: boolean;
 }): Promise<DirectorPreviewOutcome> {
     if (input.isHidden?.()) return "abandoned";
     const storedBeforeLock = input.resultStore?.load(input.runId, input.requestId);
-    if (!storedBeforeLock && input.handled?.isHandled(input.requestId)) return "skipped";
+    if (!storedBeforeLock && !input.recover && input.handled?.isHandled(input.requestId)) return "skipped";
     const lock: DirectorPreviewLock = input.withLock ?? (async (_name, fn) => ({ acquired: true, value: await fn() }));
     const locked = await lock(input.requestId, async (): Promise<DirectorPreviewOutcome> => {
         if (input.isPending && !(await input.isPending())) {
@@ -322,7 +324,7 @@ export async function runDirectorPreview(input: {
             return "skipped";
         }
         let stored = input.resultStore?.load(input.runId, input.requestId);
-        if (!stored && input.handled?.isHandled(input.requestId)) return "skipped";
+        if (!stored && !input.recover && input.handled?.isHandled(input.requestId)) return "skipped";
         if (stored) {
             try {
                 await input.submit(input.runId, input.requestId, { videoResourceId: stored.videoResourceId });

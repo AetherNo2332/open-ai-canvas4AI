@@ -98,6 +98,7 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                         handled: handledStoreRef.current,
                         withLock: withDirectorPreviewLock,
                         resultStore: resultStoreRef.current,
+                        recover: true,
                     });
                     const notice = directorPreviewOutcomeNotice(outcome);
                     if (notice) message[notice.level](notice.text);

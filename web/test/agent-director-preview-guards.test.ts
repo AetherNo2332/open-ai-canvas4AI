@@ -67,6 +67,23 @@ describe("director preview guards", () => {
         expect(recorded).toBe(0);
     });
 
+    test("recovering a still-pending request can record after the previous page was left", async () => {
+        const { handled } = memoryHandled();
+        handled.markHandled("dpv_1");
+        let recorded = 0;
+        const outcome = await runDirectorPreview({
+            ...base,
+            handled,
+            recover: true,
+            withLock: freeLock,
+            isPending: async () => true,
+            record: async () => (recorded++, "res-1"),
+            submit: async () => {},
+        });
+        expect(outcome).toBe("submitted");
+        expect(recorded).toBe(1);
+    });
+
     test("abandoning recording releases the handled marker so returning to the canvas can retry", async () => {
         const { handled } = memoryHandled();
         const outcome = await runDirectorPreview({
