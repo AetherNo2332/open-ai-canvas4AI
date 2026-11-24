@@ -247,7 +247,12 @@ describe("Agent admission replay and durable pending records", () => {
         await api.listAgentConversations({ canvasId: "canvas", limit: 100, signal: controller.signal });
         await api.listAgentConversationRuns("a/b", { after: "cursor", signal: controller.signal });
         await api.getAgentRun("run", controller.signal, { fromStart: true, eventLimit: 500 });
-        expect(requests[0]).toEqual({ path: "/agent/conversations", options: { params: { canvasId: "canvas", limit: 100 }, signal: controller.signal } });
+        const directory = new URL(requests[0]!.path, "https://canvas.example");
+        expect(directory.pathname).toBe("/agent/conversations");
+        expect(directory.searchParams.get("scopeType")).toBe("canvas");
+        expect(directory.searchParams.get("scopeId")).toBe("canvas");
+        expect(directory.searchParams.get("limit")).toBe("100");
+        expect(requests[0]!.options).toEqual({ signal: controller.signal, timeout: 15_000 });
         expect(requests[1]).toEqual({ path: "/agent/conversations/a%2Fb/runs", options: { params: { after: "cursor" }, signal: controller.signal } });
         expect(requests[2]).toEqual({ path: "/agent/runs/run?eventLimit=500&fromStart=true", options: { signal: controller.signal, timeout: 15_000 } });
     });
