@@ -105,7 +105,7 @@ func (s *Service) AgentCapabilities(userID string, scope AgentBusinessScope, def
 		PermissionModes: permissionModes, ContextScopes: []string{canonical.Type},
 		Skills:          definition.AllowUserSkills || len(definition.DefaultSkillScopes) > 0 || len(definition.SkillIDs) > 0,
 		AllowUserSkills: definition.AllowUserSkills,
-		WriteTools: len(capabilities.WriteTools) > 0, BusinessTools: slices.Clone(definition.BusinessTools),
+		WriteTools:      len(capabilities.WriteTools) > 0, BusinessTools: slices.Clone(definition.BusinessTools),
 		Tools: names, DefaultSkills: defaultSkills,
 		ModelRequirements: AgentModelRequirements{Text: true, ToolCalling: true, StreamOutput: true},
 		InteractionPolicy: definition.InteractionPolicy, MemoryPolicy: definition.MemoryPolicy,
