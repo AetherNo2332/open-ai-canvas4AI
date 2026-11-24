@@ -62,10 +62,10 @@ import { CanvasTimelineDialog } from "@/components/canvas/canvas-timeline-dialog
 import { syncNodeSubtitlesToTimeline } from "@/lib/timeline/timeline-build";
 import { CanvasNodeAnglePanel } from "@/components/canvas/canvas-node-angle-dialog";
 import { CanvasNodeLightingPanel } from "@/components/canvas/canvas-node-lighting-dialog";
+import { CanvasPrevisTemplateModal } from "@/components/canvas/previs/canvas-previs-template-modal";
 import { CanvasTextEditorModal } from "@/components/canvas/canvas-text-editor-modal";
 import { CanvasNodeSearchModal } from "@/components/canvas/canvas-node-search-modal";
 import { CanvasStylePickerModal } from "@/components/canvas/canvas-style-picker-modal";
-import { CanvasPrevisTemplateModal } from "@/components/canvas/previs/canvas-previs-template-modal";
 import { CanvasFileDropOverlay } from "@/components/canvas/canvas-file-drop-overlay";
 import { CanvasUploadModal } from "@/components/canvas/canvas-upload-modal";
 import { CanvasPanoramaConfigModal } from "@/components/canvas/canvas-panorama-config-modal";
@@ -2989,7 +2989,6 @@ function CanvasViewportPage() {
                             <TapNowImportDialog open={tapNowImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setTapNowImportOpen(false)} onApply={applyImportedCanvas} />
 
                             <CanvasStylePickerModal open={stylePickerOpen} value={activeStylePresetId} applying={styleApplying} onClose={() => setStylePickerOpen(false)} onSelect={selectCanvasStyle} />
-
                             <CanvasPrevisTemplateModal open={Boolean(previsTemplateRequest)} onClose={() => setPrevisTemplateRequest(null)} onSelect={(templateId) => createPrevisShot(templateId, previsTemplateRequest?.position)} />
 
                             <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -3506,6 +3505,7 @@ function CanvasViewportPage() {
                                     open={Boolean(timelineNode)}
                                     nodes={nodes}
                                     timeline={currentProject?.timeline || null}
+                                    previsScenes={currentProject?.previsScenes}
                                     selectedNodeIds={selectedNodeIds}
                                     dramaAspectRatio={drama.active ? drama.summary?.production.settings.aspectRatio : undefined}
                                     onClose={() => setTimelineNodeId(null)}
@@ -3513,7 +3513,10 @@ function CanvasViewportPage() {
                                         setTimelineNodeId(null);
                                         setSubtitleNodeId(subNodeId);
                                     }}
-                                    onSave={(next) => updateProject(projectId, { timeline: next })}
+                                    onSave={async (next) => {
+                                        updateProject(projectId, { timeline: next });
+                                        await saveRemoteUserDataNow(projectId);
+                                    }}
                                     onSaveSubtitles={(subNodeId, entries) =>
                                         handleConfigNodeChange(subNodeId, {
                                             subtitleEntries: entries,

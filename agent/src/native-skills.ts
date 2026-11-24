@@ -103,9 +103,24 @@ function relativeSkillParts(input: string): string[] | undefined {
   return parts.slice(1);
 }
 
+/** The prompt advertises nativeName, but models often guess the human Skill ID
+ *  or display name. Resolve only enabled Skills and only when the alias is
+ *  unique; the rest of the path still goes through the frozen file whitelist. */
+function resolveSkillAlias(skills: PiSkillSnapshot[], requested: string): string {
+  if (skills.some((skill) => skill.nativeName === requested)) return requested;
+  const matches = skills.filter((skill) => skill.id === requested || skill.displayName === requested);
+  if (matches.length === 1) return matches[0]!.nativeName;
+  if (matches.length > 1) {
+    const names = matches.map((skill) => skill.nativeName).sort().join(", ");
+    throw new NativeSkillReadRejected(`Skill name "${requested}" is ambiguous; use one of: ${names}`);
+  }
+  return requested;
+}
+
 function resolveSkillPath(skills: PiSkillSnapshot[], root: string, input: string): { skill: PiSkillSnapshot; path: string } {
   if (hasDotSegment(input)) throw new NativeSkillReadRejected("Skill read path must not contain . or .. segments");
   const relativeParts = relativeSkillParts(input);
+  if (relativeParts) relativeParts[0] = resolveSkillAlias(skills, relativeParts[0]!);
   const target = relativeParts ? join(root, ...relativeParts) : input;
   const rel = relative(resolve(root), resolve(target));
   const parts = rel.split(sep);
@@ -115,8 +130,13 @@ function resolveSkillPath(skills: PiSkillSnapshot[], root: string, input: string
   }
   const skill = skills.find((item) => item.nativeName === parts[0]);
   const path = parts.slice(1).join("/");
-  if (!skill || !skill.files.some((file) => file.path === path && file.text)) {
-    throw new NativeSkillReadRejected("Skill file is not listed for this run");
+  if (!skill) {
+    const names = skills.map((item) => item.nativeName).sort().join(", ");
+    throw new NativeSkillReadRejected(`Skill is not enabled for this run. Enabled Skills: ${names}`);
+  }
+  if (!skill.files.some((file) => file.path === path && file.text)) {
+    const files = skill.files.filter((file) => file.text).map((file) => file.path).sort().join(", ");
+    throw new NativeSkillReadRejected(`Skill file is not listed for this run. Available files: ${files}`);
   }
   return { skill, path };
 }
@@ -129,6 +149,7 @@ export function rebaseNativeSkillPath(skills: PiSkillSnapshot[], root: string, p
   if (hasDotSegment(previousPath)) throw new NativeSkillReadRejected("Persisted Skill path is invalid");
   const relativeParts = relativeSkillParts(previousPath);
   if (relativeParts) {
+    relativeParts[0] = resolveSkillAlias(skills, relativeParts[0]!);
     const rebased = join(root, ...relativeParts);
     resolveSkillPath(skills, root, rebased);
     return rebased;

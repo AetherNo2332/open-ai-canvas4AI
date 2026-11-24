@@ -58,7 +58,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v27"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v29"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -100,7 +100,7 @@ func compileCloudAgentToolsForRuntime(req CloudAgentRequest, runtimeMode string)
 
 func nativeSkillReadToolSchema() map[string]any {
 	return map[string]any{"type": "function", "function": map[string]any{
-		"name": "read", "description": "统一读取文本和图片。Skill 使用 skills/<name>/SKILL.md 或其引用文件；画布正文使用 canvas:text/<nodeId>，看图使用 canvas:image/<nodeId>（必须支持视觉）；短剧集剧情和镜头使用 drama:episode/<episodeId>。只读取当前业务内已授权内容，不支持任意 URL 或本机路径。offset/limit 是 Unicode 字符分页，仅用于文本。",
+		"name": "read", "description": "统一读取文本和图片。Skill 使用 skills/<name>/SKILL.md 或其引用文件，<name> 取系统提示 available_skills 原值。画布正文使用 canvas:text/<nodeId>，看图使用 canvas:image/<nodeId>（必须支持视觉）；短剧集剧情和镜头使用 drama:episode/<episodeId>。只读取当前业务内已授权内容，不支持任意 URL 或本机路径。offset/limit 是 Unicode 字符分页，仅用于文本。",
 		"parameters": map[string]any{"type": "object", "properties": map[string]any{
 			"path":   map[string]any{"type": "string"},
 			"offset": map[string]any{"type": "integer", "minimum": 0},

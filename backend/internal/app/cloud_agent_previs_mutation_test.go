@@ -357,8 +357,13 @@ func TestCloudAgentPrevisCharacterBindingAndAnimationPatch(t *testing.T) {
 	storedDoc, _ = creationDocument(stored.PayloadJSON)
 	scene, _ = findPrevisScene(creationMaps(storedDoc["previsScenes"]), "binding-scene")
 	actor = cloudAgentPrevisFindByID(creationMaps(scene["objects"]), "hero-actor")
-	if len(creationMaps(actor["keyframes"])) != 1 || actor["motionPath"] == nil {
+	if len(creationMaps(actor["keyframes"])) != 3 || actor["motionPath"] == nil {
 		t.Fatalf("animation patch was not persisted: %#v", actor)
+	}
+	for _, keyframe := range creationMaps(actor["keyframes"]) {
+		if !strings.HasPrefix(stringValue(keyframe["id"]), "hero-actor-path-") {
+			t.Fatalf("motion path retained a conflicting manual keyframe: %#v", keyframe)
+		}
 	}
 }
 
@@ -562,5 +567,12 @@ func applyCloudAgentPrevisMutation(repo *repository.Repository, userID, canvasID
 	if resultSnapshotHash == "" {
 		resultSnapshotHash = plan.AfterSnapshotHash
 	}
-	return map[string]any{"canvasId": canvasID, "sceneId": plan.SceneID, "snapshotHash": resultSnapshotHash, "canvasSnapshotHash": plan.AfterSnapshotHash, "beforeCanvasSnapshotHash": plan.BeforeSnapshotHash, "committed": true, "summary": plan.Preview.Description}, nil
+	result := map[string]any{"canvasId": canvasID, "sceneId": plan.SceneID, "snapshotHash": resultSnapshotHash, "canvasSnapshotHash": plan.AfterSnapshotHash, "beforeCanvasSnapshotHash": plan.BeforeSnapshotHash, "committed": true, "summary": plan.Preview.Description}
+	if scene, ok := findPrevisScene(creationMaps(plan.Document["previsScenes"]), plan.SceneID); ok {
+		if reviews := cloudAgentPrevisShotReviews(scene); len(reviews) > 0 {
+			result["review"] = reviews
+			result["reviewGuide"] = cloudAgentPrevisReviewGuide
+		}
+	}
+	return result, nil
 }

@@ -687,14 +687,14 @@ func TestNativeSkillReadToolDescribesStableRelativeLocation(t *testing.T) {
 // 系统提示给出的是相对路径 skills/<name>/SKILL.md（F3）；读取结果配对必须认它，
 // 否则每次读取技能都会以 403 判死整轮。绝对路径与越界路径的规则不变。
 func TestNativeReadCheckpointAcceptsRelativeSkillPath(t *testing.T) {
-	state := &cloudAgentRuntime{Skills: []cloudAgentSkill{{ID: "skill-1", NativeName: "story-skill", NativeFiles: []PiSkillFile{{Path: "SKILL.md", Text: true}}}}}
+	state := &cloudAgentRuntime{Skills: []cloudAgentSkill{{ID: "skill-1", Name: "故事技能", NativeName: "story-skill", NativeFiles: []PiSkillFile{{Path: "SKILL.md", Text: true}, {Path: "references/a.md", Text: true}}}}}
 	transcript := func(path string) []model.CloudAgentMessageRecord {
 		raw, _ := json.Marshal(map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "toolCall", "id": "read-1", "name": "read", "arguments": map[string]any{"path": path}}}})
 		return []model.CloudAgentMessageRecord{{Kind: cloudAgentMessageKindPi, Sequence: 1, MessageJSON: string(raw)}}
 	}
-	for _, path := range []string{"skills/story-skill/SKILL.md", "./skills/story-skill/SKILL.md", "C:/temp/canvas-pi-run-x/cwd/skills/story-skill/SKILL.md", `C:\temp\cwd\skills\story-skill\SKILL.md`} {
+	for _, path := range []string{"skills/story-skill/SKILL.md", "skills/skill-1/references/a.md", "skills/故事技能/SKILL.md", "./skills/story-skill/SKILL.md", "C:/temp/canvas-pi-run-x/cwd/skills/story-skill/SKILL.md", `C:\temp\cwd\skills\story-skill\SKILL.md`} {
 		skill, relative, err := nativeReadCheckpointCall(state, transcript(path), "read-1", true)
-		if err != nil || skill == nil || relative != "SKILL.md" {
+		if err != nil || skill == nil || relative == "" {
 			t.Fatalf("%s: skill=%v relative=%q err=%v", path, skill, relative, err)
 		}
 	}
@@ -702,5 +702,12 @@ func TestNativeReadCheckpointAcceptsRelativeSkillPath(t *testing.T) {
 		if _, _, err := nativeReadCheckpointCall(state, transcript(path), "read-1", true); err == nil {
 			t.Fatalf("%s must not pair with an enabled file", path)
 		}
+	}
+	ambiguous := &cloudAgentRuntime{Skills: []cloudAgentSkill{
+		{ID: "skill-1", Name: "同名技能", NativeName: "story-skill", NativeFiles: []PiSkillFile{{Path: "SKILL.md", Text: true}}},
+		{ID: "skill-2", Name: "同名技能", NativeName: "other-skill", NativeFiles: []PiSkillFile{{Path: "SKILL.md", Text: true}}},
+	}}
+	if _, _, err := nativeReadCheckpointCall(ambiguous, transcript("skills/同名技能/SKILL.md"), "read-1", true); err == nil {
+		t.Fatal("ambiguous Skill alias must not pair with a frozen file")
 	}
 }

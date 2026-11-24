@@ -14,7 +14,7 @@ func TestAgentDefinitionDefaultSkillsAtAdmission(t *testing.T) {
 			service, db := agentRunFixture(t)
 			selectionDataDir = service.dataDir
 			t.Cleanup(func() { selectionDataDir = "" })
-			for _, id := range []string{"shared-skill", "canvas-skill", "drama-skill", canvasToolsGuideSkillID} {
+			for _, id := range []string{"shared-skill", "canvas-skill", "drama-skill", canvasToolsGuideSkillID, previsWorldGuideSkillID} {
 				seedSelectionSkill(t, service, db, id, 1024, false, 1)
 			}
 			var defaults []AgentSkillDefaultItem
@@ -28,11 +28,12 @@ func TestAgentDefinitionDefaultSkillsAtAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			seedDefault(t, db, canvasToolsGuideSkillID, 3)
+			seedDefault(t, db, previsWorldGuideSkillID, 3)
 
 			request := agentTestRequest()
 			expected := []string{"shared-skill", business + "-skill"}
 			if business == "canvas" {
-				expected = append(expected, canvasToolsGuideSkillID)
+				expected = append(expected, canvasToolsGuideSkillID, previsWorldGuideSkillID)
 			} else {
 				for _, row := range []any{
 					&model.Project{ID: "skill-test-drama", UserID: "user", Name: "Skill test", Status: model.ProjectStatusActive},

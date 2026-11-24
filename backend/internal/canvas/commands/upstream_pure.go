@@ -2497,7 +2497,7 @@ func (p *planner) canvasPrevisValidateScene(scene map[string]any) error {
 		if err := p.canvasPrevisValidateText(p.stringValue(object["name"]), "导演对象名称", canvasPrevisTextLimit, true); err != nil {
 			return err
 		}
-		if err := p.canvasPrevisValidateEnum(p.stringValue(object["kind"]), "导演对象类型", "primitive", "model", "actor", "billboard"); err != nil {
+		if err := p.canvasPrevisValidateEnum(p.stringValue(object["kind"]), "导演对象类型", "primitive", "model", "actor", "billboard", "prop", "layout"); err != nil {
 			return err
 		}
 		if primitive := p.stringValue(object["primitive"]); primitive != "" {
@@ -2669,7 +2669,7 @@ func (p *planner) canvasPrevisValidateScene(scene map[string]any) error {
 			}
 		}
 	}
-	return nil
+	return p.validatePrevisWorldScene(scene)
 }
 
 func (p *planner) canvasPrevisValidateTemplateID(value string) error {

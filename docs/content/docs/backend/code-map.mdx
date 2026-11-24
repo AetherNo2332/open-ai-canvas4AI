@@ -164,7 +164,7 @@ description: 从产品功能快速定位主要代码入口
 
 - 核心画布操作：`internal/canvas/capability/` 注册类型化可编辑字段；`cloud_agent_operations.go` / `cloud_agent_copy.go` 处理节点、引用与复制（连线已改由服务端按引用字段派生，Agent 连线操作停用），`cloud_agent_history_tools.go` 处理逐步撤销/重做（数据库 v58）。原生绘图同步位于 `cloud_agent_drawing.go` / `cloud_agent_tldraw_validation.go`。实现范围、边界与独立 Compose 验收见 [画布 Agent 节点与内容操作](../../../design/canvas-agent-operation-parity.md)。
 
-- 预演：Agent 的预演写入工具已停用，`cloud_agent_previs_render.go` 与 `repository/task_previs.go` 只保留冻结输入与租约检查点代码；本仓库不再部署独立预演渲染器。画布上的 3D 预演编辑沿用上游前端实现。
+- 预演：画布 Agent 只注册单一 `director`，由 `cloud_agent_tool_compile.go`、`cloud_agent_director_tool.go` 和 `cloud_agent_previs_*.go` 完成 read、create_scene、apply_patch、preview 的场景投影、审批、快照校验与 review。路径、运镜、配方和镜头检查的说明正文由内置 `yingce-previs-world-guide` Skill 的受限 read 提供，不由工具 schema、场景 catalog 或 Worker 提供。前端 `web/src/components/canvas/previs/`、`web/src/lib/canvas/previs/` 负责世界渲染、路径与运镜求值；共享转码在 `web/src/lib/canvas/canvas-video-merge.ts` 串行排队并固定输出参数。
 
 - Worker 恢复：`agent/src/runner.ts`、`pi-stream.ts`（当前轮工具恢复、检查点队列与 SDK 错误传播）；`worker-runtime.ts`（共享错误边界与有限上报）；`bridge.ts`（传输分类与实例暂停领取）；`backend/internal/app/cloud_agent_worker_recovery.go`（持久化预算、幂等上报、看门狗）；`backend/internal/repository/agent_worker_recovery.go`（control-only 终态事务与接管保护）。`agent/src/session-history.ts` 保留终结轮次缺失回执的模型投影；`backend/internal/platform/api_call_payload.go` 负责日志 UTF-8 截断。实施合同见 [数据库](./backend-database)、[HTTP API](./http-api) 与 [Pi worker 错误恢复](../../../design/agent-worker-recovery.md)。
 
@@ -266,7 +266,7 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 生成 Composer | `web/src/components/canvas/canvas-node-prompt-panel.tsx`、`canvas-config-composer.tsx` |
 | 风格中心、用户风格编辑与项目快照 | `web/src/components/canvas/canvas-style-picker-modal.tsx`、`style-profile-editor-modal.tsx`、`style-asset-binding-modal.tsx`、`web/src/lib/canvas/style-profile.ts`、`web/src/services/api/style-profiles.ts` |
 | 分镜脚本节点 | `web/src/components/canvas/canvas-script-node.tsx`；列定义 `web/src/lib/canvas/canvas-storyboard-columns.ts`（与后端 `capability/storyboard_columns.go` 一致），可见行窗口 `canvas-storyboard-layout.ts` |
-| 导演台（预演工作台） | `web/src/components/canvas/previs/`、`web/src/lib/canvas/previs/` |
+| 导演台（预演工作台） | `web/src/components/canvas/previs/`、`web/src/lib/canvas/previs/`；`previs-camera-techniques.ts` 与 Go `cloud_agent_previs_camera_recipes.go` 共用配方和 golden；`canvas-video-merge.ts` 统一预演录制与普通视频合并的 FFmpeg 队列 |
 | 摄影机控制与机位产品图 | `web/src/components/canvas/canvas-node-camera-dialog.tsx`、`web/src/lib/canvas/camera-prompt-library.ts`（含上游机位 id 别名）、`camera-wheel.ts`；产品图在 `web/public/camera-controls/` |
 | 工作台侧栏动效 | `web/src/components/layout/workspace-sidebar-motion.tsx`、`workspace-sidebar-motion.css`，挂载在 `app-top-nav.tsx` |
 | 节点生成上下文 | `web/src/components/canvas/canvas-node-generation.ts` |

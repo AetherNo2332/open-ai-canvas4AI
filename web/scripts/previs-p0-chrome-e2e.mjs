@@ -74,12 +74,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 启动 Vite DEV，等待 ready 行或 TCP 可连接；超时即抛。 */
 async function launchVite(port) {
-    // package.json 仍可由 Bun 直接执行；没有 Bun 时用 Node 调本地 Vite 入口。
-    // 不能把 `vite` 同时当作 bunx 子命令和 Vite 根目录传入，否则会启动到
-    // <web>/vite，SPA 根路径与 /dev/previs-repro 都会返回 404。
+    // 直接记录 HTTP 服务进程的 PID，避免 Windows 上 bunx 退出后留下 Node 子进程。
     const viteEntry = join(process.cwd(), "node_modules", "vite", "bin", "vite.js");
-    const command = process.versions.bun ? "bunx" : process.execPath;
-    const args = process.versions.bun ? ["vite"] : [viteEntry];
+    const command = process.versions.bun ? "node" : process.execPath;
+    const args = [viteEntry];
     const child = spawn(command, [...args, "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
         cwd: process.cwd(),
         stdio: ["ignore", "pipe", "pipe"],
@@ -296,7 +294,7 @@ async function connectCdp(cdpPort) {
         })()`);
         // 目标必须"站稳"再点：AntD 弹窗/抽屉有约 200ms 入场动画，只要求相邻两次读数相同
         // 会在动画刚开始、坐标还没动的那一拍就下判定，真正派发鼠标事件时控件已经移位 ——
-        // 点击落到遮罩上（mask.closable=false）就完全无效（"留在预演台" 曾这样偶发失败）。
+        // 点击落到遮罩上（mask.closable=false）就完全无效（"留在世界引擎" 曾这样偶发失败）。
         const deadline = Date.now() + 8000;
         let previous = null;
         let hovered = null;
@@ -395,19 +393,40 @@ async function openUnifiedWorkbench(cdp, label) {
     if (!ready) throw new Error(`${label}: unified previs workbench did not enter layout context`);
 }
 
+/** 桌面端默认展开对象列表；窄屏或用户收起后，用产品工具条重新打开。 */
+async function ensureSceneObjectList(cdp, label) {
+    const visible = `(() => {
+        const panel = document.querySelector('.pv-panel--left');
+        if (!(panel instanceof HTMLElement)) return false;
+        const rect = panel.getBoundingClientRect();
+        const style = getComputedStyle(panel);
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0;
+    })()`;
+    if (await cdp.evaluate(visible)) return;
+    if (!(await cdp.click('[aria-label="场景对象列表"]'))) throw new Error(`${label}: 场景对象列表 button not clickable`);
+    if (!(await cdp.poll(visible, `${label} scene object list`, 10000))) throw new Error(`${label}: scene object list did not open`);
+}
+
 /** 使用当前产品流程从预设库加入一个真实道具，不依赖旧版快捷菜单。 */
 async function addProp(cdp, name, label) {
+    await ensureSceneObjectList(cdp, label);
     if (!(await cdp.click('[aria-label="添加到场景"]'))) throw new Error(`${label}: 添加到场景 button not clickable`);
     if (!(await cdp.poll(`!!document.querySelector('.previs-add-dialog [role="tab"]')`, `${label} add dialog`, 10000))) throw new Error(`${label}: add dialog did not open`);
     if (!(await cdp.clickText("道具", '[role="tab"]'))) throw new Error(`${label}: 道具 tab not clickable`);
+    if (!(await cdp.clickText("室内家具"))) throw new Error(`${label}: 室内家具 category not clickable`);
 
-    const card = `[...document.querySelectorAll('.previs-add-dialog__card')].find((button) => (button.textContent || '').includes(${JSON.stringify(name)}) && button.getClientRects().length > 0)`;
+    const card = `[...document.querySelectorAll('.previs-add-dialog__card')].find((button) => (button.querySelector('.previs-add-dialog__card-title')?.textContent || '').trim() === ${JSON.stringify(name)} && button.getClientRects().length > 0)`;
     if (!(await cdp.poll(`!!(${card})`, `${label} prop card`, 10000))) throw new Error(`${label}: ${name} prop card not visible`);
     if (!(await cdp.clickPoint(card, `${label}: prop ${name}`))) throw new Error(`${label}: ${name} prop card not clickable`);
 
     const confirmLabel = `加入「${name}」`;
     if (!(await cdp.clickText(confirmLabel, ".previs-add-dialog__footer button"))) throw new Error(`${label}: ${confirmLabel} button not clickable`);
-    if (!(await cdp.poll(`!!document.querySelector(${JSON.stringify(`[aria-label="删除 ${name}"]`)})`, `${label} prop row`, 20000))) throw new Error(`${label}: ${name} row did not appear`);
+    const rowReady = `(() => {
+        const rows = [...document.querySelectorAll('.pv-entity-row')];
+        const row = rows.find((item) => (item.querySelector('.pv-entity-row__name')?.textContent || '').trim() === ${JSON.stringify(name)});
+        return Boolean(row && row.querySelector(${JSON.stringify(`[aria-label="删除 ${name}"]`)}));
+    })()`;
+    if (!(await cdp.poll(rowReady, `${label} prop row`, 20000))) throw new Error(`${label}: ${name} row did not appear`);
 }
 
 async function smokeWorkbench(cdp, baseUrl) {
@@ -434,12 +453,12 @@ async function smokeWorkbench(cdp, baseUrl) {
     const hasCanvas = await cdp.poll(`(() => { const c = document.querySelector('.previs-viewport-shell canvas'); return !!c && c.clientWidth > 0; })()`, "canvas", 40000);
     assert(hasCanvas, "A5 real canvas present in viewport shell");
     const defaultLayoutMode = await cdp.evaluate(`document.querySelector('button[data-mode="layout"]')?.getAttribute('aria-pressed')`);
-    assert(defaultLayoutMode === "true", "A5a 统一预演台默认进入布景上下文", `got ${JSON.stringify(defaultLayoutMode)}`);
+    assert(defaultLayoutMode === "true", "A5a 统一世界引擎默认进入布景上下文", `got ${JSON.stringify(defaultLayoutMode)}`);
     await openUnifiedWorkbench(cdp, "A");
 
     // 使用真实产品 dock（FloatingDock）验证提示的 hover 与键盘触发，不能只验证按钮存在。
-    const dockSelector = '[role="toolbar"][aria-label="预演台视口工具"]';
-    assert(await cdp.poll(`!!document.querySelector(${JSON.stringify(dockSelector)})`, "previs dock", 10000), "A5b 预演台视口工具条已渲染");
+    const dockSelector = '[role="toolbar"][aria-label="世界引擎视口工具"]';
+    assert(await cdp.poll(`!!document.querySelector(${JSON.stringify(dockSelector)})`, "previs dock", 10000), "A5b 世界引擎视口工具条已渲染");
     assert(await cdp.evaluate(`!!document.querySelector('${dockSelector} [role="radiogroup"][aria-label="变换模式"] [role="radio"][aria-label="移动 (W)"]')`), "A5b 变换模式切换包含移动 (W)");
     const tooltipButton = `${dockSelector} button[aria-label="适配全部对象 (A)"]`;
     const tooltipMode = await cdp.evaluate(`(() => {
@@ -484,7 +503,7 @@ async function smokeWorkbench(cdp, baseUrl) {
         autoKey: document.querySelector('button[title="自动关键帧"]')?.getAttribute('aria-pressed') ?? null,
     }))()`;
     const layoutGating = await cdp.evaluate(readGating);
-    assert(layoutGating.workbench && layoutGating.layout, "A6 统一预演台布局上下文已就绪", JSON.stringify(layoutGating));
+    assert(layoutGating.workbench && layoutGating.layout, "A6 统一世界引擎布局上下文已就绪", JSON.stringify(layoutGating));
     assert(layoutGating.sequencer === 0, "A6a 摆场模式不显示时间轴", JSON.stringify(layoutGating));
     if (!(await cdp.click('button[data-mode="animate"]'))) throw new Error("A: 动画模式按钮不可点击");
     assert(await cdp.poll(`document.querySelectorAll('.previs-sequencer').length === 1`, "animate sequencer", 10000), "A7 动画模式显示时间轴");
@@ -493,18 +512,28 @@ async function smokeWorkbench(cdp, baseUrl) {
     if (!(await cdp.click('button[data-mode="layout"]'))) throw new Error("A: 摆场模式按钮不可点击");
     assert(await cdp.poll(`document.querySelectorAll('.previs-sequencer').length === 0`, "layout hides sequencer", 10000), "A7b 回到摆场模式隐藏时间轴");
 
-    await addProp(cdp, "单人沙发", "A");
-    const propAppeared = await cdp.poll(`!!document.querySelector('[aria-label="删除 单人沙发"]')`, "prop row", 20000);
-    assert(propAppeared, "A10 added prop appears in object list");
+    await addProp(cdp, "沙发", "A");
+    const addedProp = await cdp.evaluate(`(() => {
+        const rows = [...document.querySelectorAll('.pv-entity-row')];
+        const row = rows.find((item) => (item.querySelector('.pv-entity-row__name')?.textContent || '').trim() === '沙发');
+        return {
+            count: rows.filter((item) => (item.querySelector('.pv-entity-row__name')?.textContent || '').trim() === '沙发').length,
+            selected: Boolean(row?.classList.contains('pv-entity-row--active')),
+            deleteLabel: row?.querySelector('.pv-entity-row__del')?.getAttribute('aria-label') ?? null,
+        };
+    })()`);
+    assert(addedProp.count === 1, "A10 added sofa appears exactly once in object list", JSON.stringify(addedProp));
+    assert(addedProp.selected, "A10a added sofa is the selected scene object", JSON.stringify(addedProp));
+    assert(addedProp.deleteLabel === "删除 沙发", "A10b selected object exposes its delete action label", JSON.stringify(addedProp));
 
     const undone = await cdp.click('[aria-label="撤销"]');
     if (!undone) throw new Error("A: 撤销 button not clickable");
-    const propGone = await cdp.poll(`!document.querySelector('[aria-label="删除 单人沙发"]')`, "prop removed by undo", 20000);
+    const propGone = await cdp.poll(`![...document.querySelectorAll('.pv-entity-row__name')].some((item) => (item.textContent || '').trim() === '沙发')`, "prop removed by undo", 20000);
     assert(propGone, "A11 Undo removes the added prop");
 
     // 场景结束前必须真实关闭：下一个场景要重新导航，不能靠忽略 beforeunload 绕过未保存态。
-    const closed = await cdp.click('[aria-label="关闭预演台"]');
-    if (!closed) throw new Error("A: 关闭预演台 button not clickable");
+    const closed = await cdp.click('[aria-label="关闭世界引擎"]');
+    if (!closed) throw new Error("A: 关闭世界引擎 button not clickable");
     const shellGone = await cdp.poll(`document.querySelectorAll('.previs-viewport-shell').length === 0`, "workbench closed", 30000);
     assert(shellGone, "A12 workbench closed cleanly before leaving scenario A");
 
@@ -586,8 +615,8 @@ async function missingRetry(cdp, baseUrl) {
     const failedAgain = await cdp.poll(`/个 3D 模型加载失败/.test(document.body.innerText || "")`, "second-round failure", 40000);
     assert(failedAgain, "C5 second-round failure after retry");
 
-    const closed = await cdp.click('[aria-label="关闭预演台"]');
-    if (!closed) throw new Error("C: 关闭预演台 button not clickable");
+    const closed = await cdp.click('[aria-label="关闭世界引擎"]');
+    if (!closed) throw new Error("C: 关闭世界引擎 button not clickable");
     const shellGone = await cdp.poll(`document.querySelectorAll('.previs-viewport-shell').length === 0`, "workbench closed", 20000);
     assert(shellGone, "C6 workbench closed cleanly");
 
@@ -662,8 +691,8 @@ async function deleteWhileLoading(cdp, baseUrl) {
     assert(!settled.renderFailed && !settled.contextLost, "D5 viewport stayed healthy");
     assert(settled.canvasUsable, "D6 canvas still usable after in-flight delete");
 
-    const closed = await cdp.click('[aria-label="关闭预演台"]');
-    if (!closed) throw new Error("D: 关闭预演台 button not clickable");
+    const closed = await cdp.click('[aria-label="关闭世界引擎"]');
+    if (!closed) throw new Error("D: 关闭世界引擎 button not clickable");
     const shellGone = await cdp.poll(`document.querySelectorAll('.previs-viewport-shell').length === 0`, "workbench closed", 20000);
     assert(shellGone, "D7 workbench closed cleanly");
 
@@ -720,8 +749,8 @@ async function webglLossRestore(cdp, baseUrl) {
     const canvasUsable = await cdp.poll(`(() => { const c = document.querySelector('.previs-viewport-shell canvas'); return !!c && c.clientWidth > 0 && c.clientHeight > 0; })()`, "canvas usable after restore", 20000);
     assert(canvasUsable, "E6 canvas remains usable after restore");
 
-    const closed = await cdp.click('[aria-label="关闭预演台"]');
-    if (!closed) throw new Error("E: 关闭预演台 button not clickable");
+    const closed = await cdp.click('[aria-label="关闭世界引擎"]');
+    if (!closed) throw new Error("E: 关闭世界引擎 button not clickable");
     const shellGone = await cdp.poll(`document.querySelectorAll('.previs-viewport-shell').length === 0`, "workbench closed", 20000);
     assert(shellGone, "E7 workbench closed cleanly");
 
@@ -737,7 +766,7 @@ async function webglLossRestore(cdp, baseUrl) {
 
 /**
  * 场景 F：强制保存失败 → 头部错误态与重试入口 → 关闭走确认保护。
- * 选择「留在预演台」后 workbench 必须仍然存在（onClose 不得被调用）。
+ * 选择「留在世界引擎」后 workbench 必须仍然存在（onClose 不得被调用）。
  */
 async function saveFailureCloseGuard(cdp, baseUrl) {
     console.log("\n=== F. save failure and close guard ===");
@@ -761,10 +790,10 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
     const retryVisible = await cdp.poll(`[...document.querySelectorAll('button')].some((b) => (b.textContent || "").includes('重试保存'))`, "retry save affordance", 20000);
     assert(retryVisible, "F4 actionable 重试保存 affordance present");
 
-    const closeClicked = await cdp.click('[aria-label="关闭预演台"]');
-    if (!closeClicked) throw new Error("F: 关闭预演台 button not clickable");
+    const closeClicked = await cdp.click('[aria-label="关闭世界引擎"]');
+    if (!closeClicked) throw new Error("F: 关闭世界引擎 button not clickable");
 
-    const modalShown = await cdp.poll(`!!document.querySelector('.ant-modal-confirm') && (document.body.innerText || "").includes('留在预演台')`, "close confirm modal", 40000);
+    const modalShown = await cdp.poll(`!!document.querySelector('.ant-modal-confirm') && (document.body.innerText || "").includes('留在世界引擎')`, "close confirm modal", 40000);
     assert(modalShown, "F5 close is guarded by a confirm dialog, not silent exit");
 
     // 坐标点击成功派发不代表按钮收到了点击：CI 的动画/渲染调度可能让坐标落到遮罩。
@@ -773,7 +802,7 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
         const probe = { count: 0 };
         probe.listener = (event) => {
             const button = event.target instanceof Element ? event.target.closest('button') : null;
-            if (event.isTrusted && button?.closest('.ant-modal-confirm') && (button.textContent || '').trim() === '留在预演台') probe.count++;
+            if (event.isTrusted && button?.closest('.ant-modal-confirm') && (button.textContent || '').trim() === '留在世界引擎') probe.count++;
         };
         window.__previsStayClickProbe = probe;
         document.addEventListener('click', probe.listener, true);
@@ -781,11 +810,11 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
     let stayClicked = false;
     try {
         for (let attempt = 0; attempt < 3 && !stayClicked; attempt++) {
-            const dispatched = await cdp.clickText("留在预演台", ".ant-modal-confirm button");
-            if (!dispatched) throw new Error("F: 留在预演台 button not clickable");
+            const dispatched = await cdp.clickText("留在世界引擎", ".ant-modal-confirm button");
+            if (!dispatched) throw new Error("F: 留在世界引擎 button not clickable");
             stayClicked = await cdp.poll(`window.__previsStayClickProbe.count > 0`, "stay button received trusted click", 1500);
         }
-        if (!stayClicked) throw new Error("F: 留在预演台 button did not receive a trusted click");
+        if (!stayClicked) throw new Error("F: 留在世界引擎 button did not receive a trusted click");
     } finally {
         await cdp.evaluate(`(() => {
             document.removeEventListener('click', window.__previsStayClickProbe.listener, true);
@@ -801,11 +830,11 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
         "modal dismissed",
         20000,
     );
-    assert(modalGone, "F6 confirm dialog dismissed after choosing 留在预演台");
+    assert(modalGone, "F6 confirm dialog dismissed after choosing 留在世界引擎");
 
     await sleep(1000);
     const stillOpen = await cdp.evaluate(`document.querySelectorAll('.previs-viewport-shell').length`);
-    assert(stillOpen === 1, "F7 unified workbench remains open after choosing 留在预演台", `shellCount=${stillOpen}`);
+    assert(stillOpen === 1, "F7 unified workbench remains open after choosing 留在世界引擎", `shellCount=${stillOpen}`);
 
     assert(cdp.problems.length === 0, "F8 no browser problems in scenario F", JSON.stringify(cdp.problems));
 }
@@ -883,15 +912,31 @@ async function shotOutputs(cdp, baseUrl) {
     assert(result.maxColorError <= 2, "G5 beauty matches default framebuffer tone mapping", `max error=${result.maxColorError}`);
     const recording = await cdp.evaluate(`(async () => {
         const handle=window.__previsCaptureTest.handle;
-        const blob=await handle.recordVideo(.6,12,'depth',{longEdge:320});
+        const events=[], NativeRecorder=window.MediaRecorder;
+        window.MediaRecorder=class extends NativeRecorder {
+            constructor(stream,options) {
+                super(stream,options);
+                for(const type of ['start','dataavailable','stop','error']) this.addEventListener(type,event=>events.push({type,at:performance.now(),size:event.data?.size,state:this.state}));
+                const settings=stream.getVideoTracks()[0]?.getSettings();
+                events.push({type:'created',at:performance.now(),mime:options.mimeType,width:settings?.width,height:settings?.height,fps:settings?.frameRate});
+            }
+            start(...args) {events.push({type:'start-call',at:performance.now()});super.start(...args);}
+            stop() {events.push({type:'stop-call',at:performance.now(),state:this.state});super.stop();}
+        };
+        let blob;
+        try { blob=await handle.recordVideo(.6,12,'depth',{longEdge:320}); }
+        catch(error) {throw new Error(error.message+'; recording events='+JSON.stringify(events));}
+        finally {window.MediaRecorder=NativeRecorder;}
         const video=document.createElement('video'),url=URL.createObjectURL(blob);video.muted=true;
         try { await new Promise((resolve,reject)=>{video.onloadeddata=resolve;video.onerror=()=>reject(new Error('recording cannot decode'));video.src=url;});
             const abort=new AbortController();const pending=handle.recordVideo(2,12,'beauty',{longEdge:320,signal:abort.signal});abort.abort();
             let cancelled=false;try{await pending;}catch{cancelled=true;}
-            return {bytes:blob.size,width:video.videoWidth,height:video.videoHeight,cancelled};
+            const started=events.find(event=>event.type==='start'),stopped=events.find(event=>event.type==='stop-call');
+            return {bytes:blob.size,width:video.videoWidth,height:video.videoHeight,cancelled,captureMs:stopped?.at-started?.at};
         } finally {video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
     })()`);
     assert(recording.bytes > 0 && recording.width === 180 && recording.height === 320, "G6 recording is decodable at shot dimensions", JSON.stringify(recording));
+    assert(recording.captureMs >= 500, "G6a short recording measures duration after encoder start", JSON.stringify(recording));
     assert(recording.cancelled, "G7 recording cancellation rejects and releases session");
     const monitorButton = 'button[title^="投放到第二屏幕"]';
     await cdp.evaluate(`(() => { const open=window.open.bind(window);window.open=(...args)=>{const popup=open(...args);window.__previsPopup=popup;return popup;}; })()`);

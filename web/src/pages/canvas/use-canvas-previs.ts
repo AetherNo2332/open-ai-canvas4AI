@@ -4,10 +4,11 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 
 import { imageMetadata, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
-import { fitImageNodeSize, preserveImageNodeSize } from "@/lib/canvas/canvas-node-size";
+import { fitImageNodeSize, fitNodeSize, preserveImageNodeSize } from "@/lib/canvas/canvas-node-size";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { createPrevisSceneFromTemplate, type PrevisTemplateId } from "@/lib/canvas/previs/previs-templates";
 import { mergePrevisOutputPreview, upsertPrevisSceneById } from "@/lib/canvas/previs/previs-session";
+import { PREVIS_DEFAULT_WORLD } from "@/lib/canvas/previs/previs-world";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
@@ -78,7 +79,7 @@ export function useCanvasPrevis({
 
     /**
      * 新建镜头。templateId 由调用方（模板选择弹窗）显式给出 —— 这里不设默认模板，
-     * 否则又会回到「无条件塞一个默认演员」的老问题。
+     * 否则又会回到「无条件塞一个默认演员」的老问题。新场景默认开启世界环境。
      */
     const createPrevisShot = useCallback(
         (templateId: PrevisTemplateId, position?: Position) => {
@@ -86,7 +87,7 @@ export function useCanvasPrevis({
             const shotIndex = Math.max(0, ...shots.map((node) => node.metadata?.shotIndex || 0)) + 1;
             let scene = createPrevisSceneFromTemplate(templateId, translate("canvasPage.previs.shot", { index: shotIndex }));
             const shot = scene.shots[0];
-            scene = { ...scene, shots: [{ ...shot, name: translate("canvasPage.previs.shot", { index: shotIndex }) }] };
+            scene = { ...scene, world: { ...PREVIS_DEFAULT_WORLD }, shots: [{ ...shot, name: translate("canvasPage.previs.shot", { index: shotIndex }) }] };
             const node = createCanvasNode(CanvasNodeType.Video, position || getCanvasCenter(), {
                 workflowKind: "shot",
                 workflowTitle: translate("canvasPage.previs.shot", { index: shotIndex }),
@@ -196,11 +197,11 @@ export function useCanvasPrevis({
                     type: CanvasNodeType.Video,
                     title: translate("canvasPage.previs.clayVideoTitle", { title: sourceNode.title }),
                     position: existingVideo?.position || { x: sourceNode.position.x, y: sourceNode.position.y + sourceNode.height + 48 },
-                    width: existingVideo?.width || 360,
-                    height: existingVideo?.height || 220,
+                    ...preserveImageNodeSize(existingVideo, previsVideoNodeSize(videoUpload, image)),
                     metadata: {
                         ...existingVideo?.metadata,
                         ...videoMetadata(videoUpload),
+                        previsCaptureFps: output.shot.fps,
                         prompt: output.prompt,
                         workflowKind: "reference_video",
                         assetTags: ["预演台白膜", `镜头:${sourceNode.title}`],
@@ -251,11 +252,11 @@ export function useCanvasPrevis({
                     type: CanvasNodeType.Video,
                     title: translate("canvasPage.previs.depthVideoTitle", { title: sourceNode.title }),
                     position: existingDepthVideo?.position || { x: sourceNode.position.x + sourceNode.width + 48, y: sourceNode.position.y + sourceNode.height + 48 },
-                    width: existingDepthVideo?.width || 360,
-                    height: existingDepthVideo?.height || 220,
+                    ...preserveImageNodeSize(existingDepthVideo, previsVideoNodeSize(depthVideoUpload, image)),
                     metadata: {
                         ...existingDepthVideo?.metadata,
                         ...videoMetadata(depthVideoUpload),
+                        previsCaptureFps: output.shot.fps,
                         prompt: output.prompt,
                         workflowKind: "reference_video",
                         assetTags: ["预演台深度", `镜头:${sourceNode.title}`],
@@ -313,4 +314,13 @@ export function useCanvasPrevis({
     );
 
     return { applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene };
+}
+
+/**
+ * 白膜 / 深度视频节点按录制画幅取尺寸（9:16 是竖框，不再固定 360×220 横框）。
+ * 读不到视频宽高时用同一镜头的构图截图比例；用户手动调过尺寸的节点保持不变（preserveImageNodeSize）。
+ */
+function previsVideoNodeSize(video: { width?: number; height?: number }, fallback: { width: number; height: number }) {
+    const valid = (value?: number) => typeof value === "number" && Number.isFinite(value) && value > 0;
+    return valid(video.width) && valid(video.height) ? fitNodeSize(video.width!, video.height!) : fitNodeSize(fallback.width, fallback.height);
 }

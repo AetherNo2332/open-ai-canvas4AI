@@ -68,7 +68,7 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 			"canvasSnapshotHash": cloudAgentCanvasHash(doc),
 			"scenes":             items,
 			"count":              len(items),
-			"guidance":           "先用返回的 sceneId 读取一个场景，再使用 shotId 进行布局或预演；新建场景用 director create_scene。",
+			"guidance":           "先用返回的 sceneId 读取一个场景，再使用 shotId 进行布局或预演；新建场景用 director create_scene。路径、运镜和编辑规则按需用本轮原生 read 读取已启用 Skill 的主题文件。",
 		}, nil
 	}
 
@@ -89,16 +89,22 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 	if args.IncludeTransforms {
 		// Augment with full spatial data for layout planning: object positions, camera transforms, FOV
 		projection["spatialLayout"] = cloudAgentPrevisSpatialLayout(scene)
-		projection["coordinateGuide"] = "坐标系: Y轴向上，单位为米，地面Y=0。人物高约1.8m。position=[X,Y,Z]，rotation=[绕X,绕Y,绕Z弧度]。演员原点在脚底，Y=脚底离地高度：站上桌面/台阶/屋顶时设为台面高度，低于0会被拉回地面；box/sphere/cylinder原点在中心。target是摄影机焦点坐标。"
+		projection["coordinateGuide"] = "坐标系: Y轴向上，单位为米，地面Y=0。人物高约1.8m。position=[X,Y,Z]，rotation=[绕X,绕Y,绕Z弧度]。演员原点在脚底，Y=脚底离地高度：站上桌面/台阶/屋顶时设为台面高度，低于0会被拉回地面；box/sphere/cylinder原点在中心。target是摄影机焦点坐标。路径点与参考轨迹的 Y 是离地高度。"
 	}
-	return map[string]any{
+	result := map[string]any{
 		"canvasId":           canvasID,
 		"scene":              projection,
 		"snapshotHash":       creationHash(scene),
 		"canvasSnapshotHash": cloudAgentCanvasHash(doc),
 		"revision":           canvas.Revision,
-		"guidance":           "安全摘要。修改用 director apply_patch；预演用 director preview。snapshotHash 只代表该场景。",
-	}, nil
+		"catalog":            cloudAgentPrevisCatalogGuide(),
+		"guidance":           "安全摘要。修改用 director apply_patch；预演用 director preview；布局规划读取已包含精确坐标。snapshotHash 只代表该场景。路径、运镜和编辑规则按需用本轮原生 read 读取已启用 Skill 的主题文件。",
+	}
+	if reviews := cloudAgentPrevisShotReviews(scene); len(reviews) > 0 {
+		result["review"] = reviews
+		result["reviewGuide"] = cloudAgentPrevisReviewGuide
+	}
+	return result, nil
 }
 
 // previsMapSafe safely casts a value to map[string]any, returning an empty map on failure.
@@ -135,6 +141,14 @@ func cloudAgentPrevisSpatialLayout(scene map[string]any) map[string]any {
 			"keyframeCount": len(creationMaps(obj["keyframes"])),
 			"hasMotionPath": obj["motionPath"] != nil,
 		}
+		cloudAgentPrevisProjectCatalogFields(entry, obj)
+		if motions := creationMaps(obj["motions"]); len(motions) > 0 {
+			projected := make([]map[string]any, 0, len(motions))
+			for _, motion := range motions {
+				projected = append(projected, map[string]any{"id": stringValue(motion["id"]), "motion": stringValue(motion["motion"]), "start": motion["start"], "duration": motion["duration"]})
+			}
+			entry["motions"] = projected
+		}
 		if binding, ok := obj["characterBinding"].(map[string]any); ok {
 			entry["characterBinding"] = map[string]any{
 				"characterAssetId":   stringValue(binding["characterAssetId"]),
@@ -162,12 +176,13 @@ func cloudAgentPrevisSpatialLayout(scene map[string]any) map[string]any {
 	shotLayouts := make([]map[string]any, 0, len(shots))
 	for _, shot := range shots {
 		shotLayouts = append(shotLayouts, map[string]any{
-			"id":         stringValue(shot["id"]),
-			"name":       stringValue(shot["name"]),
-			"cameraId":   stringValue(shot["cameraId"]),
-			"shotSize":   stringValue(shot["shotSize"]),
-			"cameraMove": stringValue(shot["cameraMove"]),
-			"duration":   shot["duration"],
+			"id":          stringValue(shot["id"]),
+			"name":        stringValue(shot["name"]),
+			"cameraId":    stringValue(shot["cameraId"]),
+			"shotSize":    stringValue(shot["shotSize"]),
+			"aspectRatio": cloudAgentPrevisShotAspectRatio(shot),
+			"cameraMove":  stringValue(shot["cameraMove"]),
+			"duration":    shot["duration"],
 		})
 	}
 
@@ -253,6 +268,14 @@ func cloudAgentPrevisPreview(repo *repository.Repository, userID, canvasID strin
 	}, nil
 }
 
+// cloudAgentPrevisShotAspectRatio 返回镜头画幅；未设置时与前端一致按 9:16 竖屏。
+func cloudAgentPrevisShotAspectRatio(shot map[string]any) string {
+	if aspect := stringValue(shot["aspectRatio"]); aspect != "" {
+		return aspect
+	}
+	return "9:16"
+}
+
 func findPrevisSceneCamera(scene map[string]any, id string) (map[string]any, bool) {
 	for _, camera := range creationMaps(scene["cameras"]) {
 		if stringValue(camera["id"]) == id {
@@ -287,13 +310,14 @@ func projectPrevisScene(scene map[string]any, shotID string, objectIDs map[strin
 			continue
 		}
 		shots = append(shots, map[string]any{
-			"id":         stringValue(shot["id"]),
-			"name":       truncateRunes(stringValue(shot["name"]), 160),
-			"cameraId":   stringValue(shot["cameraId"]),
-			"duration":   numberValue(shot["duration"], 5),
-			"fps":        int(numberValue(shot["fps"], 24)),
-			"shotSize":   stringValue(shot["shotSize"]),
-			"cameraMove": stringValue(shot["cameraMove"]),
+			"id":          stringValue(shot["id"]),
+			"name":        truncateRunes(stringValue(shot["name"]), 160),
+			"cameraId":    stringValue(shot["cameraId"]),
+			"duration":    numberValue(shot["duration"], 5),
+			"fps":         int(numberValue(shot["fps"], 24)),
+			"shotSize":    stringValue(shot["shotSize"]),
+			"aspectRatio": cloudAgentPrevisShotAspectRatio(shot),
+			"cameraMove":  stringValue(shot["cameraMove"]),
 		})
 	}
 	objects := make([]map[string]any, 0)
@@ -302,7 +326,7 @@ func projectPrevisScene(scene map[string]any, shotID string, objectIDs map[strin
 		if len(objectIDs) > 0 && !objectIDs[id] {
 			continue
 		}
-		objects = append(objects, map[string]any{
+		entry := map[string]any{
 			"id":        id,
 			"name":      truncateRunes(stringValue(object["name"]), 160),
 			"kind":      stringValue(object["kind"]),
@@ -311,19 +335,31 @@ func projectPrevisScene(scene map[string]any, shotID string, objectIDs map[strin
 			"pose":      stringValue(object["pose"]),
 			"visible":   boolValue(object["visible"], true),
 			"transform": projectPrevisTransform(object["transform"]),
-		})
+		}
+		cloudAgentPrevisProjectCatalogFields(entry, object)
+		objects = append(objects, entry)
 	}
 	cameras := make([]map[string]any, 0)
 	for _, camera := range creationMaps(scene["cameras"]) {
-		cameras = append(cameras, map[string]any{
+		entry := map[string]any{
 			"id":          stringValue(camera["id"]),
 			"name":        truncateRunes(stringValue(camera["name"]), 160),
 			"focalLength": numberValue(camera["focalLength"], 50),
 			"transform":   projectPrevisTransform(camera["transform"]),
 			"target":      projectPrevisVec3(camera["target"]),
-		})
+		}
+		if count := len(creationMaps(camera["keyframes"])); count > 0 {
+			entry["keyframeCount"] = count
+		}
+		if moves := cloudAgentPrevisProjectCameraMoves(camera); len(moves) > 0 {
+			entry["moves"] = moves
+		}
+		if path := cloudAgentPrevisProjectMotionPath(camera); path != nil {
+			entry["motionPath"] = path
+		}
+		cameras = append(cameras, entry)
 	}
-	return map[string]any{
+	projection := map[string]any{
 		"id":           stringValue(scene["id"]),
 		"title":        truncateRunes(stringValue(scene["title"]), 160),
 		"activeShotId": stringValue(scene["activeShotId"]),
@@ -331,6 +367,35 @@ func projectPrevisScene(scene map[string]any, shotID string, objectIDs map[strin
 		"objects":      objects,
 		"cameras":      cameras,
 		"lightCount":   len(creationMaps(scene["lights"])),
+	}
+	if markers := cloudAgentPrevisProjectMarkers(scene); len(markers) > 0 {
+		projection["markers"] = markers
+	}
+	if paths := cloudAgentPrevisProjectSketchPaths(scene); len(paths) > 0 {
+		projection["paths"] = paths
+	}
+	if world, ok := scene["world"].(map[string]any); ok {
+		projection["world"] = map[string]any{"timeOfDay": numberValue(world["timeOfDay"], 10), "weather": stringValue(world["weather"]), "ground": stringValue(world["ground"]), "groundSize": int(numberValue(world["groundSize"], 1000)), "horizon": boolValue(world["horizon"], true)}
+	}
+	return projection
+}
+
+// cloudAgentPrevisProjectCatalogFields 只投影目录 ID 与布景参数，不含任何 URL。
+func cloudAgentPrevisProjectCatalogFields(entry map[string]any, object map[string]any) {
+	if travels := cloudAgentPrevisProjectTravels(object); len(travels) > 0 {
+		entry["travels"] = travels
+	}
+	if path := cloudAgentPrevisProjectMotionPath(object); path != nil {
+		entry["motionPath"] = path
+	}
+	switch stringValue(object["kind"]) {
+	case "prop":
+		entry["propId"] = stringValue(object["propId"])
+		entry["variant"] = int(numberValue(object["variant"], 0))
+	case "layout":
+		if layout, ok := object["layout"].(map[string]any); ok {
+			entry["layout"] = map[string]any{"template": stringValue(layout["template"]), "seed": int(numberValue(layout["seed"], 0)), "size": numberValue(layout["size"], 0), "density": numberValue(layout["density"], 0.75), "crowd": boolValue(layout["crowd"], true)}
+		}
 	}
 }
 

@@ -33,17 +33,16 @@ import { computeSnap } from "@/lib/timeline/timeline-snap";
 import { DEFAULT_AUDIO_TRACK_ID, DEFAULT_VIDEO_TRACK_ID, normalizeTimelineProject } from "@/lib/timeline/timeline-tracks";
 import { formatTimelineTime, getTimelineTrackWidth, getFitTimelineZoom, zoomIn, zoomOut } from "@/lib/timeline/timeline-view";
 import { exportTimelineToMp4, type TimelineExportResult } from "@/lib/timeline/timeline-export";
-import { defaultTimelineExportPreset, resolveTimelineExportSize, summarizeTimelineFitModes, timelineExportPresetOptions, timelineFitModeLabel, type TimelineExportPreset } from "@/lib/timeline/timeline-export-spec";
+import { defaultTimelineExportPreset, resolveTimelineExportFps, resolveTimelineExportSize, summarizeTimelineFitModes, timelineExportPresetOptions, timelineFitModeLabel, type TimelineExportPreset } from "@/lib/timeline/timeline-export-spec";
 import { buildSubtitleSrt, getOrderedSubtitleClips, getOrderedVideoClips, type TimelineRenderSource } from "@/lib/timeline/timeline-to-ffmpeg";
 import type { CanvasNodeData } from "@/types/canvas";
+import type { PrevisScene } from "@/types/previs";
 import type { SrtEntry, TimelineClip, TimelineDirectMedia, TimelineProject } from "@/types/timeline";
 
 const MIN_CLIP_DURATION_MS = 100;
 const TRACK_ROW_HEIGHT = 52;
 const SNAP_THRESHOLD_PX = 8;
 const BASE_PX_PER_SECOND = 96;
-const EXPORT_FPS = 30;
-
 type TimelineSourceKind = TimelineBuildScope | "saved";
 const SOURCE_LABELS: Record<TimelineSourceKind, string> = { current: "当前视频", selection: "选中视频", canvas: "整个画布", saved: "已保存时间线" };
 
@@ -52,13 +51,14 @@ type CanvasTimelineDialogProps = {
     open: boolean;
     nodes: CanvasNodeData[];
     timeline: TimelineProject | null;
+    previsScenes?: readonly PrevisScene[];
     /** 画布当前多选；选中多于 1 个视频时可切换到「选中视频」来源 */
     selectedNodeIds?: ReadonlySet<string>;
     /** 画布关联短剧时的作品画幅（如 9:16），作为默认导出规格 */
     dramaAspectRatio?: string;
     onClose: () => void;
     onOpenSubtitleDialog?: (nodeId: string) => void;
-    onSave: (timeline: TimelineProject) => void;
+    onSave: (timeline: TimelineProject) => Promise<void> | void;
     onSaveSubtitles: (nodeId: string, entries: SrtEntry[]) => void;
     /** 打开项目素材库选择器（由页面层接线） */
     onOpenAssetLibrary?: () => void;
@@ -87,6 +87,7 @@ export function CanvasTimelineDialog({
     open,
     nodes,
     timeline,
+    previsScenes = [],
     selectedNodeIds,
     dramaAspectRatio,
     onClose,
@@ -108,11 +109,14 @@ export function CanvasTimelineDialog({
     const [exportPreset, setExportPreset] = useState<TimelineExportPreset>(() => defaultTimelineExportPreset(dramaAspectRatio));
     // 草稿自上次按来源构建后是否被编辑过；切换来源前据此确认，避免静默丢弃编辑。
     const draftDirtyRef = useRef(false);
+    const draftRevision = useRef(0);
+    const saveInFlight = useRef(false);
     const [playheadMs, setPlayheadMs] = useState(0);
     const [zoomLevel, setZoomLevel] = useState(1);
     const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
     const [snapEnabled, setSnapEnabled] = useState(true);
     const [previewPlaying, setPreviewPlaying] = useState(false);
+    const [saving, setSaving] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [exportPercent, setExportPercent] = useState(0);
     const [exportDetail, setExportDetail] = useState("");
@@ -150,6 +154,7 @@ export function CanvasTimelineDialog({
     }, [open, node.id, nodes, timeline, dramaAspectRatio]);
 
     const replaceDraft = (next: TimelineProject) => {
+        draftRevision.current += 1;
         draftDirtyRef.current = false;
         setDraft(next);
         setZoomLevel(1);
@@ -237,6 +242,7 @@ export function CanvasTimelineDialog({
     }, [open, ensureToolbarObserved]);
 
     const applyDraft = (updater: (current: TimelineProject) => TimelineProject) => {
+        draftRevision.current += 1;
         draftDirtyRef.current = true;
         setDraft((current) => {
             const next = updater(current);
@@ -530,28 +536,47 @@ export function CanvasTimelineDialog({
         for (const media of medias) addDirectMediaToTimeline(media);
     };
 
-    const handleSave = () => {
-        // 互通修复：时间线草稿只在打开时初始化，期间节点字幕可能在字幕弹窗中被清空（或节点数据被外部更新）。
-        // 保存前以节点当前字幕为准做定向校准：节点字幕已为空时，剔除草稿残留的旧字幕片段并回写空数组，
-        // 避免「清空后重开视频节点旧字幕复活」；节点仍有字幕时保留草稿内用户的时间线编辑（拖动/删减/文本）。
-        const clearedSubtitleNodeIds = new Set(nodes.filter((item) => (item.metadata?.subtitleEntries?.length ?? 0) === 0).map((item) => item.id));
-        const base = normalizeTimelineProject({ ...draft, updatedAt: new Date().toISOString() });
-        const reconciledClips = clearedSubtitleNodeIds.size ? base.clips.filter((clip) => !(clip.kind === "subtitle" && clearedSubtitleNodeIds.has(clip.nodeId))) : base.clips;
-        const normalized = normalizeTimelineProject({ ...base, clips: reconciledClips });
-        onSave(normalized);
-        // 整合方向：时间线字幕片段与节点字幕互通。保存时按视频节点回写 subtitleEntries（含空数组）。
-        // 回写集合 = 项目时间线原有字幕节点 ∪ 校准后仍有字幕片段的节点 ∪ 节点当前仍有字幕数据的节点：
-        // 覆盖“首次打开时间线（项目尚无 timeline）时删除字幕片段”这类 timeline 为空导致的漏回写，
-        // 保证删除全部字幕片段后节点字幕被同步清空，重开视频节点不再显示旧字幕。
-        const previousSubtitleNodeIds = new Set((timeline?.clips || []).filter((clip) => clip.kind === "subtitle").map((clip) => clip.nodeId));
-        const nextSubtitleNodeIds = new Set(normalized.clips.filter((clip) => clip.kind === "subtitle").map((clip) => clip.nodeId));
-        const nodeSubtitleNodeIds = new Set(nodes.filter((item) => (item.metadata?.subtitleEntries?.length ?? 0) > 0).map((item) => item.id));
-        const subtitleNodeIds = new Set([...previousSubtitleNodeIds, ...nextSubtitleNodeIds, ...nodeSubtitleNodeIds]);
-        subtitleNodeIds.forEach((subNodeId) => {
-            onSaveSubtitles(subNodeId, buildSubtitleEntriesForNode(subNodeId, normalized));
-        });
-        message.success("时间线已保存");
-        onClose();
+    const handleSave = async () => {
+        if (saveInFlight.current) return;
+        saveInFlight.current = true;
+        const savedRevision = draftRevision.current;
+        setSaving(true);
+        try {
+            // 互通修复：时间线草稿只在打开时初始化，期间节点字幕可能在字幕弹窗中被清空（或节点数据被外部更新）。
+            // 保存前以节点当前字幕为准做定向校准：节点字幕已为空时，剔除草稿残留的旧字幕片段并回写空数组，
+            // 避免「清空后重开视频节点旧字幕复活」；节点仍有字幕时保留草稿内用户的时间线编辑（拖动/删减/文本）。
+            const clearedSubtitleNodeIds = new Set(nodes.filter((item) => (item.metadata?.subtitleEntries?.length ?? 0) === 0).map((item) => item.id));
+            const base = normalizeTimelineProject({ ...draft, updatedAt: new Date().toISOString() });
+            const reconciledClips = clearedSubtitleNodeIds.size ? base.clips.filter((clip) => !(clip.kind === "subtitle" && clearedSubtitleNodeIds.has(clip.nodeId))) : base.clips;
+            const normalized = normalizeTimelineProject({ ...base, clips: reconciledClips });
+            // 整合方向：时间线字幕片段与节点字幕互通。保存时按视频节点回写 subtitleEntries（含空数组）。
+            // 回写集合 = 项目时间线原有字幕节点 ∪ 校准后仍有字幕片段的节点 ∪ 节点当前仍有字幕数据的节点：
+            // 覆盖“首次打开时间线（项目尚无 timeline）时删除字幕片段”这类 timeline 为空导致的漏回写，
+            // 保证删除全部字幕片段后节点字幕被同步清空，重开视频节点不再显示旧字幕。
+            const previousSubtitleNodeIds = new Set((timeline?.clips || []).filter((clip) => clip.kind === "subtitle").map((clip) => clip.nodeId));
+            const nextSubtitleNodeIds = new Set(normalized.clips.filter((clip) => clip.kind === "subtitle").map((clip) => clip.nodeId));
+            const nodeSubtitleNodeIds = new Set(nodes.filter((item) => (item.metadata?.subtitleEntries?.length ?? 0) > 0).map((item) => item.id));
+            const subtitleNodeIds = new Set([...previousSubtitleNodeIds, ...nextSubtitleNodeIds, ...nodeSubtitleNodeIds]);
+            subtitleNodeIds.forEach((subNodeId) => {
+                onSaveSubtitles(subNodeId, buildSubtitleEntriesForNode(subNodeId, normalized));
+            });
+            await onSave(normalized);
+            if (draftRevision.current === savedRevision) {
+                message.success("时间线已保存");
+                onClose();
+            } else {
+                message.info("已保存此前的时间线，请再次保存最新修改");
+            }
+        } catch (error) {
+            message.error(error instanceof Error ? "时间线保存失败：" + error.message : "时间线保存失败");
+        } finally {
+            saveInFlight.current = false;
+            setSaving(false);
+        }
+    };
+
+    const handleCancel = () => {
+        if (!saveInFlight.current) onClose();
     };
 
     // 片段源画面尺寸：画布节点记录的 naturalWidth/Height，直连媒体用上传时读取的宽高；未知时导出按补黑边处理。
@@ -589,7 +614,7 @@ export function CanvasTimelineDialog({
         setExportDetail("准备导出");
         try {
             return await exportTimelineToMp4(normalizeTimelineProject(draft), sources, {
-                context: { width: exportSize.width, height: exportSize.height, fps: EXPORT_FPS },
+                context: { width: exportSize.width, height: exportSize.height, fps: resolveTimelineExportFps(draft, nodes, previsScenes) },
                 onProgress: ({ percent, detail }) => {
                     setExportPercent(percent);
                     setExportDetail(detail);
@@ -786,7 +811,8 @@ export function CanvasTimelineDialog({
             footer={null}
             width={1160}
             destroyOnHidden
-            onCancel={onClose}
+            onCancel={handleCancel}
+            closable={!saving}
             afterOpenChange={(visible) => {
                 if (visible) ensureToolbarObserved();
             }}
@@ -918,10 +944,10 @@ export function CanvasTimelineDialog({
                         <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedClipId} onClick={deleteSelectedClip}>
                             删除片段
                         </Button>
-                        <Button size="small" disabled={!draft.clips.length} onClick={onClose}>
+                        <Button size="small" disabled={!draft.clips.length || saving} onClick={handleCancel}>
                             取消
                         </Button>
-                        <Button size="small" type="primary" disabled={!draft.clips.length} onClick={handleSave}>
+                        <Button size="small" type="primary" loading={saving} disabled={!draft.clips.length || saving} onClick={() => void handleSave()}>
                             保存
                         </Button>
                     </div>
@@ -992,7 +1018,7 @@ export function CanvasTimelineDialog({
                             </span>
                             <span className="opacity-45">修改后保存将同步写回对应视频节点的字幕数据</span>
                             {onOpenSubtitleDialog ? (
-                                <Button size="small" className="ml-auto" icon={<Captions className="size-3.5" />} onClick={() => onOpenSubtitleDialog(selectedSubtitleClip.nodeId)}>
+                                <Button size="small" className="ml-auto" icon={<Captions className="size-3.5" />} disabled={saving} onClick={() => onOpenSubtitleDialog(selectedSubtitleClip.nodeId)}>
                                     精细编辑（SRT/高亮/样式）
                                 </Button>
                             ) : null}

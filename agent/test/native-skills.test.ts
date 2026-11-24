@@ -156,12 +156,40 @@ test("native read accepts the stable relative Skill location shown to the model"
   } finally { rmSync(parent, { recursive: true, force: true }); }
 });
 
+test("native read resolves unique enabled Skill aliases and lists available files", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "canvas-native-alias-"));
+  try {
+    const root = join(parent, "skills");
+    const skills = [nativeSkill()];
+    materializeNativeSkills(skills, root);
+    const run = { runId: "run", userId: "user", skillRuntimeMode: "pi-native", skills } as unknown as PiSnapshot;
+    const requests: string[] = [];
+    const bridge = { async readSkillFile(_run: PiSnapshot, name: string, path: string) {
+      requests.push(`${name}:${path}`);
+      const content = path === "SKILL.md" ? entry : "Reference";
+      return { nativeName: name, path, skillId: skills[0]!.id, versionId: skills[0]!.versionId,
+        contentHash: skills[0]!.contentHash, sha256: digest(content), isEntry: path === "SKILL.md",
+        offset: 0, limit: 12000, totalRunes: [...content].length, hasMore: false, content };
+    } } as unknown as CanvasBridge;
+    assert.ok((await readNativeSkill(run, root, bridge, "skills/private-skill/SKILL.md")).startsWith(entry));
+    assert.ok((await readNativeSkill(run, root, bridge, "skills/Scripts/references/a.md")).startsWith("Reference"));
+    assert.deepEqual(requests, ["skill-abc:SKILL.md", "skill-abc:references/a.md"]);
+    await assert.rejects(readNativeSkill(run, root, bridge, "skills/private-skill/references/missing.md"),
+      /Available files: .*references\/a\.md/);
+    const duplicate = [nativeSkill(), { ...nativeSkill(), id: "another-id", nativeName: "skill-def" }];
+    await assert.rejects(readNativeSkill({ ...run, skills: duplicate }, root, bridge, "skills/Scripts/SKILL.md"),
+      /ambiguous/);
+  } finally { rmSync(parent, { recursive: true, force: true }); }
+});
+
 test("rebase accepts the stable relative Skill location", () => {
   const skills = [nativeSkill()];
   const current = resolve(tmpdir(), "new-worker", "skills");
   assert.equal(rebaseNativeSkillPath(skills, current, "skills/skill-abc/references/a.md"),
     join(current, "skill-abc", "references", "a.md"));
   assert.equal(rebaseNativeSkillPath(skills, current, "skills\\skill-abc\\SKILL.md"), join(current, "skill-abc", "SKILL.md"));
+  assert.equal(rebaseNativeSkillPath(skills, current, "skills/private-skill/references/a.md"),
+    join(current, "skill-abc", "references", "a.md"));
   for (const path of ["skills/../skill-abc/SKILL.md", "../skills/skill-abc/SKILL.md", "x/skills/skill-abc/SKILL.md",
     "skills/other/SKILL.md", "skills/skill-abc/scripts/exec.js"]) {
     assert.throws(() => rebaseNativeSkillPath(skills, current, path), NativeSkillReadRejected, path);

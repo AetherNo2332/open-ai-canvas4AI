@@ -77,6 +77,7 @@ COPY --from=backend-build /out/yingce-backend /usr/local/bin/yingce-backend
 COPY --from=backend-build /out/migrate-schema /usr/local/bin/migrate-schema
 COPY --from=backend-build /out/migrate-sqlite-postgres /usr/local/bin/migrate-sqlite-postgres
 COPY --from=payment-package-smoke /app/plugin-packages /app/plugin-packages
+RUN chmod -R a+rX /app/plugin-packages
 
 USER app
 EXPOSE 8080

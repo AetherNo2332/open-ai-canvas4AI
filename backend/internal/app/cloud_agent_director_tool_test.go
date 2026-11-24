@@ -58,6 +58,64 @@ func directorSceneDocument(t *testing.T) string {
 	return string(raw)
 }
 
+func directorWorldSceneDocument(t *testing.T) (string, string) {
+	t.Helper()
+	scene, err := cloudAgentPrevisSceneCreateTemplate(cloudAgentPrevisSceneCreateArgs{SceneID: "scene", Title: "长街", TemplateID: "dialogue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scene["markers"] = []any{
+		map[string]any{"id": "marker-a", "label": "A", "position": []any{-4.0, 0.0, 2.0}},
+		map[string]any{"id": "marker-b", "label": "B", "position": []any{6.0, 0.0, -3.0}},
+	}
+	actorID := ""
+	for _, object := range creationMaps(scene["objects"]) {
+		if stringValue(object["kind"]) == "actor" {
+			actorID = stringValue(object["id"])
+			break
+		}
+	}
+	if actorID == "" {
+		t.Fatal("dialogue template has no actor")
+	}
+	node := map[string]any{"id": "shot-node", "type": "video", "title": "镜头 1", "position": map[string]any{"x": 0, "y": 0}, "width": 520, "height": 340,
+		"metadata": map[string]any{"workflowKind": "shot", "previsSceneId": "scene", "previsShotId": "scene-shot-1", "status": "idle"}}
+	raw, _ := json.Marshal(map[string]any{"nodes": []any{node}, "connections": []any{}, "previsScenes": []any{scene}})
+	return string(raw), actorID
+}
+
+func directorPathSceneDocument(t *testing.T) (string, string, string) {
+	t.Helper()
+	raw, actorID := directorWorldSceneDocument(t)
+	doc := mustCreationDocument(t, raw)
+	scene, ok := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	if !ok {
+		t.Fatal("path fixture scene missing")
+	}
+	pathID := "path-1"
+	scene["paths"] = []any{map[string]any{
+		"id": pathID, "label": "路径1",
+		"points": []any{[]any{-4.0, 0.0, 0.0}, []any{0.0, 1.2, 1.0}, []any{5.0, 0.0, 3.0}},
+	}}
+	payload, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(payload), actorID, pathID
+}
+
+func appendDirectorCall(t *testing.T, s *Service, run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) (*model.CloudAgentExecution, *cloudAgentRuntime) {
+	t.Helper()
+	state.Calls = append(state.Calls, call)
+	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": "", "tool_calls": []cloudAgentCall{call}})
+	if err := s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return reloadPiRun(t, s, run.ID)
+}
+
 func directorEvents(state *cloudAgentRuntime, kind string) []CloudAgentEvent {
 	out := []CloudAgentEvent{}
 	for _, event := range state.Events {
@@ -113,6 +171,194 @@ func TestDirectorToolSchemaSingleEntry(t *testing.T) {
 	}
 	if cloudAgentToolCategory("director") == "" {
 		t.Fatal("director needs a tool category")
+	}
+}
+
+func TestDirectorCatalogTravelApprovalAndReadBack(t *testing.T) {
+	payload, actorID := directorWorldSceneDocument(t)
+	readCall := directorTestCall("director-read-catalog", map[string]any{"action": "read"})
+	s, run, state := directorFixture(t, "request_approval", payload, readCall)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	readResult := directorToolMessage(t, state, readCall.ID)
+	if len(creationMaps(readResult["scenes"])) != 1 || numberValue(readResult["count"], 0) != 1 {
+		t.Fatalf("directory read missing scene: %#v", readResult)
+	}
+
+	sceneReadCall := directorTestCall("director-read-scene", map[string]any{"action": "read", "sceneId": "scene"})
+	sceneRead, err := cloudAgentDirectorRead(s.repo, "user", run.CanvasID, sceneReadCall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sceneReadMap := sceneRead.(map[string]any)
+	snapshotHash := stringValue(sceneReadMap["snapshotHash"])
+	if snapshotHash == "" {
+		t.Fatal("scene read missing snapshot hash")
+	}
+	catalog, _ := sceneReadMap["catalog"].(map[string]any)
+	props, _ := catalog["props"].(map[string]string)
+	if !strings.Contains(props["古风建筑"], "ancient_house") || !strings.Contains(props["花草树木"], "tree_willow") {
+		t.Fatalf("scene read catalog incomplete: %#v", catalog)
+	}
+
+	patchCall := directorTestCall("director-patch-world", map[string]any{
+		"action":            "apply_patch",
+		"sceneId":           "scene",
+		"expectedSceneHash": snapshotHash,
+		"patch": map[string]any{"operations": []map[string]any{
+			{"type": "world_update", "id": "scene", "weather": "snow", "timeOfDay": 6.0},
+			{"type": "object_add", "id": "willow", "kind": "prop", "propId": "tree_willow", "position": []float64{3, 0, 2}},
+			{"type": "object_array_add", "id": "house", "propId": "ancient_house", "count": 2, "position": []float64{-8, 0, -2}},
+			{"type": "actor_travel", "id": actorID, "travelStyle": "run", "fromMarker": "A", "toMarker": "B", "time": 0.5, "duration": 2.0},
+		}},
+	})
+	state.Calls = append(state.Calls, patchCall)
+	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": "", "tool_calls": []cloudAgentCall{patchCall}})
+	if err := s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	before, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJSON := before.PayloadJSON
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if run.Status != "waiting_approval" || state.Approval == nil {
+		t.Fatalf("catalog patch must wait for approval: status=%s approval=%v", run.Status, state.Approval)
+	}
+	unchanged, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.PayloadJSON != beforeJSON {
+		t.Fatal("canvas changed before approval")
+	}
+	if err := s.DecideCloudAgentApproval("user", run.ID, state.Approval.ID, "approve", ""); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if run.Status == "waiting_approval" || state.Approval != nil {
+		t.Fatalf("approved patch did not finish: status=%s approval=%v", run.Status, state.Approval)
+	}
+
+	updated, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := mustCreationDocument(t, updated.PayloadJSON)
+	scene, ok := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	if !ok {
+		t.Fatal("patched scene missing")
+	}
+	world, _ := scene["world"].(map[string]any)
+	if stringValue(world["weather"]) != "snow" || numberValue(world["timeOfDay"], 0) != 6 {
+		t.Fatalf("world fields not persisted: %#v", world)
+	}
+	objects := creationMaps(scene["objects"])
+	if willow := cloudAgentPrevisFindByID(objects, "willow"); willow == nil || stringValue(willow["propId"]) != "tree_willow" {
+		t.Fatalf("prop not persisted: %#v", willow)
+	}
+	if house2 := cloudAgentPrevisFindByID(objects, "house-2"); house2 == nil || stringValue(house2["propId"]) != "ancient_house" {
+		t.Fatalf("array item not persisted: %#v", house2)
+	}
+	actor := cloudAgentPrevisFindByID(objects, actorID)
+	if actor == nil || len(creationMaps(actor["travels"])) != 1 || len(creationMaps(actor["keyframes"])) != 2 {
+		t.Fatalf("actor travel not persisted: %#v", actor)
+	}
+	markers, _ := scene["markers"].([]any)
+	if len(markers) != 2 {
+		t.Fatalf("markers changed during Agent patch: %#v", scene["markers"])
+	}
+
+	readBackRaw, err := cloudAgentDirectorRead(s.repo, "user", run.CanvasID, sceneReadCall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readBack := readBackRaw.(map[string]any)
+	if stringValue(readBack["snapshotHash"]) == snapshotHash {
+		t.Fatal("read-back snapshot hash did not advance")
+	}
+	projection, _ := readBack["scene"].(map[string]any)
+	projectedObjects, _ := projection["objects"].([]map[string]any)
+	foundWillow, foundTravel := false, false
+	for _, object := range projectedObjects {
+		if object["id"] == "willow" {
+			foundWillow = object["propId"] == "tree_willow"
+		}
+		if object["id"] == actorID && len(creationMaps(object["travels"])) == 1 {
+			foundTravel = true
+		}
+	}
+	if !foundWillow || !foundTravel {
+		t.Fatalf("read-back projection mismatch: willow=%v travel=%v objects=%#v", foundWillow, foundTravel, projectedObjects)
+	}
+}
+
+func TestDirectorInvalidPatchKeepsRunRecoverable(t *testing.T) {
+	payload, actorID := directorWorldSceneDocument(t)
+	doc := mustCreationDocument(t, payload)
+	scene, ok := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	if !ok {
+		t.Fatal("scene fixture missing")
+	}
+	for _, shot := range creationMaps(scene["shots"]) {
+		if stringValue(shot["id"]) == stringValue(scene["activeShotId"]) {
+			shot["duration"] = 3.0
+		}
+	}
+	payloadRaw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := directorTestCall("director-bad-keyframe-time", map[string]any{
+		"action":            "apply_patch",
+		"sceneId":           "scene",
+		"expectedSceneHash": creationHash(scene),
+		"patch": map[string]any{"operations": []map[string]any{{
+			"type": "object_keyframe_upsert",
+			"id":   actorID,
+			"time": 3.05,
+		}}},
+	})
+	s, run, state := directorFixture(t, "request_approval", string(payloadRaw), call)
+	before, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if run.Status != "running" || state.Approval != nil || state.CallIndex != 1 {
+		t.Fatalf("invalid patch terminated the run: status=%s approval=%v callIndex=%d", run.Status, state.Approval, state.CallIndex)
+	}
+	failed := directorEvents(state, "tool_failed")
+	if len(failed) != 1 {
+		t.Fatalf("expected one recoverable tool failure: %+v", state.Events)
+	}
+	payloadMap, _ := failed[0].Payload["result"].(map[string]any)
+	retry, _ := payloadMap["retry"].(map[string]any)
+	if payloadMap["field"] != "operations[0]" || payloadMap["errorClass"] != cloudAgentToolErrorSchemaError || retry["status"] != "retrying" {
+		t.Fatalf("unexpected recoverable receipt: %+v", payloadMap)
+	}
+	after, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PayloadJSON != before.PayloadJSON {
+		t.Fatal("invalid patch changed the canvas")
 	}
 }
 
@@ -173,6 +419,209 @@ func TestDirectorReadAllowedReadOnly(t *testing.T) {
 	canvas, _ := s.repo.CanvasProjectForUser("user", run.CanvasID)
 	if strings.Contains(canvas.PayloadJSON, "previsScenes\":[{") {
 		t.Fatal("read_only director wrote the canvas")
+	}
+}
+
+// 走真实 director 工具链：先读用户画的参考轨迹，再申请写入并审批，最后回读路径与关键帧。
+func TestDirectorPathReadApprovalAndReadBack(t *testing.T) {
+	payload, actorID, pathID := directorPathSceneDocument(t)
+	readCall := directorTestCall("director-path-read", map[string]any{"action": "read", "sceneId": "scene"})
+	s, run, state := directorFixture(t, "request_approval", payload, readCall)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	readResult := directorToolMessage(t, state, readCall.ID)
+	projection, _ := readResult["scene"].(map[string]any)
+	paths := creationMaps(projection["paths"])
+	if len(paths) != 1 || paths[0]["id"] != pathID || paths[0]["label"] != "路径1" {
+		t.Fatalf("director read did not project the sketch path: %#v", projection["paths"])
+	}
+	snapshotHash := stringValue(readResult["snapshotHash"])
+	if snapshotHash == "" {
+		t.Fatal("director read did not return a scene snapshot hash")
+	}
+
+	patchCall := directorTestCall("director-path-patch", map[string]any{
+		"action":            "apply_patch",
+		"sceneId":           "scene",
+		"expectedSceneHash": snapshotHash,
+		"patch": map[string]any{"operations": []map[string]any{{
+			"type": "object_motion_path_set", "id": actorID, "pathId": pathID, "duration": 3.0, "easing": "smooth",
+		}}},
+	})
+	run, state = appendDirectorCall(t, s, run, state, patchCall)
+	before, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJSON := before.PayloadJSON
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if run.Status != "waiting_approval" || state.Approval == nil {
+		t.Fatalf("path write must wait for approval: status=%s approval=%v", run.Status, state.Approval)
+	}
+	unchanged, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.PayloadJSON != beforeJSON {
+		t.Fatal("path write changed the canvas before approval")
+	}
+	if err := s.DecideCloudAgentApproval("user", run.ID, state.Approval.ID, "approve", ""); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if state.Approval != nil || run.Status == "waiting_approval" {
+		t.Fatalf("approved path write did not settle: status=%s approval=%v", run.Status, state.Approval)
+	}
+
+	stored, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := mustCreationDocument(t, stored.PayloadJSON)
+	scene, ok := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	if !ok {
+		t.Fatal("path scene disappeared after approval")
+	}
+	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), actorID)
+	motionPath, ok := actor["motionPath"].(map[string]any)
+	if !ok || len(creationAnyList(motionPath["points"])) != 3 || len(creationMaps(actor["keyframes"])) < 2 {
+		t.Fatalf("approved path was not persisted: %#v", actor)
+	}
+	if numberValue(motionPath["duration"], 0) != 3 || stringValue(motionPath["easing"]) != "smooth" {
+		t.Fatalf("path timing was not persisted: %#v", motionPath)
+	}
+
+	readBackRaw, err := cloudAgentDirectorRead(s.repo, "user", run.CanvasID, directorTestCall("director-path-read-back", map[string]any{"action": "read", "sceneId": "scene"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readBack := readBackRaw.(map[string]any)
+	if stringValue(readBack["snapshotHash"]) == snapshotHash {
+		t.Fatal("read-back snapshot hash did not advance")
+	}
+	readBackProjection, _ := readBack["scene"].(map[string]any)
+	readBackObjects, _ := readBackProjection["objects"].([]map[string]any)
+	found := false
+	for _, object := range readBackObjects {
+		if object["id"] != actorID {
+			continue
+		}
+		path, _ := object["motionPath"].(map[string]any)
+		found = path != nil && numberValue(path["duration"], 0) == 3 && path["points"] != nil
+	}
+	if !found {
+		t.Fatalf("director read-back did not expose the persisted motion path: %#v", readBackObjects)
+	}
+}
+
+// pathId 无效时补丁在审批前失败，不能留下前一半操作或批准入口。
+func TestDirectorInvalidPathKeepsSceneIntact(t *testing.T) {
+	payload, actorID, pathID := directorPathSceneDocument(t)
+	readCall := directorTestCall("director-invalid-path-read", map[string]any{"action": "read", "sceneId": "scene"})
+	s, run, state := directorFixture(t, "request_approval", payload, readCall)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	snapshotHash := stringValue(directorToolMessage(t, state, readCall.ID)["snapshotHash"])
+	before, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJSON := before.PayloadJSON
+	badPatch := directorTestCall("director-invalid-path-patch", map[string]any{
+		"action":            "apply_patch",
+		"sceneId":           "scene",
+		"expectedSceneHash": snapshotHash,
+		"patch": map[string]any{"operations": []map[string]any{
+			{"type": "object_add", "id": "partial-write", "kind": "prop", "propId": "tree_willow"},
+			{"type": "object_motion_path_set", "id": actorID, "pathId": pathID + "-missing"},
+		}},
+	})
+	run, state = appendDirectorCall(t, s, run, state, badPatch)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if state.Approval != nil || run.Status == "waiting_approval" {
+		t.Fatalf("invalid path must fail before approval: status=%s approval=%v", run.Status, state.Approval)
+	}
+	if len(directorEvents(state, "tool_failed")) == 0 {
+		t.Fatal("invalid path did not produce a failed tool receipt")
+	}
+	after, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PayloadJSON != beforeJSON || strings.Contains(after.PayloadJSON, "partial-write") {
+		t.Fatal("failed path patch partially wrote the canvas")
+	}
+	doc := mustCreationDocument(t, after.PayloadJSON)
+	scene, _ := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), actorID)
+	if actor == nil {
+		t.Fatal("actor disappeared after failed path patch")
+	}
+	if actor["motionPath"] != nil {
+		t.Fatalf("failed path patch left a motion path behind: %#v", actor)
+	}
+}
+
+// 只读会话可以读真实路径，但同一路径写入在审批前就被拒绝，画布保持不变。
+func TestDirectorPathWriteRejectedReadOnly(t *testing.T) {
+	payload, actorID, pathID := directorPathSceneDocument(t)
+	readCall := directorTestCall("director-readonly-path-read", map[string]any{"action": "read", "sceneId": "scene"})
+	s, run, state := directorFixture(t, "read_only", payload, readCall)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	snapshotHash := stringValue(directorToolMessage(t, state, readCall.ID)["snapshotHash"])
+	before, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJSON := before.PayloadJSON
+	patchCall := directorTestCall("director-readonly-path-patch", map[string]any{
+		"action":            "apply_patch",
+		"sceneId":           "scene",
+		"expectedSceneHash": snapshotHash,
+		"patch": map[string]any{"operations": []map[string]any{{
+			"type": "object_motion_path_set", "id": actorID, "pathId": pathID,
+		}}},
+	})
+	run, state = appendDirectorCall(t, s, run, state, patchCall)
+	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+		t.Fatal(err)
+	}
+	run, state = reloadPiRun(t, s, run.ID)
+	if state.Approval != nil || len(directorEvents(state, "tool_failed")) == 0 {
+		t.Fatalf("read-only path write was not rejected: approval=%v", state.Approval)
+	}
+	after, err := s.repo.CanvasProjectForUser("user", run.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PayloadJSON != beforeJSON {
+		t.Fatal("read-only path write changed the canvas")
+	}
+	doc := mustCreationDocument(t, after.PayloadJSON)
+	scene, _ := findPrevisScene(creationMaps(doc["previsScenes"]), "scene")
+	actor := cloudAgentPrevisFindByID(creationMaps(scene["objects"]), actorID)
+	if actor == nil {
+		t.Fatal("actor disappeared after read-only path write")
+	}
+	if actor["motionPath"] != nil {
+		t.Fatalf("read-only path write left a motion path behind: %#v", actor)
 	}
 }
 

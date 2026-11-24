@@ -237,7 +237,7 @@ func cloudAgentDirectorRead(repo *repository.Repository, userID, canvasID string
 		if nodeID != "" {
 			fields["nodeId"] = nodeID
 		}
-		fields["guidance"] = "安全摘要。修改用 director apply_patch 并把 snapshotHash 作为 expectedSceneHash；预演用 director preview。snapshotHash 只代表该场景。"
+		fields["guidance"] = "安全摘要。修改用 director apply_patch 并把 snapshotHash 作为 expectedSceneHash；预演用 director preview。snapshotHash 只代表该场景。路径、运镜和编辑规则按需用本轮原生 read 读取已启用 Skill 的主题文件。"
 	}
 	return result, nil
 }
@@ -255,16 +255,36 @@ type cloudAgentDirectorPlan struct {
 func prepareCloudAgentDirectorMutation(repo *repository.Repository, userID, canvasID, runID string, call cloudAgentCall) (*cloudAgentDirectorPlan, error) {
 	args, err := cloudAgentDirectorDecode(call)
 	if err != nil {
-		return nil, err
+		return nil, cloudAgentDirectorRepairError(err)
 	}
 	switch args.Action {
 	case "create_scene":
-		return prepareCloudAgentDirectorCreate(repo, userID, canvasID, runID, call, args)
+		plan, err := prepareCloudAgentDirectorCreate(repo, userID, canvasID, runID, call, args)
+		return plan, cloudAgentDirectorRepairError(err)
 	case "apply_patch":
-		return prepareCloudAgentDirectorPatch(repo, userID, canvasID, call, args)
+		plan, err := prepareCloudAgentDirectorPatch(repo, userID, canvasID, call, args)
+		return plan, cloudAgentDirectorRepairError(err)
 	default:
 		return nil, BadAuthRequest("director 写入只支持 create_scene 或 apply_patch")
 	}
+}
+
+// cloudAgentDirectorRepairError classifies deterministic 400/422 validation
+// rejections as repairable tool errors. Permission, quota, conflicts and
+// infrastructure failures retain their existing handling.
+func cloudAgentDirectorRepairError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var argumentErr *cloudAgentArgumentError
+	if errors.As(err, &argumentErr) {
+		return err
+	}
+	var appErr *AppError
+	if errors.As(err, &appErr) && appErr != nil && (appErr.Status == 400 || appErr.Status == 422) {
+		return &cloudAgentArgumentError{err}
+	}
+	return err
 }
 
 func prepareCloudAgentDirectorCreate(repo *repository.Repository, userID, canvasID, runID string, call cloudAgentCall, args cloudAgentDirectorArgs) (*cloudAgentDirectorPlan, error) {
@@ -433,11 +453,18 @@ func applyCloudAgentDirectorMutation(repo *repository.Repository, userID, canvas
 			return nil, nil, err
 		}
 	}
-	return plan, map[string]any{
+	result := map[string]any{
 		"action": plan.Args.Action, "canvasId": canvasID, "nodeId": plan.NodeID, "sceneId": plan.SceneID, "shotId": plan.ShotID,
 		"snapshotHash": mutation.ResultSnapshotHash, "canvasSnapshotHash": mutation.AfterSnapshotHash, "beforeCanvasSnapshotHash": mutation.BeforeSnapshotHash,
 		"committed": true, "directorOpened": true, "summary": cloudAgentDirectorApprovalPreview(plan).Description,
-	}, nil
+	}
+	if scene, ok := findPrevisScene(creationMaps(mutation.Document["previsScenes"]), plan.SceneID); ok {
+		if reviews := cloudAgentPrevisShotReviews(scene); len(reviews) > 0 {
+			result["review"] = reviews
+			result["reviewGuide"] = cloudAgentPrevisReviewGuide
+		}
+	}
+	return plan, result, nil
 }
 
 func cloudAgentDirectorOpenPayload(canvasID, nodeID, sceneID, shotID, action, requestID string) map[string]any {
