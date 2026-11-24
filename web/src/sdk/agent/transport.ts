@@ -1,6 +1,6 @@
 import type { TransportRequest, TransportResponse } from "../creation-platform/transport";
 
-export type AgentTransportRequest = Omit<TransportRequest, "method"> & { method: TransportRequest["method"] | "DELETE" };
+export type AgentTransportRequest = Omit<TransportRequest, "method"> & { method: TransportRequest["method"] | "DELETE" | "PATCH" };
 export type AgentTransport = {
     request(call: AgentTransportRequest): Promise<TransportResponse & { retryAfterMs?: number }>;
     openEvents(call: AgentTransportRequest): Promise<Response>;

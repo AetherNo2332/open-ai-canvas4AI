@@ -94,6 +94,10 @@ func registerAgentConversationQueueRoutes(r *gin.RouterGroup, svc *service.Servi
 		if !decodeAgentMessageBody(c, &input) {
 			return
 		}
+		if err := normalizeAgentRequestScopeFromQuery(c, svc, user.ID, &input.Request); err != nil {
+			failService(c, err)
+			return
+		}
 		if !agentMessageWriteAllowed(c, svc, user.ID) {
 			return
 		}

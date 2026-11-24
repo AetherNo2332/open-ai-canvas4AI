@@ -209,3 +209,71 @@ test("SDK resumes SSE with durable seq and aborts only its subscription", async 
     await client.cancelRun("run/1");
     expect(requests).toEqual(["/agent/runs/run%2F1/cancel"]);
 });
+
+test("bound SDK scope is frozen into body and query and conflicts fail before transport", async () => {
+    const calls: AgentTransportRequest[] = [];
+    const transport: AgentTransport = {
+        async request(call) {
+            calls.push(structuredClone(call));
+            return { status: 200, body: { code: 0, data: { run: { id: "run-platform" } } } };
+        },
+        async openEvents() {
+            throw new Error("unused");
+        },
+    };
+    const client = createAgentClient({
+        transport,
+        scope: { type: "platform", id: "self" },
+        agentDefinitionId: "platform.default",
+    });
+    const explicit = {
+        scope: { type: "platform" as const, id: "self" as const },
+        prompt: "你好",
+        permissionMode: "read_only" as const,
+        idempotencyKey: "platform-key-1",
+    };
+    await client.startRun(explicit);
+    expect(calls[0].path).toBe("/agent/runs?scopeType=platform&scopeId=self&agentDefinitionId=platform.default");
+    expect(calls[0].body).toMatchObject({ scope: { type: "platform", id: "self" }, agentDefinitionId: "platform.default" });
+    await expect(client.startRun({ ...explicit, scope: { type: "drama", id: "p1" } })).rejects.toMatchObject({ reason: "agent_scope_invalid" });
+    expect(calls).toHaveLength(1);
+});
+
+test("SDK exposes scoped capabilities, complete queue and typed run pagination", async () => {
+    const calls: AgentTransportRequest[] = [];
+    const client = createAgentClient({
+        transport: {
+            async request(call) {
+                calls.push(call);
+                if (call.path.startsWith("/agent/capabilities")) {
+                    return {
+                        status: 200,
+                        body: { code: 0, data: { version: 3, permissionModes: ["read_only"], contextScopes: ["platform"], skills: false, writeTools: false, availability: { configured: true, readyWorkers: 1, queueReason: "", reason: "" } } },
+                    };
+                }
+                if (call.path.includes("/queue/")) return { status: 200, body: { code: 0, data: {} } };
+                if (call.path.includes("/queue")) return { status: 200, body: { code: 0, data: { revision: 2, paused: false, items: [] } } };
+                if (call.path.startsWith("/agent/ui-settings")) return { status: 200, body: { code: 0, data: { revision: 1, defaultSendMode: "queue" } } };
+                if (call.path.startsWith("/agent/director-previews/pending")) return { status: 200, body: { code: 0, data: { items: [] } } };
+                return { status: 200, body: { code: 0, data: { run: { id: "run-1" } } } };
+            },
+            async openEvents() {
+                throw new Error("unused");
+            },
+        },
+        scope: { type: "platform", id: "self" },
+        agentDefinitionId: "platform.default",
+    });
+    const capabilities = await client.getCapabilities();
+    expect(capabilities.permissionModes).toEqual(["read_only"]);
+    await client.updateQueuedMessage("c1", "m1", { revision: 1, prompt: "改" });
+    await client.cancelQueuedMessage("c1", "m1", 1);
+    await client.updateConversationQueue("c1", { revision: 1, action: "pause" });
+    await client.getUISettings();
+    await client.updateUISettings({ revision: 1, defaultSendMode: "queue" });
+    expect(await client.listPendingDirectorPreviews()).toEqual({ items: [] });
+    await client.getRun("r1", undefined, { sinceSeq: 4, eventLimit: 50, fromStart: false });
+    expect(calls[0].path).toBe("/agent/capabilities?scopeType=platform&scopeId=self&agentDefinitionId=platform.default");
+    expect(calls.at(-1)?.path).toBe("/agent/runs/r1?sinceSeq=4&eventLimit=50&fromStart=false&scopeType=platform&scopeId=self&agentDefinitionId=platform.default");
+    expect(calls.some((call) => call.path.includes("/queue/m1?revision=1"))).toBe(true);
+});

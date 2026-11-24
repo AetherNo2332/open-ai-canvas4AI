@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import { ConfigProvider } from "antd";
 
@@ -11,20 +11,20 @@ import { preloadWorkspaceNavigationPages } from "@/lib/workspace-route-modules";
 import { useGlobalAgentStore } from "@/stores/use-global-agent-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { GlobalAgentPanelBoundary } from "./global-agent-panel-boundary";
+import { AgentPanelHost } from "@/components/agent/agent-panel-host";
+import { closeAgentPanelSurface } from "@/stores/use-agent-panel-surface";
 import "@/styles/workspace-product.css";
 import "@/styles/workspace-menus.css";
 
 const workspaceTheme = getWorkspaceAntThemeConfig();
-// 平台唯一的 Agent 面板按需加载，不拖慢首屏；画布编辑器只发布画布上下文，不再自己渲染面板。
-const GlobalAgentPanel = lazy(() => import("@/components/canvas/canvas-cloud-agent-panel").then((module) => ({ default: module.CanvasCloudAgentPanel })));
-
 export default function UserLayout({ children }: { children: ReactNode }) {
     const { pathname } = useLocation();
     const adminWorkspace = pathname === "/admin" || pathname.startsWith("/admin/");
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);
     const canvasEditor = /^\/canvas\/[^/]+(?:\/|$)/.test(pathname);
     const productWorkspace = !adminWorkspace && !canvasEditor;
-    const userId = useUserStore((state) => state.user?.id);
+    const userId = useUserStore((state) => (state.hydrated ? state.user?.id : undefined));
+    useLayoutEffect(() => () => closeAgentPanelSurface(), [userId]);
     // Agent 停靠在画布右侧时，工作区让出同样的宽度，画布、顶栏和角落控件都不被遮挡。
     const agentDock = useAgentPanelDock();
     const agentDocked = Boolean(userId) && canvasEditor && agentDock.active;
@@ -62,9 +62,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
     // 所有登录页面共用同一个面板实例：跨路由不卸载，对话、运行和事件流都不中断。
     const globalAgent = userId ? (
         <GlobalAgentPanelBoundary key={userId}>
-            <Suspense fallback={null}>
-                <GlobalAgentPanel />
-            </Suspense>
+            <AgentPanelHost userId={userId} />
         </GlobalAgentPanelBoundary>
     ) : null;
 

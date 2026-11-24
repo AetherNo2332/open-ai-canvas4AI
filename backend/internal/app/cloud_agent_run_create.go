@@ -341,22 +341,32 @@ func (s *Service) buildCloudAgentRunPrompt(draft *cloudAgentRunDraft) error {
 	preferences := agentSharedPreferencesPrompt(draft.contextSnapshot.Preferences)
 	system += preferences
 	cloudAgentRecordSystemSegment(&policy, "sharedPreferences", "账户共享输出偏好", preferences)
-	canvasRules := workspacePrompt(&draft.workspace)
-	system += canvasRules
-	cloudAgentRecordSystemSegment(&policy, "canvasRules", "当前画布规则", canvasRules)
-	system += subagentSystemPrompt(req.subagent)
-	system += "\n每步最多提交一个写工具调用（可包含多项操作）。等待回执后再写；快照冲突先重读，成功后使用回执中的新快照或重新读取。\n"
+	businessType := agentBusinessScope(req).Type
+	if businessType == "canvas" {
+		canvasRules := workspacePrompt(&draft.workspace)
+		system += canvasRules
+		cloudAgentRecordSystemSegment(&policy, "canvasRules", "当前画布规则", canvasRules)
+		system += subagentSystemPrompt(req.subagent)
+		system += "\n每步最多提交一个写工具调用（可包含多项操作）。等待回执后再写；快照冲突先重读，成功后使用回执中的新快照或重新读取。\n"
+	}
 	draft.system, draft.policy = system, policy
 	draft.state = cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: draft.linkedParentID, Fingerprint: draft.fingerprint, CreativeAnchor: draft.creativeAnchor, Plan: draft.inheritedPlan, Skills: draft.skillSnapshots, Context: &draft.contextSnapshot, Capabilities: &draft.capabilities, Policy: policy, Subagent: req.subagent}
-	draft.state.Workspace = &draft.workspace
-	if agentBusinessScope(req).Type == "canvas" {
+	if businessType == "canvas" {
+		draft.state.Workspace = &draft.workspace
 		draft.state.Rules = append(draft.state.Rules, AgentRuleSnapshot{Source: "canvas", Revision: draft.workspace.Revision, Text: draft.workspace.AgentsMD})
-	} else if agentBusinessScope(req).Type == "drama" {
+	} else if businessType == "drama" {
 		businessPolicy := "\n本轮是短剧项目的只读顾问。使用 read 的 drama:episode/<episodeId> 读取本项目剧集。输出均为待用户采用的提议；不能宣称已修改剧本、已提交生成或已采用。现有短剧后端调度器是作业与采用的唯一权威。\n"
 		system += businessPolicy
 		draft.state.Rules = []AgentRuleSnapshot{{Source: "drama", Revision: 1, Text: businessPolicy}}
 		draft.system = system
 		cloudAgentRecordSystemSegment(&policy, "business", "短剧顾问边界", businessPolicy)
+		draft.policy, draft.state.Policy = policy, policy
+	} else if businessType == AgentPlatformBusinessType {
+		businessPolicy := "\n本轮是普通创作平台对话。只使用已披露的运行控制工具；没有画布、短剧、文件、媒体生成或业务读写权限。不要把普通聊天描述成已修改作品或已提交任务。\n"
+		system += businessPolicy
+		draft.state.Rules = []AgentRuleSnapshot{{Source: AgentPlatformBusinessType, Revision: 1, Text: businessPolicy}}
+		draft.system = system
+		cloudAgentRecordSystemSegment(&policy, "business", "普通平台对话边界", businessPolicy)
 		draft.policy, draft.state.Policy = policy, policy
 	}
 	canonical := cloudAgentCanonicalWithTools(system, draft.history, req.Prompt, req, draft.tools)
@@ -486,12 +496,16 @@ func (s *Service) admitCloudAgentRun(draft *cloudAgentRunDraft) (*CloudAgentRun,
 //   - 占位任务：承载本轮报价预留，worker 永不领取。
 func (draft *cloudAgentRunDraft) firstStepRuntime(stepLimits cloudAgentStepLimits) cloudAgentRuntime {
 	req := draft.req
+	var workspace *WorkspaceSnapshot
+	if agentBusinessScope(req).Type == "canvas" {
+		workspace = &draft.workspace
+	}
 	return cloudAgentRuntime{
 		Context:           &draft.contextSnapshot,
 		Capabilities:      &draft.capabilities,
 		ToolSchemaVersion: cloudAgentToolSchemaVersion,
 		Subagent:          req.subagent,
-		Workspace:         &draft.workspace,
+		Workspace:         workspace,
 		Rules:             draft.state.Rules,
 		RuntimeRunID:      draft.id, Request: req, Policy: draft.policy, ParentID: draft.linkedParentID, Fingerprint: draft.fingerprint,
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: draft.creativeAnchor, TextHistory: draft.history, Skills: draft.skillSnapshots,

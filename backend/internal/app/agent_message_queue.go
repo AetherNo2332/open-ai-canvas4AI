@@ -112,6 +112,9 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 	if err := s.requireAgentQueueOwner(userID, conversationID); err != nil {
 		return nil, err
 	}
+	if err := normalizeAgentRequestScope(userID, &input.Request); err != nil {
+		return nil, err
+	}
 	if input.Mode != "interject" && input.Mode != "queue" {
 		return nil, BadAuthRequest("发送方式无效")
 	}
@@ -174,7 +177,8 @@ func validateAgentMessageRequest(input *AgentConversationMessageRequest) error {
 	incoming := input.Request
 	input.Request = CloudAgentRequest{
 		CanvasID: incoming.CanvasID, Scope: incoming.Scope, AgentDefinitionID: incoming.AgentDefinitionID,
-		Prompt: incoming.Prompt, IdempotencyKey: incoming.IdempotencyKey, FocusNodeIDs: incoming.FocusNodeIDs,
+		DramaEpisodeID: incoming.DramaEpisodeID,
+		Prompt:         incoming.Prompt, IdempotencyKey: incoming.IdempotencyKey, FocusNodeIDs: incoming.FocusNodeIDs,
 		PermissionMode: "read_only",
 	}
 	for _, validate := range []func(*CloudAgentRequest) error{validateAgentBusinessScope, validateCloudAgentRequestBasics, validateCloudAgentRequestFocus} {
@@ -200,11 +204,8 @@ func enqueueAgentConversationMessage(tx *repository.Repository, userID, conversa
 	if !errors.Is(lookup, gorm.ErrRecordNotFound) {
 		return lookup
 	}
-	immediateInterjection, err := agentMessageSkillDelivery(latest, &input, row)
+	immediateInterjection, err := prepareAgentMessageDelivery(tx, userID, conversationID, &input, row, q, latest)
 	if err != nil {
-		return err
-	}
-	if err := checkAgentMessageQuestion(tx, userID, conversationID, input, row, q, latest); err != nil {
 		return err
 	}
 	usage, err := tx.UserStorageUsage(userID)
@@ -239,62 +240,77 @@ func enqueueAgentConversationMessage(tx *repository.Repository, userID, conversa
 	return nil
 }
 
-func agentMessageSkillDelivery(latest *model.CloudAgentExecution, input *AgentConversationMessageRequest, row *model.AgentQueuedMessage) (bool, error) {
-	if input.Mode != "interject" || !cloudAgentAcceptsInterjection(latest.Status) {
-		return false, nil
-	}
-	if input.InheritRunConfiguration {
-		return true, nil
-	}
-	needsRun, err := agentMessageNeedsNewSkillRun(latest, input.Request.SkillIDs)
-	if needsRun && input.ReplyToQuestionID == "" {
-		input.Mode, row.Mode = "queue", "queue"
-	}
-	return !needsRun, err
+type agentMessageRunConfig struct {
+	Request CloudAgentRequest `json:"request"`
+	Skills  []cloudAgentSkill `json:"skills"`
 }
 
-func agentMessageNeedsNewSkillRun(latest *model.CloudAgentExecution, skillIDs []string) (bool, error) {
-	if len(skillIDs) == 0 {
-		return false, nil
+func (frozen agentMessageRunConfig) changesEpisode(request CloudAgentRequest) bool {
+	return request.DramaEpisodeID != "" && request.DramaEpisodeID != frozen.Request.DramaEpisodeID
+}
+
+func (frozen agentMessageRunConfig) newRunReason(request CloudAgentRequest, inherit bool) string {
+	if frozen.changesEpisode(request) {
+		return "该消息切换了分析剧集，需等待当前轮次完成后发送"
 	}
-	var frozen struct {
-		Skills []cloudAgentSkill `json:"skills"`
+	if inherit {
+		return ""
 	}
-	if err := json.Unmarshal([]byte(latest.StateJSON), &frozen); err != nil {
-		return false, err
-	}
-	for _, id := range skillIDs {
+	for _, id := range request.SkillIDs {
 		if !slices.ContainsFunc(frozen.Skills, func(skill cloudAgentSkill) bool {
 			return skill.ID == id && skill.Source == skills.SkillSourceUser
 		}) {
-			return true, nil
+			return "该消息包含新选技能，需等待当前轮次完成后发送"
 		}
 	}
-	return false, nil
+	return ""
 }
 
-// checkAgentMessageQuestion checks the expected turn and canvas, the pending
-// question gate, answer staleness and the interjection length limit.
-func checkAgentMessageQuestion(tx *repository.Repository, userID, conversationID string, input AgentConversationMessageRequest, row *model.AgentQueuedMessage, q *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+func prepareAgentMessageDelivery(tx *repository.Repository, userID, conversationID string, input *AgentConversationMessageRequest, row *model.AgentQueuedMessage, q *model.AgentConversationQueue, latest *model.CloudAgentExecution) (bool, error) {
 	if latest.ID != input.ExpectedRunID {
-		return repository.ErrCloudAgentStaleParent
+		return false, repository.ErrCloudAgentStaleParent
 	}
 	if latest.ScopeType != "" &&
 		(AgentBusinessScope{Type: latest.ScopeType, ID: latest.ScopeID}) != agentBusinessScope(input.Request) {
-		return kernel.Forbidden("不能跨业务对象追加 Agent 消息")
+		return false, kernel.Forbidden("不能跨业务对象追加 Agent 消息")
 	}
-	// Queue locking loads the bounded execution row without its transcript.
-	// Only the persisted request is needed to check the immutable business ID.
-	var state struct {
-		Request CloudAgentRequest `json:"request"`
+	// The queue lock loads the checkpoint without its transcript.
+	var frozen agentMessageRunConfig
+	if err := json.Unmarshal([]byte(latest.StateJSON), &frozen); err != nil {
+		return false, kernel.BadAuthRequest("Agent 会话业务范围无法读取")
 	}
-	if err := json.Unmarshal([]byte(latest.StateJSON), &state); err != nil {
-		return kernel.BadAuthRequest("Agent 会话业务范围无法读取")
+	if agentBusinessScope(frozen.Request) != agentBusinessScope(input.Request) {
+		return false, kernel.Forbidden("不能跨业务对象追加 Agent 消息")
 	}
-	if agentBusinessScope(state.Request) != agentBusinessScope(input.Request) {
-		return kernel.Forbidden("不能跨业务对象追加 Agent 消息")
+	if input.ReplyToQuestionID != "" && frozen.changesEpisode(input.Request) {
+		return false, &kernel.AppError{Status: 409, Code: 409, Reason: "agent_question_stale", Message: "回答问题时不能切换分析剧集"}
 	}
-	if q.AwaitingQuestionID != "" && input.Mode == "interject" && (input.ReplyToQuestionID != q.AwaitingQuestionID || q.QuestionRunID != latest.ID) {
+	immediate := input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status)
+	if immediate && frozen.newRunReason(input.Request, input.InheritRunConfiguration) != "" {
+		immediate = false
+		if input.ReplyToQuestionID == "" {
+			input.Mode, row.Mode = "queue", "queue"
+		}
+	}
+	if err := checkAgentMessageQuestion(tx, userID, conversationID, input, q, latest.ID); err != nil {
+		return false, err
+	}
+	if input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status) && utf8.RuneCountInString(row.Prompt) > cloudAgentInterjectionMaxRunes {
+		return false, BadAuthRequest("插话内容超过 4000 字，请改为排队")
+	}
+	if input.InheritRunConfiguration {
+		return immediate, storeInheritedAgentMessageRequest(row, frozen.Request, input.Request)
+	}
+	if input.ReplyToQuestionID != "" && input.Request.DramaEpisodeID == "" && frozen.Request.DramaEpisodeID != "" {
+		request := input.Request
+		request.DramaEpisodeID = frozen.Request.DramaEpisodeID
+		return immediate, storeAgentMessageRequest(row, request)
+	}
+	return immediate, nil
+}
+
+func checkAgentMessageQuestion(tx *repository.Repository, userID, conversationID string, input *AgentConversationMessageRequest, q *model.AgentConversationQueue, latestID string) error {
+	if q.AwaitingQuestionID != "" && input.Mode == "interject" && (input.ReplyToQuestionID != q.AwaitingQuestionID || q.QuestionRunID != latestID) {
 		return repository.ErrAgentMessageQuestionPending
 	}
 	if input.ReplyToQuestionID != "" && input.ReplyToQuestionID != q.AwaitingQuestionID {
@@ -309,12 +325,6 @@ func checkAgentMessageQuestion(tx *repository.Repository, userID, conversationID
 			return errAgentQuestionAnswerPending
 		}
 	}
-	if input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status) && utf8.RuneCountInString(row.Prompt) > cloudAgentInterjectionMaxRunes {
-		return BadAuthRequest("插话内容超过 4000 字，请改为排队")
-	}
-	if input.InheritRunConfiguration {
-		return storeInheritedAgentMessageRequest(row, state.Request, input.Request)
-	}
 	return nil
 }
 
@@ -324,7 +334,14 @@ func storeInheritedAgentMessageRequest(row *model.AgentQueuedMessage, frozen, in
 	if incoming.FocusNodeIDs != nil {
 		frozen.FocusNodeIDs = incoming.FocusNodeIDs
 	}
-	raw, err := json.Marshal(frozen)
+	if incoming.DramaEpisodeID != "" {
+		frozen.DramaEpisodeID = incoming.DramaEpisodeID
+	}
+	return storeAgentMessageRequest(row, frozen)
+}
+
+func storeAgentMessageRequest(row *model.AgentQueuedMessage, request CloudAgentRequest) error {
+	raw, err := json.Marshal(request)
 	if err == nil {
 		row.RequestJSON = string(raw)
 	}
@@ -395,12 +412,12 @@ func (s *Service) UpdateAgentQueuedMessage(userID, conversationID, id string, in
 				if err := json.Unmarshal([]byte(row.RequestJSON), &request); err != nil {
 					return err
 				}
-				needsRun, err := agentMessageNeedsNewSkillRun(latest, request.SkillIDs)
-				if err != nil {
+				var frozen agentMessageRunConfig
+				if err := json.Unmarshal([]byte(latest.StateJSON), &frozen); err != nil {
 					return err
 				}
-				if needsRun {
-					return creationConflict("该消息包含新选技能，需等待当前轮次完成后发送")
+				if reason := frozen.newRunReason(request, false); reason != "" {
+					return creationConflict(reason)
 				}
 				if utf8.RuneCountInString(row.Prompt) > cloudAgentInterjectionMaxRunes {
 					return BadAuthRequest("插话内容超过 4000 字")

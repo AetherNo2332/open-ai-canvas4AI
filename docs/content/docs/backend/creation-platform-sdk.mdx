@@ -13,6 +13,8 @@ description: TypeScript 接入教程：传输注入、报价、幂等提交、�
 
 > **适用边界**：只接受**逻辑模型**（`model.logicalModelId`）或**系统渠道模型**（`model.channelId + model.modelKey`）。自定义渠道不在首版合同内，继续使用 `/api/tasks` 与 `/api/ai/custom`。完整 HTTP 合同见 [HTTP API 合同](/docs/backend/http-api)。
 
+Agent 会话和生成任务使用两套归属字段：Agent 的 `scope` 决定会话、历史、工具和对象授权；本 SDK 的 `business` 只决定生成任务归属与费用汇总。不要为了读取短剧或画布上下文把 `business` 当 Agent scope，也不要为了生成任务把 `scope` 写进本 SDK。普通平台聊天的 `platform/self` 同样不能作为本 SDK 的业务归属；短剧正式拆分继续作为短剧生成作业，而不是分析对话。
+
 ## 安装与导入
 
 SDK 位于 Web 应用源码内，不需要单独发布包：

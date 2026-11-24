@@ -28,6 +28,7 @@ const { createRoot } = await import("react-dom/client");
 const { AgentChatMessage, AgentMessageList, AgentChatComposer, agentChatRenderProbe } = await import("@/components/canvas/canvas-cloud-agent-chat-ui");
 const { sendAgentReplyOption } = await import("@/components/canvas/canvas-agent-reply-options");
 const { requestAgentPrefill, takeAgentPrefill, settleAgentPrefill, useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
+const { publishAgentPageContext } = await import("@/services/agent/business-context");
 const { canvasThemes } = await import("@/lib/canvas-theme");
 type Message = import("@/components/canvas/canvas-cloud-agent-chat-ui").CloudAgentChatMessage;
 
@@ -121,6 +122,16 @@ test("clicking a node chip focuses that node through the store callback", async 
 
 test("an option card submits through the global prefill path and is disabled while pending", async () => {
     useGlobalAgentStore.setState({ prefillRequest: null, panelUnavailable: false });
+    publishAgentPageContext({
+        owner: "agent-chat-ux",
+        routeKey: "/canvas/canvas-1",
+        declaration: { enabled: true, kind: "business", businessType: "canvas", agentDefinitionId: "canvas.default" },
+        status: "ready",
+        scope: { type: "canvas", id: "canvas-1" },
+        agentDefinitionId: "canvas.default",
+        displayName: "画布",
+    });
+    useGlobalAgentStore.getState().setCanvas({ canvasId: "canvas-1", nodeCount: 1, selectedNodeIds: [], references: [] });
     const outcome = sendAgentReplyOption({ canvasId: "canvas-1", userScope: "user-1", text: "先出分镜" });
     const request = useGlobalAgentStore.getState().prefillRequest;
     expect(request).toMatchObject({ canvasId: "canvas-1", userScope: "user-1", text: "先出分镜", autoSubmit: true });

@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"time"
 
 	"yingce/backend/internal/model"
 )
@@ -26,7 +27,7 @@ func (s *Service) cloudAgentExecutionOutput(userID string, identity cloudAgentRu
 	out := agentRunOutput(identity, initial)
 	out.ConversationID = firstNonEmpty(run.ConversationID, run.ID)
 	out.Status = run.Status
-	out.RuntimePhase, out.WaitReason = run.RuntimePhase, run.WaitReason
+	out.RuntimePhase, out.WaitKind, out.WaitID, out.WaitReason = run.RuntimePhase, run.WaitKind, run.WaitID, run.WaitReason
 	out.Revision, out.CleanupPending, out.FailureMessage = run.Revision, run.CleanupPending, run.FailureMessage
 	out.UpdatedAt = run.UpdatedAt
 	view := CloudAgentRunViewOptions{}
@@ -55,6 +56,7 @@ func (s *Service) cloudAgentExecutionOutput(userID string, identity cloudAgentRu
 		out.Approval = nil
 	}
 	out.Step = state.Step
+	out.PendingDirectorPreview = cloudAgentPendingDirectorPreview(run, &state)
 	out.SkillRuntimeMode = firstNonEmpty(state.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy)
 	if stateErr == nil && state.ActiveTaskID != "" && (run.Status == "running" || run.Status == "queued") {
 		active, err := s.repo.TaskForUser(userID, state.ActiveTaskID)
@@ -72,6 +74,27 @@ func (s *Service) cloudAgentExecutionOutput(userID string, identity cloudAgentRu
 	}
 	out.SpentCredits = cloudAgentRunSpentCredits(out.SpentCredits, orders)
 	return out, nil
+}
+
+func cloudAgentPendingDirectorPreview(run *model.CloudAgentExecution, state *cloudAgentRuntime) *CloudAgentPendingDirectorPreview {
+	if run == nil || state == nil {
+		return nil
+	}
+	return cloudAgentPendingDirectorPreviewFields(run, state.DirectorPreview)
+}
+
+func cloudAgentPendingDirectorPreviewFields(run *model.CloudAgentExecution, preview *cloudAgentDirectorPreview) *CloudAgentPendingDirectorPreview {
+	if run == nil || preview == nil || run.WaitKind != cloudAgentDirectorPreviewWaitKind || run.WaitID != preview.RequestID || cloudAgentRunTerminal(run.Status) {
+		return nil
+	}
+	if !time.Now().UTC().Before(preview.Deadline) {
+		return nil
+	}
+	return &CloudAgentPendingDirectorPreview{
+		RunID: run.ID, ConversationID: firstNonEmpty(run.ConversationID, run.ID), CanvasID: preview.CanvasID, Title: run.Title,
+		NodeID: preview.NodeID, SceneID: preview.SceneID, ShotID: preview.ShotID, RequestID: preview.RequestID,
+		Duration: preview.Duration, FPS: preview.FPS, Deadline: preview.Deadline,
+	}
 }
 
 func cloudAgentRunActiveMessage(state *cloudAgentRuntime, active *model.Task) map[string]string {

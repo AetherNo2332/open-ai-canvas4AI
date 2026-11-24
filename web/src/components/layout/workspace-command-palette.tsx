@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { openWorkspaceWallet } from "@/lib/workspace-wallet";
 import { useUserStore } from "@/stores/use-user-store";
 import { useTranslation } from "react-i18next";
+import { useAgentPageContext } from "@/services/agent/business-context";
 
 type PaletteEntry = {
     id: string;
@@ -26,6 +27,7 @@ export function WorkspaceCommandPalette({ open, onClose }: { open: boolean; onCl
     const [highlight, setHighlight] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const { t, i18n } = useTranslation();
+    const agentPage = useAgentPageContext();
     const entries = useMemo<PaletteEntry[]>(() => {
         const toolEntry = (slug: string, to?: string): PaletteEntry => {
             const tool = navigationTools.find((item) => item.slug === slug);
@@ -40,10 +42,10 @@ export function WorkspaceCommandPalette({ open, onClose }: { open: boolean; onCl
             toolEntry("skills", "/skills"),
             ...(features.creditsEnabled ? [{ ...toolEntry("wallet"), run: () => openWorkspaceWallet() }] : []),
             toolEntry("settings", "/settings"),
-            // 与 ⌘/Ctrl+J 相同：打开平台 Agent 面板。
-            { id: "agent", title: t("shell.palette.agent"), icon: Bot, run: () => useGlobalAgentStore.getState().openAgent() },
+            // 与 ⌘/Ctrl+J 相同：仅当前页面显式接入 Agent 时出现。
+            ...(agentPage.declaration.enabled ? [{ id: "agent", title: t("shell.palette.agent"), icon: Bot, run: () => useGlobalAgentStore.getState().openAgent() }] : []),
         ];
-    }, [features, t, i18n.language]);
+    }, [agentPage.declaration.enabled, features, t, i18n.language]);
 
     const filtered = useMemo(() => {
         const keyword = query.trim().toLowerCase();

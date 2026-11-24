@@ -99,6 +99,8 @@ type CloudAgentRun struct {
 	Status                 string              `json:"status"`
 	Revision               int64               `json:"revision"`
 	RuntimePhase           string              `json:"runtimePhase"`
+	WaitKind               string              `json:"waitKind,omitempty"`
+	WaitID                 string              `json:"waitId,omitempty"`
 	WaitReason             string              `json:"waitReason,omitempty"`
 	CleanupPending         bool                `json:"cleanupPending,omitempty"`
 	FailureMessage         string              `json:"failureMessage,omitempty"`
@@ -116,15 +118,34 @@ type CloudAgentRun struct {
 	// 增量读取的 sinceSeq，EventsTruncated 表示还有更早的记录没随本次返回。
 	// 这四个字段**不用 omitempty**：零值本身是有信息的位置读数（例如首条之前无记录、
 	// 没有更早的记录），省略会让客户端无法区分"为 0"与"服务端没给"。
-	EventSeqBase    int                 `json:"eventSeqBase"`
-	EventCount      int                 `json:"eventCount"`
-	LatestSeq       int                 `json:"latestSeq"`
-	EventsTruncated bool                `json:"eventsTruncated"`
-	Skills          []cloudAgentSkill   `json:"skills,omitempty"`
-	Approval        *cloudAgentApproval `json:"approval,omitempty"`
-	SpentCredits    float64             `json:"spentCredits"`
-	Step            int                 `json:"step"`
-	ActiveMessage   map[string]string   `json:"activeMessage,omitempty"`
+	EventSeqBase           int                               `json:"eventSeqBase"`
+	EventCount             int                               `json:"eventCount"`
+	LatestSeq              int                               `json:"latestSeq"`
+	EventsTruncated        bool                              `json:"eventsTruncated"`
+	Skills                 []cloudAgentSkill                 `json:"skills,omitempty"`
+	Approval               *cloudAgentApproval               `json:"approval,omitempty"`
+	SpentCredits           float64                           `json:"spentCredits"`
+	Step                   int                               `json:"step"`
+	ActiveMessage          map[string]string                 `json:"activeMessage,omitempty"`
+	PendingDirectorPreview *CloudAgentPendingDirectorPreview `json:"pendingDirectorPreview,omitempty"`
+}
+
+type CloudAgentPendingDirectorPreview struct {
+	RunID          string    `json:"runId"`
+	ConversationID string    `json:"conversationId"`
+	CanvasID       string    `json:"canvasId"`
+	Title          string    `json:"title,omitempty"`
+	NodeID         string    `json:"nodeId,omitempty"`
+	SceneID        string    `json:"sceneId"`
+	ShotID         string    `json:"shotId,omitempty"`
+	RequestID      string    `json:"requestId"`
+	Duration       float64   `json:"duration"`
+	FPS            int       `json:"fps"`
+	Deadline       time.Time `json:"deadline"`
+}
+
+type CloudAgentPendingDirectorPreviewPage struct {
+	Items []CloudAgentPendingDirectorPreview `json:"items"`
 }
 
 // CloudAgentRunViewOptions 是运行详情的读取选项：SinceSeq 只取该序号之后的增量，
@@ -174,7 +195,7 @@ func cloudAgentTaskIdentity(task *model.Task) cloudAgentRunIdentity {
 
 func agentRunOutput(identity cloudAgentRunIdentity, state cloudAgentState) *CloudAgentRun {
 	view := &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model,
-		ContractVersion: AgentSDKContractVersion, Scope: agentBusinessScope(state.Request), Rules: state.Rules,
+		ContractVersion: AgentSDKContractVersion, Scope: PublicAgentBusinessScope(agentBusinessScope(state.Request)), Rules: state.Rules,
 		DramaEpisodeID: state.Request.DramaEpisodeID,
 		UserPrompt:     state.Request.Prompt, IdempotencyKey: state.Request.IdempotencyKey,
 		ChannelID: state.Request.ChannelID, ChannelModelKey: state.Request.ChannelModelKey, LogicalModelID: state.Request.LogicalModelID,
@@ -341,6 +362,9 @@ func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64, opti
 // is deterministic per user/key. Competing requests may race, but task creation
 // and credit reservation share a transaction: only one can commit.
 func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, parentID string) (*CloudAgentRun, error) {
+	if err := normalizeAgentRequestScope(userID, &req); err != nil {
+		return nil, err
+	}
 	return s.createCloudAgentRunScoped(userID, req, parentID, nil)
 }
 
@@ -388,39 +412,6 @@ func (s *Service) newCloudAgentExecution(userID, id, canvasID, parentID, convers
 		return nil, err
 	}
 	return run, nil
-}
-
-// 旧运行记录没有单独保存历史；只从模型请求中当前用户消息之前的严格交替前缀恢复。
-func cloudAgentLegacyHistory(messages []map[string]interface{}, currentPrompt string) []providerTextMessage {
-	currentIndex := -1
-	for index, message := range messages {
-		role, _ := message["role"].(string)
-		content, _ := message["content"].(string)
-		if role != "user" && role != "assistant" {
-			break
-		}
-		if role == "user" && content == currentPrompt {
-			currentIndex = index
-		}
-	}
-	if currentIndex < 0 || currentIndex%2 != 0 {
-		return nil
-	}
-	history := make([]providerTextMessage, 0, currentIndex)
-	for index := 0; index < currentIndex; index++ {
-		role, _ := messages[index]["role"].(string)
-		content, ok := messages[index]["content"].(string)
-		if !ok || role != []string{"user", "assistant"}[index%2] {
-			return nil
-		}
-		// 来源标记必须一起搬：丢了它，旧会话里的运行时交接消息会被当成真人轮次参与裁剪。
-		message := providerTextMessage{Role: role, Content: content}
-		if source, ok := messages[index][cloudAgentContextSourceKey].(string); ok && source != "" && source != "runtime" {
-			message.AgentContextSource = source
-		}
-		history = append(history, message)
-	}
-	return history
 }
 
 type cloudAgentDigestNode struct {

@@ -1,4 +1,23 @@
-import type { AgentApprovalDecision, AgentBusinessScope, AgentConversation, AgentConversationPage, AgentConversationQueue, AgentEvent, AgentMessageInput, AgentMessageReceipt, AgentRunReceipt, AgentRunRequest, AgentRunSnapshot } from "./contract";
+import type {
+    AgentApprovalDecision,
+    AgentBusinessScope,
+    AgentCapabilities,
+    AgentConversation,
+    AgentConversationPage,
+    AgentConversationQueue,
+    AgentEvent,
+    AgentMessageInput,
+    AgentMessageReceipt,
+    AgentPendingDirectorPreviewPage,
+    AgentQueuedMessage,
+    AgentRunQuery,
+    AgentRunReceipt,
+    AgentRunRequest,
+    AgentRunRequestBase,
+    AgentRunSnapshot,
+    AgentSkillDefaultsSummary,
+    AgentUISettings,
+} from "./contract";
 import type { AgentTransport, AgentTransportRequest } from "./transport";
 
 export class AgentRequestError extends Error {
@@ -19,6 +38,7 @@ export class AgentRequestError extends Error {
 const runPath = (id: string) => `/agent/runs/${encodeURIComponent(id)}`;
 const conversationPath = (id: string) => `/agent/conversations/${encodeURIComponent(id)}`;
 const isTerminal = (run: AgentRunSnapshot) => !run.cleanupPending && ["completed", "failed", "cancelled", "rejected"].includes(run.status);
+const sameScope = (left: AgentBusinessScope, right: AgentBusinessScope) => left.type === right.type && left.id === right.id;
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
@@ -40,14 +60,59 @@ export function createAgentClient<R extends AgentRunSnapshot = AgentRunSnapshot>
     const maxRetries = options.maxRetries ?? 2;
     const scope = options.scope && { ...options.scope };
     const definitionId = options.agentDefinitionId;
-    const scopedPath = (path: string) => {
-        if (!scope) return path;
+    const scopeConflict = (message: string) => new AgentRequestError(0, 0, "agent_scope_invalid", message, false);
+    const scopedPathFor = (path: string, selectedScope?: AgentBusinessScope, selectedDefinition?: string) => {
+        if (!selectedScope) return path;
         const [pathname, search] = path.split("?", 2);
         const query = new URLSearchParams(search);
-        query.set("scopeType", scope.type);
-        query.set("scopeId", scope.id);
-        if (definitionId) query.set("agentDefinitionId", definitionId);
+        query.set("scopeType", selectedScope.type);
+        query.set("scopeId", selectedScope.id);
+        if (selectedDefinition) query.set("agentDefinitionId", selectedDefinition);
         return `${pathname}?${query}`;
+    };
+    const scopedPath = (path: string) => scopedPathFor(path, scope, definitionId);
+    const prepareRunRequest = (input: AgentRunRequest): AgentRunRequest => {
+        if (!scope && !definitionId) return input;
+        const prepared: AgentRunRequestBase & { scope?: AgentBusinessScope; canvasId?: string; dramaEpisodeId?: string } = { ...input };
+        if (scope) {
+            if (input.scope && !sameScope(input.scope, scope)) throw scopeConflict("请求范围与已绑定的 Agent client 不一致");
+            prepared.scope = { ...scope };
+            if (scope.type === "canvas") {
+                if (input.canvasId && input.canvasId !== scope.id) throw scopeConflict("canvasId 与已绑定的画布范围不一致");
+                prepared.canvasId = scope.id;
+            } else if (input.canvasId) {
+                throw scopeConflict("非画布业务不能携带 canvasId");
+            }
+        }
+        if (definitionId) {
+            if (input.agentDefinitionId && input.agentDefinitionId !== definitionId) throw scopeConflict("Agent 配置与已绑定的 client 不一致");
+            prepared.agentDefinitionId = definitionId;
+        }
+        return prepared as AgentRunRequest;
+    };
+    const prepareMessage = (input: AgentMessageInput): AgentMessageInput => ({ ...input, request: prepareRunRequest(input.request) });
+    const preparedRun = (prepare: () => AgentRunRequest, operate: (value: AgentRunRequest) => Promise<AgentRunReceipt<R>>): Promise<AgentRunReceipt<R>> => {
+        try {
+            return operate(prepare());
+        } catch (error) {
+            return Promise.reject(error);
+        }
+    };
+    const preparedMessage = (prepare: () => AgentMessageInput, operate: (value: AgentMessageInput) => Promise<AgentMessageReceipt>): Promise<AgentMessageReceipt> => {
+        try {
+            return operate(prepare());
+        } catch (error) {
+            return Promise.reject(error);
+        }
+    };
+    const runQuery = (value: string | AgentRunQuery = "") => {
+        if (typeof value === "string") return value && value.startsWith("?") ? value : value ? `?${value}` : "";
+        const query = new URLSearchParams();
+        if (value.sinceSeq !== undefined) query.set("sinceSeq", String(value.sinceSeq));
+        if (value.eventLimit !== undefined) query.set("eventLimit", String(value.eventLimit));
+        if (value.fromStart !== undefined) query.set("fromStart", String(value.fromStart));
+        const encoded = query.toString();
+        return encoded ? `?${encoded}` : "";
     };
     async function request<T>(call: AgentTransportRequest, idempotent = false): Promise<T> {
         // The caller may edit its composer while a timed-out request is retried.
@@ -186,10 +251,22 @@ export function createAgentClient<R extends AgentRunSnapshot = AgentRunSnapshot>
         }
     }
     return {
-        startRun: (input: AgentRunRequest, signal?: AbortSignal) => request<AgentRunReceipt<R>>({ method: "POST", path: "/agent/runs", body: input, signal }, true),
+        startRun: (input: AgentRunRequest, signal?: AbortSignal) =>
+            preparedRun(
+                () => prepareRunRequest(input),
+                (body) => request<AgentRunReceipt<R>>({ method: "POST", path: "/agent/runs", body, signal }, true),
+            ),
         /** Continue a completed run. Active conversations use sendMessage's existing queue. */
-        continueRun: (id: string, input: AgentRunRequest, signal?: AbortSignal) => request<AgentRunReceipt<R>>({ method: "POST", path: `${runPath(id)}/messages`, body: input, signal }, true),
-        sendMessage: (id: string, input: AgentMessageInput, signal?: AbortSignal) => request<AgentMessageReceipt>({ method: "POST", path: `${conversationPath(id)}/messages`, body: input, signal }, true),
+        continueRun: (id: string, input: AgentRunRequest, signal?: AbortSignal) =>
+            preparedRun(
+                () => prepareRunRequest(input),
+                (body) => request<AgentRunReceipt<R>>({ method: "POST", path: `${runPath(id)}/messages`, body, signal }, true),
+            ),
+        sendMessage: (id: string, input: AgentMessageInput, signal?: AbortSignal) =>
+            preparedMessage(
+                () => prepareMessage(input),
+                (body) => request<AgentMessageReceipt>({ method: "POST", path: `${conversationPath(id)}/messages`, body, signal }, true),
+            ),
         listConversations: (page: { before?: string; limit?: number } = {}, signal?: AbortSignal) =>
             request<AgentConversationPage<AgentConversation>>(
                 {
@@ -199,6 +276,7 @@ export function createAgentClient<R extends AgentRunSnapshot = AgentRunSnapshot>
                 },
                 true,
             ),
+        listPendingDirectorPreviews: (signal?: AbortSignal) => request<AgentPendingDirectorPreviewPage>({ method: "GET", path: "/agent/director-previews/pending", signal }, true),
         listConversationRuns: (id: string, page: { after?: string; limit?: number } = {}, signal?: AbortSignal) =>
             request<AgentConversationPage<R>>(
                 {
@@ -209,11 +287,46 @@ export function createAgentClient<R extends AgentRunSnapshot = AgentRunSnapshot>
                 true,
             ),
         getConversationQueue: (id: string, signal?: AbortSignal) => request<AgentConversationQueue>({ method: "GET", path: `${conversationPath(id)}/queue`, signal }, true),
+        updateQueuedMessage: (conversationId: string, messageId: string, input: { revision: number; prompt?: string; action?: "interject" }, signal?: AbortSignal) =>
+            request<AgentMessageReceipt>({
+                method: "PATCH",
+                path: `${conversationPath(conversationId)}/queue/${encodeURIComponent(messageId)}`,
+                body: input,
+                signal,
+            }),
+        cancelQueuedMessage: (conversationId: string, messageId: string, revision: number, signal?: AbortSignal) => {
+            const [pathname, search] = `${conversationPath(conversationId)}/queue/${encodeURIComponent(messageId)}`.split("?", 2);
+            const query = new URLSearchParams(search);
+            query.set("revision", String(revision));
+            return request<AgentMessageReceipt>({ method: "DELETE", path: `${pathname}?${query}`, signal });
+        },
+        updateConversationQueue: (id: string, input: { revision: number; action: "pause" | "resume" }, signal?: AbortSignal) => request<AgentConversationQueue>({ method: "PATCH", path: `${conversationPath(id)}/queue`, body: input, signal }),
         archiveConversation: (id: string, signal?: AbortSignal) => request<{ archived: boolean }>({ method: "DELETE", path: conversationPath(id), signal }),
-        getRun: (id: string, signal?: AbortSignal, query = "") => request<AgentRunReceipt<R>>({ method: "GET", path: runPath(id) + query, signal }, true),
+        getRun: (id: string, signal?: AbortSignal, query: string | AgentRunQuery = "") => request<AgentRunReceipt<R>>({ method: "GET", path: runPath(id) + runQuery(query), signal }, true),
         cancelRun: (id: string, signal?: AbortSignal) => request<{ accepted: boolean }>({ method: "POST", path: `${runPath(id)}/cancel`, signal }),
+        changePermission: (id: string, input: { permissionMode: AgentRunSnapshot["permissionMode"]; requestId: string }, signal?: AbortSignal) =>
+            request<{ permissionMode: AgentRunSnapshot["permissionMode"]; changed: boolean }>({ method: "POST", path: `${runPath(id)}/permission`, body: input, signal }),
         decideApproval: (id: string, approvalId: string, input: AgentApprovalDecision, signal?: AbortSignal) =>
             request<{ accepted: boolean }>({ method: "POST", path: `${runPath(id)}/approvals/${encodeURIComponent(approvalId)}/decision`, body: input, signal }),
+        getCapabilities: (input: { scope?: AgentBusinessScope; agentDefinitionId?: string } = {}, signal?: AbortSignal) => {
+            return Promise.resolve().then(() => {
+                const selectedScope = input.scope ?? scope;
+                const selectedDefinition = input.agentDefinitionId ?? definitionId;
+                if (input.scope && scope && !sameScope(input.scope, scope)) throw scopeConflict("能力查询范围与已绑定的 client 不一致");
+                return request<AgentCapabilities>({ method: "GET", path: scopedPathFor("/agent/capabilities", selectedScope, selectedDefinition), signal }, true);
+            });
+        },
+        getSkillDefaults: (input: { scopeType: string; agentDefinitionId?: string }, signal?: AbortSignal) =>
+            request<AgentSkillDefaultsSummary>(
+                {
+                    method: "GET",
+                    path: `/agent/skill-defaults?${new URLSearchParams({ scopeType: input.scopeType, ...(input.agentDefinitionId ? { agentDefinitionId: input.agentDefinitionId } : {}) })}`,
+                    signal,
+                },
+                true,
+            ),
+        getUISettings: (signal?: AbortSignal) => request<AgentUISettings>({ method: "GET", path: "/agent/ui-settings", signal }, true),
+        updateUISettings: (input: AgentUISettings, signal?: AbortSignal) => request<AgentUISettings>({ method: "PATCH", path: "/agent/ui-settings", body: input, signal }),
         readEvents,
     };
 }

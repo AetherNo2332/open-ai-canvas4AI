@@ -3,7 +3,6 @@ import { useMutation } from "@tanstack/react-query";
 import { App, Button, Dropdown } from "antd";
 import { ArrowLeft, Brush, CheckCheck, Clapperboard, FileDown, FileUp, Film, Inbox, Package, Pause, Pencil, Play, ScrollText, Settings2, UsersRound } from "lucide-react";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router";
-import { dramaChoiceKey } from "@/lib/drama/model-choice";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { SegmentedControl } from "@/components/ui/base/segmented-control";
@@ -49,6 +48,11 @@ import { ScriptView } from "./studio/script-view";
 import { Storyboard, type EpisodeEmpty } from "./studio/storyboard";
 import { isTypingTarget, useDramaCast, useDramaEpisode, useDramaInvalidate, useDramaSummary, useOpenDramaCanvas } from "./studio/use-studio";
 import { progressFillStyle } from "@/lib/progress-fill";
+import { useAgentPageDeclaration } from "@/services/agent/business-context";
+import { openAgentPanelSurface } from "@/stores/use-agent-panel-surface";
+import { createAgentClient } from "@/sdk/agent/client";
+import { agentWebTransport } from "@/sdk/agent/http-transport";
+import { dramaAgentTextModel, validatedDramaAgentRunId } from "@/services/agent/drama-agent-context";
 import "./drama.css";
 
 type Tab = "board" | "script" | "final";
@@ -93,6 +97,51 @@ export default function DramaStudioPage() {
     const { cast, byId: castById } = useDramaCast(projectId, Boolean(running));
     const shots = useMemo(() => detail?.shots || [], [detail]);
     const currentShot = shots.find((shot) => shot.id === shotParam);
+    const agentTextModel = dramaAgentTextModel(summary?.production.settings.models);
+    const legacyAgentRun = searchParams.get("agentRun") || "";
+    const legacyAgentProject = searchParams.get("agentProject") || "";
+    const [openedLegacyRun, setOpenedLegacyRun] = useState<{ projectId: string; runId: string } | null>(null);
+    useEffect(() => {
+        setOpenedLegacyRun(null);
+        if (!legacyAgentRun || legacyAgentProject !== projectId) return;
+        const controller = new AbortController();
+        const client = createAgentClient({ transport: agentWebTransport, scope: { type: "drama", id: projectId }, agentDefinitionId: "drama.analysis" });
+        void client
+            .getRun(legacyAgentRun, controller.signal, { eventLimit: 1 })
+            .then(({ run }) => {
+                controller.signal.throwIfAborted();
+                setOpenedLegacyRun({ projectId, runId: validatedDramaAgentRunId(run, projectId) });
+                openAgentPanelSurface();
+            })
+            .catch((cause) => {
+                if (!controller.signal.aborted) message.error(cause instanceof Error ? cause.message : "历史分析链接读取失败");
+            });
+        return () => controller.abort();
+    }, [legacyAgentProject, legacyAgentRun, message, projectId]);
+    useAgentPageDeclaration({
+        declaration: { enabled: true, kind: "business", businessType: "drama", agentDefinitionId: "drama.analysis" },
+        status: summaryQuery.isLoading ? "loading" : summaryQuery.isError || !summary ? "error" : "ready",
+        scope: projectId ? { type: "drama", id: projectId } : undefined,
+        agentDefinitionId: "drama.analysis",
+        displayName: summary?.project.name ? `${summary.project.name} · 短剧 Agent` : "短剧 Agent",
+        error: summaryQuery.isError ? "作品不存在、已被删除，或当前账号没有访问权限。" : undefined,
+        target: episodeId
+            ? {
+                  dramaEpisodeId: episodeId,
+                  displayLabel: episodeRow ? `第 ${episodeRow.number} 集 · ${episodeRow.title}` : undefined,
+                  openedRunId: openedLegacyRun?.projectId === projectId ? openedLegacyRun.runId : undefined,
+                  episodeOptions: episodes.map((episode) => ({ id: episode.id, label: `第 ${episode.number} 集 · ${episode.title}` })),
+                  model: agentTextModel
+                      ? {
+                            logicalModelId: agentTextModel.logicalModelId,
+                            channelId: agentTextModel.channelId,
+                            modelKey: agentTextModel.modelKey,
+                            label: agentTextModel.label,
+                        }
+                      : undefined,
+              }
+            : undefined,
+    });
 
     const setParams = useCallback(
         (patch: Record<string, string | null>) => {
@@ -670,7 +719,6 @@ export default function DramaStudioPage() {
                                 ) : tab === "script" ? (
                                     <ScriptView
                                         projectId={projectId}
-                                        textModel={dramaChoiceKey(production.settings.models.scriptText) ? production.settings.models.scriptText! : production.settings.models.text}
                                         detail={detail}
                                         storyboard={production.settings.storyboard}
                                         currentId={currentShot?.id || ""}

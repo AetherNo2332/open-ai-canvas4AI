@@ -444,7 +444,7 @@ func cloudAgentDecodeForExecution(run *model.CloudAgentExecution) (cloudAgentRun
 	if err != nil {
 		return state, WrapAppError(409, "Agent 运行记录无法安全恢复；请新建一轮消息", err)
 	}
-	if err := validateCloudAgentPolicySnapshot(state.Policy); err != nil {
+	if err := validateCloudAgentExecutionPolicy(&state); err != nil {
 		return state, WrapAppError(409, "Agent 运行使用旧版执行合同，无法继续原运行；请新建一轮消息", err)
 	}
 	return state, nil

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -246,11 +247,37 @@ func validateCloudAgentRuntimeApproval(_ *model.CloudAgentExecution, state *clou
 	return nil
 }
 
+const cloudAgentPreviousCompilerVersion = "cloud-agent-policy-compiler/v6"
+
+func validateCloudAgentExecutionPolicy(state *cloudAgentRuntime) error {
+	if state.Policy.CompilerVersion == cloudAgentPreviousCompilerVersion {
+		// v6 emitted the original policy for canvas and drama. Its compiled
+		// prompt can be replayed verbatim only if the first-step contract exists.
+		business := agentBusinessScope(state.Request).Type
+		if (business != "canvas" && business != "drama") || state.ContractVersion != cloudAgentContractVersionFirstStep {
+			return errors.New("Agent v6 runtime has no supported frozen policy contract")
+		}
+		if err := cloudAgentVerifyFrozenContract(state); err != nil {
+			return err
+		}
+		frozen := state.Snapshot
+		if frozen.Version != cloudAgentContractSnapshotVersion || frozen.ToolSchemaVersion != strconv.Itoa(cloudAgentToolDisclosureVersion) ||
+			frozen.ToolsDigest != cloudAgentToolsDigest(state.Canonical.Tools) {
+			return errors.New("Agent v6 runtime frozen tool contract is unsupported")
+		}
+		if !cloudAgentAwaitingFirstStep(state) && (frozen.Harness == nil || !cloudAgentSHA256(frozen.AssembledPromptHash) ||
+			frozen.HarnessHash != cloudAgentHarnessBodyDigest(frozen.Harness)) {
+			return errors.New("Agent v6 runtime frozen harness is invalid")
+		}
+	}
+	return validateCloudAgentPolicySnapshot(state.Policy)
+}
+
 func validateCloudAgentPolicySnapshot(snapshot cloudAgentPolicySnapshot) error {
 	if err := validateCloudAgentPolicySnapshotStructure(snapshot); err != nil {
 		return err
 	}
-	if snapshot.CompilerVersion != cloudAgentCompilerVersion {
+	if snapshot.CompilerVersion != cloudAgentCompilerVersion && snapshot.CompilerVersion != cloudAgentPreviousCompilerVersion {
 		return errors.New("Agent runtime policy compiler is unsupported")
 	}
 	if snapshot.CapabilitySetVersion != cloudAgentCapabilitySetVersion {
@@ -263,12 +290,19 @@ func validateCloudAgentPolicySnapshot(snapshot cloudAgentPolicySnapshot) error {
 	if err != nil {
 		return fmt.Errorf("load Agent runtime policies: %w", err)
 	}
-	if snapshot.SystemPolicyID != system.ID || snapshot.SystemPolicyVersion != system.Version || snapshot.MediaPolicyID != media.ID || snapshot.MediaPolicyVersion != media.Version {
+	general, err := prompts.LoadAgentGeneralPolicy()
+	if err != nil {
+		return fmt.Errorf("load general Agent policy: %w", err)
+	}
+	systemMatches := snapshot.SystemPolicyID == system.ID && snapshot.SystemPolicyVersion == system.Version && snapshot.SystemPolicyHash == system.Hash
+	generalMatches := snapshot.CompilerVersion == cloudAgentCompilerVersion &&
+		snapshot.SystemPolicyID == general.ID && snapshot.SystemPolicyVersion == general.Version && snapshot.SystemPolicyHash == general.Hash
+	if (!systemMatches && !generalMatches) || snapshot.MediaPolicyID != media.ID || snapshot.MediaPolicyVersion != media.Version {
 		return errors.New("Agent runtime policy version is unsupported")
 	}
 	// An existing run keeps its admitted prompt and tool schema. Never resume it
 	// against changed policies or capabilities under an unchanged version label.
-	if snapshot.SystemPolicyHash != system.Hash || snapshot.MediaPolicyHash != media.Hash || snapshot.CapabilitySetHash != cloudAgentCapabilitySetHash() {
+	if snapshot.MediaPolicyHash != media.Hash || snapshot.CapabilitySetHash != cloudAgentCapabilitySetHash() {
 		return errors.New("Agent runtime policy or capability contract has changed")
 	}
 	return nil

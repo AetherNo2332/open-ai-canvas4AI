@@ -69,6 +69,27 @@ func TestCloudAgentPolicyContextDoesNotPromoteUserGoal(t *testing.T) {
 	}
 }
 
+func TestDramaExecutionContextCarriesTheCurrentEpisode(t *testing.T) {
+	req := agentTestRequest()
+	req.Scope = &AgentBusinessScope{Type: "drama", ID: "project-1"}
+	req.DramaEpisodeID = "episode-2"
+	text, _, err := compileCloudAgentPolicies(req, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, `"drama":{"episodeId":"episode-2","readPath":"drama:episode/episode-2"}`) {
+		t.Fatalf("drama execution context lacks current episode: %s", text)
+	}
+	req.DramaEpisodeID = ""
+	text, _, err = compileCloudAgentPolicies(req, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, `"drama":`) {
+		t.Fatalf("drama context leaked without an episode target: %s", text)
+	}
+}
+
 func TestCloudAgentAnchorDoesNotInferReferenceRequirement(t *testing.T) {
 	canvas := &model.CanvasProject{PayloadJSON: `{"nodes":[{"id":"image-1","type":"image","title":"候选图"}]}`}
 	for _, prompt := range []string{"不要用参考图，只修正标点", "请解释图生视频是什么意思", "只改台词，不改变风格"} {

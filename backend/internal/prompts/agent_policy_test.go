@@ -11,8 +11,12 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 版本号是策略文件的公开合同：工具披露规则改变时一同更新。
-	if system.ID != "cloud-agent-system" || system.Version != 27 || media.ID != "cloud-agent-media" || media.Version != 6 {
-		t.Fatalf("unexpected policy metadata: system=%s@%d media=%s@%d", system.ID, system.Version, media.ID, media.Version)
+	general, err := LoadAgentGeneralPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if system.ID != "cloud-agent-system" || system.Version != 27 || general.ID != "cloud-agent-general" || general.Version != 1 || media.ID != "cloud-agent-media" || media.Version != 6 {
+		t.Fatalf("unexpected policy metadata: system=%s@%d general=%s@%d media=%s@%d", system.ID, system.Version, general.ID, general.Version, media.ID, media.Version)
 	}
 	if strings.Contains(system.Text, "id: cloud-agent-system") || !strings.HasPrefix(system.Text, "# ArrowFX Cloud Agent") ||
 		strings.Contains(media.Text, "id: cloud-agent-media") || !strings.HasPrefix(media.Text, "#") {
@@ -28,6 +32,29 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 	} {
 		if !strings.Contains(media.Text, phrase) {
 			t.Fatalf("media policy lost required contract phrase %q", phrase)
+		}
+	}
+}
+
+func TestGeneralPolicyExcludesBusinessSpecificInstructions(t *testing.T) {
+	general, _, err := LoadAgentPoliciesForBusiness("platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		"节点能力速查",
+		"ArrowFX Cloud Agent 媒体策略",
+		"使用 read 的 drama:episode",
+		"canvas_list_node_types",
+		"canvas_apply_ops",
+	} {
+		if strings.Contains(general.Text, forbidden) {
+			t.Fatalf("general policy leaked canvas-specific content %q", forbidden)
+		}
+	}
+	for _, expected := range []string{"用户最新消息", "read_only", "plan_update", "ask_user", "finish_run", "安全边界"} {
+		if !strings.Contains(general.Text, expected) {
+			t.Fatalf("general policy omitted required runtime rule %q", expected)
 		}
 	}
 }

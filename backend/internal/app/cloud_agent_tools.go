@@ -36,8 +36,11 @@ func cloudAgentCanonicalWithTools(system string, history []providerTextMessage, 
 }
 
 func cloudAgentPromptCacheKey(req CloudAgentRequest) string {
+	scope := agentBusinessScope(req)
 	cacheHash := sha256.Sum256([]byte(strings.Join([]string{
 		req.CanvasID,
+		scope.Type,
+		scope.ID,
 		cloudAgentCompilerVersion,
 		cloudAgentCapabilitySetVersion,
 		req.PermissionMode,

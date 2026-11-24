@@ -30,6 +30,30 @@ test("withServerPolicy restores the frozen server policy for a Pi stream canonic
   assert.match(restored.systemPrompt, /Harness rules/);
 });
 
+test("continued Pi turns send the current canonical business context with the restored branch", async () => {
+  const { bridge, state, snapshot } = fakeBridge([{ text: "第二集回答" }]);
+  const context = '本轮短剧分析对象（数据）：\n{"episodeId":"episode-2","readPath":"drama:episode/episode-2"}';
+  const prompt = "分析第 2 集";
+  const previous = [
+    { role: "user", content: "第一集问题" },
+    { role: "assistant", content: "第一集回答" },
+  ];
+  const history = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: previous } }, canvasModel(snapshot));
+  snapshot.piSessionEntries = sessionEntriesFromMessages("previous-run", history)
+    .map(entry => ({ runId: "previous-run", entry: entry as unknown as Record<string, unknown> }));
+  snapshot.piActiveLeafId = String(snapshot.piSessionEntries.at(-1)?.entry.id);
+  snapshot.skillRuntimeMode = "pi-native";
+  snapshot.request.prompt = prompt;
+  snapshot.canonical.messages = [...previous,
+    { role: "user", content: context, agentContextSource: "drama_episode" },
+    { role: "user", content: prompt },
+  ];
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  const sent = state.canonical[0]!.messages;
+  assert.ok(sent.some(message => message.role === "assistant" && message.content === "第一集回答"));
+  assert.equal(sent.at(-1)?.content, `${context}\n\n${prompt}`);
+});
+
 function promptParts(): PromptParts {
   return { system: "House style: reply in Chinese.", appendSystem: undefined,
     context: [{ name: "AGENT_HARNESS.md", text: "Harness rules: never invent ids." }] };

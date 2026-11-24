@@ -121,6 +121,8 @@ description: 影策后端核心持久化表与状态边界
 
 版本 109 `agent_conversation_scope` 为 `cloud_agent_executions` 和 `cloud_agent_pi_sessions` 增加 `scope_type`、`scope_id`、`agent_definition_id`、`agent_context_version`。会话目录索引 `idx_cloud_agent_scope_directory` 按用户、业务、配置及时间分页。迁移根据持久化请求核对归属。矛盾或缺失的记录保留供账户历史查看，旧上下文标记为不可续聊。
 
+平台 Agent 复用现有 scope 字段，不新增表或迁移。对外 `scope={type:"platform", id:"self"}` 在写入运行、队列和会话前规范化为内部 `platform/<登录用户ID>`；目录、快照和事件响应再投影回 `self`。幂等指纹、会话拥有者和对象授权都使用规范化后的账号归属。`scope_type` 仍表示业务类型，`scope_id` 在平台范围表示账号，不是画布或项目。`agent_context_version` 与 Agent 定义版本共同冻结业务合同。
+
 版本 110 `agent_wake_notification` 在 PostgreSQL 的 `agent_wake_events` 上安装语句级 INSERT 触发器，提交时发送空载荷通知。SQLite 只登记迁移，不创建触发器。通知不是事件存储；事件表、游标、计数器锁和生产者事务均保持不变。
 
 ## Agent 记忆文件列补齐（Schema 77）

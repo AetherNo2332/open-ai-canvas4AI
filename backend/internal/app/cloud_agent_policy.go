@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	cloudAgentCompilerVersion  = "cloud-agent-policy-compiler/v6"
+	cloudAgentCompilerVersion  = "cloud-agent-policy-compiler/v8"
 	cloudAgentDefaultReasoning = "off"
 )
 
@@ -151,16 +151,16 @@ func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, 
 }
 
 func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, skillMode string, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
-	system, media, err := prompts.LoadAgentPolicies()
+	businessType := req.ScopeBusinessType()
+	system, media, err := prompts.LoadAgentPoliciesForBusiness(businessType)
 	if err != nil {
 		return "", cloudAgentPolicySnapshot{}, err
 	}
 	mode := cloudAgentReasoningMode(req)
-	capabilityHash := cloudAgentCapabilitySetHash()
 	snapshot := cloudAgentPolicySnapshot{
 		SystemPolicyID: system.ID, SystemPolicyVersion: system.Version, SystemPolicyHash: system.Hash,
 		MediaPolicyID: media.ID, MediaPolicyVersion: media.Version, MediaPolicyHash: media.Hash,
-		CapabilitySetVersion: cloudAgentCapabilitySetVersion, CapabilitySetHash: capabilityHash,
+		CapabilitySetVersion: cloudAgentCapabilitySetVersion, CapabilitySetHash: cloudAgentCapabilitySetHash(),
 		ReasoningMode: mode, CompilerVersion: cloudAgentCompilerVersion,
 	}
 	var b strings.Builder
@@ -168,15 +168,19 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 	b.WriteString(system.Text)
 	b.WriteString("\n\n")
 	recorder.mark(&b, "policy", "系统行为策略")
-	b.WriteString(media.Text)
-	b.WriteString("\n\n")
-	recorder.mark(&b, "mediaPolicy", "媒体策略")
+	if businessType == "canvas" {
+		b.WriteString(media.Text)
+		b.WriteString("\n\n")
+		recorder.mark(&b, "mediaPolicy", "媒体策略")
+	}
 	// 能力指南是一个"工具回执"而不是系统提示常量：它在每一步、每一轮都会被重发。只要
 	// canvas_list_node_types 不可用就内联全文——没有画布上下文，或只读运行（只读不会创建
 	// 节点，工具本身也不暴露）；否则提示会指向一个不存在的工具。
 	// 保留我方的裁剪版（能力指南静态瘦身）：上游此处是无条件内联全文，会让每步都白背一份
 	// 工具清单，而 canvas_list_node_types 在可写画布场景下本来就能按需取权威清单。
-	if len(req.ContextScope) == 0 || req.PermissionMode == "read_only" {
+	if businessType != "canvas" {
+		// Non-canvas policies must not describe canvas nodes or tools they cannot access.
+	} else if len(req.ContextScope) == 0 || req.PermissionMode == "read_only" {
 		b.WriteString(cloudAgentCapabilityGuide())
 	} else {
 		b.WriteString("节点能力与选型：需要节点类型、默认尺寸、连接约束、适用场景和维护代价时调用 canvas_list_node_types 获取权威清单，不要凭记忆猜测 nodeType；由你按任务复杂度自主选择，不为形式强制使用任何节点——单画面、一次性说明或快速试验优先轻量节点，多镜头、镜头连续性、逐镜审查/生成或后续维护优先评估分镜脚本，普通文本或 Markdown 不能伪装成结构化分镜。\n")
@@ -185,7 +189,7 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 	// Behavior belongs to versioned policies; the compiler only projects facts.
 	context := map[string]any{
 		"source": "server_snapshot", "permissionMode": req.PermissionMode,
-		"reasoningMode": mode,
+		"reasoningMode": mode, "businessType": businessType,
 		"budget": map[string]any{
 			"maxCredits":         req.Budget.MaxCredits,
 			"maxGenerationTasks": req.Budget.MaxGenerationTasks, "maxVideoSeconds": req.Budget.MaxVideoSeconds,
@@ -204,6 +208,15 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 		context["referenceCandidates"] = anchors[0].ReferenceAssets
 		context["visualInspectionPolicy"] = "observationStatus 只描述已有观察；关系梳理无需识图，判断外观或一致性时再看图。cached_needs_validation 须由识图工具核对当前资源。"
 	}
+	if businessType == "drama" && req.DramaEpisodeID != "" {
+		// A continued Pi session keeps earlier episode snapshots in its transcript.
+		// The current run's target must remain an authoritative system fact so a
+		// newly selected episode is not shadowed by the previous turn.
+		context["drama"] = map[string]string{
+			"episodeId": req.DramaEpisodeID,
+			"readPath":  "drama:episode/" + req.DramaEpisodeID,
+		}
+	}
 	context["skillRuntimeMode"] = skillMode
 	encoded, err := json.Marshal(context)
 	if err != nil {
@@ -218,4 +231,14 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 		return "", cloudAgentPolicySnapshot{}, fmt.Errorf("compiled Agent policy is empty")
 	}
 	return text, snapshot, nil
+}
+
+func (req CloudAgentRequest) ScopeBusinessType() string {
+	if req.Scope != nil {
+		return req.Scope.Type
+	}
+	if req.DramaEpisodeID != "" {
+		return "drama"
+	}
+	return "canvas"
 }

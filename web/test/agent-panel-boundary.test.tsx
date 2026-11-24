@@ -21,6 +21,7 @@ const { act } = React;
 const { createRoot } = await import("react-dom/client");
 const { GlobalAgentPanelBoundary } = await import("@/layouts/global-agent-panel-boundary");
 const { requestAgentPrefill, useGlobalAgentStore } = await import("@/stores/use-global-agent-store");
+const { publishAgentPageContext } = await import("@/services/agent/business-context");
 
 function FailedChunk(): never {
     throw new Error("Failed to fetch dynamically imported module");
@@ -28,6 +29,16 @@ function FailedChunk(): never {
 
 test("a failed Agent chunk renders nothing next to the layout and settles pending prefills", async () => {
     useGlobalAgentStore.setState({ prefillRequest: null, panelUnavailable: false });
+    publishAgentPageContext({
+        owner: "boundary-test",
+        routeKey: "/canvas/canvas",
+        declaration: { enabled: true, kind: "business", businessType: "canvas", agentDefinitionId: "canvas.default" },
+        status: "ready",
+        scope: { type: "canvas", id: "canvas" },
+        agentDefinitionId: "canvas.default",
+        displayName: "画布",
+    });
+    useGlobalAgentStore.getState().setCanvas({ canvasId: "canvas", nodeCount: 1, selectedNodeIds: [], references: [] });
     const pending = requestAgentPrefill({ canvasId: "canvas", userScope: "user", text: "hi", autoSubmit: true });
     const host = document.createElement("div");
     document.body.append(host);

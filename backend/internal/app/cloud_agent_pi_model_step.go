@@ -92,7 +92,7 @@ func (s *Service) piModelStepState(run *model.CloudAgentExecution) (cloudAgentRu
 	if err != nil {
 		return state, err
 	}
-	if err := validateCloudAgentPolicySnapshot(state.Policy); err != nil {
+	if err := validateCloudAgentExecutionPolicy(&state); err != nil {
 		message := "本轮使用旧版执行合同，已归档；请在新一轮继续对话"
 		if cloudAgentAwaitingFirstStep(&state) {
 			if failErr := s.failCloudAgentFirstStepAdmission(run, &state, kernel.Forbidden(message)); failErr != nil {

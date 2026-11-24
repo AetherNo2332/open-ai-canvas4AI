@@ -78,9 +78,22 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 - 已实现上游输入区、图片附件、节点引用、消息复制、批量生成进度和模型推理强度选择。对话继续使用服务端消息队列、幂等提交、审批与独立 Pi Worker，批量制作工具合同已同步到 Worker 制品。
 - [ ] 在明暗主题中检查图片粘贴、拖入、上传失败后重试、引用移除和复制消息。
+
+## 公共 Agent 面板配置化复用
+
+- 已实现：画布、短剧、平台共用 `AgentPanel` 与 `AgentConversationController`；业务配置集中在 `web/src/services/agent/configs/`，适配器只注入目标、引用、审批和页面副作用。模型按 `modelRequirements` 过滤，默认技能与用户自选技能分开呈现，运行中权限变更走 `POST /agent/runs/:id/permission`。
+- 自动化：`agent-panel-config.test.ts` 校验三业务公共控件合同；`agent-panel-shared-ui.test.tsx` 通过公共入口渲染三业务；`agent-dependency-boundary.test.ts` 阻止公共目录反向依赖画布；`agent-conversation-events.test.ts` 覆盖工具、媒体批次、上下文压缩、权限和记忆事件归并。
+- 本机 Docker 验收（2026-11-24）：Web `previs-web-dev` 监听 `127.0.0.1:3100`，后端 `previs-backend-dev` 监听 `127.0.0.1:8080`，健康检查 schema 110。浏览器使用真实 Chrome 访问 Docker Web，不以宿主机 Vite 代替。
+- [x] 画布 `N8Kne7ZLaFM7xGmJsQ8U-`：只有一个 `AgentPanel` 和一个入口；打开后标题为“画布助手”，可停靠到右侧，停靠宽度 420px 且出现 resize；Skills 弹窗显示默认 2 个技能；capabilities 的 `tools` 包含 `director`，`allowUserSkills=true`，`modelRequirements.vision=true`。
+- [x] 短剧项目 `e31bbd703f6460558bc60d8c11fc60ca`：页面只有一个“短剧 Agent”入口和一套面板，旧“本集分析建议”内嵌聊天不存在；本轮剧集下拉包含第 1、2 集，实际切换到第 2 集成功；capabilities 为只读，`allowUserSkills=false`，工具为 `ask_user`、`finish_run`、`plan_update`、`read`、`task_get`。
+- [x] 创作首页 `/`：只有一个“平台对话”入口和一套面板；capabilities 为只读、无 Skills，工具仅 `ask_user`、`finish_run`、`plan_update`。
+- [x] 未接入页面 `/settings`：无面板、无入口；按 `Ctrl+J` 后面板数量仍为 0。
+- [ ] 首句、续聊、模型切换、推理、Skill 实际读取、插话/排队、上下文压缩、历史恢复和窄屏布局仍需真实 Agent Worker 与真实模型。当前 Worker 未配置，页面明确提示 `CANVAS_AGENT_INTERNAL_TOKEN` 缺失，发送被禁用。
+- [ ] 使用真实模型检查运行中权限收紧、放宽、图片审批规格调整和队列冻结；确定性测试不代表真实模型验收。
 - [ ] 运行中分别发送插队和排队消息，关闭再打开面板，确认草稿、待发编辑和阅读位置保留，浮层关闭。
 - [ ] 批量图片与视频分别完成审批、试跑、继续、取消和 Worker 重启恢复，确认任务、扣费、节点回写与进度条一致。
 - [ ] 为支持多档推理的模型选择不同强度，续聊及 Worker 重启后仍沿用本轮冻结的设置。
+- 本轮自动化结果：Web `bun run typecheck` 退出 0；8 个 Agent 专项文件 23 pass / 0 fail / 143 expect；Web `bun run build` 退出 0（16115 modules）；docs `bun run types:check` 与 `bun run build` 均退出 0；Docker 内 Go `internal/app`、`internal/prompts` 通过；Docker 内 `internal/canvas/previs` 通过；`internal/canvas/commands` 在宿主机通过（11.1s），在 Docker 全包运行出现 SQLite 迁移阻塞，单独运行命中的 `TestFieldMergePreservesDifferentFieldsAcrossWriters/host` 通过（10.2s）。该差异属于测试环境，未改生产代码。
 
 ## 创作平台 SDK（PR #130 阻塞修复）
 
@@ -5665,3 +5678,22 @@ SQLite 与 HTTP recorder 已验证；PostgreSQL 16／17、前端构建及浏览�
 后台编辑渠道可分别设置参考图片、音频、视频的发送方式（协议默认、URL、Base64）；模型「能力与参数」可覆盖，优先级为模型、渠道、协议。模型选择「协议默认」可取消渠道强制值。未设置时不改变现有行为。此项是输入素材传输设置，与生成结果 response_format 无关。
 
 URL 使用归属校验后的资源访问地址，本地存储也可签发厂商访问链接；Base64 使用上传文件实际内容。需要 multipart 文件的协议请保持默认，助手识图保留实际像素路径。要求公网 URL 的协议不允许强制 Base64，不会自动重提生成。请由管理员按供应商支持情况设置并验证图片、视频、音频任务；本次不主动提交计费生成请求。
+
+## 统一创作 Agent 一期
+
+- 已实现（第一分片）：`platform.default`、`platform/self` 登录态归属、scoped `/agent/capabilities`、平台只读控制工具、通用运行策略与画布/短剧策略隔离；TypeScript Agent SDK 增加显式 scope、冲突预检、能力查询、完整队列和 typed run 分页。
+- 已通过：`go test ./internal/app -run 'TestPlatform(Scope|Scoped|Model)' -count=1`、平台 HTTP 合同测试、`bun test test/agent-sdk.test.ts` 与 `bun run typecheck`。平台模型请求专项捕获到通用策略和 `plan_update`、`ask_user`、`finish_run`，未出现画布节点、媒体或短剧读取指引。
+- 已实现（第二分片）：公共会话控制器、按范围/配置/会话隔离的 v2 本地存储、草稿与待确认提交、完整队列编辑/插话/暂停、按 Run 独立事件游标、历史分页和旧画布 v1 缓存兼容读取。
+- 已通过：控制器测试覆盖发包前落盘、回执丢失后同键重放、跨 Run 游标、重复 seq、队列 revision、旧画布迁移与页面声明 owner 清理；公共 `components/agent`、`services/agent`、`lib/agent`、`sdk/agent` 依赖守卫通过。
+- 已实现（第三分片）：布局层唯一 `AgentPanelHost`、页面显式声明、未声明隐藏、加载/错误等待态和业务能力查询；画布通过注册的 `canvas-agent-adapter` 接入，公共宿主、控制器和 SDK 不再直接导入画布组件、store、节点或预演模块。
+- 已通过：宿主隐藏/加载/错误/适配器解析测试、迟到页面 owner 清理、公共依赖守卫和 Web 类型检查。
+- 已实现（第四分片）：创作首页显式接入平台 Agent；短剧项目页声明 `drama / projectId + drama.analysis`，面板提供当前集、剧集选项、文本模型和积分上限，既有运行恢复其实际剧集。剧本视图已移除「本集分析建议」内嵌聊天，旧 `agentProject`、`agentRun` 链接经运行归属校验后打开全局面板。
+- 已实现（第四分片）：`⌘/Ctrl+J`、命令面板和画布预填统一检查页面声明与画布上下文；未声明页面、错误画布和离开画布后的迟到预填均返回未接入。控制器按 scope 校验历史运行，短剧换集请求继续显式携带 `dramaEpisodeId`。
+- 已通过：`bun test test/agent-conversation-controller.test.ts test/agent-page-declaration.test.ts test/agent-dependency-boundary.test.ts test/agent-panel-host.test.tsx test/agent-global-panel-store.test.ts test/drama-agent-context.test.ts`、`bun test test/agent-chat-ux.test.tsx test/cloud-agent-panel-sync.test.ts`、`bun run typecheck` 和 Web 构建。
+- 已实现（第五分片）：运行视图和会话目录投影持久预演等待（`waitKind`、`waitId`、`pendingDirectorPreview`），新增账号级 `GET /agent/director-previews/pending`。服务端只把未过期且当前账号、画布和注册定义仍可访问的等待返回给目录；目录分页不加载完整事件窗口。
+- 已实现（第五分片）：画布挂载或重新可见时按持久请求恢复场景与镜头；其他画布和非画布页面只显示「返回原画布」入口，不打开错误导演台。多个标签页沿用录制锁；录制取消会释放本次标记；视频上传后先持久化资源 ID，回传失败后刷新只重试同一资源，不重新录制。
+- 已通过：`go test ./internal/app ./internal/handler -run 'DirectorPreview|PendingDirector|Conversation' -count=1`、`go test ./internal/handler -run 'OpenAPI' -count=1`、`bun test test/agent-sdk.test.ts test/agent-director-launch.test.ts test/agent-director-preview-guards.test.ts test/agent-director-recovery.test.ts test/agent-panel-host.test.tsx test/agent-global-panel-store.test.ts`（61 项）、`bun run typecheck`、Web 构建和完整预演 Chrome E2E（78 项通过，G6/G6a/G7 保留）。
+- [ ] 在真实登录态画布、短剧和创作首页验收首句、续聊、刷新、切页、短剧换集及唯一入口；自动化通过不等于真实模型页面已验收。
+- [ ] 使用真实模型与 Worker 验证平台、短剧和画布的策略、工具、Skill 目录与跨范围隔离；当前模型请求证据来自本地确定性 HTTP 上游。
+- [ ] 验证运行中断网、原 POST 回执丢失后的幂等重放、双标签续轮冲突和短剧失效剧集。
+- [ ] 真实预演验收：A→平台/短剧/B→A、刷新、双标签、录制中离开、上传成功但回传失败、等待超时；核对资源不重复上传、只有一次有效工具回执，并记录 Run ID、requestId、画布 ID、revision 和资源 ID。

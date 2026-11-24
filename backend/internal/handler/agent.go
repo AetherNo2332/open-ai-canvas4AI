@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -52,7 +50,11 @@ func registerAgentConversationRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		selector, provided := agentTargetScope(c)
+		selector, provided, err := normalizedAgentTargetScope(c, svc, user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
 		if !provided {
 			selector.Scope = service.AgentBusinessScope{Type: "canvas", ID: c.Query("canvasId")}
 		} else if canvasID := c.Query("canvasId"); canvasID != "" && (selector.Scope.Type != "canvas" || selector.Scope.ID != canvasID) {
@@ -60,6 +62,19 @@ func registerAgentConversationRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		page, err := svc.ScopedCloudAgentConversations(user.ID, selector, c.Query("before"), limit)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, page)
+	})
+	r.GET("/agent/director-previews/pending", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		page, err := svc.PendingCloudAgentDirectorPreviews(user.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -150,8 +165,23 @@ func registerAgentSettingsRoutes(r *gin.RouterGroup, svc *service.Service) {
 		ok(c, view)
 	})
 	r.GET("/agent/capabilities", func(c *gin.Context) {
-		if _, err := currentUser(c, svc); err != nil {
+		user, err := currentUser(c, svc)
+		if err != nil {
 			failService(c, err)
+			return
+		}
+		selector, provided := agentTargetScope(c)
+		if provided {
+			if selector.Scope.Type == "" || selector.Scope.ID == "" {
+				fail(c, http.StatusBadRequest, errors.New("scoped capabilities 需要 scopeType 和 scopeId"))
+				return
+			}
+			view, err := svc.AgentCapabilities(user.ID, selector.Scope, selector.AgentDefinitionID)
+			if err != nil {
+				failService(c, err)
+				return
+			}
+			ok(c, view)
 			return
 		}
 		capabilities := service.CloudAgentCapabilitySetInfo()
@@ -207,6 +237,10 @@ func createAgentRunHandler(svc *service.Service) gin.HandlerFunc {
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if err := normalizeAgentRequestScopeFromQuery(c, svc, user.ID, &req); err != nil {
+			failService(c, err)
 			return
 		}
 		if err := decoder.Decode(&struct{}{}); err != io.EOF {
@@ -533,62 +567,4 @@ func writeAgentSSE(c *gin.Context, event string, id int64, value any) {
 	}
 	_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
 	c.Writer.Flush()
-}
-
-// agentRunEventQueryLimit 是 eventLimit 允许的最大值，与 app 侧的增量上限一致：
-// 请求更大的页没有意义（单次响应体积），直接拒绝比静默截断更容易被发现。
-const agentRunEventQueryLimit = 500
-
-func agentConversationLimit(c *gin.Context) (int, error) {
-	raw, present := c.GetQuery("limit")
-	if !present {
-		return 100, nil
-	}
-	limit, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || limit < 1 || limit > 100 {
-		return 0, errors.New("limit 必须是 1–100 之间的整数")
-	}
-	return limit, nil
-}
-
-type agentRunViewQuery struct {
-	SinceSeq   string `form:"sinceSeq"`
-	EventLimit string `form:"eventLimit"`
-	FromStart  string `form:"fromStart"`
-}
-
-func agentRunViewOptions(c *gin.Context) (service.CloudAgentRunViewOptions, error) {
-	options := service.CloudAgentRunViewOptions{}
-	if raw, present := c.GetQuery("fromStart"); present {
-		value, err := strconv.ParseBool(strings.TrimSpace(raw))
-		if err != nil {
-			return options, errors.New("fromStart 必须是布尔值")
-		}
-		options.FromStart = value
-	}
-	var query agentRunViewQuery
-	if err := c.ShouldBindQuery(&query); err != nil {
-		return options, err
-	}
-	for _, item := range []struct {
-		name  string
-		raw   string
-		value *int
-		min   int
-		max   int
-	}{
-		{name: "sinceSeq", raw: query.SinceSeq, value: &options.SinceSeq, min: 0, max: math.MaxInt32},
-		{name: "eventLimit", raw: query.EventLimit, value: &options.EventLimit, min: 1, max: agentRunEventQueryLimit},
-	} {
-		raw := strings.TrimSpace(item.raw)
-		if raw == "" {
-			continue
-		}
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < item.min || parsed > item.max {
-			return options, fmt.Errorf("%s 必须是 %d–%d 之间的整数", item.name, item.min, item.max)
-		}
-		*item.value = parsed
-	}
-	return options, nil
 }

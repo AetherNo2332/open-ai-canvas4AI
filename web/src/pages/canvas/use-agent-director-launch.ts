@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App } from "antd";
 
 import {
+    DirectorPreviewAbandonedError,
     directorOpenTargetReady,
     directorPreviewHandledStore,
     directorPreviewJobPending,
     directorPreviewOutcomeNotice,
+    directorPreviewResultStore,
     directorPreviewVideoResourceId,
     handleDirectorOpen,
     runDirectorPreview,
@@ -14,7 +16,10 @@ import {
     type DirectorOpenRunEvent,
     type DirectorPreviewJob,
 } from "@/lib/canvas/agent-director-launch";
+import { findPendingCanvasDirectorPreview } from "@/lib/canvas/agent-director-recovery";
 import { getAgentRun, submitDirectorPreviewResult } from "@/services/api/agent";
+import { createAgentClient } from "@/sdk/agent/client";
+import { agentWebTransport } from "@/sdk/agent/http-transport";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { PrevisScene } from "@/types/previs";
 
@@ -36,6 +41,9 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
     const [directorPreview, setDirectorPreview] = useState<DirectorPreviewJob | null>(null);
     const previsNodeIdRef = useRef(previsNodeId);
     const handledStoreRef = useRef(directorPreviewHandledStore());
+    const resultStoreRef = useRef(directorPreviewResultStore());
+    const recoveryRef = useRef(false);
+    const client = useMemo(() => createAgentClient({ transport: agentWebTransport, scope: { type: "canvas", id: projectId }, agentDefinitionId: "canvas.default" }), [projectId]);
     previsNodeIdRef.current = previsNodeId;
 
     const onDirectorOpen = useCallback(
@@ -67,6 +75,69 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
         setDirectorPreview(null);
     }, [projectId]);
 
+    const recoverPendingPreview = useCallback(
+        async (signal?: AbortSignal) => {
+            if (recoveryRef.current || (typeof document !== "undefined" && document.visibilityState === "hidden")) return;
+            recoveryRef.current = true;
+            try {
+                const job = await findPendingCanvasDirectorPreview(client, projectId, signal);
+                signal?.throwIfAborted();
+                if (!job) return;
+                const stored = resultStoreRef.current.load(job.runId, job.requestId);
+                if (stored) {
+                    const outcome = await runDirectorPreview({
+                        runId: job.runId,
+                        requestId: job.requestId,
+                        record: async () => {
+                            throw new DirectorPreviewAbandonedError();
+                        },
+                        submit: submitDirectorPreviewResult,
+                        isHidden: () => typeof document !== "undefined" && document.visibilityState === "hidden",
+                        isPending: () => directorPreviewJobPending(job, (runId, options) => getAgentRun(runId, AbortSignal.timeout(10_000), { ...options, canvasId: projectId })),
+                        handled: handledStoreRef.current,
+                        withLock: withDirectorPreviewLock,
+                        resultStore: resultStoreRef.current,
+                        recover: true,
+                    });
+                    const notice = directorPreviewOutcomeNotice(outcome);
+                    if (notice) message[notice.level](notice.text);
+                    return;
+                }
+                setDirectorPreview((current) => current ?? { ...job, recover: true });
+                setPendingOpen(
+                    (current) =>
+                        current ?? {
+                            runId: job.runId,
+                            requestId: job.requestId,
+                            canvasId: job.canvasId || projectId,
+                            nodeId: job.nodeId || "",
+                            sceneId: job.sceneId,
+                            shotId: job.shotId,
+                            action: "preview",
+                        },
+                );
+            } catch (cause) {
+                if (!signal?.aborted) message.warning(cause instanceof Error ? `预演恢复失败：${cause.message}` : "预演恢复失败");
+            } finally {
+                recoveryRef.current = false;
+            }
+        },
+        [client, message, projectId],
+    );
+
+    useEffect(() => {
+        const controller = new AbortController();
+        void recoverPendingPreview(controller.signal);
+        const resumeWhenVisible = () => {
+            if (document.visibilityState === "visible") void recoverPendingPreview(controller.signal);
+        };
+        document.addEventListener("visibilitychange", resumeWhenVisible);
+        return () => {
+            controller.abort();
+            document.removeEventListener("visibilitychange", resumeWhenVisible);
+        };
+    }, [recoverPendingPreview]);
+
     const onDirectorPreview = useCallback(
         (job: DirectorPreviewJob, record: () => Promise<string | undefined>) => {
             setDirectorPreview((current) => (current?.requestId === job.requestId ? null : current));
@@ -77,9 +148,11 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                 submit: submitDirectorPreviewResult,
                 // 后台标签页录制会因不可见中止；只让可见标签页录制，且同一请求跨标签页只执行一次。
                 isHidden: () => typeof document !== "undefined" && document.visibilityState === "hidden",
-                isPending: () => directorPreviewJobPending(job, (runId, options) => getAgentRun(runId, AbortSignal.timeout(10_000), options)),
+                isPending: () => directorPreviewJobPending(job, (runId, options) => getAgentRun(runId, AbortSignal.timeout(10_000), { ...options, canvasId: projectId })),
                 handled: handledStoreRef.current,
                 withLock: withDirectorPreviewLock,
+                resultStore: resultStoreRef.current,
+                recover: job.recover,
             })
                 .then((outcome) => {
                     const notice = directorPreviewOutcomeNotice(outcome);
@@ -87,7 +160,7 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                 })
                 .catch((cause) => message.error(cause instanceof Error ? `预演结果回传失败：${cause.message}` : "预演结果回传失败"));
         },
-        [message],
+        [message, projectId],
     );
 
     return { directorPreview, onDirectorPreview };

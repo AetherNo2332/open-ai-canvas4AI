@@ -27,6 +27,7 @@ type CloudAgentConversation struct {
 	QueueRevision     int64              `json:"queueRevision"`
 	QueuedCount       int                `json:"queuedCount"`
 	QueuePaused       bool               `json:"queuePaused"`
+	WaitKind          string             `json:"waitKind,omitempty"`
 	CreatedAt         time.Time          `json:"createdAt"`
 	UpdatedAt         time.Time          `json:"updatedAt"`
 }
@@ -77,6 +78,11 @@ func (s *Service) agentConversationBinding(userID string, selector AgentConversa
 	var binding model.AgentConversationBinding
 	if userID == "" {
 		return binding, kernel.Unauthorized("请先登录")
+	}
+	var err error
+	selector, err = s.NormalizeAgentConversationSelector(userID, selector)
+	if err != nil {
+		return binding, err
 	}
 	scope := selector.Scope
 	if validateCloudAgentID(scope.Type, "业务类型", 40) != nil || validateCloudAgentID(scope.ID, "业务对象 ID", 80) != nil {
@@ -160,12 +166,13 @@ func (s *Service) ScopedCloudAgentConversations(userID string, selector AgentCon
 		}
 		page.Items = append(page.Items, CloudAgentConversation{
 			ID: id, CanvasID: run.CanvasID, Title: run.Title, LatestRunID: run.ID,
-			Scope:             AgentBusinessScope{Type: run.ScopeType, ID: run.ScopeID},
+			Scope:             PublicAgentBusinessScope(AgentBusinessScope{Type: run.ScopeType, ID: run.ScopeID}),
 			AgentDefinitionID: run.AgentDefinitionID, Resumable: run.AgentContextVersion == agentContextVersion,
 			Status: run.Status, Revision: run.Revision, CleanupPending: run.CleanupPending,
 			Archived:  run.ConversationArchived,
 			CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
 			QueueRevision: queues[id].Revision, QueuedCount: queues[id].QueuedCount, QueuePaused: queues[id].Paused,
+			WaitKind: run.WaitKind,
 		})
 	}
 	return page, nil

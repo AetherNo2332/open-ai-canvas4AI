@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+    DirectorPreviewAbandonedError,
     directorPreviewHandledStore,
     directorPreviewJobPending,
     directorPreviewOutcomeNotice,
     directorPreviewPending,
+    directorPreviewResultStore,
     directorPreviewRunQuery,
+    directorPreviewSnapshotPending,
     parseDirectorOpenEvent,
     handleDirectorOpen,
     isDirectorOpenStale,
@@ -18,7 +21,14 @@ const openEvent = { canvasId: "canvas-1", nodeId: "previs-scene-1", sceneId: "sc
 const base = { runId: "run-1", requestId: "dpv_1" };
 const memoryHandled = () => {
     const set = new Set<string>();
-    return { handled: { isHandled: (id: string) => set.has(id), markHandled: (id: string) => void set.add(id) }, set };
+    return {
+        handled: {
+            isHandled: (id: string) => set.has(id),
+            markHandled: (id: string) => void set.add(id),
+            unmarkHandled: (id: string) => void set.delete(id),
+        },
+        set,
+    };
 };
 const freeLock = <T>(_name: string, fn: () => Promise<T>) => fn().then((value) => ({ acquired: true as const, value }));
 
@@ -55,6 +65,73 @@ describe("director preview guards", () => {
         const outcome = await runDirectorPreview({ ...base, handled, record: async () => (recorded++, "res-1"), submit: async () => {} });
         expect(outcome).toBe("skipped");
         expect(recorded).toBe(0);
+    });
+
+    test("recovering a still-pending request can record after the previous page was left", async () => {
+        const { handled } = memoryHandled();
+        handled.markHandled("dpv_1");
+        let recorded = 0;
+        const outcome = await runDirectorPreview({
+            ...base,
+            handled,
+            recover: true,
+            withLock: freeLock,
+            isPending: async () => true,
+            record: async () => (recorded++, "res-1"),
+            submit: async () => {},
+        });
+        expect(outcome).toBe("submitted");
+        expect(recorded).toBe(1);
+    });
+
+    test("abandoning recording releases the handled marker so returning to the canvas can retry", async () => {
+        const { handled } = memoryHandled();
+        const outcome = await runDirectorPreview({
+            ...base,
+            handled,
+            withLock: freeLock,
+            record: async () => {
+                throw new DirectorPreviewAbandonedError();
+            },
+            submit: async () => {},
+        });
+        expect(outcome).toBe("abandoned");
+        expect(handled.isHandled("dpv_1")).toBe(false);
+    });
+
+    test("an uploaded result is persisted before submission and reused without recording again", async () => {
+        const data = new Map<string, string>();
+        const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => void data.set(key, value), removeItem: (key: string) => void data.delete(key) };
+        const resultStore = directorPreviewResultStore(storage);
+        let records = 0;
+        await expect(
+            runDirectorPreview({
+                ...base,
+                resultStore,
+                record: async () => (records++, "res-uploaded"),
+                submit: async () => {
+                    throw new Error("network lost after upload");
+                },
+            }),
+        ).rejects.toThrow("network lost after upload");
+        expect(records).toBe(1);
+        expect(resultStore.load("run-1", "dpv_1")?.videoResourceId).toBe("res-uploaded");
+
+        const submitted: unknown[] = [];
+        expect(
+            await runDirectorPreview({
+                ...base,
+                resultStore,
+                record: async () => {
+                    records++;
+                    return "must-not-record";
+                },
+                submit: async (...args) => void submitted.push(args),
+            }),
+        ).toBe("submitted");
+        expect(records).toBe(1);
+        expect(submitted).toEqual([["run-1", "dpv_1", { videoResourceId: "res-uploaded" }]]);
+        expect(resultStore.load("run-1", "dpv_1")).toBeNull();
     });
 
     test("marks the request handled before recording", async () => {
@@ -110,6 +187,14 @@ describe("pending check, lock and handled store", () => {
         expect(directorPreviewPending(run([requested], "completed"), "dpv_1")).toBe(false);
         expect(directorPreviewPending(run([]), "dpv_1")).toBe(false);
         expect(directorPreviewPending(run([evt(5, "director_preview_requested", { requestId: "other", callId: "call-1" })]), "dpv_1")).toBe(false);
+    });
+
+    test("the durable pending projection is preferred over the event window", () => {
+        const projected = run([], "running") as AgentRun & { pendingDirectorPreview?: unknown };
+        projected.pendingDirectorPreview = { requestId: "dpv_1", deadline: new Date(Date.now() + 60_000).toISOString() };
+        expect(directorPreviewSnapshotPending(projected, "dpv_1")).toBe(true);
+        projected.pendingDirectorPreview = { requestId: "dpv_1", deadline: new Date(Date.now() - 1).toISOString() };
+        expect(directorPreviewSnapshotPending(projected, "dpv_1")).toBe(false);
     });
 
     test("pending lookup pages from the director_open seq so an old request event is still found", async () => {

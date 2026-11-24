@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { AGENT_PANEL_DOCK_KEY, LEGACY_AGENT_PANEL_WIDTH_KEY, migrateAgentPanelDock, restoreAgentPanelDock, type AgentPanelDockPreference } from "@/lib/canvas/agent-panel-dock";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { CanvasNodeData } from "@/types/canvas";
+import { closeAgentPanelSurface, isAgentPanelSurfaceOpen, openAgentPanelSurface, subscribeAgentPanelSurface } from "@/stores/use-agent-panel-surface";
+import { getAgentPageContext } from "@/services/agent/business-context";
 
 /** 画布页交给全局面板的一次输入：autoSubmit 时按 fork 的外部发送语义直接提交，不改动用户草稿。 */
 export type AgentPrefillRequest = {
@@ -143,8 +145,14 @@ export const useGlobalAgentStore = create<GlobalAgentStore>()((set, get) => ({
     panelUnavailable: false,
     prefillRequest: null,
     dock: readAgentPanelDockPreference(),
-    openAgent: () => set({ open: true }),
-    closeAgent: () => set({ open: false }),
+    openAgent: () => {
+        openAgentPanelSurface();
+        set({ open: true });
+    },
+    closeAgent: () => {
+        closeAgentPanelSurface();
+        set({ open: false });
+    },
     setCanvas: (canvas) =>
         set((state) => {
             const next = stabilizeCanvasContext(state.canvas, canvas);
@@ -175,6 +183,11 @@ export const useGlobalAgentStore = create<GlobalAgentStore>()((set, get) => ({
     },
 }));
 
+subscribeAgentPanelSurface(() => {
+    const open = isAgentPanelSurfaceOpen();
+    if (useGlobalAgentStore.getState().open !== open) useGlobalAgentStore.setState({ open });
+});
+
 /** 停靠判断用的“在画布里”：有画布上下文，或仍在画布路由且之前发布过（加载 / 切换画布的空档）。 */
 export function selectAgentOnCanvas(state: Pick<GlobalAgentStore, "canvas" | "canvasRoute" | "canvasHeld">) {
     return state.canvas !== null || (state.canvasRoute && state.canvasHeld);
@@ -196,6 +209,9 @@ export function markAgentPanelUnavailable() {
  */
 export function requestAgentPrefill(input: AgentPrefillInput): Promise<AgentPrefillOutcome> {
     const state = useGlobalAgentStore.getState();
+    const page = getAgentPageContext();
+    const canvasDeclared = page.declaration.enabled && page.declaration.kind === "business" && page.declaration.businessType === "canvas" && page.scope?.type === "canvas" && page.scope.id === input.canvasId && state.canvas?.canvasId === input.canvasId;
+    if (!canvasDeclared) return Promise.resolve(false);
     if (state.panelUnavailable || state.prefillRequest) return Promise.resolve(false);
     const request: AgentPrefillRequest = { ...input, id: ++prefillSequence };
     const outcome = new Promise<AgentPrefillOutcome>((resolve) => prefillWaiters.set(request.id, resolve));

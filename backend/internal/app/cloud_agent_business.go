@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/kernel"
@@ -34,6 +35,8 @@ func agentBuiltinObjectAuthorizer(businessType string) agentObjectAuthorizer {
 		return (*Service).authorizeCanvasAgent
 	case "drama":
 		return (*Service).authorizeDramaAgent
+	case AgentPlatformBusinessType:
+		return (*Service).authorizePlatformAgent
 	default:
 		return nil
 	}
@@ -57,6 +60,16 @@ func (s *Service) authorizeCanvasAgent(userID string, req CloudAgentRequest) (*m
 		err = kernel.NotFound("画布不存在或尚未保存到服务端，请先完成画布同步")
 	}
 	return canvas, err
+}
+
+// Platform conversations are account-owned, not object-owned. The account ID
+// comes exclusively from the authenticated request and never from client data.
+func (s *Service) authorizePlatformAgent(userID string, req CloudAgentRequest) (*model.CanvasProject, error) {
+	scope := agentBusinessScope(req)
+	if strings.TrimSpace(userID) == "" || scope.Type != AgentPlatformBusinessType || scope.ID != userID {
+		return nil, kernel.NotFound("平台 Agent 会话不存在")
+	}
+	return nil, nil
 }
 
 func (s *Service) agentReadDramaEpisode(userID string, state *cloudAgentRuntime, episodeID string, args agentReadArguments, _ cloudAgentCall) (agentReadResult, error) {

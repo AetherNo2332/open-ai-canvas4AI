@@ -69,6 +69,10 @@ func validAgentScopedRequest(req *CloudAgentRequest) bool {
 	if req.CanvasID != "" || len(req.ContextScope) != 0 || len(req.FocusNodeIDs) != 0 || req.SubagentEnabled || req.SubagentWriteEnabled {
 		return false
 	}
+	if req.Scope.Type == AgentPlatformBusinessType {
+		return req.PermissionMode == "read_only" && len(req.SkillIDs) == 0 &&
+			validateCloudAgentID(req.Scope.ID, "平台账号 ID", 80) == nil
+	}
 	if req.Scope.Type != "drama" {
 		return validateCloudAgentID(req.Scope.Type, "业务类型", 40) == nil && req.DramaEpisodeID == ""
 	}
@@ -77,7 +81,8 @@ func validAgentScopedRequest(req *CloudAgentRequest) bool {
 }
 
 func agentSDKAdmissionEnabled(req CloudAgentRequest) error {
-	if agentBusinessScope(req).Type == "drama" && os.Getenv("CANVAS_AGENT_SDK_BUSINESS_DISABLED") == "true" {
+	scope := agentBusinessScope(req)
+	if (scope.Type == "drama" || scope.Type == AgentPlatformBusinessType) && os.Getenv("CANVAS_AGENT_SDK_BUSINESS_DISABLED") == "true" {
 		err := kernel.NewAppError(503, "短剧 Agent 新准入已暂停，已有运行仍可查看或取消")
 		err.Reason = "agent_business_admission_disabled"
 		return err

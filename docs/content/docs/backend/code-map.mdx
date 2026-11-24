@@ -18,6 +18,13 @@ description: 从产品功能快速定位主要代码入口
 - 验证计划：`scripts/verification-plan.mjs`（纯计划与 Git/Go 图收集），归属声明 `scripts/verification-policy.mjs`；本地 runner 和 PR CI 按同一计划执行 affected，主干 push、未知路径及共享核心变动保留 full。真实 CI 切换验收见待测试清单。
 - Web 测试：`web/scripts/run-tests.mjs` 发现真实测试并分配唯一组；原隔离组保留进程边界，普通集合不再重复运行。
 
+## 统一创作 Agent
+
+- 服务端范围与能力：`backend/internal/app/agent_definition_registry.go` 注册 `canvas.default`、`drama.analysis`、`platform.default`；`agent_platform_scope.go` 规范化 `platform/self`；`agent_capabilities_view.go` 按对象授权和注册合同生成 scoped capabilities。HTTP 入口在 `handler/agent.go`、`handler/agent_conversation_scope.go`，运行与冻结快照在 `cloud_agent_*.go`。
+- 提示词与工具：`backend/internal/prompts/agent-system-policy.md` 与 `agent-media-policy.md` 只服务画布；`agent-general-policy.md` 服务短剧和平台。业务装配在 `cloud_agent_policy.go`、`cloud_agent_run_create.go`；权威工具目录在 `cloud_agent_tools.go`、`agent_tool_registry.go`。
+- TypeScript SDK：`web/src/sdk/agent/contract.ts`、`client.ts`、`transport.ts` 保持 UI 无关；业务页面通过 `web/src/sdk/agent/http-transport.ts` 注入浏览器传输。合同样例在 `agent/contracts/agent-sdk-v1.json`。
+- 公共会话与宿主：`web/src/services/agent/conversation-controller.ts`、`conversation-storage.ts`、`business-context.ts` 管理草稿、待确认提交、事件恢复和页面声明；`web/src/components/agent/agent-panel-host.tsx` 是布局层唯一宿主。唯一完整面板在 `web/src/components/agent/agent-panel.tsx`，业务展示配置在 `web/src/services/agent/panel-config.ts` 与 `configs/{canvas,drama,platform}.ts`，受限扩展注册在 `services/agent/panel-adapters.ts`。画布专属交互继续在 `web/src/components/canvas/agent/canvas-agent-adapter.tsx`，平台适配在 `services/agent/adapters/platform.ts`，短剧适配在 `services/agent/adapters/drama.ts`，剧集目标由 `pages/projects/detail.tsx` 声明。跨页画布预演由 `web/src/lib/canvas/agent-director-recovery.ts` 按目录分页定位，运行投影与待录索引在 `backend/internal/app/cloud_agent_run_output.go`、`cloud_agent_director_preview_list.go`，宿主只显示返回原画布入口。
+
 ## 电商 Agent 与后台知识库
 
 - 页面：`web/src/pages/ecommerce/`；后台：`web/src/pages/admin/ecommerce-agent-config-page.tsx`（上线检查、阶段模型 `ecommerce-stage-models.tsx` 与目录换算 `ecommerce-model-catalog.ts`）；`ecommerce-management-page.tsx`（知识与技能标签页：`ecommerce-knowledge-page.tsx`、`ecommerce-skills-page.tsx`、`ecommerce-categories-page.tsx`，内容头 `ecommerce-library-panel.tsx`）；`knowledge-domain-coverage.ts`。
@@ -92,7 +99,7 @@ description: 从产品功能快速定位主要代码入口
 
 - 后台入口：`web/src/pages/admin/settings/appearance-settings-page.tsx` 与 `components/canvas-appearance-editor.tsx`。
 - 公共配置及文案：`web/src/stores/use-appearance-store.ts`、`web/src/lib/canvas/agent-appearance.ts`。
-- 画布形象：`web/src/components/canvas/live2d-avatar.tsx`、`canvas-cloud-agent-panel.tsx`；受限资源加载：`web/src/services/live2d-loader.ts`。
+- 公共助手形象：`web/src/components/agent/agent-live2d-avatar.tsx`、`agent-avatar-video.tsx`；旧画布形象 `web/src/components/canvas/live2d-avatar.tsx` 只保留兼容；受限资源加载：`web/src/services/live2d-loader.ts`。
 - 服务端：`backend/internal/app/appearance_canvas.go` 校验配置，`appearance_live2d.go` 验证 ZIP、导入及资源访问；`backend/internal/handler/appearance_live2d.go` 为 HTTP 边界。已有外观设置和资源引用链路负责持久化及删除保护。
 
 这是一张入口地图，不罗列所有文件。先找到功能所属层，再沿调用关系阅读。
@@ -241,9 +248,9 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 内部资源保护与维护快照 | `backend/internal/canvas/canvas_history.go`、`repair_resources.go`、`backend/internal/repository/canvas_history.go`；仅供资源完整性维护和审计，不提供用户历史树、预览或恢复入口 |
 | Patch 历史、生成任务和重试控制 | `web/src/pages/canvas/use-canvas-history.ts`、`use-canvas-generation.ts`、`use-canvas-generation-executor.ts`、`use-canvas-generation-retry.ts` |
 | 文本、图片、视频和音频生成执行 | `web/src/pages/canvas/canvas-*-generation-executor*.ts` |
-| 云端 Agent、助手面板和全局快捷键控制 | `web/src/components/canvas/canvas-cloud-agent-panel.tsx`（由 `web/src/layouts/user-layout.tsx` 全局挂载）；画布上下文、开合、停靠偏好与一次性投递在 `web/src/stores/use-global-agent-store.ts`，停靠/浮动外壳在 `use-agent-panel-dock.ts`、`use-agent-panel-layout.ts`；`web/src/pages/canvas/use-canvas-assistant-visibility.ts`、`use-canvas-keyboard.ts`；画布操作契约在 `web/src/lib/canvas/canvas-operation-contract.ts` |
+| 云端 Agent、助手面板和全局快捷键控制 | `web/src/components/agent/agent-panel.tsx`（由 `web/src/components/agent/agent-panel-host.tsx` 在 `web/src/layouts/user-layout.tsx` 全局挂载）；画布上下文、开合、停靠偏好与一次性投递在 `web/src/stores/use-global-agent-store.ts`，停靠/浮动外壳在 `web/src/lib/agent/agent-panel-dock.ts`、`web/src/components/agent/use-agent-panel-layout.ts`；`web/src/pages/canvas/use-canvas-assistant-visibility.ts`、`use-canvas-keyboard.ts`；画布操作契约在 `web/src/lib/canvas/canvas-operation-contract.ts` |
 | Agent 共同编辑：在线状态、增量合并与撤销 | 后端 `backend/internal/app/cloud_agent_presence.go` 发布 Agent 在线与编辑节点，`backend/internal/app/cloud_agent_undo.go` 撤销单次运行；前端 `web/src/components/canvas/canvas-agent-presence.tsx` 显示 Agent 正在编辑的节点，`web/src/services/agent-canvas-sync.ts` 在 realtime `canvas_changed` 后增量合并 |
-| Agent 导演工具与自动打开导演台 | 后端 `backend/internal/app/cloud_agent_director_tool.go`（单一 `director` 工具、审批门控、预演等待与回传）；前端 `web/src/lib/canvas/agent-director-launch.ts`、`web/src/pages/canvas/use-agent-director-launch.ts` 处理 `director_open` 与预演回传 |
+| Agent 导演工具与自动打开导演台 | 后端 `backend/internal/app/cloud_agent_director_tool.go`（单一 `director` 工具、审批门控、预演等待与回传）、`cloud_agent_director_preview_list.go`（账号级待录索引与画布授权复核）；前端 `web/src/lib/canvas/agent-director-launch.ts`、`agent-director-recovery.ts`、`web/src/pages/canvas/use-agent-director-launch.ts` 处理 `director_open`、跨页恢复和已上传待回传重试 |
 | 素材引用字段与连线同步 | `web/src/lib/canvas/canvas-reference-fields.ts`：`referenceFieldsVersion = 1` 的画布中把 `inputBindings` / `storyboard.referenceNodeIds` 投影为连线，用户连线、删线时同步字段 |
 | 媒体版本历史 | 前端 `web/src/lib/canvas/canvas-media-versions.ts`；后端 `backend/internal/canvas/mediaversions/history.go` 实现同一规则（共享夹具 `testdata/parity.json` 校验一致），任务回写与 Agent 工具都读写节点 `metadata.mediaVersions` |
 | 选择拖拽与连线控制 | `web/src/pages/canvas/use-canvas-selection-controller.ts`、`use-canvas-connection-controller.ts` |
@@ -275,7 +282,7 @@ Pi worker 的坏参数恢复见本页「Agent 工具参数恢复」。`cloud_age
 | 编辑命令与批次状态投影 | `web/src/lib/canvas/canvas-editor-state.ts`、`canvas-task-state.ts`、`canvas-image-batch-retry.ts` |
 | 视口节点选择与输入关系解析 | `web/src/lib/canvas/canvas-node-visibility.ts`、`canvas-resource-references.ts` |
 | 本地持久化状态 | `web/src/stores/canvas/use-canvas-store.ts` |
-| 云端 Agent 运行与事件 API | `web/src/services/api/agent.ts`、`web/src/components/canvas/canvas-cloud-agent-panel.tsx` |
+| 云端 Agent 运行与事件 API | `web/src/services/api/agent.ts`、`web/src/sdk/agent/client.ts`、`web/src/services/agent/conversation-controller.ts`、`web/src/components/agent/agent-panel.tsx` |
 | Agent 长期记忆 | 后端：`backend/internal/agentmemory/document`（文档行为归属：条目编辑规则、修订、撤销、审批、Agent 写入与类型化 `WriteOutcome`）、`backend/internal/app/cloud_agent_memory_document.go`（run 快照冻结/注入与兼容类型别名）、`cloud_agent_tools_memory.go`（`memory_update` 运行态准入与 `memory_updated` 事件拼装）、`cloud_agent_memory_document_api.go`（对外 API 门面：类型别名与单 return 透传）、`cloud_agent_memory_admin.go`（管理员跨用户聚合）、`backend/internal/agentmemory`（条目文本规则与旧经验映射，迁移 v82 共用，纯规则包不依赖持久化）、`backend/internal/database/migrations_lessons_memory.go`（v82）、`handler/agent_memory_document.go`（经 `agent_settings.go` 注册）；前端：`web/src/services/api/agent-memory.ts`、设置面板 `web/src/pages/settings/agent-memory-pane.tsx`、聊天记忆卡 `web/src/components/canvas/canvas-cloud-agent-memory-cards.tsx`、事件归并 `web/src/lib/canvas/cloud-agent-events.ts` |
 | 任务计费与终态 | 后端：`backend/internal/taskruntime`（计费状态迁移与核对策略、终态业务策略、任务执行诊断、上游地址脱敏的归属）、`backend/internal/generation/terminal_error.go`（上游明确终态的稳定错误事实 `TerminalError`）、`backend/internal/app/task_billing.go`、`task_terminal.go`（原方法名转发与 `serviceRuntimeAdapter` 显式接线，文本回放/日志/产物登记/音频视频结算由 Service 提供）、`task_diagnostic.go`（诊断转发，writeback 展示留 app）、`task_worker.go`、`task_lifecycle.go`（任务编排暂留 app，不再自行决定终态计费策略）；轮询归属见「插件声明驱动的宿主行为」节 |
 | Agent 画布上下文、操作与历史 | `web/src/lib/canvas/canvas-context-discovery.ts`、`canvas-operation-contract.ts`、`web/src/pages/canvas/use-canvas-operation-history.ts` |

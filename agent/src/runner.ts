@@ -261,6 +261,39 @@ function lastUserText(snapshot: PiSnapshot): string {
   return snapshot.request.prompt;
 }
 
+/**
+ * Go appends business facts such as the selected drama episode immediately
+ * before the current user prompt. A restored Pi branch already contains the
+ * older transcript but not that new envelope, so carry any adjacent sourced
+ * user messages into the resumed prompt.
+ */
+function withCanonicalRunContext(
+  canonical: PiCanonical,
+  prompt: string,
+  restoredMessages: readonly AgentMessage[],
+): string {
+  const messages = canonical.messages;
+  let promptIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === "user" && textContent(messages[index]?.content) === prompt) {
+      promptIndex = index;
+      break;
+    }
+  }
+  if (promptIndex < 0) return prompt;
+  const existing = new Set(restoredMessages.filter(message => message.role === "user").map(message => textContent(message.content)));
+  const context: string[] = [];
+  for (let index = promptIndex - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (!message || message.role !== "user") break;
+    const source = String(message.agentContextSource || "");
+    if (!source || source === "runtime" || source === "continuation" || source === "user_interjection") break;
+    const content = textContent(message.content);
+    if (content && !existing.has(content)) context.unshift(content);
+  }
+  return [...context, prompt].filter((part) => part.trim() !== "").join("\n\n");
+}
+
 /** 隔离工作目录：不读操作者的 ~/.pi，也不写任何真实项目文件。 */
 function createWorkspace(): { cwd: string; agentDir: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "canvas-pi-run-"));
@@ -377,16 +410,16 @@ async function resumePoint(
 ): Promise<ResumePoint> {
   // Native-only calls are checkpointed in Pi's v3 branch, never appended by
   // the canvas batch path. Resolve that branch with Pi's compaction semantics.
+  const storedEntries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
   const hasCurrentEntries = snapshot.piSessionEntries?.some(item => item.runId === snapshot.runId);
   const history = snapshot.skillRuntimeMode === "pi-native" && hasCurrentEntries
-    ? buildSessionContext(snapshot.piSessionEntries!.map(({ entry }) => entry as unknown as SessionEntry), snapshot.piActiveLeafId).messages
+    ? buildSessionContext(storedEntries, snapshot.piActiveLeafId).messages
     : fromCanonical(snapshot, model);
   if (snapshot.pendingContextCompaction) {
     // Compaction was started by the previous worker. Do not let normal recovery
     // call PiModelStep while Go's ActiveTaskID belongs to the compaction task.
     // Restore the persisted branch and commit the existing Go checkpoint before
     // issuing another model prompt.
-    const storedEntries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
     const tail = history.at(-1);
     const prompt = tail?.role === "user" ? textContent(tail.content)
       : snapshot.piMessages?.length ? CONTINUATION_PROMPT : snapshot.request.prompt;
@@ -397,13 +430,17 @@ async function resumePoint(
   await recoverToolResults(bridge, snapshot, history, disclosure, checkpoint, signal, recoverNativeRead);
 
   if (!snapshot.activeTaskId && snapshot.lastTaskId === snapshot.modelFailureTaskId && snapshot.modelFailureNudge) {
-    const entries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
-    return { entries: entries.length ? entries : sessionEntriesFromMessages(snapshot.runId, history),
+    return { entries: storedEntries.length ? storedEntries : sessionEntriesFromMessages(snapshot.runId, history),
       prompt: snapshot.modelFailureNudge, activeLeafId: snapshot.piActiveLeafId };
   }
 
-  const storedEntries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
   if (storedEntries.length > 0) {
+    if (!hasCurrentEntries && !snapshot.piMessages?.length && !snapshot.activeTaskId) {
+      // The canonical slice already contains the new turn's facts. Only the
+      // restored Pi branch tells us which of them will actually be sent.
+      const restored = buildSessionContext(storedEntries, snapshot.piActiveLeafId).messages;
+      return { entries: storedEntries, prompt: withCanonicalRunContext(snapshot.canonical, snapshot.request.prompt, restored), activeLeafId: snapshot.piActiveLeafId };
+    }
     // A crash can occur after SDK omission is durable but before the operation
     // is registered. Replay only that current-run failed attempt on a new
     // branch; Pi will decide its native overflow recovery again.

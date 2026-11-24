@@ -1733,9 +1733,20 @@ paths:
     get:
       tags: [agent]
       summary: 读取云端 Agent 能力
+      description: 省略范围参数时保留旧版画布全局能力响应。显式传入 scopeType 与 scopeId 时，按该业务范围注册的 Agent 配置返回权限模式、工具、默认 Skill、模型要求和 Worker 可用性。平台范围使用 platform/self，由登录账号解析为用户级范围；响应始终投影回 self。
+      parameters:
+        - $ref: "#/components/parameters/AgentScopeType"
+        - $ref: "#/components/parameters/AgentScopeID"
+        - $ref: "#/components/parameters/AgentDefinitionID"
       responses:
         "200":
-          description: 信封 data 包含 version、permissionModes、contextScopes、skills、writeTools、billing、maxHistoryPairs、maxSteps、maxHistoryBytes、capabilitySetVersion、capabilitySetHash、nodeTypes、tools；maxHistoryPairs 为跨轮保留的用户对话轮数，maxSteps 为 0 表示无固定模型调用上限，历史仍受 maxHistoryBytes 限制
+          description: 无范围请求返回旧版画布能力对象，包含 version、permissionModes、contextScopes、skills、writeTools、billing、maxHistoryPairs、maxSteps、maxHistoryBytes、capabilitySetVersion、capabilitySetHash、nodeTypes、tools。显式范围请求返回同一合同加 scope、agentDefinitionId、agentDefinitionVersion、businessTools、defaultSkills、interactionPolicy、memoryPolicy、availability；平台默认只读、无业务工具、无 Skill 和记忆。工具能力是 UI 投影，最终仍以运行创建时的冻结目录为准。
+        "400":
+          description: 范围参数不完整，或 scopeType/scopeId 未解析为当前用户可访问范围，reason 为 agent_scope_invalid
+        "401":
+          description: 未登录
+        "404":
+          description: 业务对象不存在或不属于当前用户
   /agent/skills/usage:
     get:
       tags: [agent]
@@ -1861,9 +1872,9 @@ paths:
           schema: { type: string, maxLength: 512 }
       responses:
         "200":
-          description: 信封 data 为 items（id、canvasId、scope、agentDefinitionId、resumable、title、latestRunId、status、revision、cleanupPending、archived、createdAt、updatedAt）和可选 nextCursor。resumable 为 false 的存量会话仅供查看。
+          description: 信封 data 为 items（id、canvasId、scope、agentDefinitionId、resumable、title、latestRunId、status、revision、cleanupPending、archived、waitKind、createdAt、updatedAt）和可选 nextCursor。resumable 为 false 的存量会话仅供查看；waitKind=director_preview 表示该会话最新轮仍可恢复为浏览器预演录制。
         "400":
-          description: 画布 ID、limit 或分页游标无效
+          description: 范围参数不完整或冲突、画布 ID、limit 或分页游标无效；范围冲突 reason 为 agent_scope_invalid
         "404":
           description: 画布不存在或不属于当前用户
   /agent/conversations/{id}:
@@ -1917,6 +1928,7 @@ paths:
     post:
       tags: [agent]
       summary: 创建一轮云端 Agent 任务
+      description: 请求体 scope 是会话授权归属。画布请求可继续只传 canvasId；显式非画布请求必须传 scope 并将 canvasId 置空，短剧可附 dramaEpisodeId。平台只接受 scope={type:"platform",id:"self"}，由登录账号解析内部归属，只读、无业务工具和无 Skill。查询参数与请求体同时带范围时必须一致，否则返回 agent_scope_invalid。
       requestBody:
         required: true
         content:
@@ -1939,7 +1951,7 @@ paths:
     get:
       tags: [agent]
       summary: 读取当前用户的 Agent 轮次
-      description: data.run 只返回一页事件（默认最新 40 条）并带上 eventSeqBase、eventCount、latestSeq、eventsTruncated：eventSeqBase 是本次首条事件之前已入库的条数（不变量 events[i].seq == eventSeqBase + i + 1），latestSeq 可直接作为下次 sinceSeq，eventsTruncated 表示还有更早的记录未随本次返回。读取走 (run_id, sequence) 的 keyset 分页，不使用 offset；升级前把事件放在 state_json 里的轮次在事件表中没有行，读取回退到内存窗口。
+      description: data.run 只返回一页事件（默认最新 40 条）并带上 eventSeqBase、eventCount、latestSeq、eventsTruncated：eventSeqBase 是本次首条事件之前已入库的条数（不变量 events[i].seq == eventSeqBase + i + 1），latestSeq 可直接作为下次 sinceSeq，eventsTruncated 表示还有更早的记录未随本次返回。读取走 (run_id, sequence) 的 keyset 分页，不使用 offset；升级前把事件放在 state_json 里的轮次在事件表中没有行，读取回退到内存窗口。运行仍等待浏览器预演时，视图同时返回 waitKind=director_preview、waitId=requestId 和 pendingDirectorPreview（runId、conversationId、canvasId、nodeId、sceneId、shotId、requestId、duration、fps、deadline）；请求已结算或超过 deadline 后该字段省略。
       parameters:
         - in: query
           name: fromStart
@@ -4160,6 +4172,16 @@ paths:
           description: 未登录
         "404":
           description: "reason=director_preview_not_found：运行不存在或不属于当前用户，或 requestId 未知、已完成、已超时"
+  /agent/director-previews/pending:
+    get:
+      tags: [agent]
+      summary: 列出当前用户待浏览器录制的导演台预演
+      description: 按用户返回仍处于 director_preview 等待、截止时间未到、当前业务对象和注册 Agent 定义仍有权限访问的预演。用于用户在另一画布、短剧或平台页面时显示「返回原画布处理」，不打开目标画布导演台，也不提交或取消原运行。已结算、已过期、非画布或失效授权不进入结果；单次最多 50 项。
+      responses:
+        "200":
+          description: 信封 data.items 为 pendingDirectorPreview 数组，字段与运行详情相同。
+        "401":
+          description: 未登录
   /agent/runs/{id}/permission:
     parameters:
       - $ref: "#/components/parameters/AgentRunID"
@@ -5756,12 +5778,12 @@ components:
     AgentScopeType:
       in: query
       name: scopeType
-      description: 注册的业务类型。业务调用与 scopeId 一起传入。
-      schema: { type: string, maxLength: 40 }
+      description: 注册的业务类型。业务调用与 scopeId 一起传入；平台使用 platform。
+      schema: { type: string, maxLength: 40, enum: [canvas, drama, platform] }
     AgentScopeID:
       in: query
       name: scopeId
-      description: 当前用户有权访问的业务对象 ID。
+      description: 当前用户有权访问的业务对象 ID。平台固定传 self；服务端从登录态解析为内部账号，不接受客户端用户 ID。
       schema: { type: string, maxLength: 80 }
     AgentDefinitionID:
       in: query
@@ -6335,7 +6357,7 @@ components:
           additionalProperties: false
           required: [type, id]
           properties:
-            type: {type: string, enum: [canvas, drama]}
+            type: {type: string, enum: [canvas, drama, platform]}
             id: {type: string, maxLength: 80}
         agentDefinitionId:
           type: string

@@ -12,6 +12,7 @@ import {
     type AgentCanvasContext,
 } from "@/stores/use-global-agent-store";
 import { DIRECTOR_OPEN_EVENT, dispatchDirectorOpen, subscribeDirectorOpen, type DirectorOpenRunEvent } from "@/lib/canvas/agent-director-launch";
+import { clearAgentPageContext, publishAgentPageContext } from "@/services/agent/business-context";
 
 const memory = new Map<string, string>();
 const storage = {
@@ -34,8 +35,18 @@ beforeEach(() => {
     memory.clear();
     Object.defineProperty(globalThis, "localStorage", { configurable: true, writable: true, value: storage });
     useGlobalAgentStore.setState({ open: false, canvas: null, canvasRoute: false, canvasHeld: false, panelUnavailable: false, prefillRequest: null });
+    publishAgentPageContext({
+        owner: "prefill-test",
+        routeKey: "/canvas/canvas-a",
+        declaration: { enabled: true, kind: "business", businessType: "canvas", agentDefinitionId: "canvas.default" },
+        status: "ready",
+        scope: { type: "canvas", id: "canvas-a" },
+        agentDefinitionId: "canvas.default",
+        displayName: "画布 A",
+    });
 });
 afterEach(() => {
+    clearAgentPageContext("prefill-test");
     if (previousStorage) Object.defineProperty(globalThis, "localStorage", previousStorage);
     else delete (globalThis as { localStorage?: unknown }).localStorage;
 });
@@ -80,6 +91,17 @@ describe("global agent store", () => {
 });
 
 describe("prefill requests", () => {
+    beforeEach(() => {
+        useGlobalAgentStore.getState().setCanvas(context());
+    });
+
+    test("requires the current page to declare the addressed canvas", async () => {
+        expect(await requestAgentPrefill({ canvasId: "canvas-b", userScope: "user-a", text: "wrong canvas" })).toBe(false);
+        clearAgentPageContext("prefill-test");
+        expect(await requestAgentPrefill({ canvasId: "canvas-a", userScope: "user-a", text: "undeclared" })).toBe(false);
+        expect(useGlobalAgentStore.getState().prefillRequest).toBeNull();
+    });
+
     test("a request is taken once by id and settles with the panel outcome", async () => {
         const pending = requestAgentPrefill({ canvasId: "canvas-a", userScope: "user-a", text: "生成预演台", autoSubmit: true, requiresVision: true, focusNodeIds: ["n1"] });
         const request = useGlobalAgentStore.getState().prefillRequest!;
@@ -104,6 +126,7 @@ describe("prefill requests", () => {
 
 describe("panel chunk failure", () => {
     test("settles the waiting prefill and refuses later ones immediately until the next account mount", async () => {
+        useGlobalAgentStore.getState().setCanvas(context());
         const pending = requestAgentPrefill({ canvasId: "canvas-a", userScope: "user-a", text: "hi", autoSubmit: true });
         markAgentPanelUnavailable();
         expect(await pending).toBe(false);
@@ -111,6 +134,7 @@ describe("panel chunk failure", () => {
         expect(await requestAgentPrefill({ canvasId: "canvas-a", userScope: "user-a", text: "again" })).toBe(false);
         expect(useGlobalAgentStore.getState().prefillRequest).toBeNull();
         useGlobalAgentStore.getState().reset();
+        useGlobalAgentStore.getState().setCanvas(context());
         void requestAgentPrefill({ canvasId: "canvas-a", userScope: "user-b", text: "new account" });
         expect(useGlobalAgentStore.getState().prefillRequest?.text).toBe("new account");
     });
