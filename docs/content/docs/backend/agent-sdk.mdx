@@ -71,6 +71,8 @@ const receipt = await agent.sendMessage(conversationId, {
 
 回复提问时携带对应的 `replyToQuestionId`。普通消息如需立即插话，由界面明确选择 `interject`，否则排队。按 `receipt.delivery` 提示已启动、已插话、已排队或已取消；排队回执不等于新 Run 已开始，后续以队列和运行快照为准。若服务端拒绝了过期的 `expectedRunId`，先刷新会话，再根据用户意图决定是否重送，不要静默发送到另一轮。业务审批用 `decideApproval`；回答 Agent 的问题不等于批准工具写入。
 
+短剧运行中显式切换剧集时，消息按新剧集排队，等当前轮结束后再启动。该消息不能提升为发给当前轮的插话。回复待答问题时可沿用该轮剧集，指定其他剧集会返回 `agent_question_stale`。
+
 | 场景 | 公开 API（前缀 `/api`） |
 | --- | --- |
 | 创建一轮 / 从终态 Run 继续 | `POST /agent/runs` / `POST /agent/runs/:id/messages` |

@@ -17,7 +17,7 @@ func (s *Service) cloudAgentParentCanBeSuperseded(userID, parentID string) bool 
 	if err != nil {
 		return false
 	}
-	if validateCloudAgentPolicySnapshot(state.Policy) == nil {
+	if validateCloudAgentExecutionPolicy(&state) == nil {
 		return false
 	}
 	if strings.TrimSpace(state.ActiveTaskID) == "" {

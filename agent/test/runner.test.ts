@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { CanvasContextOverflow, CanvasLeaseLost, CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "../src/tool-disclosure.js";
-import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent, withCanonicalRunContext, withServerPolicy } from "../src/runner.js";
+import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent, withServerPolicy } from "../src/runner.js";
 import type { PromptParts } from "../src/system-prompt.js";
 import { sessionEntriesFromMessages } from "../src/session-tools.js";
 import { createHash } from "node:crypto";
@@ -30,21 +30,28 @@ test("withServerPolicy restores the frozen server policy for a Pi stream canonic
   assert.match(restored.systemPrompt, /Harness rules/);
 });
 
-test("resumed Pi turns receive the current canonical business context", () => {
+test("continued Pi turns send the current canonical business context with the restored branch", async () => {
+  const { bridge, state, snapshot } = fakeBridge([{ text: "第二集回答" }]);
   const context = '本轮短剧分析对象（数据）：\n{"episodeId":"episode-2","readPath":"drama:episode/episode-2"}';
   const prompt = "分析第 2 集";
-  const snapshot = {
-    request: { prompt },
-    canonical: { systemPrompt: "", toolChoice: "auto", tools: [], messages: [
-      { role: "user", content: "第一集问题" },
-      { role: "assistant", content: "第一集回答" },
-      { role: "user", content: context, agentContextSource: "drama_episode" },
-      { role: "user", content: prompt },
-    ] },
-  } as unknown as Pick<PiSnapshot, "canonical" | "request">;
-  const rendered = withCanonicalRunContext(snapshot, prompt);
-  assert.equal(rendered, `${context}\n\n${prompt}`);
-  assert.equal(withCanonicalRunContext(snapshot, prompt, [{ role: "user", content: context, timestamp: 1 }]), prompt);
+  const previous = [
+    { role: "user", content: "第一集问题" },
+    { role: "assistant", content: "第一集回答" },
+  ];
+  const history = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: previous } }, canvasModel(snapshot));
+  snapshot.piSessionEntries = sessionEntriesFromMessages("previous-run", history)
+    .map(entry => ({ runId: "previous-run", entry: entry as unknown as Record<string, unknown> }));
+  snapshot.piActiveLeafId = String(snapshot.piSessionEntries.at(-1)?.entry.id);
+  snapshot.skillRuntimeMode = "pi-native";
+  snapshot.request.prompt = prompt;
+  snapshot.canonical.messages = [...previous,
+    { role: "user", content: context, agentContextSource: "drama_episode" },
+    { role: "user", content: prompt },
+  ];
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  const sent = state.canonical[0]!.messages;
+  assert.ok(sent.some(message => message.role === "assistant" && message.content === "第一集回答"));
+  assert.equal(sent.at(-1)?.content, `${context}\n\n${prompt}`);
 });
 
 function promptParts(): PromptParts {
