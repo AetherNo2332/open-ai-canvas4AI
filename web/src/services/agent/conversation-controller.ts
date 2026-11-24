@@ -44,8 +44,6 @@ type ControllerOptions = {
     initial?: Partial<Pick<AgentConversationControllerState, "model" | "reasoningMode" | "skillIds" | "sendMode">>;
 };
 
-const terminal = new Set<AgentRunSnapshot["status"]>(["completed", "failed", "cancelled", "rejected"]);
-
 function activeRun(run: AgentRunSnapshot | null | undefined) {
     return Boolean(run && (run.cleanupPending || ["queued", "running", "waiting_approval"].includes(run.status)));
 }
@@ -55,30 +53,8 @@ function sameScope(left: AgentBusinessScope, right: AgentBusinessScope) {
 }
 
 function recordFromConversation(summary: AgentConversation, existing?: AgentConversationRecord): AgentConversationRecord {
-    return {
-        id: existing?.id || summary.id,
-        serverConversationId: summary.id,
-        title: summary.title,
-        messages: existing?.messages || [],
-        run: existing?.run || null,
-        lastEventSeq: existing?.lastEventSeq,
-        historyState: existing?.historyState,
-        draft: existing?.draft,
-        permissionMode: existing?.permissionMode || "read_only",
-        model: existing?.model,
-        reasoningMode: existing?.reasoningMode,
-        skillIds: existing?.skillIds,
-        contextUsage: existing?.contextUsage,
-        sendMode: existing?.sendMode,
-        archived: summary.archived,
-        createdAt: existing?.createdAt || summary.createdAt,
-        updatedAt: summary.updatedAt,
-        adapterData: existing?.adapterData,
-    };
-}
-
-function sameRecord(left: AgentConversationRecord, right: AgentConversationRecord) {
-    return JSON.stringify(left) === JSON.stringify(right);
+    const record = existing || { id: summary.id, messages: [], run: null, permissionMode: "read_only" as const, createdAt: summary.createdAt };
+    return { ...record, serverConversationId: summary.id, title: summary.title, archived: summary.archived, updatedAt: summary.updatedAt };
 }
 
 export class AgentConversationController {
@@ -93,8 +69,15 @@ export class AgentConversationController {
     private eventListeners = new Set<(event: AgentEvent) => void>();
     private stateValue: AgentConversationControllerState;
     private document: AgentConversationDocument = { version: 2, activeId: null, conversations: [] };
+    private readonly lifetime = new AbortController();
     private eventController: AbortController | null = null;
     private disposed = false;
+    private viewVersion = 0;
+    private historyVersion = 0;
+    private directoryVersion = 0;
+    private runVersion = 0;
+    private directoryRequest?: Promise<void>;
+    private submissions = new Map<string, AgentPendingSubmission>();
     private persistTimer: ReturnType<typeof setTimeout> | undefined;
 
     constructor(options: ControllerOptions) {
@@ -153,8 +136,7 @@ export class AgentConversationController {
             this.document = document;
             const active = document.conversations.find((record) => record.id === document.activeId) || document.conversations[0];
             const activeConversationId = active?.id || this.createId();
-            const draft = active ? (await this.store.loadDraft(this.identity, active.id)) || active.draft || "" : "";
-            const pending = active ? await this.store.loadPending(this.identity, active.id) : null;
+            const { draft, pending } = active ? await this.loadComposer(active.id) : { draft: "", pending: null };
             if (this.disposed) return;
             this.set({
                 status: "ready",
@@ -163,7 +145,7 @@ export class AgentConversationController {
                 run: active?.run || null,
                 approval: active?.run?.approval || null,
                 conversations: document.conversations,
-                draft,
+                draft: draft ?? active?.draft ?? "",
                 pending,
                 contextUsage: active?.contextUsage || emptyAgentContextUsage(active?.run?.id || ""),
                 model: active?.model || active?.run?.model || this.stateValue.model,
@@ -171,61 +153,97 @@ export class AgentConversationController {
                 skillIds: active?.skillIds || this.stateValue.skillIds,
                 sendMode: active?.sendMode || this.stateValue.sendMode,
             });
+            const view = this.viewVersion;
             if (!active) await this.ensureActiveRecord();
-            if (active?.serverConversationId || active?.run?.conversationId) await this.loadHistory(active.serverConversationId || active.run!.conversationId!);
+            const serverId = active?.serverConversationId || active?.run?.conversationId;
+            if (serverId) await this.loadHistory(activeConversationId, serverId, view);
             else await this.refreshDirectory();
         } catch (cause) {
             if (!this.disposed) this.set({ status: "error", error: cause instanceof Error ? cause.message : "Agent 会话恢复失败" });
         }
     }
 
-    async refreshDirectory() {
-        if (this.disposed) return;
+    refreshDirectory() {
+        if (this.disposed || this.stateValue.status !== "ready") return Promise.resolve();
+        if (!this.directoryRequest) {
+            this.directoryRequest = this.readDirectory().finally(() => {
+                this.directoryRequest = undefined;
+            });
+        }
+        return this.directoryRequest;
+    }
+
+    async reconnect() {
+        const id = this.stateValue.activeConversationId;
+        const view = this.viewVersion;
+        const runId = this.stateValue.run?.id;
+        await this.refreshDirectory();
+        const run = this.stateValue.run;
+        if (this.isCurrentView(id, view) && run && run.id === runId && this.stateValue.connection === "disconnected" && activeRun(run)) this.connectRun(run);
+    }
+
+    private async readDirectory() {
+        const version = ++this.directoryVersion;
+        const runVersion = this.runVersion;
+        const view = this.viewVersion;
+        const localId = this.stateValue.activeConversationId;
         try {
-            const items: AgentConversation[] = [];
+            const items = new Map<string, AgentConversation>();
             let before: string | undefined;
             do {
                 const page = await this.client.listConversations({ before, limit: 100 }, this.signal());
-                if (this.disposed) return;
-                items.push(...page.items);
+                if (this.disposed || version !== this.directoryVersion || runVersion !== this.runVersion) return;
+                for (const summary of page.items) items.set(summary.id, summary);
                 before = page.nextCursor;
             } while (before);
-            const existing = new Map(this.document.conversations.map((record) => [record.serverConversationId || record.id, record]));
             const conversations = this.document.conversations.map((record) => {
-                const summary = items.find((item) => item.id === (record.serverConversationId || record.id));
+                const summary = items.get(record.serverConversationId || record.id);
                 return summary ? recordFromConversation(summary, record) : record;
             });
-            for (const summary of items) {
-                if (!conversations.some((record) => record.serverConversationId === summary.id || record.id === summary.id)) conversations.push(recordFromConversation(summary, existing.get(summary.id)));
+            const known = new Set(conversations.map((record) => record.serverConversationId || record.id));
+            for (const summary of items.values()) {
+                if (!known.has(summary.id)) conversations.push(recordFromConversation(summary));
             }
             this.document = { version: 2, activeId: this.stateValue.activeConversationId || null, conversations };
             this.set({ conversations });
-            const active = conversations.find((record) => record.id === this.stateValue.activeConversationId);
-            if (active?.serverConversationId && (!active.run || active.run.id !== this.summaryFor(active)?.latestRunId)) await this.loadHistory(active.serverConversationId);
             this.schedulePersist();
+            if (!this.isCurrentView(localId, view) || this.submissions.has(localId)) return;
+            const active = this.record(localId);
+            const serverId = active?.serverConversationId;
+            const latest = serverId ? items.get(serverId)?.latestRunId : undefined;
+            if (serverId && latest && (this.stateValue.run?.id !== latest || active?.historyState?.status === "unavailable")) {
+                await this.loadHistory(localId, serverId, view);
+            }
         } catch (cause) {
-            if (!this.disposed) this.set({ error: cause instanceof Error ? cause.message : "Agent 目录读取失败" });
+            if (this.isCurrentView(localId, view) && version === this.directoryVersion && runVersion === this.runVersion) this.set({ error: cause instanceof Error ? cause.message : "Agent 目录读取失败" });
         }
     }
 
     async openConversation(id: string) {
-        const record = this.document.conversations.find((item) => item.id === id);
-        if (!record) return;
+        if (this.disposed || !this.record(id)) return;
+        const view = ++this.viewVersion;
+        let composer: Awaited<ReturnType<AgentConversationController["loadComposer"]>>;
+        try {
+            composer = await this.loadComposer(id);
+        } catch (cause) {
+            if (!this.disposed && view === this.viewVersion) this.set({ error: cause instanceof Error ? cause.message : "Agent 草稿读取失败" });
+            return;
+        }
+        const { draft, pending } = composer;
+        const record = this.record(id);
+        if (this.disposed || view !== this.viewVersion || !record) return;
         this.stopEvents();
-        const draft = await this.store.loadDraft(this.identity, id);
-        const pending = await this.store.loadPending(this.identity, id).catch((cause) => {
-            this.set({ error: cause instanceof Error ? cause.message : "待确认请求读取失败" });
-            return null;
-        });
-        if (this.disposed) return;
         this.document = { ...this.document, activeId: id };
         this.set({
             activeConversationId: id,
             messages: record.messages,
             run: record.run,
             approval: record.run?.approval || null,
-            draft: draft || record.draft || "",
-            pending,
+            draft: draft ?? record.draft ?? "",
+            queue: undefined,
+            pending: this.submissions.get(id) || pending,
+            busy: this.submissions.has(id),
+            connection: "connected",
             error: "",
             contextUsage: record.contextUsage || emptyAgentContextUsage(record.run?.id || ""),
             model: record.model || record.run?.model || "",
@@ -233,22 +251,28 @@ export class AgentConversationController {
             skillIds: record.skillIds || [],
             sendMode: record.sendMode || this.stateValue.sendMode,
         });
-        if (record.serverConversationId || record.run?.conversationId) await this.loadHistory(record.serverConversationId || record.run!.conversationId!);
+        const serverId = record.serverConversationId || record.run?.conversationId;
+        if (serverId) await this.loadHistory(id, serverId, view);
         this.schedulePersist();
     }
 
     async openRun(runId: string) {
-        if (!runId) return false;
+        if (this.disposed || !runId) return false;
+        const view = ++this.viewVersion;
         const { run } = await this.client.getRun(runId, this.signal(), { eventLimit: 1 });
+        if (this.disposed || view !== this.viewVersion) return false;
         if (run.scope && !sameScope(run.scope, this.identity.scope)) {
             throw new Error("该运行不属于当前页面范围");
         }
-        this.stopEvents();
         const conversationId = run.conversationId || run.id;
         const existing = this.document.conversations.find((item) => item.serverConversationId === conversationId || item.run?.conversationId === conversationId);
         const recordId = existing?.id || conversationId;
+        const { draft, pending } = await this.loadComposer(recordId);
+        if (this.disposed || view !== this.viewVersion) return false;
+        this.stopEvents();
+        const current = this.record(recordId);
         const record: AgentConversationRecord = existing
-            ? { ...existing, run }
+            ? { ...(current || existing), run }
             : {
                   id: recordId,
                   serverConversationId: conversationId,
@@ -269,8 +293,11 @@ export class AgentConversationController {
             messages: record.messages,
             run,
             approval: run.approval || null,
-            draft: (await this.store.loadDraft(this.identity, recordId)) || record.draft || "",
-            pending: await this.store.loadPending(this.identity, recordId),
+            draft: draft ?? record.draft ?? "",
+            queue: undefined,
+            pending: this.submissions.get(recordId) || pending,
+            busy: this.submissions.has(recordId),
+            connection: "connected",
             error: "",
             conversations: this.document.conversations,
             contextUsage: record.contextUsage || emptyAgentContextUsage(run.id),
@@ -280,11 +307,13 @@ export class AgentConversationController {
             sendMode: record.sendMode || this.stateValue.sendMode,
         });
         await this.store.saveDocument(this.identity, this.document);
-        await this.loadHistory(conversationId);
+        await this.loadHistory(recordId, conversationId, view);
         return true;
     }
 
     async newConversation() {
+        if (this.disposed || this.stateValue.status !== "ready") return;
+        ++this.viewVersion;
         this.stopEvents();
         const id = this.createId();
         const record: AgentConversationRecord = {
@@ -324,7 +353,9 @@ export class AgentConversationController {
     }
 
     setDraft(draft: string) {
+        if (this.disposed || !this.stateValue.activeConversationId) return;
         this.set({ draft });
+        this.updateRecord({ draft });
         void this.store.saveDraft(this.identity, this.stateValue.activeConversationId, draft);
         this.schedulePersist();
     }
@@ -359,7 +390,8 @@ export class AgentConversationController {
     }
 
     async submit(options: AgentConversationSubmitOptions) {
-        if (this.disposed || this.stateValue.busy) return false;
+        const localId = this.stateValue.activeConversationId;
+        if (this.disposed || this.stateValue.status !== "ready" || !localId || this.submissions.has(localId)) return false;
         const request = this.normalizeRequest(options.request);
         const conversationId = this.currentServerConversationId();
         const previous = this.stateValue.pending;
@@ -390,21 +422,19 @@ export class AgentConversationController {
                   ...(!options.preserveDraft ? { composerDraft: this.stateValue.draft } : {}),
                   ...(conversationMessage ? { conversationMessage } : {}),
               };
-        this.set({ busy: true, error: "", ...(previous?.request ? {} : { pending }) });
+        this.submissions.set(localId, pending);
+        this.set({ busy: true, error: "" });
         try {
             await this.prepare?.();
             if (this.disposed) return false;
-            const messages = options.preserveDraft
-                ? this.stateValue.messages
-                : this.stateValue.messages.some((message) => message.id === pending.messageId)
-                  ? this.stateValue.messages
-                  : [...this.stateValue.messages, { id: pending.messageId || `user-${pending.key}`, role: "user" as const, text: request.prompt }];
-            await this.ensureActiveRecord(messages);
-            await this.store.savePending(this.identity, this.stateValue.activeConversationId, pending);
-            this.set({
-                pending,
-                messages,
-            });
+            const record = this.record(localId);
+            if (!record) return false;
+            const messages =
+                options.preserveDraft || record.messages.some((message) => message.id === pending.messageId) ? record.messages : [...record.messages, { id: pending.messageId || `user-${pending.key}`, role: "user" as const, text: request.prompt }];
+            await this.store.savePending(this.identity, localId, pending);
+            if (this.disposed) return false;
+            this.patchRecord(localId, { messages });
+            if (this.isCurrentView(localId)) this.set({ pending, messages });
             await this.store.saveDocument(this.identity, this.document);
             let nextRun: AgentRunSnapshot | undefined;
             let conversationDelta: AgentConversationQueue | undefined;
@@ -414,44 +444,15 @@ export class AgentConversationController {
                 const receipt = await this.client.sendMessage(target, { ...message, request: pending.request! }, this.signal());
                 receiptConversationId = receipt.conversationId || target;
                 conversationDelta = await this.client.getConversationQueue(target, this.signal());
-                if (receipt.runId) nextRun = (await this.client.getRun(receipt.runId, this.signal(), { eventLimit: 1 })).run;
+                if (receipt.runId) nextRun = (await this.client.getRun(receipt.runId, this.signal(), { fromStart: true, eventLimit: 500 })).run;
             } else if (pending.parentRunId) {
                 nextRun = (await this.client.continueRun(pending.parentRunId, pending.request!, this.signal())).run;
             } else {
                 nextRun = (await this.client.startRun(pending.request!, this.signal())).run;
             }
             if (this.disposed) return false;
-            await this.store.clearPending(this.identity, this.stateValue.activeConversationId);
-            if (nextRun) {
-                const messages = this.stateValue.messages.map((message) => (message.id === pending.messageId ? { ...message, id: `user-${nextRun!.id}`, runId: nextRun!.id } : message));
-                const conversationId = nextRun.conversationId || receiptConversationId;
-                this.set({ messages, run: nextRun, approval: nextRun.approval || null, pending: null, connection: "connecting", ...(conversationDelta ? { queue: conversationDelta } : {}) });
-                this.updateRecord({
-                    messages,
-                    run: nextRun,
-                    pending: null,
-                    model: nextRun.model || this.stateValue.model || undefined,
-                    reasoningMode: this.stateValue.reasoningMode,
-                    skillIds: this.stateValue.skillIds,
-                    sendMode: this.stateValue.sendMode,
-                    ...(conversationId ? { serverConversationId: conversationId } : {}),
-                    ...(conversationDelta ? { queue: conversationDelta } : {}),
-                });
-                this.connectRun(nextRun);
-            } else {
-                await this.refreshQueue();
-                if (receiptConversationId) this.updateRecord({ serverConversationId: receiptConversationId });
-                this.set({ pending: null });
-                this.updateRecord({
-                    pending: null,
-                    model: this.stateValue.model || undefined,
-                    reasoningMode: this.stateValue.reasoningMode,
-                    skillIds: this.stateValue.skillIds,
-                    sendMode: this.stateValue.sendMode,
-                });
-            }
-            if (!options.preserveDraft) this.setDraft("");
-            this.schedulePersist();
+            ++this.runVersion;
+            await this.settleSubmission(localId, pending, nextRun, conversationDelta, receiptConversationId, Boolean(options.preserveDraft));
             return true;
         } catch (cause) {
             if (this.disposed) return false;
@@ -459,15 +460,38 @@ export class AgentConversationController {
             const reason = (cause as { reason?: string }).reason || "";
             const definitive = Boolean(status && [400, 401, 403, 404, 422].includes(status)) || ["agent_conversation_stale_parent", "agent_question_pending", "agent_question_answer_pending", "agent_question_stale"].includes(reason);
             if (definitive) {
-                await this.store.clearPending(this.identity, this.stateValue.activeConversationId).catch(() => undefined);
-                this.set({ pending: null });
-                this.updateRecord({ pending: null });
+                await this.store.clearPending(this.identity, localId).catch(() => undefined);
+                if (this.isCurrentView(localId)) this.set({ pending: null });
             }
-            this.set({ error: cause instanceof Error ? cause.message : "Agent 请求失败，可重试原消息" });
+            if (this.isCurrentView(localId)) this.set({ error: cause instanceof Error ? cause.message : "Agent 请求失败，可重试原消息" });
             return false;
         } finally {
-            if (!this.disposed) this.set({ busy: false });
+            this.submissions.delete(localId);
+            if (this.isCurrentView(localId)) this.set({ busy: false });
         }
+    }
+
+    private async settleSubmission(localId: string, pending: AgentPendingSubmission, run: AgentRunSnapshot | undefined, queue: AgentConversationQueue | undefined, receiptConversationId: string, preserveDraft: boolean) {
+        const record = this.record(localId);
+        if (!record) return;
+        const serverConversationId = run?.conversationId || receiptConversationId;
+        const clearDraft = !preserveDraft && (record.draft ?? "") === pending.composerDraft;
+        const messages = run ? record.messages.map((message) => (message.id === pending.messageId ? { ...message, id: `user-${run.id}`, runId: run.id } : message)) : record.messages;
+        this.patchRecord(localId, {
+            messages,
+            ...(run ? { run, model: run.model || record.model } : {}),
+            ...(serverConversationId ? { serverConversationId } : {}),
+            ...(clearDraft ? { draft: "" } : {}),
+        });
+        if (this.isCurrentView(localId)) {
+            this.set({ messages, ...(clearDraft ? { draft: "" } : {}), ...(run ? { run, approval: run.approval || null } : {}) });
+            if (queue) this.applyQueue(queue);
+            if (run) this.connectRun(run);
+        }
+        if (clearDraft) await this.store.saveDraft(this.identity, localId, "");
+        await this.store.saveDocument(this.identity, this.document);
+        await this.store.clearPending(this.identity, localId);
+        if (this.isCurrentView(localId)) this.set({ pending: null });
     }
 
     async retryPending() {
@@ -478,54 +502,72 @@ export class AgentConversationController {
 
     async refreshQueue() {
         const conversationId = this.currentServerConversationId();
-        if (!conversationId) return;
+        const localId = this.stateValue.activeConversationId;
+        const view = this.viewVersion;
+        if (this.disposed || !conversationId) return;
         try {
             const queue = await this.client.getConversationQueue(conversationId, this.signal());
-            if (!this.disposed) this.set({ queue });
+            if (this.isCurrentView(localId, view) && this.currentServerConversationId() === conversationId) this.applyQueue(queue);
         } catch (cause) {
-            if (!this.disposed) this.set({ error: cause instanceof Error ? cause.message : "待发消息读取失败" });
+            if (this.isCurrentView(localId, view)) this.set({ error: cause instanceof Error ? cause.message : "待发消息读取失败" });
         }
+    }
+
+    private applyQueue(queue: AgentConversationQueue) {
+        const current = this.stateValue.queue;
+        if (current?.conversationId === queue.conversationId && current.revision > queue.revision) return;
+        this.set({ queue });
     }
 
     async editQueued(item: AgentQueuedMessage, prompt: string) {
         const conversationId = this.currentServerConversationId();
+        const view = this.viewVersion;
         if (!conversationId) return false;
         await this.client.updateQueuedMessage(conversationId, item.id, { revision: item.revision, prompt }, this.signal());
-        await this.refreshQueue();
+        if (this.viewVersion === view) await this.refreshQueue();
         return true;
     }
 
     async interjectQueued(item: AgentQueuedMessage) {
         const conversationId = this.currentServerConversationId();
+        const view = this.viewVersion;
         if (!conversationId) return false;
         await this.client.updateQueuedMessage(conversationId, item.id, { revision: item.revision, action: "interject" }, this.signal());
-        await this.refreshQueue();
+        if (this.viewVersion === view) await this.refreshQueue();
         return true;
     }
 
     async cancelQueued(item: AgentQueuedMessage) {
         const conversationId = this.currentServerConversationId();
+        const view = this.viewVersion;
         if (!conversationId) return false;
         await this.client.cancelQueuedMessage(conversationId, item.id, item.revision, this.signal());
-        await this.refreshQueue();
+        if (this.viewVersion === view) await this.refreshQueue();
         return true;
     }
 
     async updateQueue(action: "pause" | "resume") {
         const conversationId = this.currentServerConversationId();
+        const localId = this.stateValue.activeConversationId;
+        const view = this.viewVersion;
         if (!conversationId || !this.stateValue.queue) return false;
         const queue = await this.client.updateConversationQueue(conversationId, { revision: this.stateValue.queue.revision, action }, this.signal());
-        this.set({ queue });
+        if (this.isCurrentView(localId, view)) this.applyQueue(queue);
         return true;
     }
 
     async cancelRun() {
         const run = this.stateValue.run;
+        const view = this.viewVersion;
         if (!run) return false;
         const receipt = await this.client.cancelRun(run.id, this.signal());
         if (receipt.accepted) {
             const { run: next } = await this.client.getRun(run.id, this.signal(), { eventLimit: 1 });
-            this.set({ run: next, approval: next.approval || null });
+            if (!this.disposed && view === this.viewVersion && this.stateValue.run?.id === run.id) {
+                this.set({ run: next, approval: next.approval || null });
+                this.updateRecord({ run: next });
+                this.schedulePersist();
+            }
         }
         return receipt.accepted;
     }
@@ -533,28 +575,34 @@ export class AgentConversationController {
     async decideApproval(decision: "approve" | "reject", input: Omit<AgentApprovalDecision, "decision"> = {}) {
         const run = this.stateValue.run;
         const approval = this.stateValue.approval;
+        const view = this.viewVersion;
         if (!run || !approval) return false;
         await this.client.decideApproval(run.id, approval.approvalId, { decision, ...input }, this.signal());
-        this.set({ approval: null });
+        if (!this.disposed && view === this.viewVersion && this.stateValue.run?.id === run.id && this.stateValue.approval?.approvalId === approval.approvalId) this.set({ approval: null });
         return true;
     }
 
     async changePermission(permissionMode: AgentRunSnapshot["permissionMode"]) {
         const run = this.stateValue.run;
+        const localId = this.stateValue.activeConversationId;
         if (!run) return false;
         const receipt = await this.client.changePermission(run.id, { permissionMode, requestId: this.createId() }, this.signal());
-        if (receipt.changed) {
-            const next = { ...run, permissionMode: receipt.permissionMode };
-            this.set({ run: next });
-            this.updateRecord({ run: next });
+        const current = this.record(localId)?.run;
+        if (!this.disposed && receipt.changed && current?.id === run.id) {
+            const next = { ...current, permissionMode: receipt.permissionMode };
+            this.patchRecord(localId, { run: next });
+            if (this.isCurrentView(localId) && this.stateValue.run?.id === run.id) this.set({ run: next });
+            this.schedulePersist();
         }
         return receipt.changed;
     }
 
     async archiveConversation(id: string) {
         const record = this.document.conversations.find((item) => item.id === id);
-        if (!record) return false;
+        if (this.disposed || !record || this.submissions.has(id)) return false;
         if (record.serverConversationId) await this.client.archiveConversation(record.serverConversationId, this.signal());
+        if (this.disposed) return false;
+        ++this.directoryVersion;
         const conversations = this.document.conversations.filter((item) => item.id !== id);
         this.document = { ...this.document, conversations };
         this.set({ conversations });
@@ -565,6 +613,7 @@ export class AgentConversationController {
 
     dispose() {
         this.disposed = true;
+        this.lifetime.abort();
         this.stopEvents();
         if (this.persistTimer) clearTimeout(this.persistTimer);
         this.listeners.clear();
@@ -572,7 +621,20 @@ export class AgentConversationController {
     }
 
     private signal() {
-        return this.eventController?.signal;
+        return this.lifetime.signal;
+    }
+
+    private isCurrentView(id: string, version = this.viewVersion) {
+        return !this.disposed && version === this.viewVersion && id === this.stateValue.activeConversationId;
+    }
+
+    private record(id: string) {
+        return this.document.conversations.find((item) => item.id === id);
+    }
+
+    private async loadComposer(id: string) {
+        const [draft, pending] = await Promise.all([this.store.loadDraft(this.identity, id), this.store.loadPending(this.identity, id)]);
+        return { draft, pending };
     }
 
     private normalizeRequest(request: AgentRunRequest): AgentRunRequest {
@@ -625,84 +687,102 @@ export class AgentConversationController {
         return record;
     }
 
-    private summaryFor(record: AgentConversationRecord) {
-        if (!record.serverConversationId) return undefined;
-        return this.document.conversations.some((item) => item.serverConversationId === record.serverConversationId) ? { latestRunId: record.run?.id } : undefined;
-    }
-
-    private async loadHistory(conversationId: string) {
+    private async loadHistory(localId: string, conversationId: string, viewVersion: number) {
+        if (!this.isCurrentView(localId, viewVersion)) return;
+        const version = ++this.historyVersion;
+        const initialRunId = this.stateValue.run?.id;
+        const current = () => this.isCurrentView(localId, viewVersion) && version === this.historyVersion && initialRunId === this.stateValue.run?.id;
         try {
             const runs: AgentRunSnapshot[] = [];
             let after: string | undefined;
             do {
                 const page = await this.client.listConversationRuns(conversationId, { after, limit: 100 }, this.signal());
-                if (this.disposed) return;
+                if (!current()) return;
                 runs.push(...page.items);
                 after = page.nextCursor;
             } while (after);
             const restored: AgentRunSnapshot[] = [];
-            for (const run of runs) restored.push(await this.loadFullRun(run));
+            for (const run of runs) {
+                if (run.conversationId !== conversationId) throw new Error("Agent 轮次归属不一致，已停止恢复");
+                restored.push(await this.loadFullRun(run));
+                if (!current()) return;
+            }
             const view = projectAgentConversation(conversationId, restored);
             const contextUsage = restored.reduce((usage, run) => [...(run.events || [])].sort((left, right) => left.seq - right.seq).reduce((next, event) => reduceAgentContextUsage(next, event), usage), emptyAgentContextUsage(restored.at(-1)?.id || ""));
-            const record = this.document.conversations.find((item) => item.id === this.stateValue.activeConversationId);
-            if (!record) return;
+            const record = this.record(localId);
+            if (!record || !current()) return;
+            this.stopEvents();
+            // A directory response that started before this handoff may still describe the previous run.
+            if (this.stateValue.run?.id !== view.run?.id) ++this.runVersion;
             const merged = { ...this.mergeRecord(record, view, restored, conversationId), contextUsage };
             this.replaceRecord(merged);
             this.set({
                 messages: merged.messages,
                 run: merged.run,
                 approval: merged.run?.approval || null,
+                error: "",
                 contextUsage,
                 model: merged.model || merged.run?.model || this.stateValue.model,
                 reasoningMode: merged.reasoningMode || this.stateValue.reasoningMode,
                 skillIds: merged.skillIds || this.stateValue.skillIds,
                 connection: activeRun(merged.run) ? "connecting" : "connected",
             });
-            await this.refreshQueue();
             if (activeRun(merged.run)) this.connectRun(merged.run!);
+            this.schedulePersist();
+            await this.refreshQueue();
         } catch (cause) {
-            if (!this.disposed) {
+            if (current()) {
                 this.set({ error: cause instanceof Error ? cause.message : "Agent 历史读取失败" });
                 this.updateRecord({ historyState: { status: "unavailable", message: "当前对话暂时无法恢复，本地记录已保留" } });
+                this.schedulePersist();
             }
         }
     }
 
     private async loadFullRun(source: AgentRunSnapshot) {
-        const events = [...(source.events || [])].filter((event) => event.runId === source.id && event.seq > 0);
-        const seen = new Set(events.map((event) => event.seq));
-        let seq = Math.max(0, ...seen);
+        const prefix = this.uniqueEvents(source);
+        const events = prefix.every((event, index) => event.seq === index + 1) ? prefix : [];
+        let seq = events.at(-1)?.seq || 0;
+        let missingPrefix = 0;
+        let total = source.eventCount || 0;
         let snapshot = source;
-        let requestFromStart = seq === 0;
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-            if (attempt > 0 && events.length >= (snapshot.eventCount || 0)) break;
-            const { run } = await this.client.getRun(source.id, this.signal(), requestFromStart ? { fromStart: true, eventLimit: 500 } : { sinceSeq: seq, eventLimit: 500 });
-            requestFromStart = false;
-            const page = (run.events || []).filter((event) => event.runId === run.id && event.seq > seq && !seen.has(event.seq)).sort((a, b) => a.seq - b.seq);
-            snapshot = { ...run, events: [...events, ...page] };
-            if (!page.length) break;
-            for (const event of page) {
-                seen.add(event.seq);
-                events.push(event);
+        do {
+            const { run } = await this.client.getRun(source.id, this.signal(), seq === 0 ? { fromStart: true, eventLimit: 500 } : { sinceSeq: seq, eventLimit: 500 });
+            this.signal().throwIfAborted();
+            if (run.id !== source.id || run.conversationId !== source.conversationId) throw new Error("Agent 轮次归属不一致，已停止恢复");
+            const page = this.uniqueEvents(run).filter((event) => event.seq > seq);
+            total = Math.max(total, run.eventCount || 0);
+            // Legacy checkpoints may explicitly declare a prefix that no longer exists.
+            if (seq === 0 && run.eventSeqBase && page[0]?.seq === run.eventSeqBase + 1 && total >= page.at(-1)!.seq) {
+                seq = missingPrefix = run.eventSeqBase;
             }
-            seq = Math.max(seq, ...page.map((event) => event.seq));
-        }
-        return { ...snapshot, events };
+            if (page.some((event, index) => event.seq !== seq + index + 1) || (!page.length && seq < total)) throw new Error("Agent 历史事件未完整返回，请重试读取");
+            snapshot = run;
+            events.push(...page);
+            seq = events.at(-1)?.seq || 0;
+        } while (seq < total);
+        return { ...snapshot, events, latestSeq: seq, eventSeqBase: missingPrefix, eventsTruncated: missingPrefix > 0 };
+    }
+
+    private uniqueEvents(run: AgentRunSnapshot) {
+        const events = (run.events || []).filter((event) => event.runId === run.id && Number.isSafeInteger(event.seq) && event.seq > 0);
+        return [...new Map(events.map((event) => [event.seq, event])).values()].sort((a, b) => a.seq - b.seq);
     }
 
     private connectRun(run: AgentRunSnapshot) {
         this.stopEvents();
-        if (!run.id) return;
+        if (!run.id || this.disposed) return;
+        const localId = this.stateValue.activeConversationId;
         const controller = new AbortController();
         this.eventController = controller;
-        const record = this.stateValue.conversations.find((item) => item.id === this.stateValue.activeConversationId);
-        let lastSeq = Math.max(record?.eventCursors?.[run.id] || 0, ...(run.events || []).filter((event) => event.runId === run.id).map((event) => event.seq));
+        const current = () => this.isCurrentView(localId) && !controller.signal.aborted && this.stateValue.run?.id === run.id;
+        let lastSeq = this.record(localId)?.eventCursors?.[run.id] || 0;
         this.set({ connection: "connecting" });
         void this.client
             .readEvents(
                 run.id,
                 (event) => {
-                    if (this.disposed || controller.signal.aborted) return;
+                    if (!current()) return;
                     if (event.seq > 0) {
                         if (event.seq <= lastSeq) return;
                         lastSeq = event.seq;
@@ -715,7 +795,7 @@ export class AgentConversationController {
                         run: next.run,
                         contextUsage,
                         lastEventSeq: lastSeq,
-                        eventCursors: { ...(record?.eventCursors || {}), [run.id]: lastSeq },
+                        eventCursors: { ...this.record(localId)?.eventCursors, [run.id]: lastSeq },
                     });
                     for (const listener of this.eventListeners) listener(event);
                     this.schedulePersist();
@@ -725,14 +805,15 @@ export class AgentConversationController {
                     after: lastSeq,
                     signal: controller.signal,
                     onSnapshot: (snapshot) => {
-                        if (this.disposed || controller.signal.aborted) return;
-                        this.set({ run: snapshot, approval: snapshot.approval || null, connection: terminal.has(snapshot.status) ? "connected" : this.stateValue.connection });
+                        if (!current()) return;
+                        this.set({ run: snapshot, approval: snapshot.approval || null, connection: "connected", error: "" });
                         this.updateRecord({ run: snapshot });
+                        this.schedulePersist();
                     },
                 },
             )
             .catch((cause) => {
-                if (!this.disposed && !controller.signal.aborted) this.set({ connection: "disconnected", error: cause instanceof Error ? cause.message : "Agent 事件流已断开" });
+                if (current()) this.set({ connection: "disconnected", error: cause instanceof Error ? cause.message : "Agent 事件流已断开" });
             });
     }
 
@@ -750,7 +831,7 @@ export class AgentConversationController {
         );
         const eventCursors = { ...(local.eventCursors || {}) };
         for (const run of runs) {
-            eventCursors[run.id] = Math.max(eventCursors[run.id] || 0, run.latestSeq || 0, ...(run.events || []).filter((event) => event.runId === run.id).map((event) => event.seq));
+            eventCursors[run.id] = run.latestSeq || 0;
         }
         return {
             ...local,
@@ -768,7 +849,7 @@ export class AgentConversationController {
             skillIds: local.skillIds || view.run?.skills?.map((skill) => skill.id),
             contextUsage: local.contextUsage,
             sendMode: local.sendMode,
-            historyState: local.historyState,
+            historyState: runs.some((run) => run.eventsTruncated) ? { status: "partial", message: "旧运行的部分早期事件无法恢复" } : undefined,
             draft: local.draft,
         };
     }
@@ -779,12 +860,14 @@ export class AgentConversationController {
         this.set({ conversations });
     }
 
-    private updateRecord(patch: Partial<AgentConversationRecord> & { pending?: null }) {
-        const record = this.document.conversations.find((item) => item.id === this.stateValue.activeConversationId);
+    private patchRecord(id: string, patch: Partial<AgentConversationRecord>) {
+        const record = this.record(id);
         if (!record) return;
-        const next = { ...record, ...patch };
-        delete (next as AgentConversationRecord & { pending?: null }).pending;
-        this.replaceRecord(next);
+        this.replaceRecord({ ...record, ...patch });
+    }
+
+    private updateRecord(patch: Partial<AgentConversationRecord>) {
+        this.patchRecord(this.stateValue.activeConversationId, patch);
     }
 
     private titleFor(messages: AgentConversationRecord["messages"]) {
@@ -796,19 +879,6 @@ export class AgentConversationController {
         if (this.persistTimer) clearTimeout(this.persistTimer);
         this.persistTimer = setTimeout(() => {
             if (this.disposed) return;
-            const record = this.document.conversations.find((item) => item.id === this.stateValue.activeConversationId);
-            if (record) {
-                record.draft = this.stateValue.draft;
-                record.messages = this.stateValue.messages;
-                record.run = this.stateValue.run;
-                record.model = this.stateValue.model || undefined;
-                record.reasoningMode = this.stateValue.reasoningMode;
-                record.skillIds = this.stateValue.skillIds;
-                record.contextUsage = this.stateValue.contextUsage;
-                record.sendMode = this.stateValue.sendMode;
-                record.updatedAt = this.now();
-            }
-            this.document = { version: 2, activeId: this.stateValue.activeConversationId, conversations: this.document.conversations };
             void this.store.saveDocument(this.identity, this.document).catch(() => undefined);
         }, 180);
     }

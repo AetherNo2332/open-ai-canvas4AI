@@ -1037,6 +1037,7 @@ function LegacyAgentPanel({
 }
 
 export function AgentPanel({
+    userId,
     context,
     config,
     adapter,
@@ -1047,6 +1048,7 @@ export function AgentPanel({
     onClose,
     initialRunId,
 }: {
+    userId?: string;
     context: AgentPageContext;
     config: AgentPanelConfig;
     adapter: AgentPanelAdapter;
@@ -1061,7 +1063,7 @@ export function AgentPanel({
     const bindings = useAgentPanelBindings(adapter);
     const bindingsRef = useRef(bindings);
     bindingsRef.current = bindings;
-    const userScope = getActiveUserScope();
+    const userScope = userId || "";
     const configStore = useEffectiveConfig();
     const theme = useAgentTheme();
     const reducedMotion = useReducedMotion();
@@ -1465,10 +1467,6 @@ export function AgentPanel({
                     preserveDraft: options.preserveDraft,
                     ...(options.replyToQuestionId ? { mode: options.mode || "interject", replyToQuestionId: options.replyToQuestionId } : running ? { mode } : {}),
                 });
-                if (ok && !options.preserveDraft) {
-                    setDraft("");
-                    controller.setDraft("");
-                }
                 if (!ok && state.pending?.request) void message.warning("上一条请求结果未确认，请先原样重试");
                 return ok;
             } catch (cause) {
@@ -1725,7 +1723,7 @@ export function AgentPanel({
                 <div role="status" className="flex items-center justify-between gap-2 px-5 py-2 text-xs" style={{ color: theme.node.muted }}>
                     <span>{state.connection === "disconnected" ? "连接已断开，服务端任务可能仍在执行；运行记录已保留" : "正在连接并校准运行状态…"}</span>
                     {state.connection === "disconnected" ? (
-                        <Button size="small" onClick={() => controller?.refreshDirectory()}>
+                        <Button size="small" onClick={() => void controller?.reconnect()}>
                             重新连接
                         </Button>
                     ) : null}
@@ -1737,7 +1735,7 @@ export function AgentPanel({
                 </div>
             ) : null}
             {state.status === "error" ? <Alert className="mx-4 mt-3" type="error" showIcon message={state.error || "会话加载失败"} /> : null}
-            {activeRecord?.historyState?.status === "unavailable" ? <Alert className="mx-4 mt-3" type="warning" showIcon message={activeRecord.historyState.message} /> : null}
+            {activeRecord?.historyState ? <Alert className="mx-4 mt-3" type="warning" showIcon message={activeRecord.historyState.message} /> : null}
             {targetControls ? <div className="shrink-0 px-3 pt-3">{targetControls}</div> : null}
             <div data-agent-conversation className="agent-conversation thin-scrollbar min-h-0 flex-1 overflow-y-auto">
                 {!state.messages.length && state.status === "ready" ? <AgentWelcome appearance={appearance} description={config.welcome} disabled={state.status !== "ready"} onDraftPrompt={(prompt) => updateDraft(prompt)} /> : null}

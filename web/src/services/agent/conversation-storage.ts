@@ -1,5 +1,4 @@
 import { localForageStorageForScope } from "@/lib/localforage-storage";
-import { getActiveUserScope } from "@/lib/user-scope";
 import type { AgentRunSnapshot } from "@/sdk/agent";
 import type { AgentConversationDocument, AgentConversationIdentity, AgentConversationMessage, AgentConversationRecord, AgentPendingSubmission } from "./conversation-types";
 import { emptyAgentConversationDocument } from "./conversation-types";
@@ -8,7 +7,7 @@ import type { AgentContextUsage } from "@/lib/agent/context-usage";
 export type AgentConversationStore = {
     loadDocument: (identity: AgentConversationIdentity) => Promise<AgentConversationDocument>;
     saveDocument: (identity: AgentConversationIdentity, document: AgentConversationDocument) => Promise<void>;
-    loadDraft: (identity: AgentConversationIdentity, conversationId: string) => Promise<string>;
+    loadDraft: (identity: AgentConversationIdentity, conversationId: string) => Promise<string | null>;
     saveDraft: (identity: AgentConversationIdentity, conversationId: string, draft: string) => Promise<void>;
     clearDraft: (identity: AgentConversationIdentity, conversationId: string) => Promise<void>;
     loadPending: (identity: AgentConversationIdentity, conversationId: string) => Promise<AgentPendingSubmission | null>;
@@ -17,7 +16,8 @@ export type AgentConversationStore = {
 };
 
 const DOCUMENT_KEY = "cloud-agent-conversations-v2";
-const DRAFT_KEY = "cloud-agent-draft-v2";
+const LEGACY_DRAFT_KEY = "cloud-agent-draft-v2";
+const DRAFT_KEY = "cloud-agent-draft-v3";
 const PENDING_KEY = "cloud-agent-pending-v2";
 
 function identityKey(identity: AgentConversationIdentity) {
@@ -28,8 +28,8 @@ function documentKey(identity: AgentConversationIdentity) {
     return `${DOCUMENT_KEY}:${identityKey(identity)}`;
 }
 
-function draftKey(identity: AgentConversationIdentity, conversationId: string) {
-    return `${DRAFT_KEY}:${identityKey(identity)}:${encodeURIComponent(conversationId)}`;
+function draftKey(identity: AgentConversationIdentity, conversationId: string, prefix = DRAFT_KEY) {
+    return `${prefix}:${identityKey(identity)}:${encodeURIComponent(conversationId)}`;
 }
 
 function pendingKey(identity: AgentConversationIdentity, conversationId: string) {
@@ -37,7 +37,8 @@ function pendingKey(identity: AgentConversationIdentity, conversationId: string)
 }
 
 function storage(identity: AgentConversationIdentity) {
-    return localForageStorageForScope(identity.userScope || getActiveUserScope());
+    if (!identity.userScope) throw new Error("Agent 会话缺少账号身份");
+    return localForageStorageForScope(identity.userScope);
 }
 
 export async function loadAgentConversationDocument(identity: AgentConversationIdentity): Promise<AgentConversationDocument> {
@@ -58,18 +59,22 @@ export async function saveAgentConversationDocument(identity: AgentConversationI
 }
 
 export async function loadAgentConversationDraft(identity: AgentConversationIdentity, conversationId: string) {
-    const value = await storage(identity).getItem(draftKey(identity, conversationId));
-    return typeof value === "string" ? value : "";
+    const scoped = storage(identity);
+    const value = await scoped.getItem(draftKey(identity, conversationId));
+    // A marker preserves an explicitly cleared draft in the shared storage adapter.
+    return value?.startsWith(":") ? value.slice(1) : await scoped.getItem(draftKey(identity, conversationId, LEGACY_DRAFT_KEY));
 }
 
 export async function saveAgentConversationDraft(identity: AgentConversationIdentity, conversationId: string, draft: string) {
     if (!conversationId) return;
-    await storage(identity).setItem(draftKey(identity, conversationId), draft);
+    await storage(identity).setItem(draftKey(identity, conversationId), `:${draft}`);
 }
 
 export async function clearAgentConversationDraft(identity: AgentConversationIdentity, conversationId: string) {
     if (!conversationId) return;
-    await storage(identity).removeItem(draftKey(identity, conversationId));
+    const scoped = storage(identity);
+    await scoped.removeItem(draftKey(identity, conversationId, LEGACY_DRAFT_KEY));
+    await scoped.removeItem(draftKey(identity, conversationId));
 }
 
 export async function loadAgentPendingSubmission(identity: AgentConversationIdentity, conversationId: string): Promise<AgentPendingSubmission | null> {

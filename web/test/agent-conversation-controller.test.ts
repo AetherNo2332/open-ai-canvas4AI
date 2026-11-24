@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentEvent, AgentRunSnapshot } from "@/sdk/agent";
-import type { createAgentClient } from "@/sdk/agent/client";
+import { createAgentClient } from "@/sdk/agent/client";
 import { AgentConversationController } from "@/services/agent/conversation-controller";
 import type { AgentConversationStore } from "@/services/agent/conversation-storage";
 import { migrateLegacyCanvasConversationDocument, migrateLegacyCanvasPendingSubmission } from "@/services/agent/conversation-storage";
@@ -128,6 +128,227 @@ function fakeClient(overrides: Record<string, unknown> = {}): Client {
     };
     return base as unknown as Client;
 }
+
+function deferred<T>() {
+    return Promise.withResolvers<T>();
+}
+
+function savedConversation(id: string, snapshot: AgentRunSnapshot | null = null) {
+    return { id, title: id, messages: [], run: snapshot, serverConversationId: snapshot?.conversationId, permissionMode: "read_only" as const, createdAt: run().createdAt, updatedAt: run().updatedAt };
+}
+
+function request(prompt = "继续") {
+    return { canvasId: "" as const, scope: identity.scope, prompt, permissionMode: "read_only" as const, idempotencyKey: "request-123" };
+}
+
+describe("shared conversation lifecycle", () => {
+    test("a late history response cannot rewrite the conversation opened after it", async () => {
+        const first = run({ id: "run-a", conversationId: "remote-a" });
+        const memory = memoryStore({ version: 2, activeId: "b", conversations: [savedConversation("a", first), savedConversation("b")] });
+        const reading = deferred<void>();
+        const history = deferred<{ items: AgentRunSnapshot[] }>();
+        const controller = new AgentConversationController({
+            identity,
+            store: memory.store,
+            client: fakeClient({
+                listConversationRuns: () => {
+                    reading.resolve();
+                    return history.promise;
+                },
+                getRun: async () => ({ run: first }),
+            }),
+        });
+        try {
+            await controller.hydrate();
+            const opening = controller.openConversation("a");
+            await reading.promise;
+            await controller.openConversation("b");
+            history.resolve({ items: [first] });
+            await opening;
+            expect(controller.getSnapshot().activeConversationId).toBe("b");
+            expect(controller.getSnapshot().run).toBeNull();
+            expect(controller.getSnapshot().conversations.find((record) => record.id === "b")?.serverConversationId).toBeUndefined();
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    test("an accepted send settles the original conversation while a new draft stays intact", async () => {
+        const memory = memoryStore();
+        const sending = deferred<void>();
+        const receipt = deferred<{ run: AgentRunSnapshot }>();
+        const controller = new AgentConversationController({
+            identity,
+            store: memory.store,
+            client: fakeClient({
+                startRun: () => {
+                    sending.resolve();
+                    return receipt.promise;
+                },
+            }),
+        });
+        try {
+            await controller.hydrate();
+            const firstId = controller.getSnapshot().activeConversationId;
+            controller.setDraft("旧草稿");
+            const send = controller.submit({ request: request() });
+            await sending.promise;
+            await controller.newConversation();
+            const secondId = controller.getSnapshot().activeConversationId;
+            controller.setDraft("新草稿");
+            receipt.resolve({ run: run() });
+            expect(await send).toBe(true);
+            expect(controller.getSnapshot()).toMatchObject({ activeConversationId: secondId, draft: "新草稿", run: null, busy: false });
+            expect(controller.getSnapshot().conversations.find((record) => record.id === firstId)?.run?.id).toBe("run-1");
+            expect(memory.pending.has(memory.conversationKey(firstId))).toBe(false);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    test("disposing the controller cancels a directory read and the SDK retry of an initial send", async () => {
+        const listing = deferred<AbortSignal | undefined>();
+        const firstSend = deferred<AbortSignal | undefined>();
+        let posts = 0;
+        const client = createAgentClient({
+            retryDelayMs: () => 30,
+            transport: {
+                async request(call) {
+                    if (call.method === "POST") {
+                        posts++;
+                        firstSend.resolve(call.signal);
+                        return { status: 503, body: { code: 503 } };
+                    }
+                    listing.resolve(call.signal);
+                    return { status: 200, body: { code: 0, data: { items: [] } } };
+                },
+                async openEvents() {
+                    throw new Error("unexpected stream");
+                },
+            },
+        });
+        const controller = new AgentConversationController({ identity, store: memoryStore().store, client });
+        try {
+            await controller.hydrate();
+            const send = controller.submit({ request: request() });
+            const signal = await firstSend.promise;
+            await Promise.resolve();
+            controller.dispose();
+            expect(await send).toBe(false);
+            expect((await listing.promise)?.aborted).toBe(true);
+            expect(signal?.aborted).toBe(true);
+            expect(posts).toBe(1);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    test("directory dispatch moves the active conversation to the new run and reconnects at its applied cursor", async () => {
+        const first = run();
+        const next = run({ id: "run-2", status: "running", createdAt: "2026-11-23T00:00:02Z" });
+        let dispatched = false;
+        const subscriptions: Array<{ id: string; after: number | undefined }> = [];
+        const controller = new AgentConversationController({
+            identity,
+            store: memoryStore({ version: 2, activeId: "a", conversations: [savedConversation("a", first)] }).store,
+            client: fakeClient({
+                async listConversations() {
+                    return { items: [{ id: first.conversationId, title: "会话", latestRunId: dispatched ? next.id : first.id }] };
+                },
+                async listConversationRuns() {
+                    return { items: dispatched ? [first, next] : [first] };
+                },
+                async getRun(id: string) {
+                    return { run: id === first.id ? first : next };
+                },
+                async readEvents(id: string, onEvent: (value: AgentEvent) => void, { after }: { after?: number }) {
+                    subscriptions.push({ id, after });
+                    onEvent(event(1, { runId: id }));
+                    throw new Error("connection ended");
+                },
+            }),
+        });
+        try {
+            await controller.hydrate();
+            dispatched = true;
+            await controller.refreshDirectory();
+            expect(controller.getSnapshot().run?.id).toBe(next.id);
+            expect(controller.getSnapshot().connection).toBe("disconnected");
+            await controller.reconnect();
+            expect(subscriptions).toEqual([
+                { id: next.id, after: 0 },
+                { id: next.id, after: 1 },
+            ]);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    test("a directory read started before an accepted turn cannot restore the previous run", async () => {
+        const parent = run();
+        const child = run({ id: "run-2", status: "running", createdAt: "2026-11-23T00:00:02Z" });
+        const loading = deferred<void>();
+        const directory = deferred<{ items: Array<{ id: string; latestRunId: string }> }>();
+        let histories = 0;
+        const controller = new AgentConversationController({
+            identity,
+            store: memoryStore({ version: 2, activeId: "a", conversations: [savedConversation("a", parent)] }).store,
+            client: fakeClient({
+                listConversations() {
+                    loading.resolve();
+                    return directory.promise;
+                },
+                async listConversationRuns() {
+                    histories++;
+                    return { items: [parent] };
+                },
+                async sendMessage() {
+                    return { conversationId: parent.conversationId, runId: child.id };
+                },
+                async getRun(id: string) {
+                    return { run: id === child.id ? child : parent };
+                },
+            }),
+        });
+        try {
+            await controller.hydrate();
+            const refresh = controller.refreshDirectory();
+            await loading.promise;
+            expect(await controller.submit({ request: request() })).toBe(true);
+            directory.resolve({ items: [{ id: parent.conversationId!, latestRunId: parent.id }] });
+            await refresh;
+            expect(controller.getSnapshot().run?.id).toBe(child.id);
+            expect(histories).toBe(1);
+        } finally {
+            controller.dispose();
+        }
+    });
+
+    test("restores a tail-window run from the first event before applying its cursor", async () => {
+        const all = Array.from({ length: 501 }, (_, index) => event(index + 1));
+        const tail = run({ events: all.slice(-40), eventSeqBase: 461, latestSeq: 501, eventCount: 501, eventsTruncated: true });
+        const controller = new AgentConversationController({
+            identity,
+            store: memoryStore({ version: 2, activeId: "a", conversations: [savedConversation("a", tail)] }).store,
+            client: fakeClient({
+                async listConversationRuns() {
+                    return { items: [tail] };
+                },
+                async getRun(_id: string, _signal: AbortSignal, query: { fromStart?: boolean; sinceSeq?: number }) {
+                    const start = query.fromStart ? 0 : query.sinceSeq || 0;
+                    const events = all.slice(start, start + 500);
+                    return { run: { ...tail, events, eventSeqBase: start, latestSeq: events.at(-1)?.seq || 0, eventsTruncated: false } };
+                },
+            }),
+        });
+        try {
+            await controller.hydrate();
+            expect(controller.getSnapshot().conversations[0]?.runs?.[0]?.events?.map((value) => value.seq)).toEqual(all.map((value) => value.seq));
+        } finally {
+            controller.dispose();
+        }
+    });
+});
 
 describe("AgentConversationController", () => {
     test("changes a running run permission through the SDK and persists the confirmed mode", async () => {
@@ -310,10 +531,10 @@ describe("AgentConversationController", () => {
         const seen: string[] = [];
         const client = fakeClient({
             async listConversationRuns() {
-                return { items: [run({ status: "running", eventCount: 2 })] };
+                return { items: [run({ status: "running", eventCount: 0 })] };
             },
             async getRun() {
-                return { run: run({ status: "running", eventCount: 2 }) };
+                return { run: run({ status: "running", eventCount: 0 }) };
             },
             async readEvents(_id: string, onEvent: (item: AgentEvent) => void, options: { onSnapshot?: (snapshot: AgentRunSnapshot) => void }) {
                 onEvent(event(1, { type: "context_pressure", payload: { modelLimitConfigured: true, inputBudgetTokens: 1000, estimatedInputTokens: 250 } }));

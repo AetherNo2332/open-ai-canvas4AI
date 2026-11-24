@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { createAgentClient } from "@/sdk/agent/client";
 import type { AgentBusinessScope } from "@/sdk/agent";
 import { AgentConversationController } from "@/services/agent/conversation-controller";
@@ -20,14 +20,16 @@ export function useAgentConversation(options: {
     };
 }) {
     const identity = options.userScope && options.scope && options.client ? `${options.userScope}:${options.scope.type}:${options.scope.id}:${options.agentDefinitionId}` : "";
-    const controller = useMemo(() => {
+    const createController = useMemo(() => {
         if (!identity || !options.scope || !options.client) return null;
-        return new AgentConversationController({
-            identity: { userScope: options.userScope, scope: options.scope, agentDefinitionId: options.agentDefinitionId },
-            client: options.client,
-            prepare: options.prepare,
-            initial: options.initial,
-        });
+        const { scope, client } = options;
+        return () =>
+            new AgentConversationController({
+                identity: { userScope: options.userScope, scope, agentDefinitionId: options.agentDefinitionId },
+                client,
+                prepare: options.prepare,
+                initial: options.initial,
+            });
     }, [
         identity,
         options.agentDefinitionId,
@@ -61,15 +63,19 @@ export function useAgentConversation(options: {
         }),
         [],
     );
+    const [mounted, setMounted] = useState<{ factory: typeof createController; controller: AgentConversationController }>();
+    const controller = mounted?.factory === createController ? mounted?.controller || null : null;
     const state = useSyncExternalStore(controller?.subscribe || (() => () => undefined), controller?.getSnapshot || (() => fallback), () => fallback);
-    useEffect(() => {
-        if (!controller) return;
+    useLayoutEffect(() => {
+        if (!createController) return;
+        const controller = createController();
+        setMounted({ factory: createController, controller });
         void controller.hydrate();
         const timer = window.setInterval(() => void controller.refreshDirectory(), 4_000);
         return () => {
             window.clearInterval(timer);
             controller.dispose();
         };
-    }, [controller]);
+    }, [createController]);
     return { controller, state };
 }

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import type { AgentBusinessScope, AgentPendingDirectorPreview } from "@/sdk/agent";
+import { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
+import type { AgentBusinessScope, AgentPendingDirectorPreview, AgentTransport } from "@/sdk/agent";
 import { createAgentClient } from "@/sdk/agent/client";
 import { agentWebTransport } from "@/sdk/agent/http-transport";
 import { useAgentPageContext, type AgentPageContext } from "@/services/agent/business-context";
@@ -8,15 +8,56 @@ import { resolveAgentPanelConfig } from "@/services/agent/panel-config";
 import { platformAgentPanelAdapter } from "@/services/agent/adapters/platform";
 import { dramaAgentPanelAdapter } from "@/services/agent/adapters/drama";
 import { closeAgentPanelSurface, openAgentPanelSurface, useAgentPanelSurfaceOpen } from "@/stores/use-agent-panel-surface";
+import { useUserStore } from "@/stores/use-user-store";
+import { getActiveUserScope } from "@/lib/user-scope";
 import { AgentPanel } from "./agent-panel";
 import { useAgentCapabilities } from "./use-agent-capabilities";
 import "@/services/agent/configs";
 
-export function AgentPanelHost() {
+function subscribeAccountChanges(listener: () => void) {
+    const unsubscribe = useUserStore.subscribe(listener);
+    window.addEventListener("storage", listener);
+    return () => {
+        unsubscribe();
+        window.removeEventListener("storage", listener);
+    };
+}
+
+function accountIsCurrent(userId: string) {
+    const session = useUserStore.getState();
+    return session.hydrated && session.user?.id === userId && getActiveUserScope() === userId;
+}
+
+export function AgentPanelHost({ userId }: { userId?: string } = {}) {
     const context = useAgentPageContext();
     const open = useAgentPanelSurfaceOpen();
+    const accountChanged = useSyncExternalStore(
+        subscribeAccountChanges,
+        () => Boolean(userId && !accountIsCurrent(userId)),
+        () => false,
+    );
+    const transport = useMemo<AgentTransport>(() => {
+        const requireCurrentAccount = () => {
+            if (!userId || !accountIsCurrent(userId)) throw new DOMException("Agent 账号已变更", "AbortError");
+        };
+        return {
+            async request(call) {
+                requireCurrentAccount();
+                const response = await agentWebTransport.request(call);
+                requireCurrentAccount();
+                return response;
+            },
+            async openEvents(call) {
+                requireCurrentAccount();
+                return agentWebTransport.openEvents(call);
+            },
+        };
+    }, [userId]);
+    useLayoutEffect(() => {
+        if (accountChanged) closeAgentPanelSurface();
+    }, [accountChanged]);
     useEffect(() => {
-        if (!context.declaration.enabled) return;
+        if (!context.declaration.enabled || !userId || accountChanged) return;
         const openFromShortcut = (event: KeyboardEvent) => {
             if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "j") return;
             event.preventDefault();
@@ -24,9 +65,9 @@ export function AgentPanelHost() {
         };
         window.addEventListener("keydown", openFromShortcut);
         return () => window.removeEventListener("keydown", openFromShortcut);
-    }, [context.declaration.enabled]);
-    if (!context.declaration.enabled) return null;
-    const pendingDirectorEntry = <AgentPendingDirectorEntry ownCanvasId={context.scope?.type === "canvas" ? context.scope.id : undefined} />;
+    }, [accountChanged, context.declaration.enabled, userId]);
+    if (!context.declaration.enabled || accountChanged) return null;
+    const pendingDirectorEntry = userId ? <AgentPendingDirectorEntry transport={transport} ownCanvasId={context.scope?.type === "canvas" ? context.scope.id : undefined} /> : null;
     if (context.status === "loading") {
         return (
             <>
@@ -46,19 +87,19 @@ export function AgentPanelHost() {
     return (
         <>
             {pendingDirectorEntry}
-            <DeclaredAgentPanel context={context} scope={context.scope} open={open} onOpen={openAgentPanelSurface} onClose={closeAgentPanelSurface} />
+            <DeclaredAgentPanel userId={userId} transport={transport} context={context} scope={context.scope} open={open} onOpen={openAgentPanelSurface} onClose={closeAgentPanelSurface} />
         </>
     );
 }
 
-function DeclaredAgentPanel({ context, scope, open, onOpen, onClose }: { context: AgentPageContext; scope: AgentBusinessScope; open: boolean; onOpen: () => void; onClose: () => void }) {
+function DeclaredAgentPanel({ userId, transport, context, scope, open, onOpen, onClose }: { userId?: string; transport: AgentTransport; context: AgentPageContext; scope: AgentBusinessScope; open: boolean; onOpen: () => void; onClose: () => void }) {
     const configId = context.declaration.enabled ? (context.declaration.kind === "platform" ? "platform" : context.declaration.kind === "business" ? context.declaration.businessType : "") : "";
     const config = resolveAgentPanelConfig(configId);
     const registeredCanvasAdapter = useAgentPanelAdapter(context.declaration.enabled && context.declaration.kind === "business" ? context.declaration.businessType : "");
     const adapter = configId === "canvas" ? registeredCanvasAdapter : configId === "drama" ? dramaAgentPanelAdapter : configId === "platform" ? platformAgentPanelAdapter : null;
     const definitionId = context.agentDefinitionId || config?.agentDefinitionId || "";
-    const client = useMemo(() => createAgentClient({ transport: agentWebTransport, scope, agentDefinitionId: definitionId || undefined }), [definitionId, scope.type, scope.id]);
-    const capability = useAgentCapabilities({ active: true, client, scope, agentDefinitionId: definitionId });
+    const client = useMemo(() => createAgentClient({ transport, scope, agentDefinitionId: definitionId || undefined }), [definitionId, scope.type, scope.id, transport]);
+    const capability = useAgentCapabilities({ active: Boolean(userId), client, scope, agentDefinitionId: definitionId });
     if (!config) {
         return (
             <>
@@ -89,6 +130,7 @@ function DeclaredAgentPanel({ context, scope, open, onOpen, onClose }: { context
     return (
         <AgentPanel
             key={`${config.id}:${scope.type}:${scope.id}:${definitionId}`}
+            userId={userId}
             context={context}
             config={config}
             adapter={adapter}
@@ -102,8 +144,8 @@ function DeclaredAgentPanel({ context, scope, open, onOpen, onClose }: { context
     );
 }
 
-function AgentPendingDirectorEntry({ ownCanvasId }: { ownCanvasId?: string }) {
-    const client = useMemo(() => createAgentClient({ transport: agentWebTransport }), []);
+function AgentPendingDirectorEntry({ ownCanvasId, transport }: { ownCanvasId?: string; transport: AgentTransport }) {
+    const client = useMemo(() => createAgentClient({ transport }), [transport]);
     const [pending, setPending] = useState<AgentPendingDirectorPreview | null>(null);
     useEffect(() => {
         let active = true;
