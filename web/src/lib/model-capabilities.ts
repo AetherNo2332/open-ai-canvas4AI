@@ -42,6 +42,8 @@ export type ModelCapabilityConfig = {
 };
 
 export type TextCapabilityConfig = {
+    /** Whether the text route supports ordinary tool calling. */
+    toolCallingSupported?: boolean;
     /** Whether Agent image inspection is supported by this text model. */
     visionSupported?: boolean;
     /** Optional Agent batch image ceiling; zero/omitted means runtime probing. */

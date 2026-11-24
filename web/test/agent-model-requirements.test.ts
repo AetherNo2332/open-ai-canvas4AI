@@ -6,13 +6,20 @@ const config = {
     channels: [
         {
             id: "test",
-            models: ["tool-less", "vision-less", "stream-less", "full"],
+            models: ["tool-less", "non-strict", "vision-less", "stream-less", "full", "logical-primary"],
             modelCosts: [
-                { model: "tool-less", capabilityConfig: { version: 1, text: { strictTools: false } } },
+                { model: "tool-less", capabilityConfig: { version: 1, text: { strictTools: true, toolCallingSupported: false } } },
+                { model: "non-strict", capabilityConfig: { version: 1, text: { strictTools: false, toolCallingSupported: true } } },
                 { model: "vision-less", capabilityConfig: { version: 1, text: { visionSupported: false } } },
                 { model: "stream-less", capabilityConfig: { version: 1, text: { streaming: false } } },
                 { model: "full", capabilityConfig: { version: 1, text: { strictTools: true, visionSupported: true, streaming: true } } },
+                { model: "logical-primary", logicalModelId: "logical", capabilityConfig: { version: 1, text: { toolCallingSupported: true } } },
             ],
+        },
+        {
+            id: "backup",
+            models: ["logical-backup"],
+            modelCosts: [{ model: "logical-backup", logicalModelId: "logical", capabilityConfig: { version: 1, text: { toolCallingSupported: false } } }],
         },
     ],
 } as unknown as AiConfig;
@@ -22,6 +29,8 @@ const requirements = { text: true, toolCalling: true, vision: true, streamOutput
 describe("Agent model requirements", () => {
     test("rejects models whose declared text capabilities miss a server requirement", () => {
         expect(agentModelSupportsRequirements(config, "test::tool-less", requirements)).toBe(false);
+        expect(agentModelSupportsRequirements(config, "test::non-strict", requirements)).toBe(true);
+        expect(agentModelSupportsRequirements(config, "test::logical-primary", requirements)).toBe(false);
         expect(agentModelSupportsRequirements(config, "test::vision-less", requirements)).toBe(false);
         expect(agentModelSupportsRequirements(config, "test::stream-less", requirements)).toBe(false);
         expect(agentModelSupportsRequirements(config, "test::full", requirements)).toBe(true);

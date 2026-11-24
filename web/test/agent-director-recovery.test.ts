@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { findPendingCanvasDirectorPreview } from "@/lib/canvas/agent-director-recovery";
 import type { AgentConversation, AgentConversationPage, AgentRunReceipt, AgentRunSnapshot } from "@/sdk/agent";
+import { runBunHarness } from "./run-bun-harness";
 
 const conversation = (overrides: Partial<AgentConversation>): AgentConversation =>
     ({
@@ -33,6 +34,12 @@ const run = (overrides: Partial<AgentRunSnapshot>): AgentRunReceipt<AgentRunSnap
 });
 
 describe("cross-page director preview recovery", () => {
+    test("the original canvas can take over a pending recording after reload", async () => {
+        const result = await runBunHarness(["test", "./test/fixtures/agent-director-recovery.harness.tsx"], 12000);
+        expect(result.exitCode, result.output).toBe(0);
+        expect(result.output).toContain("1 pass");
+    }, 15000);
+
     test("pages the directory and returns only the requested canvas's live wait", async () => {
         const calls: unknown[] = [];
         const runs: string[] = [];

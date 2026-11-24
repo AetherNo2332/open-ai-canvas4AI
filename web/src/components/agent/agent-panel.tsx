@@ -38,7 +38,8 @@ import { AgentWelcome } from "./agent-welcome";
 import { DEFAULT_CANVAS_APPEARANCE } from "@/lib/agent/agent-appearance";
 import { latestAgentMediaBatch } from "@/lib/agent/cloud-agent-media-batch";
 import { agentRunUndoOffer } from "@/lib/agent/agent-run-undo";
-import { agentModelFilter, agentModelSupportsRequirements } from "@/lib/agent/model-requirements";
+import { agentModelFilter } from "@/lib/agent/model-requirements";
+import { agentPanelDefaultModel, agentPanelModelRoute } from "@/services/agent/panel-model-selection";
 import { agentImageApproval } from "@/lib/agent/agent-media-approval";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import "./agent-panel.css";
@@ -1119,8 +1120,8 @@ export function AgentPanel({
         return modelFilter ? models.filter((model) => modelFilter(model)) : models;
     }, [configStore, modelFilter]);
     const targetModel = context.target?.model;
-    const fallbackModel = [targetModel?.modelKey, targetModel?.label, configStore.textModel, configStore.model].find((model) => Boolean(model) && agentModelSupportsRequirements(configStore, model!, capabilities.modelRequirements)) || textModels[0] || "";
-    const selectedModel = state.model && agentModelSupportsRequirements(configStore, state.model, capabilities.modelRequirements) ? state.model : fallbackModel;
+    const fallbackModel = agentPanelDefaultModel(configStore, textModels, targetModel);
+    const selectedModel = textModels.includes(state.model) ? state.model : fallbackModel;
     const selectedTextCapability = useMemo(() => {
         try {
             return modelCapabilityConfigFor(configStore, selectedModel).text;
@@ -1407,22 +1408,7 @@ export function AgentPanel({
         }
     };
 
-    const route = useMemo(() => {
-        if (!selectedModel) return { logicalModelId: "", channelId: "", channelModelKey: "" };
-        if (targetModel && [targetModel.modelKey, targetModel.label, targetModel.logicalModelId].filter(Boolean).some((value) => value === selectedModel || value === modelOptionName(selectedModel))) {
-            return {
-                logicalModelId: targetModel.logicalModelId || "",
-                channelId: targetModel.channelId || "",
-                channelModelKey: targetModel.modelKey || "",
-            };
-        }
-        const resolved = resolveModelRequestConfig({ ...configStore, model: selectedModel }, selectedModel);
-        return {
-            logicalModelId: logicalModelIDForConfig({ ...configStore, model: selectedModel }),
-            channelId: resolved.channelId || "",
-            channelModelKey: modelOptionName(selectedModel) || "",
-        };
-    }, [configStore, selectedModel, targetModel]);
+    const route = useMemo(() => agentPanelModelRoute(configStore, selectedModel, targetModel), [configStore, selectedModel, targetModel]);
 
     const submitPrompt = useCallback(
         async (

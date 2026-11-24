@@ -84,7 +84,6 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                 signal?.throwIfAborted();
                 if (!job) return;
                 const stored = resultStoreRef.current.load(job.runId, job.requestId);
-                if (!stored && handledStoreRef.current.isHandled(job.requestId)) return;
                 if (stored) {
                     const outcome = await runDirectorPreview({
                         runId: job.runId,
@@ -104,7 +103,7 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                     if (notice) message[notice.level](notice.text);
                     return;
                 }
-                setDirectorPreview((current) => current ?? job);
+                setDirectorPreview((current) => current ?? { ...job, recover: true });
                 setPendingOpen(
                     (current) =>
                         current ?? {
@@ -153,6 +152,7 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                 handled: handledStoreRef.current,
                 withLock: withDirectorPreviewLock,
                 resultStore: resultStoreRef.current,
+                recover: job.recover,
             })
                 .then((outcome) => {
                     const notice = directorPreviewOutcomeNotice(outcome);
@@ -160,7 +160,7 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                 })
                 .catch((cause) => message.error(cause instanceof Error ? `预演结果回传失败：${cause.message}` : "预演结果回传失败"));
         },
-        [message],
+        [message, projectId],
     );
 
     return { directorPreview, onDirectorPreview };

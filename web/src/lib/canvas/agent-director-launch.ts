@@ -21,6 +21,7 @@ export type DirectorPreviewJob = {
     canvasId?: string;
     nodeId?: string;
     deadline?: string;
+    recover?: boolean;
 };
 
 const DIRECTOR_PREVIEW_ERROR_MAX = 500;
