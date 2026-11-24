@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-    clearAgentPageContext,
-    getAgentPageContext,
-    publishAgentPageContext,
-} from "@/services/agent/business-context";
+import { clearAgentPageContext, getAgentPageContext, publishAgentPageContext } from "@/services/agent/business-context";
 
 describe("Agent page declaration ownership", () => {
     test("a late old-page cleanup cannot hide the current page", () => {

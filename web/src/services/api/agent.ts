@@ -2,16 +2,7 @@ import { http, apiBaseURL, compactApiParams, ApiError } from "@/services/api/req
 import { consumeTaskTextStream, createTaskTextStreamParser } from "@/services/api/task-text-stream";
 import { createAgentClient, AgentRequestError } from "@/sdk/agent/client";
 import { agentWebTransport } from "@/sdk/agent/http-transport";
-import type {
-    AgentBusinessScope,
-    AgentCapabilities,
-    AgentConversationQueue,
-    AgentEvent as SDKAgentEvent,
-    AgentQueuedMessage,
-    AgentRunRequest,
-    AgentRunSnapshot,
-    AgentUISettings,
-} from "@/sdk/agent/contract";
+import type { AgentBusinessScope, AgentCapabilities, AgentConversationQueue, AgentEvent as SDKAgentEvent, AgentQueuedMessage, AgentRunRequest, AgentRunSnapshot, AgentUISettings } from "@/sdk/agent/contract";
 
 const agentClient = createAgentClient<AgentRun>({ transport: agentWebTransport });
 const canvasAgentClient = (canvasId?: string) => (canvasId ? createAgentClient<AgentRun>({ transport: agentWebTransport, scope: { type: "canvas", id: canvasId } }) : agentClient);
@@ -201,9 +192,7 @@ export type AgentConversationSummary = import("@/sdk/agent/contract").AgentConve
 
 export function listAgentConversations(options: { canvasId?: string; scope?: AgentBusinessScope; agentDefinitionId?: string; before?: string; limit?: number; signal?: AbortSignal }) {
     const scope = options.scope ?? (options.canvasId ? { type: "canvas" as const, id: options.canvasId } : undefined);
-    return scopedAgentClient(scope, options.agentDefinitionId)
-        .listConversations({ before: options.before, limit: options.limit }, options.signal)
-        .catch(rethrowAgentApiError) as Promise<{ items: AgentConversationSummary[]; nextCursor?: string }>;
+    return scopedAgentClient(scope, options.agentDefinitionId).listConversations({ before: options.before, limit: options.limit }, options.signal).catch(rethrowAgentApiError) as Promise<{ items: AgentConversationSummary[]; nextCursor?: string }>;
 }
 
 export function archiveAgentConversation(conversationId: string, canvasId?: string) {

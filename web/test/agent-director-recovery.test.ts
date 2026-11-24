@@ -39,17 +39,11 @@ describe("cross-page director preview recovery", () => {
         const deadline = new Date(Date.now() + 60_000).toISOString();
         const pages = [
             {
-                items: [
-                    conversation({ id: "done", latestRunId: "run-done", status: "completed" }),
-                    conversation({ id: "other", latestRunId: "run-other", canvasId: "canvas-2", scope: { type: "canvas", id: "canvas-2" }, waitKind: "director_preview" }),
-                ],
+                items: [conversation({ id: "done", latestRunId: "run-done", status: "completed" }), conversation({ id: "other", latestRunId: "run-other", canvasId: "canvas-2", scope: { type: "canvas", id: "canvas-2" }, waitKind: "director_preview" })],
                 nextCursor: "cursor-1",
             },
             {
-                items: [
-                    conversation({ id: "target", latestRunId: "run-target", waitKind: "director_preview" }),
-                    conversation({ id: "archived", latestRunId: "run-archived", archived: true }),
-                ],
+                items: [conversation({ id: "target", latestRunId: "run-target", waitKind: "director_preview" }), conversation({ id: "archived", latestRunId: "run-archived", archived: true })],
             },
         ];
         const client = {
@@ -88,7 +82,10 @@ describe("cross-page director preview recovery", () => {
             shotId: "shot-1",
             deadline,
         });
-        expect(calls).toEqual([{ before: undefined, limit: 100 }, { before: "cursor-1", limit: 100 }]);
+        expect(calls).toEqual([
+            { before: undefined, limit: 100 },
+            { before: "cursor-1", limit: 100 },
+        ]);
         expect(runs).toEqual(["run-target"]);
     });
 
@@ -98,11 +95,7 @@ describe("cross-page director preview recovery", () => {
         const client = {
             async listConversations() {
                 return {
-                    items: [
-                        conversation({ id: "first", latestRunId: "run-first" }),
-                        conversation({ id: "second", latestRunId: "run-second" }),
-                        conversation({ id: "third", latestRunId: "run-third" }),
-                    ],
+                    items: [conversation({ id: "first", latestRunId: "run-first" }), conversation({ id: "second", latestRunId: "run-second" }), conversation({ id: "third", latestRunId: "run-third" })],
                 };
             },
             async getRun() {

@@ -2,10 +2,7 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useLocation } from "react-router";
 import type { AgentBusinessScope } from "@/sdk/agent";
 
-export type AgentPageDeclaration =
-    | { enabled: false }
-    | { enabled: true; kind: "platform" }
-    | { enabled: true; kind: "business"; businessType: string; agentDefinitionId: string };
+export type AgentPageDeclaration = { enabled: false } | { enabled: true; kind: "platform" } | { enabled: true; kind: "business"; businessType: string; agentDefinitionId: string };
 
 export type AgentPageTarget = {
     dramaEpisodeId?: string;

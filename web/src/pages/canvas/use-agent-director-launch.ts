@@ -105,16 +105,17 @@ export function useAgentDirectorLaunch({ projectId, previsNodeId, nodes, previsS
                     return;
                 }
                 setDirectorPreview((current) => current ?? job);
-                setPendingOpen((current) =>
-                    current ?? {
-                        runId: job.runId,
-                        requestId: job.requestId,
-                        canvasId: job.canvasId || projectId,
-                        nodeId: job.nodeId || "",
-                        sceneId: job.sceneId,
-                        shotId: job.shotId,
-                        action: "preview",
-                    },
+                setPendingOpen(
+                    (current) =>
+                        current ?? {
+                            runId: job.runId,
+                            requestId: job.requestId,
+                            canvasId: job.canvasId || projectId,
+                            nodeId: job.nodeId || "",
+                            sceneId: job.sceneId,
+                            shotId: job.shotId,
+                            action: "preview",
+                        },
                 );
             } catch (cause) {
                 if (!signal?.aborted) message.warning(cause instanceof Error ? `预演恢复失败：${cause.message}` : "预演恢复失败");

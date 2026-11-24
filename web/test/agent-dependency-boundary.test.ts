@@ -1,15 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Glob } from "bun";
 
-const forbidden = [
-    "@/components/canvas",
-    "@/stores/canvas",
-    "@/stores/use-global-agent-store",
-    "@/lib/canvas",
-    "@/types/canvas",
-    "@/services/user-data-sync",
-    "previs",
-];
+const forbidden = ["@/components/canvas", "@/stores/canvas", "@/stores/use-global-agent-store", "@/lib/canvas", "@/types/canvas", "@/services/user-data-sync", "previs"];
 
 describe("unified Agent dependency boundary", () => {
     test("shared shell, controller, storage and SDK do not import canvas-only modules", async () => {

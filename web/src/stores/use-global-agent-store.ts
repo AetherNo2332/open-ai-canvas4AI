@@ -210,13 +210,7 @@ export function markAgentPanelUnavailable() {
 export function requestAgentPrefill(input: AgentPrefillInput): Promise<AgentPrefillOutcome> {
     const state = useGlobalAgentStore.getState();
     const page = getAgentPageContext();
-    const canvasDeclared =
-        page.declaration.enabled &&
-        page.declaration.kind === "business" &&
-        page.declaration.businessType === "canvas" &&
-        page.scope?.type === "canvas" &&
-        page.scope.id === input.canvasId &&
-        state.canvas?.canvasId === input.canvasId;
+    const canvasDeclared = page.declaration.enabled && page.declaration.kind === "business" && page.declaration.businessType === "canvas" && page.scope?.type === "canvas" && page.scope.id === input.canvasId && state.canvas?.canvasId === input.canvasId;
     if (!canvasDeclared) return Promise.resolve(false);
     if (state.panelUnavailable || state.prefillRequest) return Promise.resolve(false);
     const request: AgentPrefillRequest = { ...input, id: ++prefillSequence };

@@ -43,9 +43,7 @@ export function WorkspaceCommandPalette({ open, onClose }: { open: boolean; onCl
             ...(features.creditsEnabled ? [{ ...toolEntry("wallet"), run: () => openWorkspaceWallet() }] : []),
             toolEntry("settings", "/settings"),
             // 与 ⌘/Ctrl+J 相同：仅当前页面显式接入 Agent 时出现。
-            ...(agentPage.declaration.enabled
-                ? [{ id: "agent", title: t("shell.palette.agent"), icon: Bot, run: () => useGlobalAgentStore.getState().openAgent() }]
-                : []),
+            ...(agentPage.declaration.enabled ? [{ id: "agent", title: t("shell.palette.agent"), icon: Bot, run: () => useGlobalAgentStore.getState().openAgent() }] : []),
         ];
     }, [agentPage.declaration.enabled, features, t, i18n.language]);
 

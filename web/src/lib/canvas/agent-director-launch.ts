@@ -151,11 +151,7 @@ export function directorPreviewPending(run: Pick<AgentRun, "status" | "events"> 
  * Prefer the durable backend wait projection. Older servers without it fall
  * back to the event window so an in-flight worker can still finish this turn.
  */
-export function directorPreviewSnapshotPending(
-    run: Pick<AgentRun, "status" | "events" | "pendingDirectorPreview"> | null | undefined,
-    requestId: string,
-    now = Date.now(),
-) {
+export function directorPreviewSnapshotPending(run: Pick<AgentRun, "status" | "events" | "pendingDirectorPreview"> | null | undefined, requestId: string, now = Date.now()) {
     if (!run || !["running", "queued"].includes(run.status)) return false;
     if (run.pendingDirectorPreview !== undefined) {
         const pending = run.pendingDirectorPreview;
@@ -382,10 +378,7 @@ export function directorPreviewResultStore(storage: LeaseStorage | undefined = s
         try {
             const parsed = JSON.parse(storage?.getItem(RESULT_STORAGE_KEY) || "[]");
             if (!Array.isArray(parsed)) return [];
-            return parsed.filter(
-                (item): item is StoredDirectorPreviewResult =>
-                    Boolean(item && typeof item.runId === "string" && typeof item.requestId === "string" && typeof item.videoResourceId === "string" && Number.isFinite(item.savedAt)),
-            );
+            return parsed.filter((item): item is StoredDirectorPreviewResult => Boolean(item && typeof item.runId === "string" && typeof item.requestId === "string" && typeof item.videoResourceId === "string" && Number.isFinite(item.savedAt)));
         } catch {
             return [];
         }

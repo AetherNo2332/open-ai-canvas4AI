@@ -246,7 +246,10 @@ test("SDK exposes scoped capabilities, complete queue and typed run pagination",
             async request(call) {
                 calls.push(call);
                 if (call.path.startsWith("/agent/capabilities")) {
-                    return { status: 200, body: { code: 0, data: { version: 3, permissionModes: ["read_only"], contextScopes: ["platform"], skills: false, writeTools: false, availability: { configured: true, readyWorkers: 1, queueReason: "", reason: "" } } } };
+                    return {
+                        status: 200,
+                        body: { code: 0, data: { version: 3, permissionModes: ["read_only"], contextScopes: ["platform"], skills: false, writeTools: false, availability: { configured: true, readyWorkers: 1, queueReason: "", reason: "" } } },
+                    };
                 }
                 if (call.path.includes("/queue/")) return { status: 200, body: { code: 0, data: {} } };
                 if (call.path.includes("/queue")) return { status: 200, body: { code: 0, data: { revision: 2, paused: false, items: [] } } };
