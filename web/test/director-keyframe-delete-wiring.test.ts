@@ -30,20 +30,20 @@ describe("workbench 接入时间轴关键帧删除", () => {
     test("缓动更新通过 workbench commit 接入，未命中不制造历史", () => {
         const element = slice(workbench, "<PrevisSequencer", "/>");
         expect(element).toContain("onSetKeyframeEasing={setKeyframeEasing}");
-        const handler = slice(workbench, "const setKeyframeEasing = useCallback", "* 快捷键执行器");
+        const handler = slice(workbench, "const setKeyframeEasing = useCallback", "const deleteCameraMove = useCallback");
         expect(handler).toContain("setPrevisSceneKeyframeEasing(current, target, easing) === current");
         expect(handler).toContain("commit((scene) => setPrevisSceneKeyframeEasing(scene, target, easing));");
     });
 
     test("deleteKeyframe 未命中时不进 commit：不记历史、不产生修订", () => {
-        const handler = slice(workbench, "const deleteKeyframe = useCallback", "* 快捷键执行器");
+        const handler = slice(workbench, "const deleteKeyframe = useCallback", "const setKeyframeEasing = useCallback");
         expect(handler).toContain("removePrevisSceneKeyframe(current, target) === current) return;");
         expect(handler).toContain("commit((scene) => removePrevisSceneKeyframe(scene, target));");
     });
 
     test("删除走 commit，因此进历史、可撤销、并触发 canonical 保存", () => {
         // commit 自身的语义：入历史 + writeAndPublish（coordinator 保存 + 镜像项目）。
-        const commit = slice(workbench, "const commit = useCallback", "/** 暂存型手势");
+        const commit = slice(workbench, "const commit = useCallback", "const stagedTransaction = useMemo");
         expect(commit).toContain("setHistory((items) => [...items.slice(-49), structuredClone(current)]);");
         // 提交前统一过落地规则（previs-grounding），仍然是同一条 writeAndPublish 通道。
         expect(commit).toContain("writeAndPublish(touchPrevisScene(groundPrevisScene(updater(current)).scene));");
@@ -51,7 +51,7 @@ describe("workbench 接入时间轴关键帧删除", () => {
 });
 
 describe("workbench 快捷键接线", () => {
-    const effect = slice(workbench, "// 预演台是全屏浮层，快捷键挂在 window", "/** 对象 transform 编辑的唯一入口");
+    const effect = slice(workbench, "const runShortcutRef = useRef(runShortcut);", "const handleObjectTransform = useCallback");
 
     test("监听挂在 window keydown，并随 open 装卸", () => {
         expect(effect).toContain("if (!open) return;");
@@ -107,7 +107,7 @@ describe("workbench 快捷键接线", () => {
     });
 
     test("时间轴轨道行点选后也释放焦点：与场景列表同源的 select-then-Delete 流程", () => {
-        const row = slice(sequencer, "function SequencerRow(", "* 关键帧渲染为真实 button");
+        const row = slice(sequencer, "function SequencerRow(", "function TrackKeys(");
         expect(row).toContain("releasePrevisFocusAfterPointer(event)");
     });
 
@@ -150,7 +150,7 @@ describe("时间轴关键帧入口可见、可选择、可键盘删除", () => {
     });
 
     test("hover/focus 只用语义 token，不新增硬编码颜色", () => {
-        const block = slice(styles, "/* 可删除关键帧：", ".previs-sequencer-clip {");
+        const block = slice(styles, ".previs-sequencer-key.is-actionable {", ".previs-sequencer-clip {");
         expect(block).toContain("outline: var(--stroke-2) solid var(--control-focus-ring);");
         expect(block).toContain("color-mix(in srgb, var(--control-focus-ring) 55%, transparent)");
         // rgba / 十六进制字面值一律不允许出现在新增块里。

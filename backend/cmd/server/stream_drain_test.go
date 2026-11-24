@@ -152,6 +152,9 @@ func TestServerDrainClosesRealSSERoutesAndFinishesOrdinaryWrite(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := server.Client()
+	// As the streams finish, a racing keep-alive reuse can leave an unused
+	// connection in StateNew for longer than the shutdown budget.
+	client.Transport.(*http.Transport).DisableKeepAlives = true
 	workerRequest, err := http.NewRequest(http.MethodGet, server.URL+"/internal-agent/events?after=0", nil)
 	if err != nil {
 		t.Fatal(err)

@@ -77,15 +77,44 @@ func cloudAgentPrevisActorPositionAt(object map[string]any, time float64) []floa
 }
 
 func cloudAgentPrevisApplyActorTravel(scene map[string]any, object map[string]any, operation cloudAgentPrevisPatchOperation) (string, error) {
+	style, start, duration, err := cloudAgentPrevisTravelTiming(scene, object, operation)
+	if err != nil {
+		return "", err
+	}
+	from, to, err := cloudAgentPrevisTravelEndpoints(scene, object, operation, start)
+	if err != nil {
+		return "", err
+	}
+	keyframes, a, b := cloudAgentPrevisTravelFrames(object, from, to, start, duration, style)
+	travel, err := cloudAgentPrevisTravelSegment(object, operation, style, start, duration)
+	if err != nil {
+		return "", err
+	}
+	end := start + duration
+	travels := make([]map[string]any, 0)
+	for _, existing := range creationMaps(object["travels"]) {
+		s, d := numberValue(existing["start"], 0), numberValue(existing["duration"], 0)
+		if s+d <= start+1e-3 || s >= end-1e-3 {
+			travels = append(travels, existing)
+		}
+	}
+	travels = append(travels, travel)
+	object["keyframes"] = keyframes
+	object["travels"] = travels
+	delete(object, "motionPath")
+	return cloudAgentPrevisTravelSummary(object, style, start, duration, a, b), nil
+}
+
+func cloudAgentPrevisTravelTiming(scene map[string]any, object map[string]any, operation cloudAgentPrevisPatchOperation) (string, float64, float64, error) {
 	if stringValue(object["kind"]) != "actor" && stringValue(object["primitive"]) != "character" {
-		return "", BadAuthRequest("actor_travel 只适用于演员")
+		return "", 0, 0, BadAuthRequest("actor_travel 只适用于演员")
 	}
 	style := operation.TravelStyle
 	if style == "" {
 		style = "walk"
 	}
 	if err := cloudAgentPrevisValidateEnum(style, "travelStyle", cloudAgentPrevisTravelStyles...); err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	shotDuration := cloudAgentPrevisPerformanceDuration(scene)
 	start := 0.0
@@ -97,19 +126,23 @@ func cloudAgentPrevisApplyActorTravel(scene map[string]any, object map[string]an
 		duration = *operation.Duration
 	}
 	if err := cloudAgentPrevisFiniteInRange(start, "time", 0, shotDuration); err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	if err := cloudAgentPrevisFiniteInRange(duration, "duration", 0.1, 60); err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	if start+duration > shotDuration+1e-6 {
-		return "", BadAuthRequest(fmt.Sprintf("移动 %.1f–%.1fs 超出镜头时长 %.1fs；缩短 duration 或先用 shot_update 加长镜头", start, start+duration, shotDuration))
+		return "", 0, 0, BadAuthRequest(fmt.Sprintf("移动 %.1f–%.1fs 超出镜头时长 %.1fs；缩短 duration 或先用 shot_update 加长镜头", start, start+duration, shotDuration))
 	}
+	return style, start, duration, nil
+}
+
+func cloudAgentPrevisTravelEndpoints(scene map[string]any, object map[string]any, operation cloudAgentPrevisPatchOperation, start float64) ([]float64, []float64, error) {
 	var from, to []float64
 	if len(operation.PathPoints) > 0 {
 		for index, point := range operation.PathPoints {
 			if err := cloudAgentPrevisValidateVec3(point, fmt.Sprintf("pathPoints[%d]", index)); err != nil {
-				return "", err
+				return nil, nil, err
 			}
 		}
 		to = operation.PathPoints[len(operation.PathPoints)-1]
@@ -120,20 +153,24 @@ func cloudAgentPrevisApplyActorTravel(scene map[string]any, object map[string]an
 	var err error
 	if operation.FromMarker != nil && *operation.FromMarker != "" {
 		if from, err = cloudAgentPrevisMarkerPosition(scene, *operation.FromMarker); err != nil {
-			return "", err
+			return nil, nil, err
 		}
 	}
 	if operation.ToMarker != nil && *operation.ToMarker != "" {
 		if to, err = cloudAgentPrevisMarkerPosition(scene, *operation.ToMarker); err != nil {
-			return "", err
+			return nil, nil, err
 		}
 	}
 	if to == nil {
-		return "", BadAuthRequest("actor_travel 需要终点：toMarker（标记点标签）或 pathPoints")
+		return nil, nil, BadAuthRequest("actor_travel 需要终点：toMarker（标记点标签）或 pathPoints")
 	}
 	if from == nil {
 		from = cloudAgentPrevisActorPositionAt(object, start)
 	}
+	return from, to, nil
+}
+
+func cloudAgentPrevisTravelFrames(object map[string]any, from, to []float64, start, duration float64, style string) ([]map[string]any, []float64, []float64) {
 	transform := cloudAgentPrevisMapTransform(object)
 	position, ok := cloudAgentPrevisNumberVec3(transform["position"])
 	if !ok {
@@ -182,27 +219,26 @@ func cloudAgentPrevisApplyActorTravel(scene map[string]any, object map[string]an
 			}
 		}
 	}
-	travel := map[string]any{"id": fmt.Sprintf("%s-travel-%s", id, suffix), "start": start, "duration": duration, "style": style}
+	return keyframes, a, b
+}
+
+func cloudAgentPrevisTravelSegment(object map[string]any, operation cloudAgentPrevisPatchOperation, style string, start, duration float64) (map[string]any, error) {
+	suffix := fmt.Sprintf("%d", int(math.Round(start*1000)))
+	travel := map[string]any{"id": fmt.Sprintf("%s-travel-%s", stringValue(object["id"]), suffix), "start": start, "duration": duration, "style": style}
 	if height, ok := cloudAgentPrevisTravelDefaultHeight[style]; ok {
 		if operation.Height != nil {
 			height = *operation.Height
 		}
 		if err := cloudAgentPrevisFiniteInRange(height, "height", 0, 50); err != nil {
-			return "", err
+			return nil, err
 		}
 		travel["height"] = height
 	}
-	travels := make([]map[string]any, 0)
-	for _, existing := range creationMaps(object["travels"]) {
-		s, d := numberValue(existing["start"], 0), numberValue(existing["duration"], 0)
-		if s+d <= start+1e-3 || s >= end-1e-3 {
-			travels = append(travels, existing)
-		}
-	}
-	travels = append(travels, travel)
-	object["keyframes"] = keyframes
-	object["travels"] = travels
-	delete(object, "motionPath")
+	return travel, nil
+}
+
+func cloudAgentPrevisTravelSummary(object map[string]any, style string, start, duration float64, a, b []float64) string {
+	end := start + duration
 	summary := fmt.Sprintf("《%s》%.1f–%.1fs %s：(%.1f, %.1f) → (%.1f, %.1f)", stringValue(object["name"]), start, end, style, a[0], a[2], b[0], b[2])
 	// 速度远超方式的合理上限时在审批摘要里提示（例如 3 秒跑 120 米），让 Agent 与用户在执行前看到。
 	distance := math.Hypot(b[0]-a[0], b[2]-a[2])
@@ -210,7 +246,7 @@ func cloudAgentPrevisApplyActorTravel(scene map[string]any, object map[string]an
 	if limit, ok := limits[style]; ok && distance/duration > limit {
 		summary += fmt.Sprintf("；注意：距离 %.0f 米、约 %.0f 米/秒，远超%s的合理速度，建议加长时长或改用飞行 / 闪现", distance, distance/duration, style)
 	}
-	return summary, nil
+	return summary
 }
 
 func cloudAgentPrevisValidateMarkersAndTravels(scene map[string]any) error {

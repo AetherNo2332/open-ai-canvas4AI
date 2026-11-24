@@ -5,7 +5,7 @@ import { BufferAttribute, BufferGeometry, Color, FogExp2, MeshStandardMaterial, 
 
 import { previsRandom } from "@/lib/canvas/previs/previs-prop-kit";
 import { resolvePrevisGroundColors, resolvePrevisWorldLighting } from "@/lib/canvas/previs/previs-world";
-import type { PrevisRenderMode, PrevisWorld } from "@/types/previs";
+import type { PrevisEnvironment, PrevisRenderMode, PrevisWorld } from "@/types/previs";
 
 const SKY_DISTANCE = 9000;
 
@@ -17,8 +17,8 @@ export function previsFogAltitudeFactor(height: number) {
 /** 天空、降水只进成片，不进深度/法线/骨骼控制图（会被 overrideMaterial 画成实体）。 */
 const DATA_PASS_EXCLUDE = { previsDataPassExclude: true } as const;
 
-export function PrevisWorldView({ world, renderMode }: { world: PrevisWorld; renderMode: PrevisRenderMode }) {
-    const lighting = useMemo(() => resolvePrevisWorldLighting(world), [world]);
+export function PrevisWorldView({ world, environment, renderMode }: { world: PrevisWorld; environment?: PrevisEnvironment; renderMode: PrevisRenderMode }) {
+    const lighting = useMemo(() => resolvePrevisWorldLighting(world, environment), [environment, world]);
     const ground = useMemo(() => resolvePrevisGroundColors(world), [world]);
     const { scene, invalidate } = useThree();
     const dataMode = renderMode === "depth" || renderMode === "normal" || renderMode === "pose";
@@ -70,7 +70,13 @@ export function PrevisWorldView({ world, renderMode }: { world: PrevisWorld; ren
                     ref={(sky: Object3D | null) => {
                         if (sky) Object.assign(sky.userData, DATA_PASS_EXCLUDE);
                     }}
-                    distance={SKY_DISTANCE} sunPosition={lighting.sunDirection.toArray()} turbidity={lighting.turbidity} rayleigh={lighting.rayleigh} mieCoefficient={0.004} mieDirectionalG={0.82} />
+                    distance={SKY_DISTANCE}
+                    sunPosition={lighting.sunDirection.toArray()}
+                    turbidity={lighting.turbidity}
+                    rayleigh={lighting.rayleigh}
+                    mieCoefficient={0.004}
+                    mieDirectionalG={0.82}
+                />
             ) : null}
             <hemisphereLight args={[lighting.skyColor, lighting.groundColor, lighting.hemisphereIntensity]} />
             <directionalLight

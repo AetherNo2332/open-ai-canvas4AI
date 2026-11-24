@@ -10,6 +10,7 @@ import type { GenerationSpec, ReferenceBinding } from "@/lib/canvas/generation-c
 import type { GenerationTask } from "@/services/api/task-center";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import type { PrevisShot } from "@/types/previs";
 
 export type Position = {
     x: number;
@@ -574,6 +575,8 @@ export type CanvasNodeMetadata = {
     previsDepthVideoNodeId?: string;
     previsNormalNodeId?: string;
     previsClayVideoNodeId?: string;
+    /** 帧率随预演录制视频保存，不跟随工作台当前镜头。 */
+    previsCaptureFps?: PrevisShot["fps"];
     subtitleEntries?: SrtEntry[];
     subtitleHighlights?: SubtitleHighlight[];
     subtitleStyle?: SubtitleStyle;

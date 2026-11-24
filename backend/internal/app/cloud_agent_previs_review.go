@@ -83,8 +83,14 @@ func cloudAgentPrevisReviewShot(scene map[string]any, shot map[string]any) []str
 		notes = append(notes, fmt.Sprintf("%d 段运镜没写参数，全靠默认值（%s）", len(defaults), strings.Join(defaults, "、")))
 	}
 
-	// 跟拍换方位或景别：后一段没有 blend 时机位在 0.6 秒内甩过去，看起来像跳切。
-	// 交接空档：前一段跟拍已经结束（机位停在原地），后一段还没过渡完，人物却在继续走，机位会落在人物身后很远。
+	notes = append(notes, cloudAgentPrevisReviewFollowHandoffs(scene, primary)...)
+	notes = append(notes, cloudAgentPrevisReviewActors(scene, duration, cameraPath)...)
+	return notes
+}
+
+// 跟拍交接按时间顺序检查换向与空档，保留与主体轨迹相同的求值时刻。
+func cloudAgentPrevisReviewFollowHandoffs(scene map[string]any, primary []map[string]any) []string {
+	var notes []string
 	objects := creationMaps(scene["objects"])
 	var previous map[string]any
 	for _, move := range primary {
@@ -114,7 +120,12 @@ func cloudAgentPrevisReviewShot(scene map[string]any, shot map[string]any) []str
 		}
 		previous = move
 	}
+	return notes
+}
 
+func cloudAgentPrevisReviewActors(scene map[string]any, duration float64, cameraPath bool) []string {
+	var notes []string
+	objects := creationMaps(scene["objects"])
 	// 正反打时另一台摄影机跟着某人也算有镜头照顾到他，所以按整个场景统计。
 	tracked := cloudAgentPrevisTrackedSubjects(scene)
 	// 有镜头跟着某个移动的人物时，其他移动的人（追兵、路人）算作背景，不提示。

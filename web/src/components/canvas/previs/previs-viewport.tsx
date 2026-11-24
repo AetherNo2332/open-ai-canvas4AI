@@ -933,7 +933,7 @@ function PrevisSceneContent({
             <PrevisShotCameraSync camera={camCamera} framing={camFraming} />
             <PrevisOrthoCameraSync camera={orthoCamera} framing={orthoFraming} aspect={size.width / Math.max(size.height, 1)} />
             <PrevisEnvironmentView environment={scene.environment} fallbackColor={backgroundColor} />
-            {world ? <PrevisWorldView world={world} renderMode={renderMode} /> : <ambientLight intensity={scene.environmentIntensity * 0.35} />}
+            {world ? <PrevisWorldView world={world} environment={scene.environment} renderMode={renderMode} /> : <ambientLight intensity={scene.environmentIntensity * 0.35} />}
             {/* 世界环境由太阳与天光照明：场景里的方向光、环境光暂停，点光与聚光保留。 */}
             {scene.lights
                 .filter((light) => !world || (light.type !== "directional" && light.type !== "ambient"))
@@ -1096,10 +1096,11 @@ function PrevisSceneContent({
 }
 
 function PrevisEnvironmentView({ environment, fallbackColor }: { environment?: PrevisEnvironment; fallbackColor: string }) {
-    const { scene } = useThree();
+    const { scene, invalidate } = useThree();
     const textureRef = useRef<Texture | null>(null);
     useEffect(() => {
         scene.background = new Color(fallbackColor);
+        invalidate();
         const activeEnvironment = environment;
         const url = activeEnvironment?.mode === "panorama" ? activeEnvironment.url : undefined;
         if (!url) return;
@@ -1118,19 +1119,26 @@ function PrevisEnvironmentView({ environment, fallbackColor }: { environment?: P
                 texture.rotation = activeEnvironment?.rotationY || 0;
                 textureRef.current = texture;
                 scene.background = texture;
+                invalidate();
             },
             undefined,
             () => {
-                if (!disposed) scene.background = new Color(fallbackColor);
+                if (!disposed) {
+                    scene.background = new Color(fallbackColor);
+                    invalidate();
+                }
             },
         );
         return () => {
             disposed = true;
-            if (scene.background === textureRef.current) scene.background = new Color(fallbackColor);
+            if (scene.background === textureRef.current) {
+                scene.background = new Color(fallbackColor);
+                invalidate();
+            }
             textureRef.current?.dispose();
             textureRef.current = null;
         };
-    }, [environment?.mode, environment?.rotationY, environment?.url, fallbackColor, scene]);
+    }, [environment?.mode, environment?.rotationY, environment?.url, fallbackColor, invalidate, scene]);
     return null;
 }
 

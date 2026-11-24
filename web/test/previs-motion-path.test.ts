@@ -9,13 +9,90 @@ import {
     previsPathEase,
     previsPathPointsFromStroke,
     removePrevisPathPoint,
+    resolvePrevisSceneMotionPaths,
+    upsertPrevisMotionPathOverride,
 } from "@/lib/canvas/previs/previs-motion-path";
 import { evaluatePrevisActorPose } from "@/lib/canvas/previs/previs-motion";
-import { createPrevisActor, interpolatePrevisKeyframeLift, interpolatePrevisTransform, previsIdentityTransform } from "@/lib/canvas/previs/previs-scene";
-import { resolvePrevisSubjectState } from "@/lib/canvas/previs/previs-camera-moves";
+import { createPrevisActor, createPrevisScene, interpolatePrevisKeyframeLift, interpolatePrevisTransform, previsIdentityTransform } from "@/lib/canvas/previs/previs-scene";
+import { evaluatePrevisCamera, resolvePrevisSubjectState } from "@/lib/canvas/previs/previs-camera-moves";
 import type { PrevisKeyframe, PrevisMotionPath, PrevisVec3 } from "@/types/previs";
 
 const base = previsIdentityTransform([0, 0, 0]);
+
+function sceneWithMotionPaths(shotDuration: number) {
+    const scene = createPrevisScene();
+    const path: PrevisMotionPath = {
+        points: [
+            [0, 0, 0],
+            [8, 0, 0],
+        ],
+        speed: "walk",
+        metersPerSecond: 1,
+        startDelay: 1,
+        orientToPath: false,
+    };
+    const actor = applyPrevisMotionPath(scene.objects[0], path, shotDuration, true);
+    const camera = applyPrevisMotionPath(
+        scene.cameras[0],
+        {
+            ...path,
+            points: [
+                [0, 2, 6],
+                [8, 2, 6],
+            ],
+        },
+        shotDuration,
+        false,
+    );
+    return { ...scene, objects: [actor], cameras: [camera], shots: [{ ...scene.shots[0], duration: shotDuration }] };
+}
+
+describe("motion paths for the active shot", () => {
+    test("shortening a shot lets the actor and camera reach the end of their paths", () => {
+        const scene = sceneWithMotionPaths(10);
+        const shot = { ...scene.shots[0], duration: 3 };
+        const playback = resolvePrevisSceneMotionPaths({ ...scene, shots: [shot] }, shot.duration);
+        const actor = playback.objects[0];
+        expect(interpolatePrevisTransform(actor.transform, actor.keyframes, 3).position).toEqual([8, 0, 0]);
+        expect(evaluatePrevisCamera(playback, playback.cameras[0], 3).position).toEqual([8, 2, 6]);
+        expect(scene.objects[0].keyframes.at(-1)?.time).toBe(9);
+    });
+
+    test("a longer shot sharing the same path restores the original speed and delay", () => {
+        const scene = sceneWithMotionPaths(1);
+        const longShot = { ...scene.shots[0], id: "long-shot", duration: 12 };
+        const playback = resolvePrevisSceneMotionPaths({ ...scene, shots: [...scene.shots, longShot], activeShotId: longShot.id }, longShot.duration);
+        const actor = playback.objects[0];
+        expect(interpolatePrevisTransform(actor.transform, actor.keyframes, 5).position).toEqual([4, 0, 0]);
+        expect(evaluatePrevisCamera(playback, playback.cameras[0], 5).position).toEqual([4, 2, 6]);
+        expect(actor.keyframes.at(-1)?.time).toBe(9);
+        expect(scene.objects[0].keyframes.map((frame) => frame.time)).toEqual([1]);
+    });
+
+    test("retiming keeps manual keys at their original times and gives them priority at a collision", () => {
+        const scene = sceneWithMotionPaths(10);
+        const actor = scene.objects[0];
+        const manual: PrevisKeyframe = { id: "manual", time: 3, transform: previsIdentityTransform([5, 0, 0]), easing: "smooth" };
+        const later: PrevisKeyframe = { id: "later", time: 11, transform: previsIdentityTransform([10, 0, 0]) };
+        actor.keyframes = [...actor.keyframes.slice(0, -1), manual, actor.keyframes.at(-1)!, later];
+        const playback = resolvePrevisSceneMotionPaths(scene, 3);
+        const evaluated = playback.objects[0];
+        expect(evaluated.keyframes.map((frame) => frame.time)).toEqual([0, 1, 3, 11]);
+        expect(evaluated.keyframes[2]).toBe(manual);
+        expect(evaluated.keyframes[3]).toBe(later);
+        expect(interpolatePrevisTransform(evaluated.transform, evaluated.keyframes, 3).position).toEqual([5, 0, 0]);
+    });
+
+    test("recording a manual camera key on a generated key keeps the manual time after retiming", () => {
+        const scene = sceneWithMotionPaths(3);
+        const camera = scene.cameras[0];
+        const transform = previsIdentityTransform([6, 2, 6]);
+        const keyframes = upsertPrevisMotionPathOverride(camera, 3, transform);
+        const playback = resolvePrevisSceneMotionPaths({ ...scene, cameras: [{ ...camera, keyframes }] }, 12);
+        expect(evaluatePrevisCamera(playback, playback.cameras[0], 3).position).toEqual([6, 2, 6]);
+        expect(playback.cameras[0].keyframes.at(-1)?.time).toBe(9);
+    });
+});
 
 /**
  * 与 backend/internal/app/cloud_agent_previs_path_test.go 共用的三组路径：同一输入在前后端展开出同样的关键帧。
@@ -26,19 +103,52 @@ export const PREVIS_PATH_GOLDEN: Array<{ name: string; locked: boolean; shot: nu
         name: "actor-hold-smooth",
         locked: true,
         shot: 10,
-        path: { points: [[0, 0, 0], [4, 2, 0], [4, 2, 4]], speed: "walk", metersPerSecond: 2, startDelay: 1, orientToPath: true, easing: "smooth", holds: [0, 1, 0] },
+        path: {
+            points: [
+                [0, 0, 0],
+                [4, 2, 0],
+                [4, 2, 4],
+            ],
+            speed: "walk",
+            metersPerSecond: 2,
+            startDelay: 1,
+            orientToPath: true,
+            easing: "smooth",
+            holds: [0, 1, 0],
+        },
     },
     {
         name: "camera-curve-speeds",
         locked: false,
         shot: 6,
-        path: { points: [[0, 3, 0], [2, 3, 2], [4, 1, 0], [6, 0.5, 2]], speed: "run", startDelay: 0, orientToPath: false, curve: true, speeds: [1, 2, 0.5] },
+        path: {
+            points: [
+                [0, 3, 0],
+                [2, 3, 2],
+                [4, 1, 0],
+                [6, 0.5, 2],
+            ],
+            speed: "run",
+            startDelay: 0,
+            orientToPath: false,
+            curve: true,
+            speeds: [1, 2, 0.5],
+        },
     },
     {
         name: "compressed-ease-in",
         locked: true,
         shot: 5,
-        path: { points: [[0, 0, 0], [30, 0, 0]], speed: "walk", startDelay: 0, orientToPath: true, easing: "ease_in" },
+        path: {
+            points: [
+                [0, 0, 0],
+                [30, 0, 0],
+            ],
+            speed: "walk",
+            startDelay: 0,
+            orientToPath: true,
+            easing: "ease_in",
+        },
     },
 ];
 
@@ -74,7 +184,21 @@ describe("路径展开（与后端同一组数值）", () => {
 
 describe("路径动画", () => {
     test("旧行为不变：步行 1.4m/s，1 秒出发，0 秒有等待帧", () => {
-        const frames = buildPrevisMotionPathKeyframes({ id: "w", base, path: { points: [[0, 0, 0], [2.8, 0, 0]], speed: "walk", startDelay: 1, orientToPath: true }, shotDuration: 5, locked: true });
+        const frames = buildPrevisMotionPathKeyframes({
+            id: "w",
+            base,
+            path: {
+                points: [
+                    [0, 0, 0],
+                    [2.8, 0, 0],
+                ],
+                speed: "walk",
+                startDelay: 1,
+                orientToPath: true,
+            },
+            shotDuration: 5,
+            locked: true,
+        });
         expect(frames.map((frame) => [frame.id, frame.time])).toEqual([
             ["w-path-hold", 0],
             ["w-path-1", 1],
@@ -84,13 +208,42 @@ describe("路径动画", () => {
     });
 
     test("镜头结束才出发时只写一帧原地等待", () => {
-        const frames = buildPrevisMotionPathKeyframes({ id: "w", base, path: { points: [[0, 0, 0], [1, 0, 0]], speed: "walk", startDelay: 5, orientToPath: false }, shotDuration: 5, locked: true });
+        const frames = buildPrevisMotionPathKeyframes({
+            id: "w",
+            base,
+            path: {
+                points: [
+                    [0, 0, 0],
+                    [1, 0, 0],
+                ],
+                speed: "walk",
+                startDelay: 5,
+                orientToPath: false,
+            },
+            shotDuration: 5,
+            locked: true,
+        });
         expect(frames.map((frame) => frame.id)).toEqual(["w-path-hold"]);
     });
 
     test("演员路径高度写进 lift，位置贴地；人偶悬空且不迈步，机位跟拍按真实高度", () => {
         const actor = createPrevisActor("飞人", [0, 0, 0]);
-        const flying = applyPrevisMotionPath(actor, { points: [[0, 0, 0], [5, 3, 0], [10, 3, 0]], speed: "walk", metersPerSecond: 2.5, startDelay: 0, orientToPath: true }, 6, true);
+        const flying = applyPrevisMotionPath(
+            actor,
+            {
+                points: [
+                    [0, 0, 0],
+                    [5, 3, 0],
+                    [10, 3, 0],
+                ],
+                speed: "walk",
+                metersPerSecond: 2.5,
+                startDelay: 0,
+                orientToPath: true,
+            },
+            6,
+            true,
+        );
         expect(flying.keyframes.every((frame) => frame.transform.position[1] === 0)).toBe(true);
         const mid = flying.keyframes.find((frame) => frame.transform.position[0] === 10)!;
         expect(mid.lift).toBe(3);
@@ -104,7 +257,21 @@ describe("路径动画", () => {
 
     test("演员站在 0.8 米台阶上时，路径高度进 lift，脚底高度全程保留", () => {
         const raised = createPrevisActor("台上演员", [0, 0.8, 0]);
-        const moving = applyPrevisMotionPath(raised, { points: [[0, 0, 0], [2, 0.5, 0], [4, 0, 0]], speed: "walk", startDelay: 0, orientToPath: true }, 5, true);
+        const moving = applyPrevisMotionPath(
+            raised,
+            {
+                points: [
+                    [0, 0, 0],
+                    [2, 0.5, 0],
+                    [4, 0, 0],
+                ],
+                speed: "walk",
+                startDelay: 0,
+                orientToPath: true,
+            },
+            5,
+            true,
+        );
         expect(moving.keyframes.every((frame) => frame.transform.position[1] === 0.8)).toBe(true);
         expect(Math.max(...moving.keyframes.map((frame) => frame.lift ?? 0))).toBe(0.5);
         expect(moving.keyframes.at(-1)?.transform.position[1]).toBe(0.8);
@@ -113,19 +280,84 @@ describe("路径动画", () => {
 
     test("摄影机与道具的高度直接写进位置 Y", () => {
         const camera = { id: "cam", transform: previsIdentityTransform([0, 2, 0]), keyframes: [] as PrevisKeyframe[] };
-        const updated = applyPrevisMotionPath(camera, { points: [[0, 2, 0], [0, 10, -20]], speed: "walk", metersPerSecond: 10, startDelay: 0, orientToPath: false }, 5, false);
+        const updated = applyPrevisMotionPath(
+            camera,
+            {
+                points: [
+                    [0, 2, 0],
+                    [0, 10, -20],
+                ],
+                speed: "walk",
+                metersPerSecond: 10,
+                startDelay: 0,
+                orientToPath: false,
+            },
+            5,
+            false,
+        );
         expect(interpolatePrevisTransform(camera.transform, updated.keyframes, 5).position).toEqual([0, 10, -20]);
         expect(updated.keyframes.some((frame) => frame.lift)).toBe(false);
     });
 
     test("用时优先于速度；每段倍率改变分配；停留插入原地帧；镜头放不下时等比压缩", () => {
-        const byDuration = planPrevisMotionPath({ points: [[0, 0, 0], [10, 0, 0]], speed: "run", startDelay: 0, orientToPath: false, duration: 4 }, 10);
+        const byDuration = planPrevisMotionPath(
+            {
+                points: [
+                    [0, 0, 0],
+                    [10, 0, 0],
+                ],
+                speed: "run",
+                startDelay: 0,
+                orientToPath: false,
+                duration: 4,
+            },
+            10,
+        );
         expect(byDuration.travel).toBeCloseTo(4, 6);
-        const segmented = planPrevisMotionPath({ points: [[0, 0, 0], [2, 0, 0], [4, 0, 0]], speed: "walk", metersPerSecond: 1, startDelay: 0, orientToPath: false, speeds: [1, 2] }, 10);
+        const segmented = planPrevisMotionPath(
+            {
+                points: [
+                    [0, 0, 0],
+                    [2, 0, 0],
+                    [4, 0, 0],
+                ],
+                speed: "walk",
+                metersPerSecond: 1,
+                startDelay: 0,
+                orientToPath: false,
+                speeds: [1, 2],
+            },
+            10,
+        );
         expect(segmented.edgeTimes).toEqual([2, 1]);
-        const held = planPrevisMotionPath({ points: [[0, 0, 0], [2, 0, 0], [4, 0, 0]], speed: "walk", metersPerSecond: 1, startDelay: 0, orientToPath: false, holds: [0, 1.5, 9] }, 10);
+        const held = planPrevisMotionPath(
+            {
+                points: [
+                    [0, 0, 0],
+                    [2, 0, 0],
+                    [4, 0, 0],
+                ],
+                speed: "walk",
+                metersPerSecond: 1,
+                startDelay: 0,
+                orientToPath: false,
+                holds: [0, 1.5, 9],
+            },
+            10,
+        );
         expect(held.end).toBeCloseTo(5.5, 6);
-        const compressed = planPrevisMotionPath({ points: [[0, 0, 0], [30, 0, 0]], speed: "walk", startDelay: 1, orientToPath: false }, 5);
+        const compressed = planPrevisMotionPath(
+            {
+                points: [
+                    [0, 0, 0],
+                    [30, 0, 0],
+                ],
+                speed: "walk",
+                startDelay: 1,
+                orientToPath: false,
+            },
+            5,
+        );
         expect(compressed.compressed).toBe(true);
         expect(compressed.end).toBeCloseTo(5, 6);
     });
@@ -135,14 +367,40 @@ describe("路径动画", () => {
         expect(previsPathEase("ease_out", 0.5)).toBeCloseTo(0.75, 6);
         expect(previsPathEase("smooth", 0.5)).toBeCloseTo(0.5, 6);
         expect(previsPathEase("smooth", 0.1)).toBeLessThan(0.1);
-        const frames = buildPrevisMotionPathKeyframes({ id: "a", base, path: { points: [[0, 0, 0], [10, 0, 0]], speed: "walk", metersPerSecond: 1, startDelay: 0, orientToPath: false, easing: "ease_in" }, shotDuration: 20, locked: false });
+        const frames = buildPrevisMotionPathKeyframes({
+            id: "a",
+            base,
+            path: {
+                points: [
+                    [0, 0, 0],
+                    [10, 0, 0],
+                ],
+                speed: "walk",
+                metersPerSecond: 1,
+                startDelay: 0,
+                orientToPath: false,
+                easing: "ease_in",
+            },
+            shotDuration: 20,
+            locked: false,
+        });
         const at = (time: number) => interpolatePrevisTransform(base, frames, time).position[0];
         expect(at(5)).toBeCloseTo(2.5, 1);
         expect(at(10)).toBeCloseTo(10, 6);
     });
 
     test("途经点插入、删除保持速度倍率与停留对齐；画笔笔迹去抖并限制点数", () => {
-        const path: PrevisMotionPath = { points: [[0, 0, 0], [4, 0, 0]], speed: "walk", startDelay: 0, orientToPath: true, speeds: [2], holds: [1, 0] };
+        const path: PrevisMotionPath = {
+            points: [
+                [0, 0, 0],
+                [4, 0, 0],
+            ],
+            speed: "walk",
+            startDelay: 0,
+            orientToPath: true,
+            speeds: [2],
+            holds: [1, 0],
+        };
         const inserted = insertPrevisPathPoint(path, 0);
         expect(inserted.points[1]).toEqual([2, 0, 0]);
         expect(inserted.speeds).toEqual([2, 2]);
@@ -154,7 +412,18 @@ describe("路径动画", () => {
         expect(points.length).toBeLessThanOrEqual(24);
         expect(points[0]).toEqual(stroke[0]);
         expect(points.at(-1)).toEqual(stroke.at(-1));
-        expect(normalizePrevisMotionPath({ ...path, points: [[0, -2, 0], [1, 3, 0]] }, true).points).toEqual([
+        expect(
+            normalizePrevisMotionPath(
+                {
+                    ...path,
+                    points: [
+                        [0, -2, 0],
+                        [1, 3, 0],
+                    ],
+                },
+                true,
+            ).points,
+        ).toEqual([
             [0, 0, 0],
             [1, 3, 0],
         ]);

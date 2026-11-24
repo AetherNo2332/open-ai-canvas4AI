@@ -13,10 +13,12 @@ ENV NODE_ENV=production
 ENV CANVAS_AGENT_BUILD_COMMIT=$CANVAS_AGENT_BUILD_COMMIT
 ENV CANVAS_AGENT_HARNESS_DIR=/agent/harness
 COPY agent/package*.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+RUN umask 022 && npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /agent/dist/src ./dist/src
 COPY agent/harness ./harness
-RUN chmod -R a+rX /agent
+RUN chmod a+rx /agent /agent/dist \
+    && chmod a+r /agent/package*.json \
+    && chmod -R a+rX /agent/dist/src /agent/harness
 USER node
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 CMD ["node", "dist/src/health-probe.js"]
 CMD ["node", "dist/src/server.js"]
