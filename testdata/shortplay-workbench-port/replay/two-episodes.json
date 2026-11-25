@@ -1,0 +1,236 @@
+{
+  "fixture": "shortplay-two-episodes-shared-character",
+  "provenance": {
+    "donor": "https://gitee.com/yyvan1/open-ai-canvas",
+    "donorCommit": "13731aae6c4cefadc2a1719e3e7e59b22e249f94",
+    "kind": "sanitized-synthetic",
+    "capturedAt": "2026-11-26",
+    "note": "按供体 backend/internal/shortplay 与 backend/internal/app/shortplay_* 的合同手工构造的脱敏样本；不是生产档案，不含真实账号、资源 ID 或付费回执。剧本、角色名与资产均为自造。"
+  },
+  "create": {
+    "name": "雨夜回眸",
+    "aspectRatio": "9:16",
+    "chapters": [
+      {
+        "title": "第一集 雨夜初遇",
+        "text": "雨夜，天台。林小满握着一块停摆的旧怀表，等一个不会来的人。她把怀表贴在胸口，霓虹在积水里碎成两半。"
+      },
+      {
+        "title": "第二集 战袍归来",
+        "text": "同一座天台，林小满换上战袍，怀表重新走动。她抬手，雨停在半空，远处楼群一盏盏亮起。"
+      }
+    ],
+    "settingsJson": "{\"aspectRatio\":\"9:16\",\"styleName\":\"写实电影感\",\"stylePrompt\":\"霓虹雨夜，冷调高反差\",\"language\":\"中文\",\"assets\":{\"mode\":\"portrait\",\"characterPrompt\":\"\",\"scenePrompt\":\"\",\"characterRatio\":\"16:9\"},\"models\":{}}",
+    "defaultImageModel": "",
+    "defaultVideoModel": ""
+  },
+  "settings": {
+    "aspectRatio": "9:16",
+    "styleName": "写实电影感",
+    "stylePrompt": "霓虹雨夜，冷调高反差，浅景深",
+    "language": "中文",
+    "assets": {
+      "mode": "portrait",
+      "characterPrompt": "全身站姿，正面，柔和侧光，纯色背景",
+      "scenePrompt": "广角环境，无人，冷调霓虹",
+      "characterRatio": "16:9"
+    },
+    "models": {}
+  },
+  "expected": {
+    "project": {
+      "type": "shortplay",
+      "aspectRatio": "9:16",
+      "sourceType": "script"
+    },
+    "episodes": [
+      {
+        "number": 1,
+        "title": "第一集 雨夜初遇",
+        "assetIds": [1, 2, 3],
+        "canvasInitialNodes": 1
+      },
+      {
+        "number": 2,
+        "title": "第二集 战袍归来",
+        "assetIds": [1, 3, 4],
+        "canvasInitialNodes": 1
+      }
+    ],
+    "assets": [
+      {
+        "id": 1,
+        "kind": "character",
+        "name": "林小满",
+        "aliases": ["小满"],
+        "description": "青年女性，夜班护士，性格执拗，等一个不会回来的人。",
+        "appearance": "及肩黑发，被雨打湿，米色风衣，深色长靴，指节泛红。",
+        "voice": "青年女声，偏低，克制的沙哑。",
+        "locked": false,
+        "revision": 3,
+        "imageStatus": "ready",
+        "imageVersion": 2,
+        "currentImageId": 1,
+        "episodeNumbers": [1, 2],
+        "position": 0
+      },
+      {
+        "id": 2,
+        "kind": "prop",
+        "name": "旧怀表",
+        "aliases": ["怀表"],
+        "description": "停摆的男式怀表，剧情关键物，链子上缠着红线。",
+        "appearance": "黄铜外壳，表面裂纹，链子缠着红线。",
+        "voice": "",
+        "locked": false,
+        "revision": 1,
+        "imageStatus": "ready",
+        "imageVersion": 1,
+        "currentImageId": 2,
+        "episodeNumbers": [1],
+        "position": 1
+      },
+      {
+        "id": 3,
+        "kind": "scene",
+        "name": "雨夜天台",
+        "aliases": ["天台"],
+        "description": "城市高层天台，两集共用。",
+        "appearance": "积水天台，霓虹招牌倒影，铁栏杆，远景楼群。",
+        "voice": "",
+        "locked": false,
+        "revision": 1,
+        "imageStatus": "ready",
+        "imageVersion": 1,
+        "currentImageId": 3,
+        "episodeNumbers": [1, 2],
+        "position": 2
+      },
+      {
+        "id": 4,
+        "kind": "character",
+        "name": "",
+        "aliases": [],
+        "description": "",
+        "appearance": "及肩黑发束起，暗红战袍，铜扣至领，右手握着旧怀表。",
+        "voice": "",
+        "locked": false,
+        "revision": 1,
+        "imageStatus": "ready",
+        "imageVersion": 1,
+        "currentImageId": 4,
+        "derivedFrom": 1,
+        "variantName": "战袍",
+        "renderRule": "",
+        "episodeNumbers": [2],
+        "position": 3
+      }
+    ],
+    "images": [
+      {
+        "id": 1,
+        "assetId": 1,
+        "version": 2,
+        "status": "ready",
+        "sourceImageId": 0,
+        "resourceId": "res-fixture-base-portrait"
+      },
+      {
+        "id": 2,
+        "assetId": 2,
+        "version": 1,
+        "status": "ready",
+        "sourceImageId": 0,
+        "resourceId": "res-fixture-prop-watch"
+      },
+      {
+        "id": 3,
+        "assetId": 3,
+        "version": 1,
+        "status": "ready",
+        "sourceImageId": 0,
+        "resourceId": "res-fixture-scene-rooftop"
+      },
+      {
+        "id": 4,
+        "assetId": 4,
+        "version": 1,
+        "status": "ready",
+        "sourceImageId": 1,
+        "resourceId": "res-fixture-derived-warpaint"
+      }
+    ],
+    "audios": [
+      {
+        "id": 1,
+        "assetId": 1,
+        "version": 1,
+        "status": "ready",
+        "sourceAudioId": 0,
+        "resourceId": "res-fixture-base-voice"
+      }
+    ],
+    "extract": {
+      "dedupeKey": "extract|{shortplayId}",
+      "payloadCursor": 0,
+      "batchRunes": 40000,
+      "firstClick": { "queued": true },
+      "secondClickWhileRunning": { "queued": false },
+      "limits": { "characters": 24, "props": 20, "scenes": 16 },
+      "instruction": "只抽取剧本中真实出现过的角色、道具、场景；角色必须写清年代阶段与性别，非人实体标注「非人」。"
+    },
+    "derived": {
+      "displayName": "林小满-战袍",
+      "displayNameRunes": 20,
+      "parentRunes": 3,
+      "separatorRunes": 1,
+      "variantNameMaxRunes": 16,
+      "inherits": {
+        "kind": "character",
+        "name": "林小满-战袍",
+        "aliases": ["小满"],
+        "description": "青年女性，夜班护士，性格执拗，等一个不会回来的人。",
+        "voice": "青年女声，偏低，克制的沙哑。"
+      },
+      "ownOverrides": {
+        "appearance": "及肩黑发束起，暗红战袍，铜扣至领，右手握着旧怀表。"
+      },
+      "audioInheritance": "衍生行 currentAudioId=0 时音色回落父资产；父样本未就绪时不排队",
+      "imageStaleness": "父资产 currentImageId 与衍生行自身 images[].sourceImageId 不同即 baseImageStale，仅提示不阻断",
+      "rejectedVariantNames": [
+        { "value": "", "reason": "衍生形象必须提供 variantName" },
+        { "value": "战-袍", "reason": "形象名不能含" },
+        { "value": "林小满", "reason": "形象名不能与角色名同名" },
+        { "value": "小满", "reason": "形象名不能与角色别名" }
+      ],
+      "lookResolution": [
+        { "name": "林小满-战袍", "expectAssetId": 4, "rule": "完整显示名命中" },
+        { "name": "战袍", "expectAssetId": 4, "rule": "variantName 命中" },
+        { "name": " 战袍 ", "expectAssetId": 4, "rule": "归一化后命中" },
+        { "name": "林小满", "expectAssetId": 0, "rule": "基础角色名回落" },
+        { "name": "小满", "expectAssetId": 0, "rule": "基础角色别名回落" },
+        { "name": "默认", "expectAssetId": 0, "rule": "基础造型词表" },
+        { "name": "没有这套造型", "expectAssetId": 0, "rule": "未命中静默回落基础造型" }
+      ]
+    },
+    "queueSemantics": {
+      "assetImage": { "dedupeKey": "asset_image|{shortplayId}|{assetId}", "lockedSkip": true },
+      "assetAudio": { "dedupeKey": "asset_audio|{shortplayId}|{assetId}", "nonCharacterSkip": true },
+      "assetSync": { "dedupeKey": "asset_sync|{canvasId}" },
+      "priorities": { "extract": 60, "asset_image": 40, "asset_audio": 40, "asset_sync": 20 }
+    },
+    "canvas": {
+      "sharedCharacterAssetId": 1,
+      "derivedAssetId": 4,
+      "episodeCards": { "1": [1, 2, 3], "2": [1, 3, 4] },
+      "derivedCardPlacement": "衍生卡优先贴父卡右侧；父卡不在画布上时退回常规网格",
+      "episodeTwoLook": "战袍",
+      "canvasIdIsEpisodeAuthority": true,
+      "injectionIdempotent": "同 shortplayAssetId 的已有卡只刷新快照，无差异时不递增画布 revision"
+    },
+    "isolation": {
+      "assetIdScope": "shortplayId",
+      "note": "资产 id 是项目内从 1 起的序号；两个项目各自可以有资产 1，读写必须带项目身份。"
+    }
+  }
+}

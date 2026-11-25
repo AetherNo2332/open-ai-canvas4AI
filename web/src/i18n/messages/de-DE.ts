@@ -22,6 +22,7 @@ export const deDE: Messages = {
         tools: {
             create: "Erstellen",
             projects: "Kurzserien",
+            shortplays: "Kurzfilm-Studio",
             canvas: "Canvas",
             tasks: "Aufgaben",
             assets: "Assets",
@@ -37,6 +38,7 @@ export const deDE: Messages = {
         sidebar: {
             home: "Erstellen",
             projects: "Kurzserien",
+            shortplays: "Kurzfilm-Studio",
             ecommerce: "E-Commerce-Agent",
             canvas: "Freier Canvas",
             toolboxImage: "Bildgenerierung",
@@ -51,6 +53,7 @@ export const deDE: Messages = {
         collapsed: {
             home: "Start",
             projects: "Serien",
+            shortplays: "Kurzfilm-Studio",
             canvas: "Canvas",
             assets: "Assets",
             skills: "Skills",
@@ -60,6 +63,7 @@ export const deDE: Messages = {
         pageTitles: {
             home: "Erstellen",
             projects: "Kurzserien",
+            shortplays: "Kurzfilm-Studio",
             canvas: "Freier Canvas",
             tasks: "Verlauf",
             assets: "Assets",

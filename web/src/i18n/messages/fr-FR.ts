@@ -22,6 +22,7 @@ export const frFR: Messages = {
         tools: {
             create: "Créer",
             projects: "Courts métrages",
+            shortplays: "Studio de courts métrages",
             canvas: "Canevas",
             tasks: "Tâches",
             assets: "Ressources",
@@ -37,6 +38,7 @@ export const frFR: Messages = {
         sidebar: {
             home: "Créer",
             projects: "Courts métrages",
+            shortplays: "Studio de courts métrages",
             ecommerce: "Agent e-commerce",
             canvas: "Canevas libre",
             toolboxImage: "Génération d'images",
@@ -51,6 +53,7 @@ export const frFR: Messages = {
         collapsed: {
             home: "Créer",
             projects: "Séries",
+            shortplays: "Studio de courts métrages",
             canvas: "Canevas",
             assets: "Ress.",
             skills: "Comp.",
@@ -60,6 +63,7 @@ export const frFR: Messages = {
         pageTitles: {
             home: "Créer",
             projects: "Courts métrages",
+            shortplays: "Studio de courts métrages",
             canvas: "Canevas libre",
             tasks: "Historique",
             assets: "Ressources",

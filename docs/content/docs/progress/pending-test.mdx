@@ -5708,3 +5708,12 @@ URL 使用归属校验后的资源访问地址，本地存储也可签发厂商�
 - [ ] 使用真实模型与 Worker 验证平台、短剧和画布的策略、工具、Skill 目录与跨范围隔离；当前模型请求证据来自本地确定性 HTTP 上游。
 - [ ] 验证运行中断网、原 POST 回执丢失后的幂等重放、双标签续轮冲突和短剧失效剧集。
 - [ ] 真实预演验收：A→平台/短剧/B→A、刷新、双标签、录制中离开、上传成功但回传失败、等待超时；核对资源不重复上传、只有一次有效工具回执，并记录 Run ID、requestId、画布 ID、revision 和资源 ID。
+
+## 独立短剧工作台（W03）
+
+- 已实现：Schema 112 六张表（作品域配置、分集、资产、图片/音色历史、job 队列）；`GET/POST /api/shortplays`、`GET /api/shortplays/:id`、`PATCH /api/shortplays/:id/settings`；侧栏「短剧工作台」入口、列表、新建、详情与设置页。
+- 自动化：`go test ./internal/repository ./internal/database ./internal/shortplay ./internal/architecture` 通过，覆盖项目内复合资产身份、跨项目读写拒绝、revision CAS、同名建档原子回滚、并发建档单赢家、SQLite/PostgreSQL 17 空库与旧 drama 库升级、v112 六表与未结束 job 去重索引；`go test ./internal/handler -run TestOpenAPI` 通过；`bun run typecheck` 通过。
+- 正式页面：`127.0.0.1:18080` 后端 + `127.0.0.1:13000` 前端，隔离数据目录 `.local/project-workbench-debug`，账号 `shortplay_w03_20261126`。从侧栏进入、新建两集《雨夜回眸 W03》（9:16，49+31 字）、保存设置（`stylePrompt=W03 验收：霓虹雨夜冷调，浅景深，胶片颗粒`）后刷新重开，分集数、原文、画布地址与设置均保持。SQLite 回读 `projects.type=shortplay`、两行 `shortplay_episodes` 各带唯一 `canvas_id`、`settings_json` 含上述提示词。
+- [ ] 在正式 PostgreSQL 部署上重复建档与设置保存；本轮 PostgreSQL 只覆盖迁移与仓储并发专项，未跑 HTTP。
+- [ ] 资产提取、参考图/音色生成、集画布创建、收录与 Agent 工具（W04–W07）尚未接入；「进精修画布」按钮当前禁用。
+- [ ] 未使用真实模型渠道，本页没有生成请求；真实渠道回执留给 W05/W08。

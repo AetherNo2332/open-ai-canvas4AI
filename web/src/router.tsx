@@ -73,6 +73,9 @@ const TasksPage = workspaceRoutePages.tasks;
 const ProjectsPage = workspaceRoutePages.projects;
 const ProjectDetailPage = workspaceRoutePages.projectDetail;
 const ProjectCreatePage = workspaceRoutePages.projectCreate;
+const ShortplayListPage = workspaceRoutePages.shortplays;
+const ShortplayDetailPage = workspaceRoutePages.shortplayDetail;
+const ShortplayCreatePage = workspaceRoutePages.shortplayCreate;
 const SettingsPage = workspaceRoutePages.settings;
 const ReferralPage = workspaceRoutePages.referral;
 const AdminReferralPage = lazyAdminPage(() => import("@/pages/admin/referral/referral-admin-page"));
@@ -223,6 +226,31 @@ export const router = createBrowserRouter([
                 ),
             },
             { path: "/projects/:projectId/*", element: <Navigate to=".." relative="path" replace /> },
+            // 短剧工作台：与 /projects（drama 制作台）是两条产品线，复用同一功能开关。
+            {
+                path: "/shortplays",
+                element: (
+                    <RequireAuth>
+                        <RequireFeature feature="shortDramaEnabled">{deferred(<ShortplayListPage />)}</RequireFeature>
+                    </RequireAuth>
+                ),
+            },
+            {
+                path: "/shortplays/new",
+                element: (
+                    <RequireAuth>
+                        <RequireFeature feature="shortDramaEnabled">{deferred(<ShortplayCreatePage />)}</RequireFeature>
+                    </RequireAuth>
+                ),
+            },
+            {
+                path: "/shortplays/:projectId",
+                element: (
+                    <RequireAuth>
+                        <RequireFeature feature="shortDramaEnabled">{deferred(<ShortplayDetailPage />)}</RequireFeature>
+                    </RequireAuth>
+                ),
+            },
             { path: "/canvas", element: <RequireAuth>{deferred(<CanvasPage />)}</RequireAuth> },
             {
                 path: "/canvas/:id",

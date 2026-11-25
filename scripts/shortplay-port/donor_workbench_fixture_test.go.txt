@@ -1,0 +1,384 @@
+package shortplay
+
+import (
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+// W01 夹具回放：用供体固定提交的纯函数与常量核对两集样本。
+// 临时注入供体 backend/internal/shortplay 后运行，运行完删除；副本见
+// 目标 scripts/shortplay-port/donor_workbench_fixture_test.go.txt。
+// 夹具路径由 SHORTPLAY_W01_FIXTURE 指定（绝对路径）。
+
+type w01Fixture struct {
+	Fixture    string `json:"fixture"`
+	Provenance struct {
+		DonorCommit string `json:"donorCommit"`
+		Kind        string `json:"kind"`
+	} `json:"provenance"`
+	Create struct {
+		Name        string `json:"name"`
+		AspectRatio string `json:"aspectRatio"`
+		Chapters    []struct {
+			Title string `json:"title"`
+			Text  string `json:"text"`
+		} `json:"chapters"`
+	} `json:"create"`
+	Expected struct {
+		Project struct {
+			Type        string `json:"type"`
+			AspectRatio string `json:"aspectRatio"`
+			SourceType  string `json:"sourceType"`
+		} `json:"project"`
+		Episodes []struct {
+			Number     int    `json:"number"`
+			Title      string `json:"title"`
+			AssetIDs   []int  `json:"assetIds"`
+			InitialNOs int    `json:"canvasInitialNodes"`
+		} `json:"episodes"`
+		Assets []struct {
+			ID             int      `json:"id"`
+			Kind           string   `json:"kind"`
+			Name           string   `json:"name"`
+			Aliases        []string `json:"aliases"`
+			Description    string   `json:"description"`
+			Appearance     string   `json:"appearance"`
+			Voice          string   `json:"voice"`
+			CurrentImageID int      `json:"currentImageId"`
+			DerivedFrom    int      `json:"derivedFrom"`
+			VariantName    string   `json:"variantName"`
+			EpisodeNumbers []int    `json:"episodeNumbers"`
+		} `json:"assets"`
+		Images []struct {
+			ID            int `json:"id"`
+			AssetID       int `json:"assetId"`
+			SourceImageID int `json:"sourceImageId"`
+		} `json:"images"`
+		Audios []struct {
+			ID      int `json:"id"`
+			AssetID int `json:"assetId"`
+		} `json:"audios"`
+		Extract struct {
+			DedupeKey  string `json:"dedupeKey"`
+			BatchRunes int    `json:"batchRunes"`
+			Limits     struct {
+				Characters int `json:"characters"`
+				Props      int `json:"props"`
+				Scenes     int `json:"scenes"`
+			} `json:"limits"`
+		} `json:"extract"`
+		Derived struct {
+			DisplayName        string `json:"displayName"`
+			DisplayNameRunes   int    `json:"displayNameRunes"`
+			ParentRunes        int    `json:"parentRunes"`
+			SeparatorRunes     int    `json:"separatorRunes"`
+			VariantNameMaxRune int    `json:"variantNameMaxRunes"`
+			RejectedVariant    []struct {
+				Value  string `json:"value"`
+				Reason string `json:"reason"`
+			} `json:"rejectedVariantNames"`
+			LookResolution []struct {
+				Name          string `json:"name"`
+				ExpectAssetID int    `json:"expectAssetId"`
+				Rule          string `json:"rule"`
+			} `json:"lookResolution"`
+		} `json:"derived"`
+		QueueSemantics struct {
+			AssetImage struct {
+				DedupeKey string `json:"dedupeKey"`
+			} `json:"assetImage"`
+			AssetAudio struct {
+				DedupeKey string `json:"dedupeKey"`
+			} `json:"assetAudio"`
+			AssetSync struct {
+				DedupeKey string `json:"dedupeKey"`
+			} `json:"assetSync"`
+			Priorities struct {
+				Extract    int `json:"extract"`
+				AssetImage int `json:"asset_image"`
+				AssetAudio int `json:"asset_audio"`
+				AssetSync  int `json:"asset_sync"`
+			} `json:"priorities"`
+		} `json:"queueSemantics"`
+		Canvas struct {
+			SharedCharacterAssetID int              `json:"sharedCharacterAssetId"`
+			DerivedAssetID         int              `json:"derivedAssetId"`
+			EpisodeTwoLook         string           `json:"episodeTwoLook"`
+			EpisodeCards           map[string][]int `json:"episodeCards"`
+		} `json:"canvas"`
+		Isolation struct {
+			AssetIDScope string `json:"assetIdScope"`
+		} `json:"isolation"`
+	} `json:"expected"`
+}
+
+func loadW01Fixture(t *testing.T) *w01Fixture {
+	t.Helper()
+	path := os.Getenv("SHORTPLAY_W01_FIXTURE")
+	if strings.TrimSpace(path) == "" {
+		t.Fatal("SHORTPLAY_W01_FIXTURE 未设置：需要指向 testdata/shortplay-workbench-port/replay/two-episodes.json")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取夹具失败：%v", err)
+	}
+	var fixture w01Fixture
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatalf("解析夹具失败：%v", err)
+	}
+	return &fixture
+}
+
+func fixtureAsset(t *testing.T, fx *w01Fixture, id int) (ShortplayAsset, []string) {
+	t.Helper()
+	for _, row := range fx.Expected.Assets {
+		if row.ID != id {
+			continue
+		}
+		aliases, err := json.Marshal(row.Aliases)
+		if err != nil {
+			t.Fatalf("序列化别名失败：%v", err)
+		}
+		return ShortplayAsset{
+			ID:             row.ID,
+			Kind:           row.Kind,
+			Name:           row.Name,
+			AliasesJSON:    string(aliases),
+			Description:    row.Description,
+			Appearance:     row.Appearance,
+			Voice:          row.Voice,
+			DerivedFrom:    row.DerivedFrom,
+			VariantName:    row.VariantName,
+			CurrentImageID: row.CurrentImageID,
+		}, row.Aliases
+	}
+	t.Fatalf("夹具缺少资产 %d", id)
+	return ShortplayAsset{}, nil
+}
+
+// TestW01TwoEpisodeFixtureReplay 用供体自身实现核对夹具：两集共用同一角色（资产 1），
+// 第二集改用其衍生造型（资产 4，derivedFrom=1），并覆盖显示名、回落、形象名校验与造型解析。
+func TestW01TwoEpisodeFixtureReplay(t *testing.T) {
+	fx := loadW01Fixture(t)
+	if fx.Fixture != "shortplay-two-episodes-shared-character" {
+		t.Fatalf("夹具标识不符：%s", fx.Fixture)
+	}
+	const donorCommit = "13731aae6c4cefadc2a1719e3e7e59b22e249f94"
+	if fx.Provenance.DonorCommit != donorCommit {
+		t.Fatalf("夹具来源提交不符：%s", fx.Provenance.DonorCommit)
+	}
+	if fx.Provenance.Kind != "sanitized-synthetic" {
+		t.Fatalf("夹具必须标记为脱敏合成样本：%s", fx.Provenance.Kind)
+	}
+
+	// 建集约束：集数 1..3000，单集不超 ScriptSourceChapterRunes，标题非空。
+	if len(fx.Create.Chapters) != len(fx.Expected.Episodes) {
+		t.Fatalf("章节数与期望集数不一致：%d vs %d", len(fx.Create.Chapters), len(fx.Expected.Episodes))
+	}
+
+	base, baseAliases := fixtureAsset(t, fx, 1)
+	derived, _ := fixtureAsset(t, fx, 4)
+	if derived.DerivedFrom != base.ID {
+		t.Fatalf("衍生行的父资产应为 %d，实际 %d", base.ID, derived.DerivedFrom)
+	}
+
+	// 1. 显示名与字段回落。
+	resolved := ResolveShortplayAsset(&base, &derived)
+	if resolved.Name != fx.Expected.Derived.DisplayName {
+		t.Fatalf("显示名应为 %q，实际 %q", fx.Expected.Derived.DisplayName, resolved.Name)
+	}
+	if resolved.Name != ShortplayDerivedDisplayName(base.Name, derived.VariantName) {
+		t.Fatalf("显示名应只由 ShowDisplayName 合成")
+	}
+	if resolved.Kind != base.Kind {
+		t.Fatalf("衍生行 kind 应回落父资产：%q", resolved.Kind)
+	}
+	if resolved.AliasesJSON != base.AliasesJSON || len(baseAliases) == 0 {
+		t.Fatalf("衍生行别名应回落父资产：%q", resolved.AliasesJSON)
+	}
+	if resolved.Description != base.Description {
+		t.Fatalf("衍生行 description 为空时应回落父资产")
+	}
+	if resolved.Voice != base.Voice {
+		t.Fatalf("衍生行 voice 为空时应回落父资产")
+	}
+	if resolved.Appearance != derived.Appearance || strings.TrimSpace(derived.Appearance) == "" {
+		t.Fatalf("衍生行外观应使用自身值")
+	}
+
+	// 2. 形象名预算与四条拒绝用例。
+	if got := utf8.RuneCountInString(base.Name); got != fx.Expected.Derived.ParentRunes {
+		t.Fatalf("父资产名长度应为 %d，实际 %d", fx.Expected.Derived.ParentRunes, got)
+	}
+	if got := ShortplayDerivedDisplayNameRunes - utf8.RuneCountInString(base.Name) - utf8.RuneCountInString(ShortplayVariantNameSeparator); got != fx.Expected.Derived.VariantNameMaxRune {
+		t.Fatalf("形象名预算应为 %d，实际 %d", fx.Expected.Derived.VariantNameMaxRune, got)
+	}
+	if err := ValidateShortplayVariantName(&base, derived.VariantName); err != nil {
+		t.Fatalf("合法形象名被拒绝：%v", err)
+	}
+	for _, reject := range fx.Expected.Derived.RejectedVariant {
+		err := ValidateShortplayVariantName(&base, reject.Value)
+		if err == nil {
+			t.Fatalf("形象名 %q 应被拒绝（%s）", reject.Value, reject.Reason)
+		}
+		if !strings.Contains(err.Error(), reject.Reason) && !strings.Contains(reject.Reason, err.Error()) {
+			// 夹具记录的是可读原因，供体错误文案必须能对应到它。
+			t.Fatalf("形象名 %q 的错误文案 %q 未对应夹具原因 %q", reject.Value, err.Error(), reject.Reason)
+		}
+	}
+
+	// 3. 造型解析：第一命中即返回，未命中静默回落基础造型（0）。
+	rows := []ShortplayAsset{base, derived}
+	for _, want := range fx.Expected.Derived.LookResolution {
+		got := ResolveShortplayLook(&base, rows[1:], want.Name)
+		if got != want.ExpectAssetID {
+			t.Fatalf("造型 %q 解析为 %d，期望 %d（%s）", want.Name, got, want.ExpectAssetID, want.Rule)
+		}
+	}
+
+	// 4. 两集共用角色：资产 1 同时属于两集；衍生 4 只在第二集；道具只在第一集；场景两集共用。
+	episodes := map[int]map[int]bool{}
+	for _, episode := range fx.Expected.Episodes {
+		set := map[int]bool{}
+		for _, id := range episode.AssetIDs {
+			set[id] = true
+		}
+		episodes[episode.Number] = set
+	}
+	if !episodes[1][base.ID] || !episodes[2][base.ID] {
+		t.Fatalf("基础角色 %d 必须同时绑定两集", base.ID)
+	}
+	if episodes[1][derived.ID] {
+		t.Fatalf("衍生造型 %d 不应出现在第一集", derived.ID)
+	}
+	if !episodes[2][derived.ID] {
+		t.Fatalf("衍生造型 %d 应绑定第二集", derived.ID)
+	}
+	prop, _ := fixtureAsset(t, fx, 2)
+	scene, _ := fixtureAsset(t, fx, 3)
+	if episodes[2][prop.ID] || !episodes[1][prop.ID] {
+		t.Fatalf("道具 %d 只应绑定第一集", prop.ID)
+	}
+	if !episodes[1][scene.ID] || !episodes[2][scene.ID] {
+		t.Fatalf("场景 %d 应两集共用", scene.ID)
+	}
+
+	// 5. 画布卡：两集各自的卡集合与绑定一致；衍生卡跟随父卡。
+	for _, episode := range fx.Expected.Episodes {
+		wantCards := fx.Expected.Canvas.EpisodeCards[itoa(episode.Number)]
+		if len(wantCards) != len(episode.AssetIDs) {
+			t.Fatalf("第 %d 集卡数应与绑定一致：%d vs %d", episode.Number, len(wantCards), len(episode.AssetIDs))
+		}
+		for index, id := range episode.AssetIDs {
+			if wantCards[index] != id {
+				t.Fatalf("第 %d 集第 %d 张卡应为资产 %d，实际 %d", episode.Number, index, wantCards[index], id)
+			}
+		}
+		if episode.InitialNOs != 1 {
+			t.Fatalf("第 %d 集初始画布应只有一个故事输入节点", episode.Number)
+		}
+	}
+	if fx.Expected.Canvas.SharedCharacterAssetID != base.ID || fx.Expected.Canvas.DerivedAssetID != derived.ID {
+		t.Fatalf("画布段共享角色/衍生造型身份与资产表不一致")
+	}
+	if resolve := ResolveShortplayLook(&base, []ShortplayAsset{derived}, fx.Expected.Canvas.EpisodeTwoLook); resolve != derived.ID {
+		t.Fatalf("第二集造型 %q 应解析到衍生行 %d，实际 %d", fx.Expected.Canvas.EpisodeTwoLook, derived.ID, resolve)
+	}
+
+	// 6. 图片与音色继承：衍生行有自己的图（以父资产当前图为底），音色指针为空即继承。
+	var derivedSource, derivedImageID, baseCurrent int
+	for _, image := range fx.Expected.Images {
+		if image.AssetID == derived.ID {
+			derivedSource = image.SourceImageID
+			derivedImageID = image.ID
+		}
+		if image.AssetID == base.ID && image.ID == base.CurrentImageID {
+			baseCurrent = image.ID
+		}
+	}
+	if derivedSource == 0 || derivedSource != baseCurrent {
+		t.Fatalf("衍生图应以父资产当前图 %d 为底，实际 %d", baseCurrent, derivedSource)
+	}
+	if derivedImageID == 0 || derived.CurrentImageID != derivedImageID {
+		t.Fatalf("衍生行应显式持有自己的当前图 %d，实际 %d", derivedImageID, derived.CurrentImageID)
+	}
+	hasBaseAudio := false
+	for _, audio := range fx.Expected.Audios {
+		if audio.AssetID == base.ID {
+			hasBaseAudio = true
+		}
+	}
+	if !hasBaseAudio || derived.CurrentAudioID != 0 {
+		t.Fatalf("衍生行当前音色为空时应继承父资产样本")
+	}
+
+	// 7. 提取批次与去重键：两集在默认预算内一批读完。
+	var episodesForBatch []ShortplayEpisode
+	for _, chapter := range fx.Create.Chapters {
+		episodesForBatch = append(episodesForBatch, ShortplayEpisode{ScriptText: strings.TrimSpace(chapter.Text)})
+	}
+	for index := range episodesForBatch {
+		episodesForBatch[index].Number = index + 1
+		episodesForBatch[index].Title = fx.Create.Chapters[index].Title
+	}
+	if ExtractRunes != fx.Expected.Extract.BatchRunes {
+		t.Fatalf("单批预算应为 %d，实际 %d", fx.Expected.Extract.BatchRunes, ExtractRunes)
+	}
+	batch, next := NextEpisodeBatch(episodesForBatch, 0, 0)
+	if len(batch) != 2 || next != 0 {
+		t.Fatalf("默认预算下应一批读完两集，实际 %d 集、next=%d", len(batch), next)
+	}
+	if one, nextSmall := NextEpisodeBatch(episodesForBatch, 0, 10); len(one) != 1 || nextSmall != 2 {
+		t.Fatalf("小预算应只读一集并指向第 2 集，实际 %d 集、next=%d", len(one), nextSmall)
+	}
+	if key := ShortplayJobDedupeKey(ShortplayJobExtract, "sp"); key != strings.ReplaceAll(fx.Expected.Extract.DedupeKey, "{shortplayId}", "sp") {
+		t.Fatalf("提取去重键不符：%q", key)
+	}
+	if key := ShortplayJobDedupeKey(ShortplayJobAssetImage, "sp|1"); key != strings.NewReplacer("{shortplayId}", "sp", "{assetId}", "1").Replace(fx.Expected.QueueSemantics.AssetImage.DedupeKey) {
+		t.Fatalf("出图去重键不符：%q", key)
+	}
+	if key := ShortplayJobDedupeKey(ShortplayJobAssetAudio, "sp|1"); key != strings.NewReplacer("{shortplayId}", "sp", "{assetId}", "1").Replace(fx.Expected.QueueSemantics.AssetAudio.DedupeKey) {
+		t.Fatalf("音色去重键不符：%q", key)
+	}
+	if key := ShortplayJobDedupeKey(ShortplayJobAssetSync, "cv-1"); key != strings.ReplaceAll(fx.Expected.QueueSemantics.AssetSync.DedupeKey, "{canvasId}", "cv-1") {
+		t.Fatalf("同步补偿去重键不符：%q", key)
+	}
+	if ShortplayExtractPriority != fx.Expected.QueueSemantics.Priorities.Extract ||
+		ShortplayAssetImagePriority != fx.Expected.QueueSemantics.Priorities.AssetImage ||
+		ShortplayAssetAudioPriority != fx.Expected.QueueSemantics.Priorities.AssetAudio ||
+		ShortplayAssetSyncPriority != fx.Expected.QueueSemantics.Priorities.AssetSync {
+		t.Fatalf("job 优先级与夹具不一致")
+	}
+
+	// 8. 数量上限与身份口径。
+	const charactersLimit, propsLimit, scenesLimit = 24, 20, 16
+	if fx.Expected.Extract.Limits.Characters != charactersLimit ||
+		fx.Expected.Extract.Limits.Props != propsLimit ||
+		fx.Expected.Extract.Limits.Scenes != scenesLimit {
+		t.Fatalf("资产数量上限与供体提示词不一致")
+	}
+	if fx.Expected.Isolation.AssetIDScope != "shortplayId" {
+		t.Fatalf("资产 id 的唯一性作用域应为 shortplayId")
+	}
+	if fx.Expected.Assets[0].EpisodeNumbers == nil || len(fx.Expected.Assets[0].EpisodeNumbers) != 2 {
+		t.Fatalf("基础角色应记录两集绑定")
+	}
+	if _, err := json.Marshal(fx.Expected.Canvas.EpisodeCards); err != nil {
+		t.Fatalf("画布卡集合应可序列化：%v", err)
+	}
+}
+
+func itoa(value int) string {
+	if value == 0 {
+		return "0"
+	}
+	digits := []byte{}
+	for value > 0 {
+		digits = append([]byte{byte('0' + value%10)}, digits...)
+		value /= 10
+	}
+	return string(digits)
+}

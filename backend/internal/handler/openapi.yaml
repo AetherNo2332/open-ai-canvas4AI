@@ -2901,6 +2901,108 @@ paths:
           $ref: "#/components/responses/Error"
         "429":
           $ref: "#/components/responses/Error"
+  /shortplays:
+    get:
+      tags: [shortplay]
+      summary: 列出当前账号的独立短剧作品
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [shortplay]
+      summary: 建档（容器行、域配置与全部分集原文；不建画布、不入队提取）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, chapters]
+              properties:
+                name: { type: string, description: 作品名，最多 80 字 }
+                aspectRatio: { type: string, enum: ["9:16", "16:9", "1:1", "3:4", "4:3"] }
+                settingsJson: { type: string, description: 短剧设置的 JSON 文本，服务端归一后落库 }
+                defaultImageModel: { type: string }
+                defaultVideoModel: { type: string }
+                chapters:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    properties:
+                      title: { type: string }
+                      text: { type: string, description: 单集原文，不超过 12000 字 }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: 同名作品已存在（reason=project_name_conflict）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /shortplays/{id}:
+    get:
+      tags: [shortplay]
+      summary: 短剧详情（容器、设置、全部分集与最近任务）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /shortplays/{id}/settings:
+    patch:
+      tags: [shortplay]
+      summary: 整份保存短剧设置（分步骤模型、参考图方案、风格与语言）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [settings]
+              properties:
+                settings:
+                  type: object
+                  properties:
+                    styleName: { type: string }
+                    stylePrompt: { type: string }
+                    language: { type: string }
+                    assets: { type: object }
+                    models: { type: object }
+                    extractSkill:
+                      type: object
+                      properties:
+                        skillId: { type: string }
+                        skillName: { type: string }
+                        path: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /projects:
     get:
       tags: [projects]

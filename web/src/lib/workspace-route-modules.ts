@@ -13,6 +13,9 @@ export const workspaceRoutePages = {
     projects: preloadableLazy(() => import("@/pages/projects")),
     projectDetail: preloadableLazy(() => import("@/pages/projects/detail")),
     projectCreate: preloadableLazy(() => import("@/pages/projects/create")),
+    shortplays: preloadableLazy(() => import("@/pages/shortplays")),
+    shortplayDetail: preloadableLazy(() => import("@/pages/shortplays/detail")),
+    shortplayCreate: preloadableLazy(() => import("@/pages/shortplays/new")),
     skills: preloadableLazy(() => import("@/pages/skills")),
     skillWorkbench: preloadableLazy(() => import("@/pages/skills/workbench")),
     plugins: preloadableLazy(() => import("@/pages/plugins")),
@@ -30,6 +33,7 @@ const workspaceNavigationPages = [
     workspaceRoutePages.canvas,
     workspaceRoutePages.assets,
     workspaceRoutePages.projects,
+    workspaceRoutePages.shortplays,
     workspaceRoutePages.tasks,
     workspaceRoutePages.skills,
     workspaceRoutePages.imageWorkbench,
@@ -52,6 +56,7 @@ const workspaceRouteSlugs: Record<string, keyof typeof workspaceRoutePages> = {
     canvas: "canvas",
     assets: "assets",
     projects: "projects",
+    shortplays: "shortplays",
     tasks: "tasks",
     skills: "skills",
     plugins: "plugins",
@@ -73,6 +78,10 @@ export function preloadWorkspaceRoute(pathnameOrSlug: string) {
     if (slug === "canvas" && segments.length > 1) return;
     if (slug === "projects" && segments.length > 1) {
         warm(segments[1] === "new" ? "projectCreate" : "projectDetail");
+        return;
+    }
+    if (slug === "shortplays" && segments.length > 1) {
+        warm(segments[1] === "new" ? "shortplayCreate" : "shortplayDetail");
         return;
     }
     if (slug === "skills" && segments[2] === "edit") {

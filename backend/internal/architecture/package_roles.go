@@ -15,7 +15,7 @@ var packageRoles = map[string]string{
 	"observability": "domain", "outbound": "domain", "payment": "domain",
 	"platform": "domain", "poselibrary": "domain", "production": "domain",
 	"prompts": "domain", "protocol": "domain", "provider": "domain",
-	"providercatalog": "domain", "skills": "domain", "sms": "domain",
+	"providercatalog": "domain", "shortplay": "domain", "skills": "domain", "sms": "domain",
 	"storage": "domain", "taskruntime": "domain", "tools": "domain",
 	"updaterclient": "domain", "workbench": "domain",
 }

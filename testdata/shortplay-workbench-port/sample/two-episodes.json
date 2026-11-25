@@ -1,0 +1,165 @@
+{
+  "schema": "shortplay-workbench-sample/v1",
+  "provenance": {
+    "donorCommit": "13731aae6c4cefadc2a1719e3e7e59b22e249f94",
+    "kind": "source-observed",
+    "note": "Built from the donor's shortplay types, derived-look rules and dedupe keys at the pinned commit. Not yet replayed through target code; W02 owns the first replay."
+  },
+  "project": {
+    "id": "proj-w01-shortplay",
+    "type": "shortplay",
+    "name": "雨夜追踪",
+    "aspectRatio": "9:16",
+    "defaultImageModel": "seedream-4",
+    "defaultVideoModel": "seedance-1-pro"
+  },
+  "shortplay": {
+    "id": "sp-w01",
+    "settingsJson": "{\"aspectRatio\":\"9:16\",\"episodeSeconds\":90,\"stylePrompt\":\"写实电影感，冷蓝夜色，霓虹反光\",\"styleName\":\"雨夜霓虹\",\"language\":\"中文普通话\",\"assets\":{\"mode\":\"reference\"},\"storyboard\":{}}"
+  },
+  "episodes": [
+    {
+      "id": "ep-w01-1",
+      "number": 1,
+      "title": "雨夜追踪",
+      "canvasId": "cv-w01-ep1",
+      "wordCount": 58,
+      "scriptText": "夜，暴雨。沈青禾撑着黑伞穿过霓虹巷口，风衣下摆被雨水打湿。\n她把一只旧怀表塞进便利店储物柜，转身时看见巷尾有个影子跟了她三条街。",
+      "assetIds": [1]
+    },
+    {
+      "id": "ep-w01-2",
+      "number": 2,
+      "title": "天台对峙",
+      "canvasId": "cv-w01-ep2",
+      "wordCount": 64,
+      "scriptText": "清晨，天台。沈青禾换上一身黑色战袍，束发，腰佩短刃。\n影子从水塔后走出，她把短刃横在身前：「你追了我三集，该说说你是谁了。」",
+      "assetIds": [1, 2]
+    }
+  ],
+  "assets": [
+    {
+      "id": 1,
+      "kind": "character",
+      "name": "沈青禾",
+      "aliases": ["阿禾", "青禾"],
+      "description": "青年女性，前情报员，冷静克制，习惯在行动前先确认退路。",
+      "appearance": "青年女性，短黑发，冷白肤色，黑色长风衣配深色高领衫，右手戴旧皮手套。",
+      "voice": "清冷女声，语速偏慢，略沙哑",
+      "locked": false,
+      "revision": 2,
+      "imageStatus": "ready",
+      "imageVersion": 1,
+      "episodeNumbers": [1, 2],
+      "position": 0,
+      "currentImageId": 1,
+      "currentAudioId": 1,
+      "audioStatus": "ready",
+      "audioVersion": 1,
+      "renderRule": ""
+    },
+    {
+      "id": 2,
+      "kind": "character",
+      "name": "",
+      "aliases": [],
+      "description": "",
+      "appearance": "黑色战袍，束发，腰佩短刃，右肩有旧伤绷带，面部与体态延续基础角色。",
+      "voice": "",
+      "locked": false,
+      "revision": 1,
+      "imageStatus": "ready",
+      "imageVersion": 1,
+      "episodeNumbers": [2],
+      "position": 1,
+      "derivedFrom": 1,
+      "variantName": "战袍",
+      "renderRule": "",
+      "currentImageId": 2,
+      "currentAudioId": 0,
+      "audioStatus": "",
+      "audioVersion": 0
+    }
+  ],
+  "assetImages": [
+    {
+      "id": 1,
+      "assetId": 1,
+      "version": 1,
+      "prompt": "青年女性，短黑发，冷白肤色，黑色长风衣配深色高领衫，右手戴旧皮手套。9:16 竖版人物设定图，纯色背景。",
+      "appearance": "青年女性，短黑发，冷白肤色，黑色长风衣配深色高领衫，右手戴旧皮手套。",
+      "sourceImageId": 0,
+      "resourceId": "res-w01-base",
+      "status": "ready"
+    },
+    {
+      "id": 2,
+      "assetId": 2,
+      "version": 1,
+      "prompt": "参考图1是角色既有形象，保持五官、脸型与体态完全一致，只改服装、发型与配饰。黑色战袍，束发，腰佩短刃，右肩有旧伤绷带。9:16 竖版人物设定图。",
+      "appearance": "黑色战袍，束发，腰佩短刃，右肩有旧伤绷带，面部与体态延续基础角色。",
+      "sourceImageId": 1,
+      "resourceId": "res-w01-look",
+      "status": "ready"
+    }
+  ],
+  "jobs": [
+    {
+      "id": "job-w01-extract",
+      "kind": "extract",
+      "status": "succeeded",
+      "dedupeKey": "extract|sp-w01",
+      "priority": 60,
+      "attempt": 1,
+      "costMicrocredits": 1200
+    },
+    {
+      "id": "job-w01-image-1",
+      "kind": "asset_image",
+      "status": "succeeded",
+      "dedupeKey": "asset_image|sp-w01|1",
+      "priority": 40,
+      "attempt": 1,
+      "costMicrocredits": 8000
+    },
+    {
+      "id": "job-w01-image-2",
+      "kind": "asset_image",
+      "status": "succeeded",
+      "dedupeKey": "asset_image|sp-w01|2",
+      "priority": 40,
+      "attempt": 1,
+      "costMicrocredits": 8000
+    }
+  ],
+  "expectations": {
+    "derivedLook": {
+      "assetId": 2,
+      "displayName": "沈青禾-战袍",
+      "resolvedVoice": "清冷女声，语速偏慢，略沙哑",
+      "resolvedDescription": "青年女性，前情报员，冷静克制，习惯在行动前先确认退路。",
+      "resolvedRenderRule": "",
+      "baseImageStale": false
+    },
+    "resolveLookNames": [
+      { "name": "战袍", "assetId": 2, "via": "variantName" },
+      { "name": "沈青禾-战袍", "assetId": 2, "via": "displayName" },
+      { "name": "沈青禾", "assetId": 0, "via": "baseName" },
+      { "name": "阿禾", "assetId": 0, "via": "baseAlias" },
+      { "name": "基础造型", "assetId": 0, "via": "baseLookVocabulary" },
+      { "name": "夜行装", "assetId": 0, "via": "unknownFallsBackToBase" }
+    ],
+    "episodeAssetIds": {
+      "1": [1],
+      "2": [1, 2]
+    },
+    "dedupe": {
+      "unfinishedKeys": [],
+      "note": "All three jobs finished, so the same dedupe keys may be queued again."
+    },
+    "pending": [
+      "resolvedRenderRule stays empty here; the builtin default render rule is applied by the image job, not by the read model",
+      "derived audio inherits the parent because currentAudioId is 0; a derived run would re-synthesise from the parent voice text"
+    ]
+  }
+}
