@@ -75,7 +75,11 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 **门禁环境修复（本轮）**
 - `backend:gofmt`：失败来自工作树 4844 个被系统 gitconfig `core.autocrlf=true` 检出的 CRLF 文件（索引与 blob 均为 LF，`git diff` 为空，`git status` 因 stat 缓存未报）。按字节把工作树归一为 LF 后，Linux `golang:1.25-alpine` 内 `gofmt -l backend` 为 0；干净 `origin/main` 检出同为 0。
 - `backend:agent-lint`：本地 Go 1.27 的 export data 版本与 golangci-lint 2.5.0 的 typecheck 不兼容（日志 `export data version 4 is greater than maximum supported version 2`，同时打印 0 issues）。用 `GOTOOLCHAIN=go1.25.0`（与 CI 的 Go 1.25 一致）执行脚本同一命令 `golangci-lint run --config=.golangci.yml ./internal/agentcontext/... ./internal/agentmemory/... ./internal/architecture/...`：0 issues，退出码 0。
-- `TestSettingsEncryptionKey*`：Windows 没有 group/other 权限位，`os.FileMode.Perm()` 无法表达 0600。测试改用 `requireKeyPermissions`：Windows 跳过权限位断言，POSIX 仍断言 0600；Windows 复跑 5 个用例 PASS。
+- `TestSettingsEncryptionKey*`：Windows 没有 group/other 权限位，`os.FileMode.Perm()` 无法表达 0600。测试改用 `requireKeyPermissions`：Windows 跳过权限位断言，POSIX 仍断言 0600；Windows 复跑 5 个用例 PASS，Linux 容器（`golang:1.25.0-bookworm`，挂载本机模块缓存离线）复跑 PASS（4.7s）。
 - `web:test`：修正前 3706 pass / 7 skip / 2 fail；两条失败都是外层 `test(...)` 默认 5s 超时短于内部 harness 15s 预算（`canvas-timeline-save`、`canvas-node-generation-reveal`），与业务代码无关。给两条用例显式 30s 外层超时后单独复跑 14 pass / 0 fail。干净 base 检出在同一环境同样复现这两条超时，作为基线证据。
+
+**本机全量门禁（2026-11-26，`--mode full`）**　修复后 26 项中 24 项通过、2 项受本机环境阻塞：`agent:smoke`（Docker Hub `auth.docker.io` 直连超时；用本机代理时构建通过，但 `compose up --wait` 中 agent 容器 unhealthy）与 `backend:full`（`TestAgentSDKRealHTTPWorkerRestart` 在本机 Windows 上不稳定：同一提交曾 184s 通过、也曾 6.8s 与 99s 失败；失败时 worker 报 `EPERM mkdtemp %TEMP%\canvas-pi-run-*`，本机 Node 26 可写 `%TEMP%`、下载的 Node 22.19.0 对该目录一律 EPERM）。CI 权威环境（Ubuntu + Node 22.19.0 + Go 1.25）在同一代码族上 14 项检查全部通过，见 PR #154。`web:e2e` 在设置 `CHROME_BIN` 后 78/78 通过；`payment:platforms` 在设置 `HTTP(S)_PROXY=http://127.0.0.1:7897` 后通过。
+
+**推送状态**　本轮提交 `f0e5bae`（功能开关与门禁修复）与 `d8a4ad0`（版本）只在本机，未推送；待门禁剩余两项给出可复现结论或由 CI 复核后再推送，不绕过门禁。
 
 **未覆盖项（W04 起）**　资产与提取、造型与媒体、分集画布与收录、Agent 工具与审批、正式页面全流程、发布与恢复；真实图像/音频渠道与生产灰度仍未验证。
