@@ -12,7 +12,7 @@ items 是待办对象数组，整表替换当前清单，最多20项，如 [{"id
 
 ## finish_run
 
-summary 必填，内容为给用户的最终答复全文。通过后持久化回执、最终消息和 completed 终态，返回 committed/runId/finalMessageId，可按原调用恢复且不重复发布。待办状态不阻止收尾。completionBlocked=true 时按 blockers/requiredAction 处理尚未送达的用户插话或子代理交付协议；无需为此清空待办。仍需执行工具或等待审批时继续处理，已保存不等于用户已看见。
+summary 必填，为最终答复全文。可选 continuation 仅限本轮已提交生成：when 只能 all_generations_terminal，instruction 必填（检查成功项、汇总失败项、不自动重试）；全部终态后只续接一次，普通收尾不续接，提交后不等待、不轮询。通过后持久化回执、最终消息与 completed 终态，返回 committed/runId/finalMessageId，可按原调用恢复且不重复发布。待办不阻止收尾。completionBlocked=true 时按 blockers/requiredAction 处理未送达插话或子代理协议，无需清空待办；仍需工具或审批时继续处理，已保存不等于用户已看见。
 
 ## canvas_list_node_types
 
@@ -32,7 +32,7 @@ summary 必填，内容为给用户的最终答复全文。通过后持久化回
 
 ## storyboard
 
-统一分镜工具。read 返回原表、快照、分页与素材引用。当前会话的拆镜在 ask_user 获得用户明确确认后使用 write_rows，传原 nodeId、最新 snapshotHash、稳定 operationId，并按需传 updates:[{rowId,patch}]、newRows、removeRowIds，一次写回原表。newRows 提供 durationSeconds 和镜头创作说明；updates 保留已有素材、产物和行 ID。只能按原顺序删除无关联、未锁定、无任务占用的末尾行。局部方案只更新指定行。写失败或冲突时核对最新 read，再报告实际状态。update 和资产/产物 action 继续使用真实行 ID 与快照；lock/unlock 管理锁定。分镜表工具关闭时说明能力缺口。split/resplit 保留给明确要求服务端拆镜的旧流程，回执为 submitted/taskId，需结果时 wait_generations；模型选择可省略，显式选择必须是文本模型。
+统一分镜工具。read 返回原表、快照、分页与素材引用。当前会话的拆镜在 ask_user 获得用户明确确认后使用 write_rows，传原 nodeId、最新 snapshotHash、稳定 operationId，并按需传 updates:[{rowId,patch}]、newRows、removeRowIds，一次写回原表。newRows 提供 durationSeconds 和镜头创作说明；updates 保留已有素材、产物和行 ID。只能按原顺序删除无关联、未锁定、无任务占用的末尾行。局部方案只更新指定行。写失败或冲突时核对最新 read，再报告实际状态。update 和资产/产物 action 继续使用真实行 ID 与快照；lock/unlock 管理锁定。分镜表工具关闭时说明能力缺口。split/resplit 保留给明确要求服务端拆镜的旧流程，回执为 submitted/taskId，生成在后台继续；需要结果后继续时用 finish_run.continuation 声明全终态续接，不等待、不轮询。模型选择可省略，显式选择必须是文本模型。
 
 ## spawn_subagent
 
@@ -89,10 +89,7 @@ nodeId 读取当前画布图片或角色卡图，以真实字节附图。摘要�
 
 ## generate_media
 
-提交媒体任务，保留审批、计价、预算与资源校验。先查 model_list。intent 默认 create；更新成品用 new_version，复用 nodeId/分镜绑定，旧版仍可用，成功自动采用；期间手选版本则结果只进历史。new_version 可引用自身，冻结旧资源、不建自连线。原任务执行中、接单未知或待保存时用 task_get 恢复，不重新收费生成。分镜传 mode+storyboardNodeId+storyboardRowId，从行读取提示词、引用和时长，省略 nodeId 续用原输出；普通任务按 schema 传参。submitted/taskSubmitted 仅表示入队；后台通过「[系统通知] 生成结果」回报状态。可继续其他工作，依赖结果用 wait_generations，不轮询 task_get。失败后重新收费须用户明确要求并经审批。
-## wait_generations
-
-等待本轮已提交、尚未结束的生成，结束后返回每个生成的结果（节点、状态、摘要、错误）；没有进行中的生成时立即返回。只在需要结果才能决定下一步时调用，例如要查看生成的图片；等待期间运行让出 Worker，不计入步骤。
+提交媒体任务，保留审批、计价、预算与资源校验。先查 model_list。intent 默认 create；更新成品用 new_version 复用 nodeId/分镜绑定，旧版仍可用、成功自动采用，期间手选版本则结果只进历史；可引用自身，冻结旧资源、不建自连线。执行中、接单未知或待保存时用 task_get 恢复，不重新收费。分镜传 mode+storyboardNodeId+storyboardRowId，从行读提示词、引用和时长，省略 nodeId 续用原输出；普通任务按 schema 传参。submitted/taskSubmitted 仅表示入队，后台经「[系统通知] 生成结果」回报。先提交完全部生成项再说明下一步，不要等待，也不轮询；需生成完成后继续时，用 finish_run.continuation 声明 all_generations_terminal，全部登记任务终态后只续接一次，否则普通收尾。失败后重新收费须用户明确要求并经审批。
 ## parameter_001
 
 短标识，如 1

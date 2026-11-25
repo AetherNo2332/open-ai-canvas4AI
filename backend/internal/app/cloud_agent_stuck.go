@@ -44,12 +44,6 @@ func (s *Service) cloudAgentHasLiveWork(run *model.CloudAgentExecution, state *c
 		return true
 	}
 	taskIDs := []string{state.ActiveTaskID, state.MediaTaskID, state.StoryboardTaskID}
-	// 挂起等待生成时，进行中的生成就是这条运行的活计。
-	if run.WaitKind == cloudAgentGenerationsWaitKind {
-		for _, item := range state.PendingGenerations {
-			taskIDs = append(taskIDs, item.TaskID)
-		}
-	}
 	for _, taskID := range taskIDs {
 		if taskID == "" {
 			continue

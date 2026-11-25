@@ -239,6 +239,15 @@ func parsePiAgentLeaseOwner(owner string) (string, int64, bool, error) {
 }
 
 func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnapshot, error) {
+	// Upgrade checkpoints suspended on the removed wait_generations tool before
+	// rebuilding the loadout, so an old run cannot stay parked forever.
+	repaired, err := s.repairLegacyGenerationWait(run)
+	if err != nil {
+		return nil, err
+	}
+	if repaired != nil {
+		run = repaired
+	}
 	// 先回写已结束的生成：通知随这份快照的待送插话一起交给模型。
 	if run, err := s.settleCloudAgentGenerationsAndReload(run); err != nil {
 		return nil, err

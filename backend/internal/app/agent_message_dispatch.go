@@ -47,6 +47,9 @@ func (s *Service) DispatchAgentMessages(limit int) (int, error) {
 	if limit < 1 || limit > 100 {
 		limit = 64
 	}
+	if _, err := s.QueueReadyGenerationContinuations(limit); err != nil {
+		return 0, err
+	}
 	queues, err := s.repo.PendingAgentMessageConversations(limit)
 	if err != nil {
 		return 0, err
@@ -161,14 +164,14 @@ func (s *Service) recoverAgentMessageClaim(message model.AgentQueuedMessage, cau
 			delay := time.Duration(1<<min(row.Attempts, 6)) * time.Second
 			at := time.Now().UTC().Add(delay)
 			next = &at
-		} else {
+		} else if row.Kind != model.AgentQueuedMessageGenerationContinuation {
 			q.Paused = true
 			q.PauseReason = agentMessageFailureText(cause)
 		}
 		if err = tx.ReleaseAgentMessageClaim(row, agentMessageFailureText(cause), next); err != nil {
 			return err
 		}
-		if !transient {
+		if !transient && row.Kind != model.AgentQueuedMessageGenerationContinuation {
 			if err = tx.InvalidateAgentMessageClaims(message.UserID, message.ConversationID); err != nil {
 				return err
 			}

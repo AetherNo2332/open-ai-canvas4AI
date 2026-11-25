@@ -220,6 +220,10 @@ type cloudAgentToolCheckpoint struct {
 	allowed bool
 	policy  RuntimePolicySetting
 	outside cloudAgentToolOutsideReads
+	repo    *repository.Repository
+	// finishContinuation/finishBatch 是本次 finish_run 通过闸门后要登记的生成续接。
+	finishContinuation *cloudAgentFinishRunContinuation
+	finishBatch        *model.AgentGenerationBatch
 }
 
 // cloudAgentToolOutcome 是检查点事务内一次工具执行的产出。finished 为 true 时工具已自行保存检查点或要求回滚，
@@ -248,9 +252,11 @@ func (s *Service) checkpointCloudAgentToolCall(run *model.CloudAgentExecution, s
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	tc := &cloudAgentToolCheckpoint{run: run, state: state, call: call, allowed: allowed, policy: policy, outside: outside}
+	tc := &cloudAgentToolCheckpoint{run: run, state: state, call: call, allowed: allowed, policy: policy, outside: outside, repo: s.repo}
 	checkpoint := func(dbRepo *repository.Repository) error {
+		tc.repo = dbRepo
 		return dbRepo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
+			tc.repo = repo
 			outcome := s.runCloudAgentCheckpointTool(tc, current, repo)
 			if outcome.finished {
 				return outcome.err
@@ -420,7 +426,7 @@ func runCloudAgentCanvasWriteTool(tc *cloudAgentToolCheckpoint, repo *repository
 	return cloudAgentToolOutcome{result: result, toolErr: toolErr}, true
 }
 
-// runCloudAgentControlTool 执行其余工具：生成等待、工具类别切换、识图回执、显式收尾、事务外已完成的读取，
+// runCloudAgentControlTool 执行其余工具：后台生成提交、工具类别切换、识图回执、显式收尾、事务外已完成的读取，
 // 以及默认的只读工具。
 func (s *Service) runCloudAgentControlTool(tc *cloudAgentToolCheckpoint, current *model.CloudAgentExecution, repo *repository.Repository) cloudAgentToolOutcome {
 	run, state, call := tc.run, tc.state, tc.call
@@ -433,12 +439,6 @@ func (s *Service) runCloudAgentControlTool(tc *cloudAgentToolCheckpoint, current
 			return s.settleCloudAgentImageInspection(tc, repo)
 		}
 		return cloudAgentToolOutcome{result: tc.outside.skillResult, toolErr: tc.outside.skillErr}
-	case "wait_generations":
-		result, suspended := cloudAgentWaitGenerations(current, state, call)
-		if suspended {
-			return cloudAgentToolFinished(cloudAgentSave(current, state))
-		}
-		return cloudAgentToolOutcome{result: result}
 	case "agent_tools_control", "agent_tools_memory", "agent_tools_skills", "agent_tools_canvas_read", "agent_tools_image", "agent_tools_canvas_edit", "agent_tools_generation":
 		state.SelectedToolCategory = call.Function.Name
 		state.ActivatedToolCategories = cloudAgentAppendActivatedCategory(state.ActivatedToolCategories, call.Function.Name)
@@ -450,7 +450,7 @@ func (s *Service) runCloudAgentControlTool(tc *cloudAgentToolCheckpoint, current
 			return cloudAgentToolFinished(err)
 		}
 		// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
-		result, err := cloudAgentFinishRun(run.ID, state, call)
+		result, err := cloudAgentFinishRun(tc, current, call)
 		return cloudAgentToolOutcome{result: result, toolErr: err}
 	case "web_search", "model_list", "memory_update", "canvas_preflight":
 		return cloudAgentToolOutcome{result: tc.outside.skillResult, toolErr: tc.outside.skillErr}
@@ -557,6 +557,23 @@ func (s *Service) settleCloudAgentFinishRun(tc *cloudAgentToolCheckpoint, curren
 	run, state, call := tc.run, tc.state, tc.call
 	// 闸门通过：summary 就是本轮唯一一次最终答复，本轮就此结束。
 	if cloudAgentFinishRunAccepted(result) {
+		if tc.finishContinuation != nil && tc.finishBatch != nil {
+			requestJSON, err := json.Marshal(state.Request)
+			if err != nil {
+				return true, err
+			}
+			batch, err := tc.repo.ArmAgentGenerationBatch(run.UserID, tc.finishBatch.ID, tc.finishContinuation.When, tc.finishContinuation.Instruction, string(requestJSON))
+			if err != nil {
+				return true, err
+			}
+			tc.finishBatch = batch
+		} else if tc.repo != nil {
+			if batch, lookupErr := tc.repo.AgentGenerationBatchBySourceRun(run.UserID, run.ID); lookupErr == nil && batch.Status == model.AgentGenerationBatchCollecting {
+				if err := tc.repo.DetachAgentGenerationBatch(run.UserID, batch.ID); err != nil {
+					return true, err
+				}
+			}
+		}
 		err := cloudAgentCompleteByFinishRun(current, state, run.ID, call, result)
 		if err == nil {
 			s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTask, Status: observability.StatusCompleted, EndedAt: time.Now().UTC()})

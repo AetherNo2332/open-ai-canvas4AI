@@ -16,19 +16,19 @@ import (
 
 // 媒体生成是异步的：generate_media 提交任务后立即返回回执，Agent 可以继续其他工作；
 // 任务结束时由 settleCloudAgentPendingGenerations 回写画布，并在下一步边界以
-// 「[系统通知]」告知 Agent。需要结果才能继续时，Agent 调用 wait_generations 挂起，
-// 运行让出 Worker，最后一个生成结束后重新进入调度。
+// 「[系统通知]」告知 Agent。需要生成结果后再继续时，source run 正常 finish_run，
+// 由生成批次在全部任务终态后触发一次新的 continuation run。
 
 const (
 	cloudAgentGenerationSource          = "generation"
-	cloudAgentWaitGenerationsTool       = "wait_generations"
-	cloudAgentGenerationsWaitKind       = "generations"
+	cloudAgentLegacyGenerationsWaitKind = "generations"
 	cloudAgentMaxPendingGenerations     = 16
 	cloudAgentGenerationNoticeMaxEvents = 8
 )
 
 type cloudAgentPendingGeneration struct {
 	TaskID      string    `json:"taskId"`
+	BatchID     string    `json:"batchId,omitempty"`
 	NodeID      string    `json:"nodeId"`
 	CallID      string    `json:"callId"`
 	Mode        string    `json:"mode,omitempty"`
@@ -36,7 +36,7 @@ type cloudAgentPendingGeneration struct {
 	SubmittedAt time.Time `json:"submittedAt"`
 }
 
-// cloudAgentGenerationOutcome 是一次生成结束后的回写结果，供通知文本与 wait_generations 回执使用。
+// cloudAgentGenerationOutcome 是一次生成结束后的回写结果，供通知文本与续接结果使用。
 type cloudAgentGenerationOutcome struct {
 	TaskID      string `json:"taskId"`
 	NodeID      string `json:"nodeId"`
@@ -65,12 +65,56 @@ func cloudAgentPendingGenerationIndex(state *cloudAgentRuntime, taskID string) i
 }
 
 // cloudAgentGenerationSubmittedReceipt 是 generate_media 提交成功后的即时回执。
-func cloudAgentGenerationSubmittedReceipt(item cloudAgentPendingGeneration, pending int) map[string]any {
+func cloudAgentGenerationSubmittedReceipt(item cloudAgentPendingGeneration, pending int, batchTasks int) map[string]any {
 	return map[string]any{
 		"status": "submitted", "taskSubmitted": true, "taskId": item.TaskID, "nodeId": item.NodeID, "mode": item.Mode,
-		"pendingGenerations": pending,
-		"next":               "生成在后台进行，完成后会以系统通知告诉你结果；期间可以继续其他工作。需要结果才能继续时调用 wait_generations，不要用 task_get 轮询",
+		"pendingGenerations": pending, "generationBatchId": item.BatchID, "batchTaskCount": batchTasks,
+		"next": "生成在后台进行，完成后会以系统通知告诉你结果；期间可以继续其他工作。需要生成结果后再继续时，先完成本轮提交并用 finish_run.continuation 声明续接条件",
 	}
+}
+
+func cloudAgentEnsureGenerationBatch(repo *repository.Repository, run *model.CloudAgentExecution, state *cloudAgentRuntime, taskID, nodeID, mode, title string) (*model.AgentGenerationBatch, error) {
+	batch, _, err := repo.EnsureAgentGenerationBatchTask(model.AgentGenerationBatch{
+		ID: newID(), UserID: run.UserID, CanvasID: state.Request.CanvasID,
+		ConversationID: firstNonEmpty(run.ConversationID, run.ID), SourceRunID: run.ID,
+	}, model.AgentGenerationBatchTask{TaskID: taskID, UserID: run.UserID, NodeID: nodeID, Mode: mode, Title: title})
+	return batch, err
+}
+
+// repairLegacyGenerationWait upgrades a checkpoint that was suspended on the
+// removed wait_generations tool. It clears only the legacy generation wait,
+// writes one compatibility tool result, and leaves every pending generation
+// untouched: the background work still writes back, and the model can finish
+// the current run with finish_run.
+func (s *Service) repairLegacyGenerationWait(run *model.CloudAgentExecution) (*model.CloudAgentExecution, error) {
+	if run == nil || run.WaitKind != cloudAgentLegacyGenerationsWaitKind {
+		return run, nil
+	}
+	var repaired *model.CloudAgentExecution
+	err := s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "running", "", "", ""
+		if state.CallIndex >= 0 && state.CallIndex < len(state.Calls) && state.Calls[state.CallIndex].Function.Name == "wait_generations" {
+			call := state.Calls[state.CallIndex]
+			cloudAgentToolResult(current.ID, &state, call, map[string]any{
+				"removed": true, "pending": len(state.PendingGenerations), "results": []any{},
+				"next": "wait_generations 已移除；生成任务仍在后台执行并回写画布。请根据当前事实调用 finish_run 结束本轮；如需生成完成后再继续，请在 finish_run.continuation 中声明 all_generations_terminal。",
+			}, nil)
+			state.PiToolBatchTaskID = ""
+		}
+		if err := cloudAgentSave(current, &state); err != nil {
+			return err
+		}
+		repaired = current
+		return nil
+	})
+	if errors.Is(err, repository.ErrCreationConflict) {
+		return s.repo.CloudAgent(run.UserID, run.ID)
+	}
+	return repaired, err
 }
 
 func cloudAgentGenerationNoticeText(outcomes []cloudAgentGenerationOutcome, remaining int) string {
@@ -184,13 +228,21 @@ func (s *Service) settleCloudAgentPendingGenerations(run *model.CloudAgentExecut
 			if err != nil {
 				return err
 			}
+			batchID := item.BatchID
+			if batchID == "" {
+				if batch, lookupErr := repo.AgentGenerationBatchBySourceRun(run.UserID, run.ID); lookupErr == nil {
+					batchID = batch.ID
+				}
+			}
+			if batchID != "" {
+				if _, _, err := repo.SettleAgentGenerationBatchTask(run.UserID, batchID, item.TaskID, outcome); err != nil {
+					return err
+				}
+			}
 			outcomes = append(outcomes, outcome)
 		}
 		state.PendingGenerations = remaining
 		cloudAgentQueueGenerationNotice(&state, outcomes)
-		if len(remaining) == 0 && current.WaitKind == cloudAgentGenerationsWaitKind {
-			s.resumeCloudAgentGenerationsWait(current, &state, outcomes)
-		}
 		return cloudAgentSave(current, &state)
 	})
 	return err == nil, err
@@ -334,34 +386,6 @@ func settleCloudAgentStoryboardGeneration(repo *repository.Repository, run *mode
 	}
 	state.event(run.ID, "generation_settled", settled)
 	return outcome, nil
-}
-
-// resumeCloudAgentGenerationsWait 在最后一个生成结束时完成挂起的 wait_generations 调用，
-// 让运行重新进入调度（WaitKind 清空后准入不再跳过它）。
-func (s *Service) resumeCloudAgentGenerationsWait(current *model.CloudAgentExecution, state *cloudAgentRuntime, outcomes []cloudAgentGenerationOutcome) {
-	current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "running", "", "", ""
-	if state.CallIndex < 0 || state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].Function.Name != cloudAgentWaitGenerationsTool {
-		return
-	}
-	// 结果已写进 wait_generations 回执，同一批结果的通知不必再送一次。
-	kept := state.PendingInterjections[:0]
-	for _, item := range state.PendingInterjections {
-		if item.Source != cloudAgentGenerationSource {
-			kept = append(kept, item)
-		}
-	}
-	state.PendingInterjections = kept
-	cloudAgentToolResult(current.ID, state, state.Calls[state.CallIndex], map[string]any{"pending": 0, "results": outcomes}, nil)
-}
-
-// cloudAgentWaitGenerations 执行 wait_generations：没有待完成生成时立即返回，
-// 否则挂起运行（WaitKind=generations），由最后一个生成结束时恢复。
-func cloudAgentWaitGenerations(current *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) (any, bool) {
-	if len(state.PendingGenerations) == 0 {
-		return map[string]any{"pending": 0, "results": []cloudAgentGenerationOutcome{}, "next": "当前没有进行中的生成"}, false
-	}
-	current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "waiting_tool", cloudAgentGenerationsWaitKind, call.ID, "等待生成结果"
-	return nil, true
 }
 
 // cloudAgentPendingGenerationsDetail 用于收尾回执：本轮仍在进行的生成不阻止结束。

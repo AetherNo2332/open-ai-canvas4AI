@@ -5,19 +5,19 @@
       "file": "SYSTEM_POLICY.md",
       "source": "backend/internal/prompts/agent-system-policy.md",
       "stripFrontmatter": true,
-      "sha256": "8d6a62f325eb69a7b9929b1037650f65ce64e0e9e48f37ae0cbf7b1dc32a26d8"
+      "sha256": "60e816decb4988b179deeaed9aa91690b942690f20a90cb72aa358d90a32539a"
     },
     {
       "file": "MEDIA_POLICY.md",
       "source": "backend/internal/prompts/agent-media-policy.md",
       "stripFrontmatter": true,
-      "sha256": "152dec9b6cdb62cd8ae4d6a75197965bacac9f68f6641c161c5147e0bc884d46"
+      "sha256": "cca7a76fb096c51af8733dc0d8b5a4606a4582cc0da7d20c68fad16b6d52b485"
     },
     {
       "file": "TOOL_DESCRIPTIONS.md",
       "source": "backend/internal/app/agent-tool-descriptions.md",
       "stripFrontmatter": false,
-      "sha256": "0bffbc45f3bc6d96a2bc14ed36bb0f05990239f4566b0d3113108269797e10f3"
+      "sha256": "b866e926d7a50481e363f833217e2b52169d843b597a11899857e9aeef88278b"
     }
   ]
 }

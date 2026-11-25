@@ -3,7 +3,6 @@ package app
 import (
 	"encoding/json"
 	"reflect"
-	"strings"
 
 	"yingce/backend/internal/model"
 )
@@ -46,12 +45,10 @@ type piHistoricalFinishEnvelope struct {
 		Role      string `json:"role"`
 		Timestamp int64  `json:"timestamp"`
 		Content   []struct {
-			Type      string `json:"type"`
-			ID        string `json:"id"`
-			Name      string `json:"name"`
-			Arguments struct {
-				Summary string `json:"summary"`
-			} `json:"arguments"`
+			Type      string          `json:"type"`
+			ID        string          `json:"id"`
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
 		} `json:"content"`
 	} `json:"message"`
 }
@@ -85,7 +82,7 @@ func (s *Service) piHistoricalFinishReceipts(current *model.CloudAgentExecution,
 				continue
 			}
 			for _, call := range previous.Calls {
-				if call.ID != part.ID || call.Function.Name != "finish_run" || cloudAgentToolCallSummary(call) != strings.TrimSpace(part.Arguments.Summary) {
+				if call.ID != part.ID || call.Function.Name != "finish_run" || !cloudAgentFinishArgumentsEquivalent(call.Function.Arguments, part.Arguments) {
 					continue
 				}
 				if receipt := piToolReceipt(previous, previous.PiToolBatchTaskID, part.ID); receipt != nil {
@@ -95,6 +92,19 @@ func (s *Service) piHistoricalFinishReceipts(current *model.CloudAgentExecution,
 		}
 	}
 	return result, nil
+}
+
+// finish_run idempotent recovery must compare the complete arguments, not just
+// the summary: a restored call cannot silently drop or rewrite continuation.
+func cloudAgentFinishArgumentsEquivalent(callArguments string, recorded json.RawMessage) bool {
+	if len(recorded) == 0 {
+		return false
+	}
+	var left, right any
+	if json.Unmarshal([]byte(callArguments), &left) != nil || json.Unmarshal(recorded, &right) != nil {
+		return false
+	}
+	return reflect.DeepEqual(left, right)
 }
 
 // piHistoricalRunState loads (once per run) the terminal Pi run of the same

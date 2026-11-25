@@ -238,7 +238,9 @@ func (enqueue *cloudAgentTaskEnqueue) commit(current *model.CloudAgentExecution,
 	}
 	state.TaskIDs = append(state.TaskIDs, task.ID)
 	if media != nil {
-		enqueue.recordMediaSubmission()
+		if err := enqueue.recordMediaSubmission(repo); err != nil {
+			return err
+		}
 	} else {
 		enqueue.recordModelTask()
 	}
@@ -310,7 +312,7 @@ func (enqueue *cloudAgentTaskEnqueue) registerMediaTask(repo *repository.Reposit
 	return nil
 }
 
-func (enqueue *cloudAgentTaskEnqueue) recordMediaSubmission() {
+func (enqueue *cloudAgentTaskEnqueue) recordMediaSubmission(repo *repository.Repository) error {
 	run, state, media, task := enqueue.run, enqueue.state, enqueue.media, enqueue.task
 	// MediaTaskID 只记最近一次提交的生成，供诊断与取消事件引用；不再把运行钉在这次调用上。
 	state.MediaTaskID = task.ID
@@ -326,10 +328,16 @@ func (enqueue *cloudAgentTaskEnqueue) recordMediaSubmission() {
 	if state.CallIndex >= 0 && state.CallIndex < len(state.Calls) {
 		pending.CallID = state.Calls[state.CallIndex].ID
 	}
+	batch, err := cloudAgentEnsureGenerationBatch(repo, run, state, task.ID, media.Args.NodeID, media.Args.Mode, media.Args.Title)
+	if err != nil {
+		return err
+	}
+	pending.BatchID = batch.ID
 	state.PendingGenerations = append(state.PendingGenerations, pending)
 	if state.CallIndex >= 0 && state.CallIndex < len(state.Calls) {
-		cloudAgentToolResult(run.ID, state, state.Calls[state.CallIndex], cloudAgentGenerationSubmittedReceipt(pending, len(state.PendingGenerations)), nil)
+		cloudAgentToolResult(run.ID, state, state.Calls[state.CallIndex], cloudAgentGenerationSubmittedReceipt(pending, len(state.PendingGenerations), batch.ExpectedTasks), nil)
 	}
+	return nil
 }
 
 func (enqueue *cloudAgentTaskEnqueue) recordModelTask() {

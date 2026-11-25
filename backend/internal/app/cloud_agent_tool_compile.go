@@ -83,7 +83,17 @@ func (c *cloudAgentToolCompiler) addControlTools() {
 		},
 		"question", "options")
 	c.add("finish_run", cloudAgentToolText("finish_run"),
-		map[string]any{"summary": str(cloudAgentToolText("parameter_007"))},
+		map[string]any{
+			"summary": str(cloudAgentToolText("parameter_007")),
+			"continuation": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"when":        map[string]any{"type": "string", "enum": []string{model.AgentGenerationContinuationAllTerminal}},
+					"instruction": str("续接指令"),
+				},
+				"required": []string{"when", "instruction"}, "additionalProperties": false,
+			},
+		},
 		"summary")
 }
 
@@ -258,7 +268,7 @@ func (c *cloudAgentToolCompiler) addCanvasWriteTools(req CloudAgentRequest) {
 	}, "snapshotHash")
 }
 
-// addGenerationTools adds media generation and the generation wait tool.
+// addGenerationTools adds media generation and background batch tools.
 func (c *cloudAgentToolCompiler) addGenerationTools() {
 	str := cloudAgentToolStringSchema
 	c.add("generate_media", cloudAgentToolText("generate_media"), map[string]any{
@@ -269,7 +279,6 @@ func (c *cloudAgentToolCompiler) addGenerationTools() {
 		"durationSeconds": map[string]any{"type": "integer", "minimum": 0}, "size": str(cloudAgentToolText("parameter_074")), "quality": str(cloudAgentToolText("parameter_075")), "imageResolution": str("图片模型的分辨率档位，与模型目录一致"), "videoGenerateAudio": map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_076")},
 		"snapshotHash": str(cloudAgentToolText("parameter_077")), "nodeId": str(cloudAgentToolText("parameter_078")), "title": str(cloudAgentToolText("parameter_079")), "sourceNodeId": str(cloudAgentToolText("parameter_080")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_081"))}, "referenceTransientIds": map[string]any{"type": "array", "maxItems": 4, "items": str(cloudAgentToolText("parameter_082"))},
 	}, "mode")
-	c.add("wait_generations", cloudAgentToolText("wait_generations"), map[string]any{})
 }
 
 // addSubagentParentTools adds the tools a parent Agent uses to manage children.
