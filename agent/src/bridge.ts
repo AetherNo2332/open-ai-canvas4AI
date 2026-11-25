@@ -84,6 +84,7 @@ export interface PiSnapshot {
   piSessionEntries?: Array<{ runId: string; entry: Record<string, unknown> }>;
   historicalToolReceipts?: Array<{ runId: string; assistantEntryId: string; assistantTimestamp: number; callId: string; result: unknown; isError?: boolean }>;
   visionBatchBudget?: { maxImages: number; maxCost: number };
+  visionRequestTail?: boolean;
   piActiveLeafId?: string;
   piSessionLeaseEpoch?: number;
   userId: string;

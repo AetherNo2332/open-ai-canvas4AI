@@ -396,5 +396,7 @@ func (enqueue *cloudAgentTaskEnqueue) recordContextPressure() {
 	state.LastStepModel = model
 	state.LastStepChannelID = channelID
 	state.LastStepWindowTokens = contextPressure.ContextWindowTokens
-	state.cloudAgentRecordImageDeliverySHA(requestCanonical)
+	if !state.VisionRequestTail {
+		state.cloudAgentRecordImageDeliverySHA(requestCanonical)
+	}
 }

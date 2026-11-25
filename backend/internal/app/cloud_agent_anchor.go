@@ -7,6 +7,9 @@ import (
 	"yingce/backend/internal/repository"
 )
 
+// Older anchors belong to runs that already carry the candidates in their frozen prompt.
+const cloudAgentRuntimeReferenceAnchorVersion = 3
+
 // The anchor records the current request and observable reference candidates.
 // It does not infer creative permissions or carry an old goal into a new turn.
 type cloudAgentCreativeAnchor struct {
@@ -36,7 +39,7 @@ type cloudAgentReferenceAnchor struct {
 // 不继承旧视觉标记：工具成功和下一段正文都不是识别成功的可靠证据，节点也可能换图。
 // UserPrompt 仍按我们的口径截断：锚点会进检查点，超长提示词会放大每一步的请求体积。
 func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID string, canvas *model.CanvasProject, prompt string, _ *cloudAgentCreativeAnchor) (cloudAgentCreativeAnchor, error) {
-	anchor := cloudAgentCreativeAnchor{Version: 2, UserPrompt: truncateRunes(prompt, 16000)}
+	anchor := cloudAgentCreativeAnchor{Version: cloudAgentRuntimeReferenceAnchorVersion, UserPrompt: truncateRunes(prompt, 16000)}
 
 	doc, err := creationDocument(canvas.PayloadJSON)
 	if err != nil {

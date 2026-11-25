@@ -418,7 +418,7 @@ func (s *Service) settleCloudAgentImageInspection(tc *cloudAgentToolCheckpoint, 
 	if inspection.Summary != nil {
 		state.cloudAgentRecordImageObservations(stringValue(inspection.Receipt["nodeId"])+"："+stringValue(inspection.Summary["short"]), true)
 	} else {
-		state.markCanvasImageInspection(stringValue(inspection.Receipt["nodeId"]), attached, stringValue(inspection.Receipt["contentSignature"]))
+		state.markCanvasImageInspection(stringValue(inspection.Receipt["nodeId"]), attached && !state.VisionRequestTail, stringValue(inspection.Receipt["contentSignature"]))
 	}
 	if inspection.CacheKey != "" {
 		if state.ImageInspectionReads == nil {

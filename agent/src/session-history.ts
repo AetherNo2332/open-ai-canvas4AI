@@ -165,12 +165,18 @@ function missingSummaryContent(source: readonly AgentMessage[], existing: readon
 /** Preserve durable images, but replace observed SHAs with saved summaries in
  * the model projection. Keep recent originals within the current model budget.
  */
-export function createImageContextExtension(imageLimit: number | (() => number) = 1): InlineExtension {
+export function createImageContextExtension(imageLimit: number | (() => number) = 1, requestTail = false): InlineExtension {
   return {
     name: "canvas-original-image-context",
     hidden: true,
     factory: (pi) => {
       pi.on("context", (event, context) => {
+        // New tool results are attached by Go. Legacy tool images from older
+        // turns have a fixed text projection regardless of the current budget.
+        if (requestTail) {
+          const messages = event.messages.map(projectLegacyInspection);
+          return messages.some((message, index) => message !== event.messages[index]) ? { messages } : undefined;
+        }
         const source = context.sessionManager.getBranch().flatMap(entry => entry.type === "message" ? [entry.message] : []);
         const summaries = new Map<string, unknown>();
         for (const message of source) {
@@ -209,4 +215,16 @@ export function createImageContextExtension(imageLimit: number | (() => number) 
       });
     },
   };
+}
+
+function projectLegacyInspection(message: AgentMessage): AgentMessage {
+  if (message.role !== "user") return message;
+  const parts = imageParts(message);
+  const content = parts.filter((part, index) => {
+    if (!imageKey(part)) return true;
+    const caption = parts[index - 1] as { text?: unknown } | undefined;
+    return !imageReceipt(caption?.text)?.nodeId;
+  });
+  if (content.length === parts.length) return message;
+  return { ...message, canvasContent: [...content, { type: "text", text: "以上是历史识图回执。需要核对画面时，请重新读取当前素材。" }] } as typeof message;
 }

@@ -258,6 +258,8 @@ func (s *Service) piModelStepTaskInput(run *model.CloudAgentExecution, state *cl
 		// 不把资源 ID 或上游地址写进失败原因。
 		return nil, cloudAgentContextBudget{}, kernel.BadAuthRequest(cloudAgentSafeToolError(refErr))
 	}
+	// Project only in the provider request, after the complete transcript and vision batch.
+	request.Canonical.Messages = state.CreativeAnchor.appendReferenceContext(request.Canonical.Messages)
 	// The Go vision ledger tracks images that reached this specific provider envelope,
 	// not merely images present in Pi history. Check the model's image limit before
 	// settling pending observations; all visual inputs remain intact.

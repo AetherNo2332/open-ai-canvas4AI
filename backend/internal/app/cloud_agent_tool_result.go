@@ -178,16 +178,20 @@ func cloudAgentAnnotateArgumentFailure(state *cloudAgentRuntime, call cloudAgent
 }
 
 // cloudAgentRecordImageInspectionResult records a successful image inspection:
-// the text receipt goes into the transcript now and staged images are flushed as
-// one user message after the last call of the batch.
+// the text receipt goes into the transcript, and the final call closes the image batch.
 func cloudAgentRecordImageInspectionResult(runID string, state *cloudAgentRuntime, call cloudAgentCall, inspection cloudAgentImageInspection, kind string, payload map[string]any) {
 	// 重复查看时只回执文字（ImageURL 为空），不再附图。
 	staged := strings.TrimSpace(inspection.ImageURL) != ""
 	if staged {
+		if state.VisionRequestTail {
+			inspection.Receipt["imagePending"] = true
+			inspection.Receipt["imageAttached"] = false
+			inspection.Receipt["note"] = "图片已准备。以本次请求末尾实际附送的画面为准。观察后可提交 nodeId、sha256 和 summary 保存摘要。"
+		}
 		cloudAgentStageImageInspection(state, inspection)
 	}
 	lastOfBatch := state.CallIndex+1 >= len(state.Calls)
-	if lastOfBatch {
+	if lastOfBatch && !state.VisionRequestTail {
 		// 本批最后一次看图：把"这一批到底附了哪几张"写进回执，模型不必再靠试探猜。
 		// 必须赶在下面序列化回执之前补上，否则这条说明对模型不可见。
 		cloudAgentDescribeImageBatch(state, inspection.Receipt)

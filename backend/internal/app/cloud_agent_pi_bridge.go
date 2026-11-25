@@ -52,6 +52,7 @@ type PiAgentSnapshot struct {
 	PiSessionEntries         []PiAgentSessionEntry        `json:"piSessionEntries"`
 	HistoricalToolReceipts   []PiHistoricalToolReceipt    `json:"historicalToolReceipts,omitempty"`
 	VisionBatchBudget        *cloudAgentVisionBatchBudget `json:"visionBatchBudget,omitempty"`
+	VisionRequestTail        bool                         `json:"visionRequestTail,omitempty"`
 	PiActiveLeafID           string                       `json:"piActiveLeafId,omitempty"`
 	UserID                   string                       `json:"userId"`
 	Revision                 int64                        `json:"revision"`
@@ -320,6 +321,7 @@ func (s *Service) piAgentSnapshotSettled(run *model.CloudAgentExecution) (*PiAge
 		PendingToolBatch: pendingBatch,
 		SkillRuntimeMode: mode, Skills: nativeSkills,
 		VisionBatchBudget: visionBudget,
+		VisionRequestTail: state.VisionRequestTail,
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。
 		Harness: cloudAgentFrozenHarness(state.Snapshot),
 	}, nil

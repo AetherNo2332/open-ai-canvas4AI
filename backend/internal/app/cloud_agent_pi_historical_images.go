@@ -8,6 +8,13 @@ import (
 )
 
 func (s *Service) piModelStepImageReferences(run *model.CloudAgentExecution, state *cloudAgentRuntime, canonical *canonicalAgentRequest) ([]providerMedia, error) {
+	if state.VisionRequestTail {
+		return s.piProjectVisionTail(run, state, canonical)
+	}
+	return s.piLegacyModelStepImageReferences(run, state, canonical)
+}
+
+func (s *Service) piLegacyModelStepImageReferences(run *model.CloudAgentExecution, state *cloudAgentRuntime, canonical *canonicalAgentRequest) ([]providerMedia, error) {
 	keys := cloudAgentCanonicalImageKeys(canonical)
 	if len(keys) == 0 {
 		return nil, nil

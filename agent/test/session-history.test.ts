@@ -6,6 +6,26 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { PiSnapshot } from "../src/bridge.js";
 import { createImageContextExtension, createTerminalHistoryExtension } from "../src/session-history.js";
 
+test("request-tail runs keep a stable text projection of older inspection images", async () => {
+  const image = { role: "user", timestamp: 1, content: "", canvasContent: [
+    { type: "text", text: `画面：${JSON.stringify({ nodeId: "cat", sha256: "a".repeat(64) })}` },
+    { type: "image_url", image_url: { url: "resource:cat" } },
+  ] } as unknown as AgentMessage;
+  const next = { role: "user", timestamp: 2, content: "继续" } as AgentMessage;
+  const before = JSON.stringify(image);
+  let handler: any;
+  const extension = createImageContextExtension(() => { throw new Error("Go owns the vision budget"); }, true);
+  if (typeof extension === "function") throw new Error("expected image extension");
+  await extension.factory({ on: (_: string, listener: unknown) => { handler = listener; } } as unknown as ExtensionAPI);
+  const context = { sessionManager: { getBranch: () => { throw new Error("must not restore old images"); } } };
+  const projected = handler({ messages: [image] }, context);
+  const continued = handler({ messages: [image, next] }, context);
+  assert.deepEqual(continued.messages, [...projected.messages, next]);
+  assert.equal(JSON.stringify(projected.messages).includes("resource:cat"), false);
+  assert.equal(handler({ messages: [next] }, context), undefined);
+  assert.equal(JSON.stringify(image), before);
+});
+
 test("saved SHA-bound vision summaries replace images even across compaction", async () => {
   const sha = "a".repeat(64);
   const image = { role: "user", timestamp: 1, content: "", canvasContent: [

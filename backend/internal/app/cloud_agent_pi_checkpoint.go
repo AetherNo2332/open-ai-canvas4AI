@@ -366,6 +366,7 @@ func (s *Service) piCheckpointModelTaskOutput(repo *repository.Repository, state
 		stopKind = normalizeCloudAgentStopReason(output.StopReason)
 	}
 	disposition := cloudAgentStepStopDisposition(state, stopKind)
+	state.settleVisionProjection(disposition == cloudAgentStepDispositionAccept)
 	commit.publishAssistantText = (len(output.ToolCalls) > 0 || len(output.LegacyCalls) > 0) &&
 		disposition == cloudAgentStepDispositionAccept
 	if disposition != cloudAgentStepDispositionRetry {
