@@ -43,6 +43,8 @@
 
 ## A1 / A3：复用 Pi 运行时与统一 read
 
+> **已被取代（2026-11-25）：** 本节验收的"统一 read"已在一次功能回退中撤除，`read` 恢复为只读 Skill 文本文件；画布正文、识图与短剧分集改用 `canvas_read_content`、`canvas_inspect_image`、`drama_read_episode`。下面的记录保留为历史验收来源，现行合同见 [Agent SDK 业务接入](../content/docs/backend/agent-sdk.mdx) 与[回退计划](<../superpowers/plans/2026-11-25-agent-skill-read-business-tools.md>)。
+
 没有增加 Go 推理循环，也没有新建 Agent 服务。业务 read 使用现有 `PiToolBatch → 工具 operation → checkpoint → 回执`；Skill 文本继续走现有 native read 与 lease-fenced Skill 文件入口。
 
 | read 路径 | 内容与授权 | 模型消费方式 |

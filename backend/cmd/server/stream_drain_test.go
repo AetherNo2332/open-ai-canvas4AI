@@ -161,7 +161,7 @@ func TestServerDrainClosesRealSSERoutesAndFinishesOrdinaryWrite(t *testing.T) {
 	}
 	workerRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("w", 48))
 	workerRequest.Header.Set("X-Agent-Identity", "drain-worker")
-	workerRequest.Header.Set("X-Agent-Protocol-Version", "canvas-pi-wire/v7")
+	workerRequest.Header.Set("X-Agent-Protocol-Version", "canvas-pi-wire/v8")
 	workerRequest.Header.Set("X-Pi-SDK-Version", "0.87.1")
 	workerRequest.Header.Set("X-Pi-Session-Format", "3")
 	workerResponse, err := client.Do(workerRequest)
@@ -390,7 +390,7 @@ func runDrainProcessScenario(t *testing.T, userStream bool, dbPath string, dataD
 	}
 	workerRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("w", 48))
 	workerRequest.Header.Set("X-Agent-Identity", "drain-worker")
-	workerRequest.Header.Set("X-Agent-Protocol-Version", "canvas-pi-wire/v7")
+	workerRequest.Header.Set("X-Agent-Protocol-Version", "canvas-pi-wire/v8")
 	workerRequest.Header.Set("X-Pi-SDK-Version", "0.87.1")
 	workerRequest.Header.Set("X-Pi-Session-Format", "3")
 	workerResponse, err := client.Do(workerRequest)

@@ -54,8 +54,11 @@ test.skipIf(!baseUrl)(
             expect(run.spentCredits).toBeGreaterThan(0);
             expect(new Set(seen).size).toBe(seen.length);
             expect(seen.length).toBeGreaterThan(0);
-            const receipts = run.events?.filter((event) => event.type === "tool_completed" && event.payload.toolName === "read");
+            // 业务读取走各自具名工具：短剧分集 drama_read_episode，画布看图 canvas_inspect_image。
+            const expectedTool = kind === "drama" ? "drama_read_episode" : "canvas_inspect_image";
+            const receipts = run.events?.filter((event) => event.type === "tool_completed" && event.payload.toolName === expectedTool);
             expect(receipts?.length).toBe(1);
+            expect(run.events?.filter((event) => event.type === "tool_completed" && event.payload.toolName === "read")).toHaveLength(0);
             expect(run.events?.some((event) => event.type === "assistant_message" && String(event.payload.text).includes("SDK_RESULT"))).toBe(true);
             const resumed: number[] = [];
             await client.readEvents(first.run.id, (event) => resumed.push(event.seq), { after: seen[0], signal: AbortSignal.timeout(5000) });
@@ -123,7 +126,8 @@ test.skipIf(!baseUrl)(
                         const directory = await client.listConversations();
                         expect(new Set(directory.items.map((item) => item.latestRunId))).toEqual(new Set(runs.map((run) => run.id)));
                         for (const run of runs) {
-                            expect(run.events?.filter((event) => event.type === "tool_completed" && event.payload.toolName === "read")).toHaveLength(1);
+                            const readTool = type === "canvas" ? "canvas_read_content" : "drama_read_episode";
+                            expect(run.events?.filter((event) => event.type === "tool_completed" && event.payload.toolName === readTool)).toHaveLength(1);
                             expect(run.events?.some((event) => String(event.payload.text).includes("SDK_ISOLATED_RESULT"))).toBe(true);
                             const history = await client.listConversationRuns(run.conversationId!);
                             expect(history.items.map((item) => item.id)).toEqual([run.id]);

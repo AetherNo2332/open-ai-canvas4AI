@@ -1299,21 +1299,161 @@ test("native system prompt is byte-identical across runs and resumes, with stabl
   assert.equal(resumed.state.canonical[0]!.systemPrompt, prompt, "a resumed legacy session must send the stable prompt");
 });
 
-test("unified native read executes business references through the admitted durable batch", async () => {
-  for (const path of ["drama:episode/ep-1", "library:document/item"]) {
+test("pending Skill read recovery reads the file locally and never opens a Go batch", async () => {
+  const { bridge, state, snapshot } = fakeBridge([{ text: "继续" }]);
+  nativeSkillSnapshot(snapshot);
+  authorizeNativeEntry(bridge, snapshot);
+  snapshot.canonical.messages.push({ role: "assistant", content: "", tool_calls: [
+    { id: "pending-skill-read", type: "function", function: { name: "read", arguments: JSON.stringify({ path: "skills/skill-abc/SKILL.md" }) } },
+  ] });
+  const persisted = fromCanonical(snapshot, canvasModel(snapshot));
+  snapshot.piMessages = persisted as unknown as Record<string, unknown>[];
+  snapshot.piSessionEntries = JSON.parse(JSON.stringify(sessionEntriesFromMessages(snapshot.runId, persisted)
+    .map(entry => ({ runId: snapshot.runId, entry: entry as unknown as Record<string, unknown> }))));
+  snapshot.piActiveLeafId = String(snapshot.piSessionEntries!.at(-1)!.entry.id);
+  snapshot.piSessionRevision = 3;
+  snapshot.lastTaskId = "prior-task";
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.deepEqual(state.batches, [], "a recovered Skill read must not open a Go tool batch");
+  assert.deepEqual(state.executions, []);
+  const recovered = state.checkpoints.find(message => message.role === "toolResult");
+  assert.equal(recovered?.isError, false);
+  assert.match(recovered!.text, /SKILL_BODY_TEXT/);
+});
+
+test("a failed Skill read recovery is checkpointed as a failure, never as success", async () => {
+  const { bridge, state, snapshot } = fakeBridge([{ text: "已确认失败" }]);
+  nativeSkillSnapshot(snapshot);
+  authorizeNativeEntry(bridge, snapshot);
+  snapshot.canonical.messages.push({ role: "assistant", content: "", tool_calls: [
+    { id: "pending-bad-read", type: "function", function: { name: "read", arguments: JSON.stringify({ path: "skills/skill-abc/UNLISTED.md" }) } },
+  ] });
+  const persisted = fromCanonical(snapshot, canvasModel(snapshot));
+  snapshot.piMessages = persisted as unknown as Record<string, unknown>[];
+  snapshot.piSessionEntries = JSON.parse(JSON.stringify(sessionEntriesFromMessages(snapshot.runId, persisted)
+    .map(entry => ({ runId: snapshot.runId, entry: entry as unknown as Record<string, unknown> }))));
+  snapshot.piActiveLeafId = String(snapshot.piSessionEntries!.at(-1)!.entry.id);
+  snapshot.piSessionRevision = 3;
+  snapshot.lastTaskId = "prior-task";
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.deepEqual(state.batches, []);
+  const failed = state.checkpoints.find(message => message.role === "toolResult");
+  assert.equal(failed?.isError, true);
+  assert.match(failed!.text, /Skill/);
+});
+
+test("historical business read in a resumed session is displayed but never executed", async () => {
+  const legacyPath = "drama:episode/ep-1";
+  const { bridge, state, snapshot } = fakeBridge([{ text: "只读历史" }]);
+  nativeSkillSnapshot(snapshot);
+  snapshot.canonical.messages.push(
+    { role: "assistant", content: "", tool_calls: [
+      { id: "legacy-business-read", type: "function", function: { name: "read", arguments: JSON.stringify({ path: legacyPath }) } },
+    ] },
+    { role: "tool", tool_call_id: "legacy-business-read", content: '{"content":"LEGACY_BUSINESS_TEXT"}' },
+  );
+  // 旧 Worker 保存的会话：这些条目属于其他 run，恢复时不得重新执行。
+  snapshot.piSessionEntries = [{ runId: "previous-run", entry: { type: "message", id: "legacy-entry",
+    timestamp: "2026-01-01T00:00:00.000Z", message: { role: "assistant", timestamp: "2026-01-01T00:00:00.000Z",
+      content: [{ type: "toolCall", id: "legacy-business-read", name: "read", arguments: { path: legacyPath } }] } } }];
+  snapshot.piActiveLeafId = "legacy-entry";
+  snapshot.piSessionRevision = 2;
+  snapshot.lastTaskId = "prior-task";
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.deepEqual(state.batches, []);
+  assert.deepEqual(state.executions, []);
+  // 历史记录只做展示投影：缺失回执由终态历史扩展补成"结果未知"，不是成功读取。
+  const projected = JSON.stringify(state.canonical[0]!.messages);
+  assert.match(projected, /结果未知/);
+  assert.doesNotMatch(projected, /LEGACY_BUSINESS_TEXT/);
+  assert.equal(state.checkpoints.filter(message => message.role === "toolResult").length, 0);
+});
+
+
+const NATIVE_SKILL_ENTRY = '---\nname: skill-abc\ndescription: For scripts\n---\n# Body\nSKILL_BODY_TEXT';
+
+function nativeSkillSnapshot(snapshot: PiSnapshot, extraTools: PiSnapshot["tools"] = [], withSkills = true): void {
+  snapshot.skillRuntimeMode = "pi-native";
+  snapshot.skills = withSkills ? [{ id: "skill-1", nativeName: "skill-abc", displayName: "Scripts", description: "For scripts",
+    versionId: "v1", version: "1", contentHash: "package-hash", entryPath: "SKILL.md", entryContent: NATIVE_SKILL_ENTRY,
+    files: [{ path: "SKILL.md", sha256: createHash("sha256").update(NATIVE_SKILL_ENTRY).digest("hex"),
+      size: Buffer.byteLength(NATIVE_SKILL_ENTRY), text: true }] }] : [];
+  snapshot.tools = [
+    { name: "read", category: "native_skill", description: "Read selected Skill text", allowed: true,
+      parameters: { type: "object", properties: { path: { type: "string" }, offset: { type: "integer" }, limit: { type: "integer" } },
+        required: ["path"], additionalProperties: false } },
+    ...extraTools,
+  ];
+}
+
+const DRAMA_READ_SPEC = { name: "drama_read_episode", category: "agent_tools_canvas_read",
+  description: "Read one episode of the current drama", allowed: true,
+  parameters: { type: "object", properties: { episodeId: { type: "string" } }, required: ["episodeId"], additionalProperties: false } };
+
+test("native read rejects legacy business namespaces without a durable batch", async () => {
+  for (const [label, path] of [
+    ["canvas text", "canvas:text/shot-1"],
+    ["canvas image", "canvas:image/cat"],
+    ["drama episode", "drama:episode/ep-1"],
+    ["library document", "library:document/item"],
+  ] as const) {
     const { bridge, state, snapshot } = fakeBridge([
       { toolCalls: [{ id: "read-business", function: { name: "read", arguments: JSON.stringify({ path }) } }] },
-      { text: "读取完成" },
+      { text: "读取被拒绝" },
     ], { receiptText: '{"content":"BUSINESS_TEXT"}' });
-    snapshot.skillRuntimeMode = "pi-native";
-    snapshot.skills = [];
-    snapshot.tools = [{ name: "read", category: "native_skill", description: "Read authorized content", allowed: true,
-      parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }];
+    nativeSkillSnapshot(snapshot, [], false);
     await runCanvasAgent(bridge, snapshot, undefined, promptParts());
-    assert.equal(state.steps, 2);
-    assert.deepEqual(state.batches.map(batch => batch.map(call => call.id)), [["read-business"]]);
-    assert.deepEqual(state.executions, ["read-business"]);
-    assert.match(state.checkpoints.find(item => item.role === "toolResult")!.text, /BUSINESS_TEXT/);
-    assert.ok(state.ops.indexOf("checkpoint:assistant") < state.ops.indexOf("batch:task-1"));
+    const result = state.checkpoints.find(item => item.role === "toolResult");
+    assert.ok(result, label);
+    assert.equal(result.isError, true, `${label} must stay a local Skill error`);
+    assert.match(result.text, /Skill/);
+    assert.doesNotMatch(result.text, /BUSINESS_TEXT/);
+    assert.deepEqual(state.batches, [], `${label} must not open a Go tool batch`);
+    assert.deepEqual(state.executions, [], `${label} must not reach a business tool`);
   }
+});
+
+test("malformed native read parameters are rejected before any file access", async () => {
+  for (const [label, args] of [
+    ["non-string path", { path: 42 }],
+    ["missing path", {}],
+    ["negative offset", { path: "skills/skill-abc/SKILL.md", offset: -1 }],
+    ["zero limit", { path: "skills/skill-abc/SKILL.md", limit: 0 }],
+  ] as const) {
+    const { bridge, state, snapshot } = fakeBridge([
+      { toolCalls: [{ id: "read-bad", function: { name: "read", arguments: JSON.stringify(args) } }] },
+      { text: "继续" },
+    ]);
+    nativeSkillSnapshot(snapshot);
+    let reads = 0;
+    authorizeNativeEntry(bridge, snapshot);
+    const readFile = bridge.readSkillFile.bind(bridge);
+    bridge.readSkillFile = async (...call) => { reads += 1; return readFile(...call); };
+    await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+    assert.equal(state.checkpoints.find(item => item.role === "toolResult")?.isError, true, label);
+    assert.equal(reads, 0, `${label} must not read a Skill file`);
+    assert.deepEqual(state.batches, [], label);
+  }
+});
+
+test("mixed batch keeps the Skill read local and sends only the named tool to Go", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [
+      { id: "read-skill", function: { name: "read", arguments: JSON.stringify({ path: "skills/skill-abc/SKILL.md" }) } },
+      { id: "read-episode", function: { name: "drama_read_episode", arguments: JSON.stringify({ episodeId: "episode-1" }) } },
+    ] },
+    { text: "完成" },
+  ], { receiptText: '{"episodeId":"episode-1","content":"EPISODE_TEXT"}' });
+  nativeSkillSnapshot(snapshot, [DRAMA_READ_SPEC]);
+  authorizeNativeEntry(bridge, snapshot);
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 2);
+  // 只有具名业务工具进入 Go 批次；Skill read 保持本地执行身份。
+  assert.deepEqual(state.batches.map(batch => batch.map(call => call.id)), [["read-episode"]]);
+  assert.deepEqual(state.executions, ["read-episode"]);
+  const results = state.checkpoints.filter(item => item.role === "toolResult");
+  assert.deepEqual(results.map(item => item.isError), [false, false]);
+  assert.equal(results[0]!.text.trim(), NATIVE_SKILL_ENTRY.trim(), "the Skill read returns the local file text");
+  assert.match(results[1]!.text, /EPISODE_TEXT/);
+  assert.ok(state.ops.indexOf("checkpoint:assistant") < state.ops.indexOf("batch:task-1"));
 });

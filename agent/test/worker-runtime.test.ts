@@ -8,7 +8,7 @@ const run: PiSnapshot = {
   runId:'run-runtime', userId:'user-runtime', revision:1, status:'running', piSessionLeaseEpoch:7,
   request:{prompt:'private'}, canonical:{systemPrompt:'',messages:[],tools:[],toolChoice:'auto'},
   modelLimits:{contextWindowTokens:128000,maxOutputTokens:16384,configured:false,source:'default'},tools:[],
-  toolCatalog:[], capabilityDirectory:{version:1,hash:"a".repeat(64),definitionId:"canvas.default",definitionVersion:1},
+  toolCatalog:[], capabilityDirectory:{version:2,hash:"a".repeat(64),definitionId:"canvas.default",definitionVersion:2},
 };
 test('retryable run failures wait for a durable recovery acknowledgement',async()=>{
   let scheduled=0,failed=0;

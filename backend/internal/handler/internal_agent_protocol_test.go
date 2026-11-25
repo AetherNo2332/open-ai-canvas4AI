@@ -47,7 +47,7 @@ func TestInternalAgentRequiresVersionedPiWireIdentity(t *testing.T) {
 	if got := request(`{"owner":"worker"}`, nil); got.Code != http.StatusUpgradeRequired || !strings.Contains(got.Body.String(), "agent_protocol_mismatch") {
 		t.Fatalf("missing protocol identity status=%d body=%s", got.Code, got.Body.String())
 	}
-	for _, protocol := range []string{"canvas-pi-wire/v4", "canvas-pi-wire/v5"} {
+	for _, protocol := range []string{"canvas-pi-wire/v4", "canvas-pi-wire/v5", "canvas-pi-wire/v6", "canvas-pi-wire/v7"} {
 		if got := request(`{"owner":"wire-test-worker:old"}`, map[string]string{
 			"X-Agent-Protocol-Version": protocol,
 			"X-Pi-SDK-Version":         internalAgentPiSDKVersion, "X-Pi-Session-Format": internalAgentSessionFormat,

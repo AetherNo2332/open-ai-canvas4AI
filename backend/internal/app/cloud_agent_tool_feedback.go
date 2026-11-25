@@ -125,6 +125,8 @@ func cloudAgentArgumentExampleForFields(tool string, args map[string]any, field 
 		return map[string]any{"nodeId": "<nodeId>", "field": "content"}
 	case "task_get":
 		return map[string]any{"taskId": "<taskId>"}
+	case "drama_read_episode":
+		return map[string]any{"episodeId": "<episodeId>"}
 	case "canvas_inspect_image":
 		return cloudAgentInspectImageExample(args, field)
 	case "storyboard":

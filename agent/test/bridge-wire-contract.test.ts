@@ -137,7 +137,7 @@ test("内部 wire identity 与共享制品和锁定的 Pi SDK 版本一致", () 
 
 test("所有内部请求都标注独立的 Pi wire、SDK 和 session 格式版本", async () => {
   const request = await captureBody((bridge) => bridge.failRun(run, "probe", undefined));
-  assert.equal(request.headers["X-Agent-Protocol-Version"], "canvas-pi-wire/v7");
+  assert.equal(request.headers["X-Agent-Protocol-Version"], "canvas-pi-wire/v8");
   assert.equal(request.headers["X-Pi-SDK-Version"], "0.87.1");
   assert.equal(request.headers["X-Pi-Session-Format"], "3");
 });
@@ -405,7 +405,7 @@ test("claim installs a lease grant and run routes never send the worker credenti
       sent.push({path, authorization: headers.Authorization ?? "", identity: headers["X-Agent-Identity"] ?? "",
         owner: headers["X-Agent-Worker-ID"] ?? "", body: init?.body ? JSON.parse(String(init.body)) : undefined});
       const snapshot = { ...run, runAuthorization: undefined, toolCatalog: [],
-        capabilityDirectory: { version: 1, hash: "a".repeat(64), definitionId: "canvas.default", definitionVersion: 1 } };
+        capabilityDirectory: { version: 2, hash: "a".repeat(64), definitionId: "canvas.default", definitionVersion: 2 } };
       const data = path.endsWith("/claim") ? {run: snapshot, runAuthorization: "grant-one"}
         : path.endsWith("/renew") ? {renewed:true,runAuthorization:"grant-two"} : {run:snapshot};
       return new Response(JSON.stringify({code:0,data}));

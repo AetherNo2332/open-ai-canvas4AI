@@ -11,6 +11,27 @@ import (
 	"yingce/backend/internal/repository"
 )
 
+// bindCanvasImageResources 把资源 key 绑进画布节点：隔离业务上下文中的图片重放
+// 只认当前画布真实引用的资源，测试夹具必须先把它们写进画布。
+func bindCanvasImageResources(t *testing.T, db *gorm.DB, canvasID string, keys ...string) {
+	t.Helper()
+	nodes := make([]any, 0, len(keys))
+	for index, key := range keys {
+		nodes = append(nodes, map[string]any{
+			"id":   "vision-node-" + string(rune('a'+index)),
+			"type": "image", "title": "vision fixture",
+			"metadata": map[string]any{"storageKey": key, "status": "success"},
+		})
+	}
+	raw, err := json.Marshal(map[string]any{"nodes": nodes, "connections": []any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", canvasID).
+		Update("payload_json", string(raw)).Error; err != nil {
+		t.Fatal(err)
+	}
+}
 // visionReadyService 让夹具里的渠道模型声明图片输入能力，并造一张就绪的图片资源。
 //
 // 这两件事缺一不可：cloudAgentVisionReferences 要求
@@ -119,6 +140,7 @@ func TestPiModelStepBatchesImageOverflowWithoutDroppingSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	bindCanvasImageResources(t, db, root.CanvasID, "resource:"+resourceIDs[0], "resource:"+resourceIDs[1])
 	claimed, err := s.ClaimPiAgent("worker-a")
 	if err != nil || claimed == nil || claimed.RunID != root.ID {
 		t.Fatalf("领取 Pi 运行失败: %v", err)

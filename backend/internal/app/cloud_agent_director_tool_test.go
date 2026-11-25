@@ -35,6 +35,8 @@ func directorFixture(t *testing.T, permission string, payload string, call cloud
 		t.Fatal(err)
 	}
 	state.Request.PermissionMode = permission
+	// 夹具换了权限模式：冻结目录必须按新模式重编，否则只读/可写工具集会与目录不一致。
+	rebuildFrozenCapabilities(t, s, &state, len(state.Skills) > 0)
 	state.Calls = []cloudAgentCall{call}
 	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": "", "tool_calls": state.Calls})
 	if err := s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {

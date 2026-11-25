@@ -222,6 +222,7 @@ POST /api/agent/conversations/{conversationId}/messages
 依赖：A1–A5。Workspace v2 的验证与结论另列，不合并为一个统一“平台 v2/Agent v1 已通过”结论。
 
 - [x] 无数据库迁移；新增字段持久化在现有 Run JSON；统一 read 将 Worker wire 明确升到 v5，v4 返回 426，保留 Pi 0.87.1/session v3。
+  > **后续变更（2026-11-25）：** 统一 read 已在功能回退中撤除，`read` 恢复为 Skill-only。wire 现为 `canvas-pi-wire/v8`、能力目录 2、工具 Schema `cloud-agent-tools/v30`，旧 v7 Worker 与旧目录运行均被拒绝。见[取代计划](<../superpowers/plans/2026-11-25-agent-skill-read-business-tools.md>)。
 - [ ] 在隔离环境验证新旧 Worker 混跑/排空策略、运行中会话续接和消息幂等。
 - [x] 本地验新准入开关与既有请求回放/读取；部署排空与二进制回退说明见验收记录。既有新合同运行需保留 v5 处理能力。
 - [x] 分别记录代码、跨进程 smoke 与外部待验项；没有发起付费或部署操作。

@@ -36,6 +36,14 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 		c.addCanvasReadTools(req)
 	}
 	c.add("task_get", cloudAgentToolText("task_get"), map[string]any{"taskId": str(cloudAgentToolText("parameter_022"))}, "taskId")
+	if agentBusinessScope(req).Type == "drama" {
+		// 短剧分集是短视频业务自己的正文，用具名工具读取；通用 read 只留给 Skill。
+		c.add("drama_read_episode", cloudAgentToolText("drama_read_episode"), map[string]any{
+			"episodeId": str("当前短剧项目内的分集 ID"),
+			"offset":    map[string]any{"type": "integer", "minimum": 0, "description": "起始 Unicode 字符位置，省略为 0"},
+			"limit":     map[string]any{"type": "integer", "minimum": 1, "maximum": cloudAgentDramaReadMaxRunes, "description": "本次读取的 Unicode 字符数，省略为上限"},
+		}, "episodeId")
+	}
 	if req.VisionEnabled && len(req.ContextScope) > 0 {
 		c.add("canvas_inspect_image", cloudAgentToolText("canvas_inspect_image"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_023")), "refresh": map[string]any{"type": "boolean", "description": "true：在每图和本轮预算内重新附送真实图片，单图也有效；已保存摘要仍可重看，重复时 repeat=true"}, "purpose": map[string]any{"type": "string", "enum": []string{"inspect", "compare"}, "description": "默认 inspect 读取指定节点；compare 在同一工具批次逐个读取待对比节点，仍遵守图片数量和成本预算"}}, "nodeId")
 	}

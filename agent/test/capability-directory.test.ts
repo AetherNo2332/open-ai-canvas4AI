@@ -13,13 +13,18 @@ test("capability directory rejects incompatible, injected and replaced tool cont
       tools: [{ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }],
     },
     tools: [tool], toolCatalog: [tool.name],
-    capabilityDirectory: { version: 1, hash: "a".repeat(64), definitionId: "canvas.default", definitionVersion: 1 },
+    capabilityDirectory: { version: 2, hash: "a".repeat(64), definitionId: "canvas.default", definitionVersion: 2 },
   };
   validateCapabilityDirectory(original);
   validateCapabilityDirectory({ ...original, tools: [{ ...tool, allowed: false }] }, original);
   assert.throws(() => validateCapabilityDirectory({ ...original, capabilityDirectory: undefined }), /version or identity unavailable/);
+  // 目录 1 是带业务 read 语义的旧合同，新版 Worker 必须拒绝接管。
+  assert.throws(() => validateCapabilityDirectory({ ...original,
+    capabilityDirectory: { ...original.capabilityDirectory!, version: 1 } }), /version or identity unavailable/);
   assert.throws(() => validateCapabilityDirectory({ ...original,
     capabilityDirectory: { ...original.capabilityDirectory!, version: 7 } }), /version or identity unavailable/);
+  assert.throws(() => validateCapabilityDirectory({ ...original,
+    capabilityDirectory: { ...original.capabilityDirectory!, definitionId: "" } }), /definition identity unavailable/);
   assert.throws(() => validateCapabilityDirectory({ ...original, toolCatalog: [tool.name, "canvas_apply_ops"] }), /allowlist disagrees/);
   assert.throws(() => validateCapabilityDirectory({ ...original, tools: [{ ...tool, description: "Changed" }] }), /schema disagrees/);
   assert.throws(() => validateCapabilityDirectory({ ...original,

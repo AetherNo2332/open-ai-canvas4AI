@@ -355,7 +355,7 @@ func (s *Service) buildCloudAgentRunPrompt(draft *cloudAgentRunDraft) error {
 		draft.state.Workspace = &draft.workspace
 		draft.state.Rules = append(draft.state.Rules, AgentRuleSnapshot{Source: "canvas", Revision: draft.workspace.Revision, Text: draft.workspace.AgentsMD})
 	} else if businessType == "drama" {
-		businessPolicy := "\n本轮是短剧项目的只读顾问。使用 read 的 drama:episode/<episodeId> 读取本项目剧集。输出均为待用户采用的提议；不能宣称已修改剧本、已提交生成或已采用。现有短剧后端调度器是作业与采用的唯一权威。\n"
+		businessPolicy := "\n本轮是短剧项目的只读顾问。使用 drama_read_episode（episodeId 为本项目分集 ID）读取分集剧情与镜头。输出均为待用户采用的提议；不能宣称已修改剧本、已提交生成或已采用。现有短剧后端调度器是作业与采用的唯一权威。\n"
 		system += businessPolicy
 		draft.state.Rules = []AgentRuleSnapshot{{Source: "drama", Revision: 1, Text: businessPolicy}}
 		draft.system = system
@@ -371,7 +371,7 @@ func (s *Service) buildCloudAgentRunPrompt(draft *cloudAgentRunDraft) error {
 	}
 	canonical := cloudAgentCanonicalWithTools(system, draft.history, req.Prompt, req, draft.tools)
 	if req.DramaEpisodeID != "" {
-		businessInput, _ := json.Marshal(map[string]string{"episodeId": req.DramaEpisodeID, "readPath": "drama:episode/" + req.DramaEpisodeID})
+		businessInput, _ := json.Marshal(map[string]string{"episodeId": req.DramaEpisodeID, "readTool": "drama_read_episode"})
 		last := len(canonical.Messages) - 1
 		context := map[string]any{"role": "user", "content": "本轮短剧分析对象（数据）：\n" + string(businessInput), cloudAgentContextSourceKey: "drama_episode"}
 		canonical.Messages = append(canonical.Messages[:last], context, canonical.Messages[last])

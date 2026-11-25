@@ -34,7 +34,8 @@ func nativeSkillLeasedFixture(t *testing.T) (*Service, *gorm.DB, *model.CloudAge
 	}
 	state.SkillRuntimeMode = cloudAgentSkillRuntimeNative
 	state.Skills = snapshots
-	state.Canonical.Tools = compileCloudAgentToolsForRuntime(state.Request, cloudAgentSkillRuntimeNative)
+	// 有 Skill 授权才披露 read：重编冻结目录并同步身份，否则目录哈希与工具集不一致。
+	rebuildFrozenCapabilities(t, s, &state, true)
 	if err := db.Model(run).Update("state_json", marshalNativeTestState(t, state)).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -681,6 +682,16 @@ func TestNativeSkillReadToolDescribesStableRelativeLocation(t *testing.T) {
 	description := nativeSkillReadToolSchema()["function"].(map[string]any)["description"].(string)
 	if !strings.Contains(description, "skills/<name>/SKILL.md") || strings.Contains(description, "绝对路径") {
 		t.Fatalf("read description must point to the stable relative location: %s", description)
+	}
+	// PR149：<name> 必须取系统提示 available_skills 的原值，否则合法路径会被模型猜错。
+	if !strings.Contains(description, "available_skills") {
+		t.Fatalf("read description lost the available_skills naming rule: %s", description)
+	}
+	// 业务读取扩展已回退：read 不得再宣称能读画布正文、图片或短剧分集。
+	for _, removed := range []string{"canvas:text/", "canvas:image/", "drama:episode/"} {
+		if strings.Contains(description, removed) {
+			t.Fatalf("read description still advertises the removed business namespace %q: %s", removed, description)
+		}
 	}
 }
 

@@ -39,6 +39,28 @@ func piAgentTestFixture(t *testing.T) (*Service, *gorm.DB, *model.CloudAgentExec
 	}
 	state.Canonical = cloudAgentCanonical(system, nil, req.Prompt, req)
 	state.Canonical.Tools = cloudAgentVisibleTools(state.Canonical.Tools, "", nil, nil)
+	// 夹具模拟当前合同的运行：冻结目录 2、定义身份与披露清单齐全。旧目录形态由
+	// cloud_agent_read_upgrade_test.go 单独覆盖。
+	definition, err := s.ResolveAgentDefinition("canvas", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities, tools, err := compileAgentRunCapabilityDirectory(definition, req, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities.DirectoryVersion = agentCapabilityDirectoryVersion
+	if capabilities.DirectoryHash, err = agentCapabilityDirectoryHash(capabilities, tools); err != nil {
+		t.Fatal(err)
+	}
+	state.Capabilities = &capabilities
+	state.Canonical.Tools = tools
+	state.DisclosureVersion = cloudAgentToolDisclosureVersion
+	state.AdvertisedToolNames = cloudAgentSelectAdvertisedTools(tools)
+	state.Context = &AgentContextSnapshot{
+		Version: agentContextVersion,
+		Scope:   AgentContextScope{UserID: userID, Business: agentBusinessScope(req)},
+	}
 	state.StepLimits, _ = s.cloudAgentStepLimits()
 	encoded, err := json.Marshal(state)
 	if err != nil {

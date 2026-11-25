@@ -15,7 +15,6 @@ type AgentDefinition struct {
 	BusinessType       string
 	IsDefault          bool
 	BusinessTools      []string
-	ReadAdapters       []string
 	SkillIDs           []string
 	DefaultSkillScopes []string
 	AllowUserSkills    bool
@@ -23,7 +22,6 @@ type AgentDefinition struct {
 	InteractionPolicy  string
 	ReadOnly           bool
 	authorize          agentObjectAuthorizer
-	readAdapters       map[string]agentReadAdapter
 	tools              map[string]agentToolRegistration
 }
 
@@ -35,11 +33,10 @@ type agentDefinitionVersion struct {
 }
 
 type agentDefinitionRegistry struct {
-	defaults     map[string]string
-	latest       map[string]AgentDefinition
-	versions     map[agentDefinitionVersion]AgentDefinition
-	readAdapters map[string]agentReadAdapter
-	tools        map[string]agentToolRegistration
+	defaults map[string]string
+	latest   map[string]AgentDefinition
+	versions map[agentDefinitionVersion]AgentDefinition
+	tools    map[string]agentToolRegistration
 }
 
 var defaultAgentDefinitionRegistry *agentDefinitionRegistry
@@ -48,20 +45,23 @@ func init() {
 	agentToolRegistry = builtinAgentToolRegistry()
 	drama := AgentDefinition{
 		ID: "drama.analysis", Version: 1, BusinessType: "drama", IsDefault: true, ReadOnly: true,
-		BusinessTools: []string{"task_get"}, ReadAdapters: []string{"drama:episode"}, MemoryPolicy: "off",
+		BusinessTools: []string{"task_get", "drama_read_episode"}, MemoryPolicy: "off",
 		DefaultSkillScopes: []string{"global", "drama"},
 	}
-	interactiveDrama := drama
-	interactiveDrama.Version = 2
+	// v2 是 Skill-only read 合同的短剧定义：分集改用 drama_read_episode，交互式升到 v3。
+	scopedDrama := drama
+	scopedDrama.Version = 2
+	interactiveDrama := scopedDrama
+	interactiveDrama.Version = 3
 	interactiveDrama.InteractionPolicy = "ask_user"
 	platform := AgentDefinition{
 		ID: "platform.default", Version: 1, BusinessType: AgentPlatformBusinessType, IsDefault: true, ReadOnly: true,
-		BusinessTools: []string{}, ReadAdapters: []string{}, AllowUserSkills: false,
+		BusinessTools: []string{}, AllowUserSkills: false,
 		InteractionPolicy: "ask_user", MemoryPolicy: "off",
 	}
 	registry, err := newAgentDefinitionRegistry([]AgentDefinition{
 		{
-			ID: "canvas.default", Version: 1, BusinessType: "canvas", IsDefault: true,
+			ID: "canvas.default", Version: 2, BusinessType: "canvas", IsDefault: true,
 			BusinessTools: []string{
 				"director", "canvas_list_node_types", "canvas_list_assets", "canvas_read_content", "canvas_search_nodes",
 				"canvas_get_state", "canvas_read_batch_table", "task_get", "canvas_inspect_image", "canvas_undo",
@@ -71,10 +71,10 @@ func init() {
 				"wait_generations", "generate_media_batch", "media_batch_control", "canvas_build_board", "canvas_preflight",
 				"web_search", "spawn_subagent", "wait_subagents", "message_subagent", "subagent_status", "send_parent_message", "finish_subagent",
 			},
-			ReadAdapters: []string{"canvas:text", "canvas:image"}, AllowUserSkills: true, InteractionPolicy: "ask_user", MemoryPolicy: "off",
+			AllowUserSkills: true, InteractionPolicy: "ask_user", MemoryPolicy: "off",
 			DefaultSkillScopes: []string{"global", "canvas"},
 		},
-		drama, interactiveDrama, platform,
+		drama, scopedDrama, interactiveDrama, platform,
 	})
 	if err != nil {
 		panic(err)
@@ -82,27 +82,20 @@ func init() {
 	defaultAgentDefinitionRegistry = registry
 }
 
-func newAgentDefinitionRegistry(definitions []AgentDefinition, additionalAdapters ...agentReadAdapter) (*agentDefinitionRegistry, error) {
-	return newAgentRegistry(definitions, nil, additionalAdapters...)
+func newAgentDefinitionRegistry(definitions []AgentDefinition) (*agentDefinitionRegistry, error) {
+	return newAgentRegistry(definitions, nil)
 }
 
-func newAgentRegistry(definitions []AgentDefinition, additionalTools []agentToolRegistration, additionalAdapters ...agentReadAdapter) (*agentDefinitionRegistry, error) {
+func newAgentRegistry(definitions []AgentDefinition, additionalTools []agentToolRegistration) (*agentDefinitionRegistry, error) {
 	registry := &agentDefinitionRegistry{
 		defaults: map[string]string{}, latest: map[string]AgentDefinition{}, versions: map[agentDefinitionVersion]AgentDefinition{},
-		readAdapters: map[string]agentReadAdapter{}, tools: maps.Clone(agentToolRegistry),
+		tools: maps.Clone(agentToolRegistry),
 	}
 	for _, tool := range additionalTools {
 		tool.order = len(registry.tools)
 		if err := registerAgentTool(registry.tools, tool); err != nil {
 			return nil, err
 		}
-	}
-	for _, adapter := range append(builtinAgentReadAdapters(), additionalAdapters...) {
-		if !agentReadNamespace.MatchString(adapter.namespace) || adapter.business == "" || adapter.version <= 0 ||
-			adapter.read == nil || registry.readAdapters[adapter.namespace].read != nil {
-			return nil, fmt.Errorf("invalid or duplicate read adapter %q", adapter.namespace)
-		}
-		registry.readAdapters[adapter.namespace] = adapter
 	}
 	for _, definition := range definitions {
 		if err := registry.add(definition); err != nil {
@@ -119,10 +112,6 @@ func newAgentRegistry(definitions []AgentDefinition, additionalTools []agentTool
 
 func (registry *agentDefinitionRegistry) add(definition AgentDefinition) error {
 	definition.tools = registry.tools
-	definition.readAdapters = make(map[string]agentReadAdapter, len(definition.ReadAdapters))
-	for _, name := range definition.ReadAdapters {
-		definition.readAdapters[name] = registry.readAdapters[name]
-	}
 	if err := validateAgentDefinition(definition); err != nil {
 		return err
 	}
@@ -150,7 +139,6 @@ func (registry *agentDefinitionRegistry) add(definition AgentDefinition) error {
 
 func cloneAgentDefinition(definition AgentDefinition) AgentDefinition {
 	definition.BusinessTools = slices.Clone(definition.BusinessTools)
-	definition.ReadAdapters = slices.Clone(definition.ReadAdapters)
 	definition.SkillIDs = slices.Clone(definition.SkillIDs)
 	definition.DefaultSkillScopes = slices.Clone(definition.DefaultSkillScopes)
 	return definition

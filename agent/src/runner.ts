@@ -27,7 +27,7 @@ import { compactionSettings, serializePreparation, runNativeCompaction, prepareN
 import { FatalWorkerError } from "./tool-disclosure.js";
 import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
-import { createStableSkillPromptExtension, materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected, isBusinessRead } from "./native-skills.js";
+import { createStableSkillPromptExtension, materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected } from "./native-skills.js";
 import { Unsafe, type TSchema } from "typebox";
 import { createImageContextExtension, createTerminalHistoryExtension, missingImageContent } from "./session-history.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
@@ -358,8 +358,10 @@ async function recoverToolResults(
   // Legacy category selectors never performed a business operation. Complete
   // an interrupted v1 selector locally so the restored Pi transcript has a
   // paired result; do not submit a synthetic call to Go or execute any tool.
+  // Native read is always Go-independent Skill IO in native mode: it never
+  // enters a durable business batch.
   const executableCalls = calls.filter((call) => !call.function.name.startsWith("agent_tools_") &&
-    !(recoverNativeRead && call.function.name === "read" && !isBusinessRead(call)));
+    !(recoverNativeRead && call.function.name === "read"));
   const taskId = snapshot.lastTaskId || "";
   const persisted = snapshot.pendingToolBatch;
   // Recovery submits only the persisted call identity. Go owns its arguments,
@@ -371,7 +373,7 @@ async function recoverToolResults(
   for (const call of calls) {
     if (completed.has(call.id)) continue;
     const legacyCategory = call.function.name.startsWith("agent_tools_");
-    const receipt = recoverNativeRead && call.function.name === "read" && !isBusinessRead(call)
+    const receipt = recoverNativeRead && call.function.name === "read"
       ? await recoverNativeRead(call)
       : legacyCategory
       ? { result: "旧版工具分类入口已完成兼容，不执行业务操作。请直接使用当前工具表中的具体工具。" }
@@ -1030,12 +1032,6 @@ export async function runCanvasAgent(
       await queue.drain();
       if (listenerFailure !== undefined) throw listenerFailure;
       try {
-        if (isBusinessRead({ id: callId, type: "function", function: { name: "read", arguments: JSON.stringify(params) } })) {
-          const receipt = await executeBusinessTool("read", params, callId, signal);
-          if (receipt.isError) throw new NativeSkillReadRejected(typeof receipt.result === "string" ? receipt.result : JSON.stringify(receipt.result));
-          return { content: [{ type: "text" as const, text: JSON.stringify(receipt.result) }], details: receipt.result,
-            ...(receipt.terminate ? { terminate: true } : {}) };
-        }
         if (typeof params.path !== "string") throw new NativeSkillReadRejected("Native Skill read requires a path");
         const path = resumedNativeCallIds.has(callId)
           ? rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path) : params.path;
@@ -1141,7 +1137,7 @@ export async function runCanvasAgent(
         batchRejection = calls.length ? batchAdmissionError(disclosure, calls, nativeMode) || "" : "";
         admittedCallIds = new Set(batchRejection ? [] : calls.map((call) => call.id));
         if (admittedCallIds.size > 0) {
-          const batch = calls.filter((call) => admittedCallIds.has(call.id) && !(nativeMode && call.function.name === "read" && !isBusinessRead(call)));
+          const batch = calls.filter((call) => admittedCallIds.has(call.id) && !(nativeMode && call.function.name === "read"));
           // 顺序是跨进程合同，不是实现细节：Go 的 `PiToolBatch` 在 `ActiveTaskID` 非空时
           // 拒绝整个批次（"Agent 尚有未完成的模型或工具步骤"），而清掉它的正是这条带 taskId
           // 的 assistant 检查点（`PiCheckpointMessage` 在同一事务里写消息 + 确认模型任务）。
