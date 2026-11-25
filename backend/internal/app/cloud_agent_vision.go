@@ -419,7 +419,7 @@ func (s *Service) prepareCloudAgentImageInspection(userID, canvasID string, stat
 	if args.Purpose != "" && args.Purpose != "inspect" && args.Purpose != "compare" {
 		return nil, cloudAgentFieldError("purpose", "invalid_value", "purpose 必须是 inspect 或 compare")
 	}
-	refreshImage := args.Refresh
+	refreshImage := cloudAgentVisionRefresh(state, args.Refresh, args.Purpose)
 	summary, err := normalizeCloudAgentVisionSummary(args.Summary)
 	if err != nil {
 		return nil, err
@@ -514,7 +514,7 @@ func (s *Service) prepareCloudAgentImageInspection(userID, canvasID string, stat
 	// （例如分批预算把原图挤到了后面的批次）就按未送达处理、允许重新附图，
 	// 否则模型会卡在"看不见图又申请不到新图"的死局。重复附图次数仍受
 	// cloudAgentMaxImageInspectionsPerRun 与上面的本轮识图预算限制。
-	if state.ImageInspectionReads[cacheKey] > 0 && state.DeliveredImageSHAs[args.NodeID] == resourceSHA && !refreshImage {
+	if cloudAgentReuseDeliveredImage(state, cacheKey, args.NodeID, resourceSHA, signature) && !refreshImage {
 		return cloudAgentImageInspection{ResourceSHA: resourceSHA, Receipt: map[string]any{
 			"nodeId": args.NodeID, "sha256": resourceSHA,
 			"repeat": true, "imageAttached": false, "imageChanged": false,
@@ -591,10 +591,19 @@ func (state *cloudAgentRuntime) markCanvasImageInspection(nodeID string, attache
 	if !attached {
 		return
 	}
+	state.countCanvasImageAttachment(nodeID)
+	state.noteCanvasImageAttachment(nodeID, signature)
+}
+
+func (state *cloudAgentRuntime) countCanvasImageAttachment(nodeID string) {
 	if state.ImageInspectCounts == nil {
 		state.ImageInspectCounts = map[string]int{}
 	}
 	state.ImageInspectCounts[nodeID]++
+}
+
+func (state *cloudAgentRuntime) noteCanvasImageAttachment(nodeID, signature string) {
+	state.cloudAgentImageObservationFor(nodeID, signature)
 	if signature != "" {
 		if state.ImageObservationSignatures == nil {
 			state.ImageObservationSignatures = map[string]string{}
@@ -1085,23 +1094,4 @@ func cloudAgentStageImageInspection(state *cloudAgentRuntime, inspection cloudAg
 		return
 	}
 	state.PendingImageInspections = append(state.PendingImageInspections, inspection)
-}
-
-// cloudAgentFlushPendingImages 把缓冲里的图片合并成一条 user 消息，追加在最后一条
-// tool 结果之后。返回是否真的追加了消息。
-//
-// 幂等：缓冲在追加前就清空，重复调用是空操作。正常路径在当前批次最后一个调用完成时
-// 调用；提前收尾的调用则由 skipRemainingCloudAgentCalls 补齐批次后 flush，确保缓冲图片
-// 位于全部 tool 结果之后，不会随着本轮结束丢失。
-func cloudAgentFlushPendingImages(state *cloudAgentRuntime) bool {
-	if state == nil || len(state.PendingImageInspections) == 0 {
-		return false
-	}
-	inspections := state.PendingImageInspections
-	state.PendingImageInspections = nil
-	for _, batch := range planCloudAgentVisionBatches(inspections, state.VisionBatchBudget) {
-		state.Canonical.Messages = append(state.Canonical.Messages,
-			map[string]any{"role": "user", "content": cloudAgentImageContentParts(batch...)})
-	}
-	return true
 }

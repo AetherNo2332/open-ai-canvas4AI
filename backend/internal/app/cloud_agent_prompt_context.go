@@ -18,29 +18,39 @@ const (
 	cloudAgentContextTruncatedArguments cloudAgentRuntimeContextKind = "truncated_tool_arguments"
 	cloudAgentContextStreamStalled      cloudAgentRuntimeContextKind = "stream_stalled"
 	cloudAgentRuntimeCallLimits         cloudAgentRuntimeContextKind = "call_limits"
+	cloudAgentRuntimeCanvasReferences   cloudAgentRuntimeContextKind = "canvas_references"
 )
 
 // Only serializable fact fields belong here. Behavioral instructions live in
 // prompts/agent-system-policy.md and share its version/hash contract.
 type cloudAgentRuntimeContext struct {
-	Source         string                       `json:"source"`
-	Kind           cloudAgentRuntimeContextKind `json:"kind"`
-	Items          []cloudAgentPlanItem         `json:"items,omitempty"`
-	Detail         string                       `json:"detail,omitempty"`
-	MaxToolCalls   int                          `json:"maxToolCalls,omitempty"`
-	MaxOutputBytes int                          `json:"maxOutputBytes,omitempty"`
-	CallLimits     *cloudAgentCallLimits        `json:"callLimits,omitempty"`
-	ReadToolCalls  int                          `json:"readToolCalls,omitempty"`
+	Source              string                       `json:"source"`
+	Kind                cloudAgentRuntimeContextKind `json:"kind"`
+	Items               []cloudAgentPlanItem         `json:"items,omitempty"`
+	Detail              string                       `json:"detail,omitempty"`
+	MaxToolCalls        int                          `json:"maxToolCalls,omitempty"`
+	MaxOutputBytes      int                          `json:"maxOutputBytes,omitempty"`
+	CallLimits          *cloudAgentCallLimits        `json:"callLimits,omitempty"`
+	ReadToolCalls       int                          `json:"readToolCalls,omitempty"`
+	ReferenceCandidates []cloudAgentReferenceAnchor  `json:"referenceCandidates,omitempty"`
 }
 
 func cloudAgentRuntimeMessage(context cloudAgentRuntimeContext) map[string]any {
 	context.Source = "runtime"
-	// The closed struct contains only strings, integers and serializable plan items.
 	encoded, _ := json.Marshal(context)
 	return map[string]any{
 		"role": "user", "content": cloudAgentRuntimeContextMarker + string(encoded),
 		cloudAgentContextSourceKey: "runtime",
 	}
+}
+
+func (anchor cloudAgentCreativeAnchor) appendReferenceContext(messages []map[string]any) []map[string]any {
+	if anchor.Version < cloudAgentRuntimeReferenceAnchorVersion || len(anchor.ReferenceAssets) == 0 {
+		return messages
+	}
+	return append(messages[:len(messages):len(messages)], cloudAgentRuntimeMessage(cloudAgentRuntimeContext{
+		Kind: cloudAgentRuntimeCanvasReferences, ReferenceCandidates: anchor.ReferenceAssets,
+	}))
 }
 
 func cloudAgentLatestUserInstruction(messages []map[string]any) string {

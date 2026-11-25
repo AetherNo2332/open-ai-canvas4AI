@@ -65,6 +65,9 @@ func cloudAgentCompletionBlockers(state *cloudAgentRuntime) []cloudAgentCompleti
 	if state.ActiveSubagents > 0 {
 		blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "pending_subagents", Detail: "使用 wait_subagents 等待并收集子代理结果"})
 	}
+	if state.VisionRequestTail && (len(state.VisionQueue) > 0 || len(state.PendingImageInspections) > 0) {
+		blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "pending_images", Detail: "还有图片批次待处理"})
+	}
 	// 权限与生成完成通知不阻止收尾：它们只是事实同步，不该为它们多开一步模型调用。
 	for _, item := range state.PendingInterjections {
 		if item.Source != cloudAgentPermissionSource && item.Source != cloudAgentGenerationSource {
@@ -163,7 +166,7 @@ func cloudAgentCompletionBlockerText(block cloudAgentCompletionBlock) string {
 		switch blocker.Kind {
 		case "pending_interjection":
 			parts = append(parts, "用户刚发来插话，还没送进上下文")
-		case "pending_subagents", "structured_subagent_result":
+		case "pending_subagents", "structured_subagent_result", "pending_images":
 			parts = append(parts, blocker.Detail)
 		case cloudAgentCompletionTruncatedKind:
 			parts = append(parts, "上一步正文被输出上限截断，不是完整答复")

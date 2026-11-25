@@ -146,11 +146,11 @@ func cloudAgentCapabilityGuide() string {
 	return b.String()
 }
 
-func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
-	return compileCloudAgentPoliciesForRuntime(req, skills, canvasSummary, cloudAgentSkillRuntimeNative, anchors...)
+func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string) (string, cloudAgentPolicySnapshot, error) {
+	return compileCloudAgentPoliciesForRuntime(req, skills, canvasSummary, cloudAgentSkillRuntimeNative)
 }
 
-func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, skillMode string, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
+func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, skillMode string) (string, cloudAgentPolicySnapshot, error) {
 	businessType := req.ScopeBusinessType()
 	system, media, err := prompts.LoadAgentPoliciesForBusiness(businessType)
 	if err != nil {
@@ -186,6 +186,10 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 		b.WriteString("节点能力与选型：需要节点类型、默认尺寸、连接约束、适用场景和维护代价时调用 canvas_list_node_types 获取权威清单，不要凭记忆猜测 nodeType；由你按任务复杂度自主选择，不为形式强制使用任何节点——单画面、一次性说明或快速试验优先轻量节点，多镜头、镜头连续性、逐镜审查/生成或后续维护优先评估分镜脚本，普通文本或 Markdown 不能伪装成结构化分镜。\n")
 	}
 	recorder.mark(&b, "capabilities", "节点能力与选型")
+	if agentBusinessScope(req).Type == "canvas" {
+		b.WriteString("\n【运行状态】中的 canvas_references 提供服务端观察到的画布素材候选。observationStatus 只描述已有观察；关系梳理无需识图，判断外观或一致性时再看图。cached_needs_validation 须由识图工具核对当前资源。\n")
+		recorder.mark(&b, "canvasReferences", "画布素材引用规则")
+	}
 	// Behavior belongs to versioned policies; the compiler only projects facts.
 	context := map[string]any{
 		"source": "server_snapshot", "permissionMode": req.PermissionMode,
@@ -202,11 +206,6 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 		// passes an empty value and places the catalog in canonical messages so
 		// the stable system prefix remains cacheable.
 		context["canvasSummary"] = canvasSummary
-	}
-	if len(anchors) > 0 {
-		// User intent remains in user messages, never frozen into system context.
-		context["referenceCandidates"] = anchors[0].ReferenceAssets
-		context["visualInspectionPolicy"] = "observationStatus 只描述已有观察；关系梳理无需识图，判断外观或一致性时再看图。cached_needs_validation 须由识图工具核对当前资源。"
 	}
 	if businessType == "drama" && req.DramaEpisodeID != "" {
 		// A continued Pi session keeps earlier episode snapshots in its transcript.

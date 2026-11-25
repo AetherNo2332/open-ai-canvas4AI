@@ -878,7 +878,7 @@ export async function runCanvasAgent(
         return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
       }
       const refreshed = await bridge.snapshot(snapshot, signal);
-      for (const message of refreshed.canonical.messages.slice(canonicalCount)) {
+      for (const message of refreshed.visionRequestTail ? [] : refreshed.canonical.messages.slice(canonicalCount)) {
         // 插话里的图片要直接进会话，不能等下一次模型步骤才补（见旧实现的 steer 分支）。
         if (message.role === "user" && hasImagePart(message.content)) {
           session?.agent.steer(canvasUserMessage(message.content));
@@ -1056,7 +1056,7 @@ export async function runCanvasAgent(
     return undefined;
   }, nativeRead);
   const boot = await bootstrapSession(snapshot, systemPrompt, resume.entries, streamSimple, disclosure,
-    [compactionExtension, toolExtension, createStableSkillPromptExtension(snapshot.skills || []), createTerminalHistoryExtension(snapshot), createImageContextExtension(() => snapshot.visionBatchBudget?.maxImages ?? 1)],
+    [compactionExtension, toolExtension, createStableSkillPromptExtension(snapshot.skills || []), createTerminalHistoryExtension(snapshot), createImageContextExtension(() => snapshot.visionBatchBudget?.maxImages ?? 1, snapshot.visionRequestTail)],
     workspace);
   session = boot.session;
   sessionManager = boot.sessionManager;
@@ -1214,7 +1214,7 @@ export async function runCanvasAgent(
       }
       // A crash can leave a Go image message newer than Pi's last checkpoint.
       // Persist its original references before any new automatic compaction.
-      const imageContent = missingImageContent(initialVisualMessages,
+      const imageContent = snapshot.visionRequestTail ? [] : missingImageContent(initialVisualMessages,
         sessionManager.getBranch().flatMap(entry => entry.type === "message" ? [entry.message] : []));
       if (imageContent.length > 0) {
         const imageMessage = canvasUserMessage(imageContent);

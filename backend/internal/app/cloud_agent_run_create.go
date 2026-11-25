@@ -334,7 +334,7 @@ func (s *Service) buildCloudAgentRunPrompt(draft *cloudAgentRunDraft) error {
 	req := draft.req
 	// The policy prompt is the stable provider-cache prefix. Canvas contents are
 	// dynamic run data and must not be embedded in that prefix.
-	system, policy, err := compileCloudAgentPoliciesForRuntime(req, draft.skillSnapshots, "", cloudAgentSkillRuntimeNative, draft.creativeAnchor)
+	system, policy, err := compileCloudAgentPoliciesForRuntime(req, draft.skillSnapshots, "", cloudAgentSkillRuntimeNative)
 	if err != nil {
 		return err
 	}
@@ -404,6 +404,7 @@ func (s *Service) checkCloudAgentRunContextBudget(draft *cloudAgentRunDraft) err
 	}
 	content := draft.canonical
 	content.Tools = nil
+	content.Messages = draft.creativeAnchor.appendReferenceContext(content.Messages)
 	projected, err := cloudAgentRequestEstimatedTokens(&content)
 	if err != nil {
 		return err
@@ -511,6 +512,7 @@ func (draft *cloudAgentRunDraft) firstStepRuntime(stepLimits cloudAgentStepLimit
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: draft.creativeAnchor, TextHistory: draft.history, Skills: draft.skillSnapshots,
 		Canonical: draft.canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
 		Plan: draft.inheritedPlan, StepLimits: stepLimits, CallLimits: stepLimits.CallLimits,
+		VisionRequestTail:   draft.canvas != nil,
 		TokenAnchor:         draft.inheritedUsage,
 		DisclosureVersion:   cloudAgentToolDisclosureVersion,
 		AdvertisedToolNames: draft.advertisedNames,

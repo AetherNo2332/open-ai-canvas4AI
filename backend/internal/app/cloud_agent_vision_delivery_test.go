@@ -573,7 +573,7 @@ func TestCloudAgentVisionRepeatReadKeepsRunAlive(t *testing.T) {
 	first := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-first", map[string]any{"nodeId": "cat"})
 	repeat := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-repeat", map[string]any{"nodeId": "cat"})
 	run, state := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{first, repeat})
-	// 预置"这张图上一批已经真的送达模型"：交付 SHA 与资源内容一致，重复申请才走引导分支。
+	// 仅有送达记录，没有观察。同批的重复调用可准备图片，最终只交付一次。
 	state.DeliveredImageSHAs = map[string]string{"cat": fmt.Sprintf("%x", sha256.Sum256(pixels))}
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
@@ -582,12 +582,16 @@ func TestCloudAgentVisionRepeatReadKeepsRunAlive(t *testing.T) {
 	}
 
 	firstReceipt := cloudAgentVisionAdvanceReceipt(t, s, root.ID, first.ID)
-	if firstReceipt["imageAttached"] != true || stringValue(firstReceipt["sha256"]) == "" {
-		t.Fatalf("first inspection must attach the real image: %+v", firstReceipt)
+	if firstReceipt["imagePending"] != true || stringValue(firstReceipt["sha256"]) == "" {
+		t.Fatalf("first inspection must prepare the real image: %+v", firstReceipt)
 	}
 	repeatReceipt := cloudAgentVisionAdvanceReceipt(t, s, root.ID, repeat.ID)
-	if repeatReceipt["repeat"] != true || repeatReceipt["imageAttached"] != false {
-		t.Fatalf("repeat inspection must be a text-only guidance receipt: %+v", repeatReceipt)
+	if repeatReceipt["repeat"] != true || repeatReceipt["imagePending"] != true || repeatReceipt["imageAttached"] != false {
+		t.Fatalf("repeat inspection without an observation must remain eligible for delivery: %+v", repeatReceipt)
+	}
+	_, queued := agentInterjectionState(t, s, root.ID)
+	if len(queued.VisionQueue) != 1 || len(queued.VisionQueue[0].Images) != 1 {
+		t.Fatal("duplicate calls must share one queued original")
 	}
 	output, err := s.CloudAgentRun("user", root.ID)
 	if err != nil {
