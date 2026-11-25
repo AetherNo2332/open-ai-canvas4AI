@@ -1,5 +1,5 @@
 # CHANGELOG
-## v1.8.3(a92fa7a)
+## v1.8.3(dccb04a)
 
 - 画布 Agent 提交生成后不再阻塞等待：本轮提交完全部生成项即可继续或收尾，需要生成结果后再继续时用 finish_run 的 continuation 声明「全部登记任务终态后续接一次」，由后端在批次终态时自动开启续接；普通收尾不自动续接，也不轮询、不自动重试失败的付费生成。
 - 移除 wait_generations 工具，工具说明、Pi wire 身份（canvas-pi-wire/v8）、云端工具 schema（cloud-agent-tools/v30）和 Agent SDK 文档同步更新。
