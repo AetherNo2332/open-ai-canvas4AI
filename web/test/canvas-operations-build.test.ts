@@ -4,6 +4,7 @@ import { canvasContentHash, sameCanvasContent } from "@/lib/canvas/canvas-conten
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { buildCanvasOperations, prepareJournalRequestForReplay, repairPendingCanvasMutationRequest } from "@/services/user-data-sync";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 
 function canvas(patch: Partial<CanvasProject> = {}): CanvasProject {
     return {
@@ -24,6 +25,17 @@ function canvas(patch: Partial<CanvasProject> = {}): CanvasProject {
 }
 
 describe("画布 operations 生成", () => {
+    test("新建画布使用字段引用格式并通过 operations 保存", () => {
+        const before = useCanvasStore.getState().projects;
+        try {
+            const id = useCanvasStore.getState().createProject("新画布");
+            const created = useCanvasStore.getState().projects.find((project) => project.id === id)!;
+            expect(created.referenceFieldsVersion).toBe(1);
+            expect(buildCanvasOperations(undefined, created)[0]).toMatchObject({ type: "create_canvas", patch: { referenceFieldsVersion: 1 } });
+        } finally {
+            useCanvasStore.setState({ projects: before });
+        }
+    });
     test("生成任务时间戳更新携带taskId身份前置条件", () => {
         const before = canvas({ nodes: [{ id: "video", type: "video", metadata: { taskId: "task-1", taskUpdatedAt: "2026-04-01T00:00:00Z" } }] as CanvasProject["nodes"] });
         const after = canvas({ nodes: [{ id: "video", type: "video", metadata: { taskId: "task-1", taskUpdatedAt: "2026-04-01T00:00:01Z" } }] as CanvasProject["nodes"] });

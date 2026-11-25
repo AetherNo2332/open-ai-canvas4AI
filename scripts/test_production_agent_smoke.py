@@ -400,7 +400,8 @@ class ProductionSmokeTests(unittest.TestCase):
             self.assertEqual((method, path), ("PATCH", f"/canvas-projects/{identity}/operations"))
             self.assertEqual(body["baseRevision"], 0)
             self.assertTrue(body["mutationId"])
-            self.assertEqual(body["operations"][0], {"type": "create_canvas", "id": identity, "patch": {"title": "CI smoke"}})
+            self.assertEqual(body["clientCapabilities"], ["canvas-reference-fields/v1"])
+            self.assertEqual(body["operations"][0], {"type": "create_canvas", "id": identity, "patch": {"title": "CI smoke", "referenceFieldsVersion": 1}})
 
     def test_override_names_every_built_image_for_project(self):
         with tempfile.TemporaryDirectory() as directory:

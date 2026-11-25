@@ -266,8 +266,9 @@ class Smoke:
     def canvas(self):
         identity = str(uuid.uuid4())
         self.api("PATCH", f"/canvas-projects/{identity}/operations", {"mutationId": str(uuid.uuid4()),
-            "baseRevision": 0, "operations": [{"type": "create_canvas", "id": identity,
-                "patch": {"title": "CI smoke"}}]})
+            "baseRevision": 0, "clientCapabilities": ["canvas-reference-fields/v1"],
+            "operations": [{"type": "create_canvas", "id": identity,
+                "patch": {"title": "CI smoke", "referenceFieldsVersion": 1}}]})
         return identity
 
     def start(self, canvas, permission):

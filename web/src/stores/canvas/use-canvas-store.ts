@@ -724,6 +724,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 const project: CanvasProject = {
                     id,
                     revision: 0,
+                    referenceFieldsVersion: 1,
                     projectId,
                     title,
                     createdAt: now,
