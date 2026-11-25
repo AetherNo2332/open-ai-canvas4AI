@@ -16,6 +16,7 @@ const featureAvailabilitySettingKey = "feature_availability"
 
 const (
 	FeatureShortDrama            = "shortDrama"
+	FeatureShortplay             = "shortplay"
 	FeatureTaskCenter            = "taskCenter"
 	FeatureCredits               = "credits"
 	FeatureCustomChannels        = "customChannels"
@@ -34,6 +35,7 @@ const (
 type FeatureAvailability struct {
 	WelcomeEnabled               bool `json:"welcomeEnabled"`
 	ShortDramaEnabled            bool `json:"shortDramaEnabled"`
+	ShortplayEnabled             bool `json:"shortplayEnabled"`
 	TaskCenterEnabled            bool `json:"taskCenterEnabled"`
 	CreditsEnabled               bool `json:"creditsEnabled"`
 	CustomChannelsEnabled        bool `json:"customChannelsEnabled"`
@@ -62,6 +64,7 @@ func DefaultFeatureAvailability() FeatureAvailability {
 	return FeatureAvailability{
 		WelcomeEnabled:               true,
 		ShortDramaEnabled:            true,
+		ShortplayEnabled:             true,
 		TaskCenterEnabled:            true,
 		CreditsEnabled:               true,
 		CustomChannelsEnabled:        true,
@@ -125,6 +128,8 @@ func (s *Service) FeatureEnabled(feature string) (bool, error) {
 	switch feature {
 	case FeatureShortDrama:
 		return value.ShortDramaEnabled, nil
+	case FeatureShortplay:
+		return value.ShortplayEnabled, nil
 	case FeatureTaskCenter:
 		return value.TaskCenterEnabled, nil
 	case FeatureCredits:
@@ -167,6 +172,8 @@ func (s *Service) RequireFeature(feature string) error {
 	switch feature {
 	case FeatureShortDrama:
 		return kernel.Forbidden("短剧创作暂未开放")
+	case FeatureShortplay:
+		return kernel.Forbidden("短剧工作台暂未开放")
 	case FeatureTaskCenter:
 		return kernel.Forbidden("任务中心暂未开放")
 	case FeatureCredits:

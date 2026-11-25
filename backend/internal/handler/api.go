@@ -66,6 +66,10 @@ func RegisterCanvasAPI(api *gin.RouterGroup, svc *service.Service) {
 	projectAPI := api.Group("")
 	projectAPI.Use(RequireFeature(svc, service.FeatureShortDrama))
 	RegisterProjectRoutes(projectAPI, svc)
+	// 独立短剧工作台有自己的开放开关：关掉 drama 不影响 /shortplays，反之亦然。
+	shortplayAPI := api.Group("")
+	shortplayAPI.Use(RequireFeature(svc, service.FeatureShortplay))
+	registerShortplayRoutes(shortplayAPI, svc)
 	RegisterCanvasShareRoutes(api, svc)
 }
 

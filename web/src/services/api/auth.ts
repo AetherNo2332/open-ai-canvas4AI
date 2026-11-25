@@ -506,6 +506,7 @@ export function updateAdminFeatureAvailability(
             FeatureAvailability,
             | "welcomeEnabled"
             | "shortDramaEnabled"
+            | "shortplayEnabled"
             | "taskCenterEnabled"
             | "creditsEnabled"
             | "customChannelsEnabled"

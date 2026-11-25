@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { App, Button, Skeleton } from "antd";
 import { Switch } from "@/pages/admin/ui/controls";
-import { AlertTriangle, ArrowUpRight, Boxes, Clapperboard, Coins, CornerDownRight, History, ImageIcon, MonitorCog, PlugZap, Quote, RadioTower, RefreshCw, ShieldCheck, ShoppingBag, SlidersHorizontal, Video, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Boxes, Clapperboard, Coins, CornerDownRight, Film, History, ImageIcon, MonitorCog, PlugZap, Quote, RadioTower, RefreshCw, ShieldCheck, ShoppingBag, SlidersHorizontal, Video, Wallet } from "lucide-react";
 
 import { Link } from "react-router";
 
@@ -14,6 +14,7 @@ import "./feature-availability-panel.css";
 
 type FeatureKey =
     | "shortDramaEnabled"
+    | "shortplayEnabled"
     | "taskCenterEnabled"
     | "creditsEnabled"
     | "customChannelsEnabled"
@@ -52,6 +53,7 @@ type FeatureGroup = {
 
 const editableFeatureKeys: FeatureKey[] = [
     "shortDramaEnabled",
+    "shortplayEnabled",
     "taskCenterEnabled",
     "creditsEnabled",
     "customChannelsEnabled",
@@ -78,6 +80,13 @@ const featureGroups: FeatureGroup[] = [
                 location: "侧栏 · 短剧制作",
                 description: "关闭后隐藏入口，已有项目保留。",
                 icon: <Clapperboard className="size-4" aria-hidden="true" />,
+            },
+            {
+                key: "shortplayEnabled",
+                title: "短剧工作台",
+                location: "侧栏 · 短剧工作台",
+                description: "独立入口：建档、分集、资产与精修画布。关闭后隐藏入口，已有作品保留；与短剧创作互不影响。",
+                icon: <Film className="size-4" aria-hidden="true" />,
             },
             {
                 key: "imageWorkbenchEnabled",
@@ -524,6 +533,7 @@ function ModelSourceRow({ draft, saving, onChange }: { draft: FeatureAvailabilit
 function toEditablePayload(features: FeatureAvailability) {
     return {
         shortDramaEnabled: features.shortDramaEnabled,
+        shortplayEnabled: features.shortplayEnabled,
         taskCenterEnabled: features.taskCenterEnabled,
         creditsEnabled: features.creditsEnabled,
         customChannelsEnabled: features.customChannelsEnabled,
@@ -551,6 +561,7 @@ function parseFeatureAvailability(value: unknown): FeatureAvailability {
     return {
         welcomeEnabled: record.welcomeEnabled as boolean,
         shortDramaEnabled: record.shortDramaEnabled as boolean,
+        shortplayEnabled: record.shortplayEnabled as boolean,
         taskCenterEnabled: record.taskCenterEnabled as boolean,
         creditsEnabled: record.creditsEnabled as boolean,
         customChannelsEnabled: record.customChannelsEnabled as boolean,

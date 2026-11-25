@@ -226,12 +226,12 @@ export const router = createBrowserRouter([
                 ),
             },
             { path: "/projects/:projectId/*", element: <Navigate to=".." relative="path" replace /> },
-            // 短剧工作台：与 /projects（drama 制作台）是两条产品线，复用同一功能开关。
+            // 短剧工作台：与 /projects（drama 制作台）是两条产品线，使用独立的 shortplayEnabled 开关。
             {
                 path: "/shortplays",
                 element: (
                     <RequireAuth>
-                        <RequireFeature feature="shortDramaEnabled">{deferred(<ShortplayListPage />)}</RequireFeature>
+                        <RequireFeature feature="shortplayEnabled">{deferred(<ShortplayListPage />)}</RequireFeature>
                     </RequireAuth>
                 ),
             },
@@ -239,7 +239,7 @@ export const router = createBrowserRouter([
                 path: "/shortplays/new",
                 element: (
                     <RequireAuth>
-                        <RequireFeature feature="shortDramaEnabled">{deferred(<ShortplayCreatePage />)}</RequireFeature>
+                        <RequireFeature feature="shortplayEnabled">{deferred(<ShortplayCreatePage />)}</RequireFeature>
                     </RequireAuth>
                 ),
             },
@@ -247,7 +247,7 @@ export const router = createBrowserRouter([
                 path: "/shortplays/:projectId",
                 element: (
                     <RequireAuth>
-                        <RequireFeature feature="shortDramaEnabled">{deferred(<ShortplayDetailPage />)}</RequireFeature>
+                        <RequireFeature feature="shortplayEnabled">{deferred(<ShortplayDetailPage />)}</RequireFeature>
                     </RequireAuth>
                 ),
             },

@@ -43,6 +43,7 @@ const (
 	FeatureImageWorkbench              = app.FeatureImageWorkbench
 	FeaturePluginCenter                = app.FeaturePluginCenter
 	FeatureShortDrama                  = app.FeatureShortDrama
+	FeatureShortplay                   = app.FeatureShortplay
 	FeatureSystemPlugins               = app.FeatureSystemPlugins
 	FeatureInspirationSources          = app.FeatureInspirationSources
 	FeatureTaskCenter                  = app.FeatureTaskCenter
