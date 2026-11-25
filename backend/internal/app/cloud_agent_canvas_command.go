@@ -34,7 +34,7 @@ var canvasCommandSpecs = []canvasCommandSpec{
 	{Name: "run", Usage: "run <nodedir...> [--glob <pattern>] [--mode image|video|audio] [--concurrency N] [--max-retries N] [--canary]", Summary: "按节点 generationSpec 批量触发生成；走批次审批，结果逐条回写各自节点", Sensitive: true, Action: "触发生成"},
 	{Name: "edit", Usage: "edit <字段文件> [value...] | edit --glob <pattern> <value...>", Summary: "写字段文件；省略值表示清空", Sensitive: true, Action: "写字段"},
 	{Name: "log", Usage: "log [-n N]", Summary: "打印本画布最近的 Agent 写入留痕"},
-	{Name: "preset", Usage: "preset list | preset delete <id>", Summary: "列出或删除当前用户的 submap 预制件；save 走 S07 页面入口", Sensitive: false, Action: "管理预制件"},
+	{Name: "preset", Usage: "preset list", Summary: "列出当前用户的 submap 模板；保存和删除使用页面入口", Sensitive: false, Action: "查看模板"},
 	{Name: "help", Usage: "help", Summary: "打印命令清单与路径语义"},
 }
 

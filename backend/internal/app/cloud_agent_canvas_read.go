@@ -443,19 +443,10 @@ func canvasCommandPreset(repo *repository.Repository, userID string, args []stri
 	}
 	switch args[0] {
 	case "delete":
-		if len(args) != 2 {
-			return "", canvasCommandError("command", "required", "preset delete 需要预制 id：preset delete <id>")
-		}
-		if _, err := repo.UserSubmapPresetForUser(userID, args[1]); err != nil {
-			return "", canvasCommandError("command", "not_found", fmt.Sprintf("预制件 %s 不存在或不属于当前用户；先运行 preset list 取真实 id", args[1]))
-		}
-		if err := repo.DeleteUserSubmapPreset(userID, args[1]); err != nil {
-			return "", err
-		}
-		return "已删除预制件 " + args[1], nil
+		return "", canvasCommandError("command", "unsupported", "模板删除需要用户在模板管理页面操作；preset 只提供 list，不能通过只读画布命令删除模板")
 	case "save":
 		return "", canvasCommandError("command", "dependency", "preset save 需要把 submap 子树转成局部 ID 快照；请使用 S07 的子画布标题栏「另存为用户模板」或 POST /api/user-submap-presets，本片不复制前端快照逻辑")
 	default:
-		return "", canvasCommandError("command", "invalid_value", "preset 支持 list、delete <id>；save 请走 S07 页面入口")
+		return "", canvasCommandError("command", "invalid_value", "preset 只支持 list；模板保存和删除请使用页面入口")
 	}
 }

@@ -397,6 +397,35 @@ func TestCanvasCommandExposedByToolPolicy(t *testing.T) {
 	}
 }
 
+func TestCanvasCommandPresetReadCannotDeleteUserTemplate(t *testing.T) {
+	s, db := canvasCommandFixture(t)
+	if err := db.AutoMigrate(&model.UserSubmapPreset{}); err != nil {
+		t.Fatal(err)
+	}
+	preset := &model.UserSubmapPreset{ID: "preset-read-boundary", UserID: "user", Name: "保留模板", ManifestJSON: "{}", Revision: 1}
+	if err := s.repo.CreateUserSubmapPreset(preset); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"read_only", "auto"} {
+		state := &cloudAgentRuntime{Request: CloudAgentRequest{CanvasID: "agent-canvas", PermissionMode: mode}}
+		call := canvasCommandCall(t, "preset delete "+preset.ID, "")
+		if _, err := canvasCommandHandleRead(s.repo, "user", state, call); err == nil {
+			t.Errorf("%s: read channel must reject template deletion", mode)
+		}
+		if _, err := s.repo.UserSubmapPresetForUser("user", preset.ID); err != nil {
+			t.Fatalf("%s: read channel changed template: %v", mode, err)
+		}
+	}
+	_, hash := canvasCommandReload(t, s)
+	call := canvasCommandCall(t, "preset delete "+preset.ID+"; edit ./submap-1/text-1/content.txt 不应落库", hash)
+	if _, err := prepareCloudAgentCanvasCommandPlan(s.repo, "user", "agent-canvas", call); err == nil {
+		t.Fatal("write preview must reject unsupported template deletion")
+	}
+	if _, err := s.repo.UserSubmapPresetForUser("user", preset.ID); err != nil {
+		t.Fatalf("approval preparation changed template: %v", err)
+	}
+}
+
 func TestCanvasCommandRollsBackWhenRecorderFails(t *testing.T) {
 	s, _ := canvasCommandFixture(t)
 	_, hash := canvasCommandReload(t, s)
