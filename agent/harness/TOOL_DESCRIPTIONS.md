@@ -12,7 +12,7 @@ items 是待办对象数组，整表替换当前清单，最多20项，如 [{"id
 
 ## finish_run
 
-summary 必填，为给用户的最终答复全文。可选 continuation 仅限本轮已提交生成：when 只能是 all_generations_terminal，instruction 必填，写明检查成功项、汇总失败项且不自动重试。全部任务终态后只续接一次；普通收尾不自动续接，提交后不等待、不轮询。通过后持久化回执、最终消息和 completed 终态，返回 committed/runId/finalMessageId，可按原调用恢复且不重复发布。待办不阻止收尾。completionBlocked=true 时按 blockers/requiredAction 处理未送达插话或子代理交付协议，无需清空待办；仍需工具或审批时继续处理，已保存不等于用户已看见。
+summary 必填，为最终答复全文。可选 continuation 仅限本轮已提交生成：when 只能 all_generations_terminal，instruction 必填（检查成功项、汇总失败项、不自动重试）；全部终态后只续接一次，普通收尾不续接，提交后不等待、不轮询。通过后持久化回执、最终消息与 completed 终态，返回 committed/runId/finalMessageId，可按原调用恢复且不重复发布。待办不阻止收尾。completionBlocked=true 时按 blockers/requiredAction 处理未送达插话或子代理协议，无需清空待办；仍需工具或审批时继续处理，已保存不等于用户已看见。
 
 ## canvas_list_node_types
 
@@ -89,7 +89,7 @@ nodeId 读取当前画布图片或角色卡图，以真实字节附图。摘要�
 
 ## generate_media
 
-提交媒体任务，保留审批、计价、预算与资源校验。先查 model_list。intent 默认 create；更新成品用 new_version，复用 nodeId/分镜绑定，旧版仍可用，成功自动采用；期间手选版本则结果只进历史。new_version 可引用自身，冻结旧资源、不建自连线。原任务执行中、接单未知或待保存时用 task_get 恢复，不重新收费生成。分镜传 mode+storyboardNodeId+storyboardRowId，从行读取提示词、引用和时长，省略 nodeId 续用原输出；普通任务按 schema 传参。submitted/taskSubmitted 仅表示入队；后台通过「[系统通知] 生成结果」回报状态。先提交完需要生成的项，再说明下一步；不要等待，也不轮询。需要生成完成后继续时，在 finish_run.continuation 声明 all_generations_terminal，全部登记任务终态后只续接一次；否则普通收尾。失败后重新收费须用户明确要求并经审批。
+提交媒体任务，保留审批、计价、预算与资源校验。先查 model_list。intent 默认 create；更新成品用 new_version 复用 nodeId/分镜绑定，旧版仍可用、成功自动采用，期间手选版本则结果只进历史；可引用自身，冻结旧资源、不建自连线。执行中、接单未知或待保存时用 task_get 恢复，不重新收费。分镜传 mode+storyboardNodeId+storyboardRowId，从行读提示词、引用和时长，省略 nodeId 续用原输出；普通任务按 schema 传参。submitted/taskSubmitted 仅表示入队，后台经「[系统通知] 生成结果」回报。先提交完全部生成项再说明下一步，不要等待，也不轮询；需生成完成后继续时，用 finish_run.continuation 声明 all_generations_terminal，全部登记任务终态后只续接一次，否则普通收尾。失败后重新收费须用户明确要求并经审批。
 ## parameter_001
 
 短标识，如 1
