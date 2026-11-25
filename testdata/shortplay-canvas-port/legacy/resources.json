@@ -1,0 +1,96 @@
+{
+  "owner": "user",
+  "resources": [
+    {
+      "id": "frame-1",
+      "kind": "image",
+      "status": "ready",
+      "mimeType": "image/png",
+      "size": 1024,
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "id": "frame-2",
+      "kind": "image",
+      "status": "ready",
+      "mimeType": "image/png",
+      "size": 1024,
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "id": "video-1",
+      "kind": "video",
+      "status": "ready",
+      "mimeType": "video/mp4",
+      "size": 4096,
+      "durationMs": 4000
+    },
+    {
+      "id": "character-1",
+      "kind": "image",
+      "status": "ready",
+      "mimeType": "image/png",
+      "size": 1024,
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "id": "batch-output",
+      "kind": "image",
+      "status": "ready",
+      "mimeType": "image/png",
+      "size": 1024,
+      "width": 1280,
+      "height": 720
+    }
+  ],
+  "assets": [
+    {
+      "id": "asset-character",
+      "kind": "image",
+      "status": "confirmed",
+      "title": "林夏设定图",
+      "payload": {
+        "data": { "storageKey": "resource:character-1" }
+      }
+    },
+    {
+      "id": "asset-frame-1",
+      "kind": "image",
+      "status": "confirmed",
+      "title": "第一镜首帧",
+      "payload": {
+        "data": { "storageKey": "resource:frame-1" }
+      }
+    },
+    {
+      "id": "asset-frame-2",
+      "kind": "image",
+      "status": "confirmed",
+      "title": "第二镜首帧",
+      "payload": {
+        "data": { "storageKey": "resource:frame-2" }
+      }
+    },
+    {
+      "id": "asset-video-1",
+      "kind": "video",
+      "status": "confirmed",
+      "title": "第一镜旧视频",
+      "payload": {
+        "data": { "storageKey": "resource:video-1" }
+      }
+    },
+    {
+      "id": "asset-batch-output",
+      "kind": "image",
+      "status": "confirmed",
+      "title": "批量输出",
+      "payload": {
+        "data": { "storageKey": "resource:batch-output" }
+      }
+    }
+  ]
+}

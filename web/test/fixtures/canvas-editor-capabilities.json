@@ -1024,6 +1024,47 @@
                 "manualSize": {
                     "path": "metadata.manualSize"
                 },
+                "supersededByNodeId": {
+                    "path": "metadata.supersededByNodeId"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "usageNote": {
+                    "path": "metadata.usageNote"
+                },
+                "usageStatus": {
+                    "path": "metadata.usageStatus"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "shortplay-asset"
+        },
+        {
+            "patchFields": {
+                "content": {
+                    "path": "metadata.content"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
                 "title": {
                     "path": "title"
                 },
@@ -1038,6 +1079,35 @@
                 }
             },
             "type": "skill"
+        },
+        {
+            "patchFields": {
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "submap"
         },
         {
             "patchFields": {

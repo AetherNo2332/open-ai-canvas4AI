@@ -614,9 +614,9 @@ func TestCloudAgentToolLoopPersistsApprovalAndAppliesCanvasWrite(t *testing.T) {
 func TestCloudAgentNodeTypesExposeExecutableAllowList(t *testing.T) {
 	result := cloudAgentNodeTypes()
 	nodes, ok := result["nodes"].([]map[string]any)
-	want := []string{"image", "text", "drawing", "script", "skill", "config", "video", "audio", "frame", "markdown", "svg", "html", "panorama", "compare", "chart", "colorgrade", "media-conversion", "batch-table", "character"}
+	want := []string{"image", "text", "drawing", "script", "skill", "config", "video", "audio", "frame", "markdown", "svg", "html", "panorama", "compare", "chart", "colorgrade", "media-conversion", "batch-table", "submap", "shortplay-asset", "character"}
 	if !ok || len(nodes) != len(want) {
-		t.Fatalf("expected 18 builtin adapters and the character variant, got %d", len(nodes))
+		t.Fatalf("expected 20 builtin adapters and the character variant, got %d", len(nodes))
 	}
 	seen := map[string]bool{}
 	for _, node := range nodes {

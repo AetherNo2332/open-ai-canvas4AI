@@ -1,0 +1,380 @@
+{
+  "project": {
+    "id": "canvas-shortplay-s01",
+    "userId": "user",
+    "title": "shortplay S01",
+    "revision": 8
+  },
+  "payloadJson": "{\"createdAt\":\"2026-11-22T19:29:03.6423324+08:00\",\"id\":\"canvas-shortplay-s01\",\"idCounters\":{\"image\":1,\"submap\":1,\"submap-1__image\":1,\"submap-1__text\":4,\"submap-1__video\":1,\"text\":1},\"nodes\":[{\"height\":360,\"id\":\"submap-1\",\"metadata\":{\"collapsed\":false,\"content\":\"\",\"status\":\"idle\",\"workflowId\":\"storyboard\",\"workflowVersion\":1},\"position\":{\"x\":0,\"y\":0},\"title\":\"镜头1\",\"type\":\"submap\",\"width\":920},{\"height\":240,\"id\":\"submap-1__text-1\",\"metadata\":{\"content\":\"\",\"fontSize\":14,\"status\":\"idle\"},\"position\":{\"x\":24,\"y\":60},\"scopeId\":\"submap-1\",\"title\":\"图片提示词\",\"type\":\"text\",\"width\":340},{\"height\":240,\"id\":\"submap-1__text-2\",\"metadata\":{\"content\":\"\",\"fontSize\":14,\"status\":\"idle\"},\"position\":{\"x\":320,\"y\":60},\"scopeId\":\"submap-1\",\"title\":\"视频提示词\",\"type\":\"text\",\"width\":340},{\"height\":240,\"id\":\"submap-1__text-3\",\"metadata\":{\"content\":\"\",\"fontSize\":14,\"status\":\"idle\"},\"position\":{\"x\":616,\"y\":60},\"scopeId\":\"submap-1\",\"title\":\"台词/旁白\",\"type\":\"text\",\"width\":340},{\"height\":240,\"id\":\"submap-1__text-4\",\"metadata\":{\"content\":\"\",\"fontSize\":14,\"status\":\"idle\"},\"position\":{\"x\":24,\"y\":316},\"scopeId\":\"submap-1\",\"title\":\"备注\",\"type\":\"text\",\"width\":340},{\"height\":405,\"id\":\"submap-1__image-1\",\"metadata\":{\"composerContent\":\"\",\"content\":\"\",\"generationSpec\":{\"mode\":\"image\",\"options\":{\"imageResolution\":\"1k\",\"size\":\"16:9\"},\"prompt\":\"雨夜霓虹下的女主角，湿发，近景\",\"referenceBindings\":[],\"textInputMode\":\"append-sources\",\"version\":1},\"imageSizeSource\":\"default\",\"prompt\":\"\",\"referenceTextNodeIds\":[\"submap-1__text-1\"],\"status\":\"idle\"},\"position\":{\"x\":320,\"y\":316},\"scopeId\":\"submap-1\",\"title\":\"首帧\",\"type\":\"image\",\"width\":720},{\"height\":405,\"id\":\"submap-1__video-1\",\"metadata\":{\"composerContent\":\"\",\"content\":\"\",\"generationSpec\":{\"mode\":\"video\",\"options\":{\"resolution\":\"720\",\"size\":\"16:9\"},\"prompt\":\"@文本1\\n@文本2\\n台词/旁白：@文本3\",\"referenceBindings\":[],\"textInputMode\":\"append-sources\",\"version\":1},\"prompt\":\"\",\"referenceNodeIds\":[\"submap-1__image-1\",\"image-1\"],\"referenceTextNodeIds\":[\"submap-1__text-1\",\"submap-1__text-2\",\"submap-1__text-3\"],\"seconds\":\"4\",\"status\":\"idle\",\"videoStartFrameNodeId\":\"submap-1__image-1\"},\"position\":{\"x\":616,\"y\":316},\"scopeId\":\"submap-1\",\"title\":\"视频\",\"type\":\"video\",\"width\":720},{\"height\":405,\"id\":\"image-1\",\"metadata\":{\"composerContent\":\"\",\"content\":\"\",\"generationSpec\":{\"mode\":\"image\",\"options\":{\"imageResolution\":\"1k\",\"size\":\"16:9\"},\"prompt\":\"\",\"referenceBindings\":[],\"textInputMode\":\"append-sources\",\"version\":1},\"imageSizeSource\":\"default\",\"prompt\":\"\",\"status\":\"idle\"},\"position\":{\"x\":1080,\"y\":761},\"title\":\"外部素材\",\"type\":\"image\",\"width\":720},{\"height\":240,\"id\":\"text-1\",\"metadata\":{\"content\":\"\",\"fontSize\":14,\"status\":\"idle\"},\"position\":{\"x\":996,\"y\":1460},\"title\":\"外部文本\",\"type\":\"text\",\"width\":340}],\"projectId\":\"\",\"title\":\"shortplay S01\",\"updatedAt\":\"\\u003cdynamic-timestamp\\u003e\"}",
+  "document": {
+    "createdAt": "2026-11-22T19:29:03.6423324+08:00",
+    "id": "canvas-shortplay-s01",
+    "idCounters": {
+      "image": 1,
+      "submap": 1,
+      "submap-1__image": 1,
+      "submap-1__text": 4,
+      "submap-1__video": 1,
+      "text": 1
+    },
+    "nodes": [
+      {
+        "height": 360,
+        "id": "submap-1",
+        "metadata": {
+          "collapsed": false,
+          "content": "",
+          "status": "idle",
+          "workflowId": "storyboard",
+          "workflowVersion": 1
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "title": "镜头1",
+        "type": "submap",
+        "width": 920
+      },
+      {
+        "height": 240,
+        "id": "submap-1__text-1",
+        "metadata": {
+          "content": "",
+          "fontSize": 14,
+          "status": "idle"
+        },
+        "position": {
+          "x": 24,
+          "y": 60
+        },
+        "scopeId": "submap-1",
+        "title": "图片提示词",
+        "type": "text",
+        "width": 340
+      },
+      {
+        "height": 240,
+        "id": "submap-1__text-2",
+        "metadata": {
+          "content": "",
+          "fontSize": 14,
+          "status": "idle"
+        },
+        "position": {
+          "x": 320,
+          "y": 60
+        },
+        "scopeId": "submap-1",
+        "title": "视频提示词",
+        "type": "text",
+        "width": 340
+      },
+      {
+        "height": 240,
+        "id": "submap-1__text-3",
+        "metadata": {
+          "content": "",
+          "fontSize": 14,
+          "status": "idle"
+        },
+        "position": {
+          "x": 616,
+          "y": 60
+        },
+        "scopeId": "submap-1",
+        "title": "台词/旁白",
+        "type": "text",
+        "width": 340
+      },
+      {
+        "height": 240,
+        "id": "submap-1__text-4",
+        "metadata": {
+          "content": "",
+          "fontSize": 14,
+          "status": "idle"
+        },
+        "position": {
+          "x": 24,
+          "y": 316
+        },
+        "scopeId": "submap-1",
+        "title": "备注",
+        "type": "text",
+        "width": 340
+      },
+      {
+        "height": 405,
+        "id": "submap-1__image-1",
+        "metadata": {
+          "composerContent": "",
+          "content": "",
+          "generationSpec": {
+            "mode": "image",
+            "options": {
+              "imageResolution": "1k",
+              "size": "16:9"
+            },
+            "prompt": "雨夜霓虹下的女主角，湿发，近景",
+            "referenceBindings": [],
+            "textInputMode": "append-sources",
+            "version": 1
+          },
+          "imageSizeSource": "default",
+          "prompt": "",
+          "referenceTextNodeIds": [
+            "submap-1__text-1"
+          ],
+          "status": "idle"
+        },
+        "position": {
+          "x": 320,
+          "y": 316
+        },
+        "scopeId": "submap-1",
+        "title": "首帧",
+        "type": "image",
+        "width": 720
+      },
+      {
+        "height": 405,
+        "id": "submap-1__video-1",
+        "metadata": {
+          "composerContent": "",
+          "content": "",
+          "generationSpec": {
+            "mode": "video",
+            "options": {
+              "resolution": "720",
+              "size": "16:9"
+            },
+            "prompt": "@文本1\n@文本2\n台词/旁白：@文本3",
+            "referenceBindings": [],
+            "textInputMode": "append-sources",
+            "version": 1
+          },
+          "prompt": "",
+          "referenceNodeIds": [
+            "submap-1__image-1",
+            "image-1"
+          ],
+          "referenceTextNodeIds": [
+            "submap-1__text-1",
+            "submap-1__text-2",
+            "submap-1__text-3"
+          ],
+          "seconds": "4",
+          "status": "idle",
+          "videoStartFrameNodeId": "submap-1__image-1"
+        },
+        "position": {
+          "x": 616,
+          "y": 316
+        },
+        "scopeId": "submap-1",
+        "title": "视频",
+        "type": "video",
+        "width": 720
+      },
+      {
+        "height": 405,
+        "id": "image-1",
+        "metadata": {
+          "composerContent": "",
+          "content": "",
+          "generationSpec": {
+            "mode": "image",
+            "options": {
+              "imageResolution": "1k",
+              "size": "16:9"
+            },
+            "prompt": "",
+            "referenceBindings": [],
+            "textInputMode": "append-sources",
+            "version": 1
+          },
+          "imageSizeSource": "default",
+          "prompt": "",
+          "status": "idle"
+        },
+        "position": {
+          "x": 1080,
+          "y": 761
+        },
+        "title": "外部素材",
+        "type": "image",
+        "width": 720
+      },
+      {
+        "height": 240,
+        "id": "text-1",
+        "metadata": {
+          "content": "",
+          "fontSize": 14,
+          "status": "idle"
+        },
+        "position": {
+          "x": 996,
+          "y": 1460
+        },
+        "title": "外部文本",
+        "type": "text",
+        "width": 340
+      }
+    ],
+    "projectId": "",
+    "title": "shortplay S01",
+    "updatedAt": "\u003cdynamic-timestamp\u003e"
+  },
+  "nodeOrder": [
+    "submap-1",
+    "submap-1__text-1",
+    "submap-1__text-2",
+    "submap-1__text-3",
+    "submap-1__text-4",
+    "submap-1__image-1",
+    "submap-1__video-1",
+    "image-1",
+    "text-1"
+  ],
+  "nodes": [
+    {
+      "id": "submap-1",
+      "type": "submap",
+      "title": "镜头1",
+      "workflowId": "storyboard",
+      "workflowVersion": 1,
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "submap-1__text-1",
+      "type": "text",
+      "title": "图片提示词",
+      "scopeId": "submap-1",
+      "position": {
+        "x": 24,
+        "y": 60
+      }
+    },
+    {
+      "id": "submap-1__text-2",
+      "type": "text",
+      "title": "视频提示词",
+      "scopeId": "submap-1",
+      "position": {
+        "x": 320,
+        "y": 60
+      }
+    },
+    {
+      "id": "submap-1__text-3",
+      "type": "text",
+      "title": "台词/旁白",
+      "scopeId": "submap-1",
+      "position": {
+        "x": 616,
+        "y": 60
+      }
+    },
+    {
+      "id": "submap-1__text-4",
+      "type": "text",
+      "title": "备注",
+      "scopeId": "submap-1",
+      "position": {
+        "x": 24,
+        "y": 316
+      }
+    },
+    {
+      "id": "submap-1__image-1",
+      "type": "image",
+      "title": "首帧",
+      "scopeId": "submap-1",
+      "prompt": "雨夜霓虹下的女主角，湿发，近景",
+      "referenceTextNodeIds": [
+        "submap-1__text-1"
+      ],
+      "position": {
+        "x": 320,
+        "y": 316
+      }
+    },
+    {
+      "id": "submap-1__video-1",
+      "type": "video",
+      "title": "视频",
+      "scopeId": "submap-1",
+      "prompt": "@文本1\n@文本2\n台词/旁白：@文本3",
+      "seconds": "4",
+      "videoStartFrameNodeId": "submap-1__image-1",
+      "referenceNodeIds": [
+        "submap-1__image-1",
+        "image-1"
+      ],
+      "referenceTextNodeIds": [
+        "submap-1__text-1",
+        "submap-1__text-2",
+        "submap-1__text-3"
+      ],
+      "position": {
+        "x": 616,
+        "y": 316
+      }
+    },
+    {
+      "id": "image-1",
+      "type": "image",
+      "title": "外部素材",
+      "position": {
+        "x": 1080,
+        "y": 761
+      }
+    },
+    {
+      "id": "text-1",
+      "type": "text",
+      "title": "外部文本",
+      "position": {
+        "x": 996,
+        "y": 1460
+      }
+    }
+  ],
+  "projectedEdges": [
+    {
+      "id": "conn:r1:submap-1__image-1:submap-1__text-1",
+      "fromNodeId": "submap-1__text-1",
+      "toNodeId": "submap-1__image-1"
+    },
+    {
+      "id": "conn:r1:submap-1__video-1:submap-1__image-1",
+      "fromNodeId": "submap-1__image-1",
+      "toNodeId": "submap-1__video-1"
+    },
+    {
+      "id": "conn:r1:submap-1__video-1:image-1",
+      "fromNodeId": "image-1",
+      "toNodeId": "submap-1__video-1"
+    },
+    {
+      "id": "conn:r1:submap-1__video-1:submap-1__text-1",
+      "fromNodeId": "submap-1__text-1",
+      "toNodeId": "submap-1__video-1"
+    },
+    {
+      "id": "conn:r1:submap-1__video-1:submap-1__text-2",
+      "fromNodeId": "submap-1__text-2",
+      "toNodeId": "submap-1__video-1"
+    },
+    {
+      "id": "conn:r1:submap-1__video-1:submap-1__text-3",
+      "fromNodeId": "submap-1__text-3",
+      "toNodeId": "submap-1__video-1"
+    }
+  ]
+}

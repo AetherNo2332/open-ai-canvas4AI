@@ -83,7 +83,7 @@ func builtinAgentToolPolicy(name string) agentToolRegistration {
 	case "send_parent_message", "finish_subagent":
 		tool.allowed = func(req CloudAgentRequest) bool { return req.subagent != nil }
 	case "director", "canvas_list_node_types", "canvas_list_assets", "canvas_read_content",
-		"canvas_search_nodes", "canvas_get_state", "canvas_read_batch_table":
+		"canvas_search_nodes", "canvas_get_state", "canvas_read_batch_table", "canvas":
 		tool.allowed = canvas
 	case "canvas_undo", "canvas_redo", "canvas_bind_asset", "model_list", "canvas_create_character",
 		"canvas_edit_batch_table", "canvas_apply_ops", "canvas_arrange_nodes", "generate_media", "wait_generations",

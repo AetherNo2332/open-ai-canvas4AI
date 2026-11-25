@@ -113,6 +113,10 @@ func (c *cloudAgentToolCompiler) addCanvasReadTools(req CloudAgentRequest) {
 		"depth":            map[string]any{"type": "integer", "minimum": 0, "maximum": 3, "description": cloudAgentToolText("parameter_085")},
 		"includeRelated":   map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_086")},
 	})
+	c.add("canvas", cloudAgentToolText("canvas"), map[string]any{
+		"command":      str("命令行：pwd/ls/cat/grep/wc/head/tail/find/help/log/preset 只读；new/dup/mv/rm/edit/sed 与 cat > 写画布；run 按节点字段批量生成并走批次审批。支持 &&、;、换行与 cat/head/tail 管道；rm 任何权限模式都要审批"),
+		"snapshotHash": str("写命令使用的画布快照；审批前服务端会固化。只读命令可省略"),
+	}, "command")
 	c.add("canvas_read_batch_table", cloudAgentToolText("canvas_read_batch_table"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_013")), "offset": map[string]any{"type": "integer", "minimum": 0}}, "nodeId")
 }
 

@@ -170,6 +170,13 @@ func checkpointCloudAgentWriteApproval(current *model.CloudAgentExecution, repo 
 		if err != nil {
 			return err
 		}
+	} else if call.Function.Name == "canvas" {
+		resolved, canvasPreview, canvasErr := resolveCloudAgentCanvasCommandApproval(repo, run.UserID, state.Request.CanvasID, call)
+		if canvasErr != nil {
+			return failCloudAgentApprovalPreview(current, run, state, call, canvasErr)
+		}
+		call = resolved
+		preview = canvasPreview
 	} else {
 		var mutationErr error
 		preview, mutationErr = cloudAgentWriteApprovalPreview(repo, run, state, call)
@@ -228,6 +235,12 @@ func cloudAgentWriteApprovalPreview(repo *repository.Repository, run *model.Clou
 			return cloudAgentApprovalPreview{}, err
 		}
 		return arrangePlan.Preview, nil
+	case "canvas":
+		plan, err := prepareCloudAgentCanvasCommandPlan(repo, run.UserID, canvasID, call)
+		if err != nil {
+			return cloudAgentApprovalPreview{}, err
+		}
+		return plan.Preview, nil
 	}
 	canvasPlan, err := prepareCloudAgentCanvasMutation(repo, run.UserID, canvasID, call, state.Request.StoryboardDisabled)
 	if err != nil {

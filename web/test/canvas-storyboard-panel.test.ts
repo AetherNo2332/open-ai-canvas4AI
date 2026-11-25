@@ -9,7 +9,7 @@ describe("storyboard prompt panel boundaries", () => {
         const operations = source("use-canvas-node-operations.ts");
         expect(operations).toContain("if (type === CanvasNodeType.Script) setDialogNodeId(null)");
         expect(operations).toContain("if (source.type === CanvasNodeType.Script) setDialogNodeId(null)");
-        expect(operations).toContain("primaryNode.type !== CanvasNodeType.Script ? primaryNode.id : null");
+        expect(operations).toContain("primaryNode.type !== CanvasNodeType.Submap ? primaryNode.id : null");
     });
 
     test("single and batch connection creation clear the previous panel", () => {

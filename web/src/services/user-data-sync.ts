@@ -4,6 +4,8 @@ import { deleteRemoteAssets, deleteRemoteCanvasProject, applyRemoteCanvasOperati
 import type { CanvasOperation, CanvasOperationsRequest } from "@/services/api/user-data";
 import { ApiError } from "@/services/api/request";
 import { canvasContentHash, sameCanvasContent } from "@/lib/canvas/canvas-content";
+import { projectCanvasReferenceConnections } from "@/lib/canvas/canvas-reference-fields";
+import { canvasEdgePresentationFromConnections, type CanvasEdgePresentationMap } from "@/lib/canvas/canvas-edge-presentation";
 import { rebaseCanvasLocalEdits } from "@/lib/canvas/canvas-sync-rebase";
 import { fenceRejectedTaskTimestampMutation, repairLegacyTaskIdFence } from "@/lib/canvas/canvas-task-mutation";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -237,9 +239,13 @@ async function loadConfirmedCanvasBaselines() {
     }
     for (const project of projects) {
         if (!project?.id || !Array.isArray(project.nodes) || !Array.isArray(project.connections) || !project.remoteContentHash) continue;
-        const hash = await canvasContentHash(project);
+        const storedHash = await canvasContentHash(project);
         if (scope !== getActiveUserScope() || epoch !== sessionEpoch) return;
-        if (project.remoteContentHash === hash) acknowledgedProjects.set(project.id, project);
+        if (project.remoteContentHash !== storedHash) continue;
+        const projected = projectCanvasReferenceConnections(project);
+        const hash = projected === project ? storedHash : await canvasContentHash(projected);
+        if (scope !== getActiveUserScope() || epoch !== sessionEpoch) return;
+        acknowledgedProjects.set(project.id, projected === project ? project : { ...projected, remoteContentHash: hash });
     }
 }
 
@@ -261,7 +267,9 @@ export async function initializeRemoteUserDataSession(userId: string) {
         incrementalSession = true;
         await loadConfirmedCanvasBaselines();
         for (const project of useCanvasStore.getState().projects) {
-            if (!acknowledgedProjects.has(project.id) && project.remoteContentHash === (await canvasContentHash(project))) acknowledgedProjects.set(project.id, project);
+            if (acknowledgedProjects.has(project.id) || project.remoteContentHash !== (await canvasContentHash(project))) continue;
+            const projected = projectCanvasReferenceConnections(project);
+            acknowledgedProjects.set(project.id, projected === project ? project : { ...projected, remoteContentHash: await canvasContentHash(projected) });
         }
         for (const pending of pendingCanvasMutations.values()) {
             if (pending.baseline) acknowledgedProjects.set(pending.projectId, pending.baseline);
@@ -334,7 +342,7 @@ export async function loadCanvasProjectForEditing(id: string, options: { onLoad?
         let remote: CanvasProject;
         try {
             const knownRemote = verifiedProjects.has(id) ? acknowledgedProjects.get(id) : undefined;
-            remote = await restoreRemoteTextNodeContents((await getRemoteCanvasProject(id, knownRemote)).project);
+            remote = projectCanvasReferenceConnections(await restoreRemoteTextNodeContents((await getRemoteCanvasProject(id, knownRemote)).project));
         } catch (error) {
             if (epoch !== sessionEpoch) throw new Error("账号已切换，请重新打开画布");
             const local = useCanvasStore.getState().openProject(id);
@@ -420,16 +428,16 @@ export async function loadCanvasProjectForEditing(id: string, options: { onLoad?
 }
 
 // Project remote changes into the live editor while retaining authored edits.
-const agentCanvasListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined, source?: "sync" | "agent") => void>();
+const agentCanvasListeners = new Set<(project: CanvasProject, previous: CanvasProject | undefined, source?: "sync" | "agent" | "restore") => void>();
 
-export function subscribeAgentCanvasRefresh(listener: (project: CanvasProject, previous: CanvasProject | undefined, source?: "sync" | "agent") => void) {
+export function subscribeAgentCanvasRefresh(listener: (project: CanvasProject, previous: CanvasProject | undefined, source?: "sync" | "agent" | "restore") => void) {
     agentCanvasListeners.add(listener);
     return () => {
         agentCanvasListeners.delete(listener);
     };
 }
 
-export async function refreshCanvasAfterAgent(id: string, source: "sync" | "agent" = "agent") {
+export async function refreshCanvasAfterAgent(id: string, source: "sync" | "agent" | "restore" = "agent") {
     return refreshRemoteCanvas(id, source);
 }
 
@@ -444,7 +452,7 @@ export async function applyAgentCanvasChange(current: CanvasProject, event: { re
     return projected || useCanvasStore.getState().openProject(current.id) || current;
 }
 
-async function refreshRemoteCanvas(id: string, source: "sync" | "agent", minRevision?: number) {
+async function refreshRemoteCanvas(id: string, source: "sync" | "agent" | "restore", minRevision?: number) {
     const epoch = sessionEpoch;
     return withRemoteUserDataSyncExclusive(async () => {
         if (!activeRemoteUserId) throw new Error("请先登录再刷新 Agent 画布结果");
@@ -459,7 +467,7 @@ async function refreshRemoteCanvas(id: string, source: "sync" | "agent", minRevi
             return useCanvasStore.getState().openProject(id) || undefined;
         }
         const knownRemote = verifiedProjects.has(id) ? acknowledgedProjects.get(id) : undefined;
-        const project = await restoreRemoteTextNodeContents((await getRemoteCanvasProject(id, knownRemote)).project);
+        const project = projectCanvasReferenceConnections(await restoreRemoteTextNodeContents((await getRemoteCanvasProject(id, knownRemote)).project));
         if (epoch !== sessionEpoch) throw new Error("账号已切换");
         const current = useCanvasStore.getState().projects.find((candidate) => candidate.id === id);
         const baseline = acknowledgedProjects.get(id);
@@ -707,7 +715,8 @@ export async function syncRemoteUserData(userId?: string | null) {
             ensureSession();
             const localProjects = useCanvasStore.getState().projects;
             const localAssets = useAssetStore.getState().assets;
-            const remoteById = new Map(snapshot.projects.map((project) => [project.id, project]));
+            const snapshotProjects = snapshot.projects.map(projectCanvasReferenceConnections);
+            const remoteById = new Map(snapshotProjects.map((project) => [project.id, project]));
             // Convert cached local edits into the same durable operation journal before replacing the cache.
             for (const local of localProjects) {
                 const pending = pendingCanvasMutations.get(local.id);
@@ -748,7 +757,7 @@ export async function syncRemoteUserData(userId?: string | null) {
             }
             await persistPendingCanvasMutationJournal();
             const remoteProjects = await Promise.all(
-                snapshot.projects.map(async (project) => {
+                snapshotProjects.map(async (project) => {
                     const local = localProjects.find((item) => item.id === project.id);
                     const remoteContentHash = await canvasContentHash(project);
                     const pending = pendingCanvasMutations.has(project.id);
@@ -1214,10 +1223,21 @@ function canvasOperationValue(value: unknown) {
     return value === undefined ? null : value;
 }
 
-const CANVAS_OPERATION_FIELDS = ["title", "projectId", "chatSessions", "activeChatId", "starterMode", "appearance", "backgroundMode", "showImageInfo", "previsScenes", "timeline"] as const;
+const CANVAS_OPERATION_FIELDS = ["title", "projectId", "chatSessions", "activeChatId", "starterMode", "appearance", "backgroundMode", "showImageInfo", "previsScenes", "timeline", "idCounters", "edgePresentation"] as const;
+
+function canvasDocumentUsesReferenceFields(project: CanvasProject | undefined) {
+    return project?.referenceFieldsVersion === 1;
+}
+
+function canvasEdgePresentationForSave(project: CanvasProject | undefined): CanvasEdgePresentationMap | undefined {
+    return project?.edgePresentation ?? (project ? canvasEdgePresentationFromConnections(project.connections) : undefined);
+}
 
 export function buildCanvasOperations(base: CanvasProject | undefined, next: CanvasProject): CanvasOperation[] {
     const operations: CanvasOperation[] = [];
+    const nextEdgePresentation = canvasEdgePresentationForSave(next);
+    const baseEdgePresentation = canvasEdgePresentationForSave(base);
+    const persistsConnections = !canvasDocumentUsesReferenceFields(base) && !canvasDocumentUsesReferenceFields(next);
     if (!base) {
         operations.push({
             type: "create_canvas",
@@ -1233,6 +1253,9 @@ export function buildCanvasOperations(base: CanvasProject | undefined, next: Can
                 showImageInfo: next.showImageInfo,
                 previsScenes: next.previsScenes,
                 timeline: next.timeline,
+                referenceFieldsVersion: next.referenceFieldsVersion,
+                idCounters: next.idCounters,
+                edgePresentation: nextEdgePresentation,
             },
         });
     }
@@ -1257,18 +1280,20 @@ export function buildCanvasOperations(base: CanvasProject | undefined, next: Can
     for (const node of base?.nodes || []) {
         if (!nextNodes.has(node.id)) operations.push({ type: "remove_node", id: node.id, expected: node });
     }
-    const baseConnections = new Map((base?.connections || []).map((connection) => [connection.id, connection]));
-    const nextConnections = new Map(next.connections.map((connection) => [connection.id, connection]));
-    for (const connection of next.connections) {
-        const previous = baseConnections.get(connection.id);
-        if (previous && !canvasOperationValueEqual(previous, connection)) {
-            operations.push({ type: "update_connection", id: connection.id, connection, expected: previous });
-        } else if (!previous) {
-            operations.push({ type: "create_connection", connection });
+    if (persistsConnections) {
+        const baseConnections = new Map((base?.connections || []).map((connection) => [connection.id, connection]));
+        const nextConnections = new Map(next.connections.map((connection) => [connection.id, connection]));
+        for (const connection of next.connections) {
+            const previous = baseConnections.get(connection.id);
+            if (previous && !canvasOperationValueEqual(previous, connection)) {
+                operations.push({ type: "update_connection", id: connection.id, connection, expected: previous });
+            } else if (!previous) {
+                operations.push({ type: "create_connection", connection });
+            }
         }
-    }
-    for (const connection of base?.connections || []) {
-        if (!nextConnections.has(connection.id)) operations.push({ type: "remove_connection", id: connection.id, expected: connection });
+        for (const connection of base?.connections || []) {
+            if (!nextConnections.has(connection.id)) operations.push({ type: "remove_connection", id: connection.id, expected: connection });
+        }
     }
     // 新画布的字段已由 create_canvas.patch 写入；再追加 set_field(beforeValue=null)
     // 会在服务端看到刚创建的字段而判定冲突，所以只有已有基线时才生成字段操作。
@@ -1277,8 +1302,8 @@ export function buildCanvasOperations(base: CanvasProject | undefined, next: Can
         // 服务端用 "" 或缺省表示空值，本地可能是 undefined、null 或空数组；语义相同时不生成写操作。
         if ((field === "projectId" || field === "activeChatId" || field === "starterMode") && !base[field] && !next[field]) continue;
         if ((field === "previsScenes" || field === "chatSessions") && (!base[field] || base[field]?.length === 0) && (!next[field] || next[field]?.length === 0)) continue;
-        const previousValue = canvasOperationValue(base[field]);
-        const nextValue = canvasOperationValue(next[field]);
+        const previousValue = canvasOperationValue(field === "edgePresentation" ? baseEdgePresentation : base[field]);
+        const nextValue = canvasOperationValue(field === "edgePresentation" ? nextEdgePresentation : next[field]);
         if (!canvasOperationValueEqual(previousValue, nextValue)) {
             operations.push({ type: "set_field", field, value: nextValue, beforeValue: previousValue });
         }
@@ -1404,7 +1429,7 @@ async function reconcileCanvasLocalEdits(id: string, rejected?: PendingCanvasMut
         if (epoch !== sessionEpoch || scope !== getActiveUserScope()) throw new Error("账号已切换，已停止画布恢复");
     };
     useSyncProgressStore.getState().setProjectProgress(id, { phase: "saving", errorKind: undefined, message: "正在对齐云端画布" });
-    const remote = await restoreRemoteTextNodeContents((await getRemoteCanvasProject(id)).project);
+    const remote = projectCanvasReferenceConnections(await restoreRemoteTextNodeContents((await getRemoteCanvasProject(id)).project));
     ensureSession();
     await loadReferencedAssets(collectCanvasLoadAssetIds(remote));
     const hash = await canvasContentHash(remote);
@@ -1730,7 +1755,7 @@ async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: {
                 if (!operations.length) {
                     // No cloud write is needed, but local persistence and progress
                     // still need the same completion path as a submitted mutation.
-                    remoteSnapshot = { ...prepared, revision: current.revision };
+                    remoteSnapshot = projectCanvasReferenceConnections({ ...prepared, revision: current.revision });
                 } else {
                     const request: CanvasOperationsRequest = {
                         mutationId: newCanvasMutationId(),
@@ -1753,7 +1778,7 @@ async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: {
                 }
             }
             if (!remoteSnapshot && !Number.isSafeInteger(savedRevision)) throw new Error("服务端未返回有效画布版本");
-            const remote = remoteSnapshot ?? (await restoreRemoteTextNodeContents((await getRemoteCanvasProject(source.id)).project));
+            const remote = projectCanvasReferenceConnections(remoteSnapshot ?? (await restoreRemoteTextNodeContents((await getRemoteCanvasProject(source.id)).project)));
             const remoteHash = await canvasContentHash(remote);
             requireCurrentSession();
             const latest = useCanvasStore.getState().openProject(source.id);

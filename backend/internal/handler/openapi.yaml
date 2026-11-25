@@ -1525,6 +1525,84 @@ paths:
           description: 未登录
         "404":
           description: 画布不存在或不属于当前用户
+  /canvas-projects/{id}/history:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 读取当前用户画布的最近版本历史
+      description: 需要登录并拥有画布。只返回最近 20 个版本摘要和当前 revision，不返回快照正文；自动留档按内容变化和五分钟节流执行，恢复、迁移和资源修复前会强制保留快照。
+      responses:
+        "200":
+          description: 信封 data 为 { snapshots, currentRevision }；每项含 id、canvasId、revision、title、nodeCount、connectionCount、payloadBytes、reason、contentUpdatedAt、createdAt
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+  /canvas-projects/{id}/history/{snapshotId}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: snapshotId
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 读取指定画布历史版本的完整内容
+      description: 需要登录并拥有画布，快照必须属于该画布。响应同时返回版本摘要和当时的完整画布文档，供恢复前预览；Cache-Control 为 private, no-store。
+      responses:
+        "200":
+          description: 信封 data 为 { snapshot, project }，project 保留该版本的节点、引用字段和连线投影数据
+        "401":
+          description: 未登录
+        "404":
+          description: 画布或版本不存在、已过期或不属于当前用户
+  /canvas-projects/{id}/history/{snapshotId}/restore:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: snapshotId
+        required: true
+        schema: { type: string }
+    post:
+      tags: [canvas]
+      summary: 恢复指定画布历史版本
+      description: 需要登录并拥有画布。请求必须携带当前 revision 做 CAS；恢复前强制保存当前内容为 reason=before_restore 的快照，再写入历史版本并递增 revision。其他窗口通过画布变更通知刷新。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision:
+                  type: integer
+                  minimum: 0
+      responses:
+        "200":
+          description: 信封 data.project 为恢复后的完整画布及新 revision
+        "400":
+          description: 请求格式错误
+        "401":
+          description: 未登录
+        "404":
+          description: 画布或版本不存在、已过期或不属于当前用户
+        "409":
+          description: 当前画布 revision 已变化，需重新读取历史与画布版本
+        "428":
+          description: 缺少 revision，需刷新画布版本后重试
+        "429":
+          description: 请求超过画布写入频率限制
   /canvas-projects/{id}/sync-status:
     parameters:
       - in: path
@@ -1621,6 +1699,8 @@ paths:
         请求只提交对象级或字段级 operations，不提交整批画布快照。
         mutationId 是一次请求的幂等身份；响应丢失、断网、刷新或后台重试时必须复用同一个 mutationId 与原始 operations。
         更新、删除和连接操作要求目标存在并通过对象基线校验；同一字段冲突不会覆盖远端修改。
+        理解 referenceFieldsVersion=1 的客户端发送 clientCapabilities 中的 canvas-reference-fields/v1；之后写该文档也必须有此能力。
+        字段引用文档的 connections 是读取投影，连接写操作返回 canvas_connection_operations_retired；旧格式文档仍接受连接操作。
       requestBody:
         required: true
         content:
@@ -1650,6 +1730,15 @@ paths:
                       nodeId: { type: string, minLength: 1, maxLength: 160 }
                       sessionId: { type: string, minLength: 1, maxLength: 160 }
                       token: { type: string, minLength: 1, maxLength: 80 }
+                clientCapabilities:
+                  type: array
+                  maxItems: 16
+                  uniqueItems: true
+                  description: 客户端能力标识，不计入 mutation 摘要；canvas-reference-fields/v1 表示理解字段引用文档及字段关系投影
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 80
                 operations:
                   type: array
                   minItems: 1
@@ -1669,7 +1758,10 @@ paths:
         "404":
           description: 画布不存在或不属于当前用户，且请求未包含显式 create_canvas
         "409":
-          description: 对象并发冲突、同一 mutationId 对应的请求摘要不同或编辑证明失效（reason 为 canvas_edit_lease_conflict）；原事务不会被覆盖
+          description: |-
+            对象并发冲突、同一 mutationId 对应的请求摘要不同或编辑证明失效（reason 为 canvas_edit_lease_conflict）；原事务不会被覆盖。
+            字段引用文档缺少 canvas-reference-fields/v1 时 reason 为 canvas_client_capability_required；连接写操作返回 canvas_connection_operations_retired。
+            创建时显式固定字段引用格式但旧连线无法规范化时返回 canvas_document_format_conflict，画布与回执均不落库。
         "428":
           description: 缺少执行所需的对象基线
   /public/welcome:
@@ -4301,6 +4393,86 @@ paths:
           description: 画布已有更新、仍有冲突未选择（reason reference_migration_conflict）或已完成规范化（reason reference_migration_not_required）
         "428":
           description: 缺少 revision
+  /canvas-projects/{id}/shot-migration:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [canvas]
+      summary: 预览旧分镜行切换为镜头子画布
+      description: 只读。返回引用冲突、待迁移行数、分镜转 submap 计划、阻断/警告和当前在途任务；升级写入前必须没有在途任务。
+      responses:
+        "200":
+          description: 信封 data 为 { revision, required, ready, conflicts, shotSubmaps, rows, activeTasks, blocking, warnings }
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+    post:
+      tags: [canvas]
+      summary: 执行旧分镜行到镜头子画布的切换
+      description: 先按 revision CAS，再将旧连线规范化为字段引用，把每条分镜行转为 submap 与四个提示词子节点；已有图片/视频结果保持原节点和任务绑定。写入前保留历史快照 reason before_shot_migration，写入后重算托管连线。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, format: int64, minimum: 0 }
+                choices:
+                  type: object
+                  description: 引用冲突 scopeKey 到来源的映射，取值 fields 或 connections
+                  additionalProperties: { type: string, enum: [fields, connections] }
+      responses:
+        "200":
+          description: 信封 data 为 { project, submaps, rows, existingImages, existingVideos, preservedAssets }
+        "400":
+          description: 引用取值或文档格式无效
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+        "409":
+          description: 画布已有更新、仍有冲突、没有待迁移行，或存在在途任务（reason shot_migration_tasks_active）
+        "428":
+          description: 缺少 revision
+  /canvas-projects/{id}/shot-migration/rollback:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [canvas]
+      summary: 回退镜头子画布迁移
+      description: 读取最近一次 before_shot_migration 快照。切换后没有新编辑时 restore 用快照覆盖当前画布；已有新编辑时必须用 new_canvas，把迁移前文档复制成新画布，保留当前画布增量。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision]
+              properties:
+                revision: { type: integer, format: int64, minimum: 0 }
+                strategy: { type: string, enum: [restore, new_canvas], default: restore }
+      responses:
+        "200":
+          description: 信封 data 为 { restored, newCanvasId, snapshotId, migrationRevision, revision }
+        "400":
+          description: 回退策略无效
+        "401":
+          description: 未登录
+        "404":
+          description: 画布不存在或不属于当前用户
+        "409":
+          description: 画布已有更新、找不到迁移快照，或切换后已有新编辑但未选择 new_canvas
+        "428":
+          description: 缺少 revision
   /skills/install:
     post:
       tags: [skills]
@@ -5767,6 +5939,80 @@ paths:
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
         "403": {$ref: "#/components/responses/Error"}
+  /user-submap-presets:
+    get:
+      tags: [canvas]
+      summary: 列出当前用户的子画布模板
+      description: 只返回当前登录用户的模板，按最近更新时间倒序；模板名称、修订号和规范化快照均由服务端维护。Cache-Control 为 private, no-store。
+      responses:
+        "200":
+          description: 信封 data.presets 为当前用户的模板数组
+        "401":
+          description: 未登录
+    post:
+      tags: [canvas]
+      summary: 保存当前用户的子画布模板
+      description: 请求只提交局部化节点快照；id、version、revision 和归属由服务端覆盖。每个用户最多 200 个模板，单份快照最多 200 个节点、512 KiB，名称最多 80 个字。快照必须自包含，三组引用只能指向组内 localId。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifestJson]
+              properties:
+                manifestJson:
+                  type: string
+                  description: 序列化后的 {version, id, title, nodes} 快照；传入 manifestJson 字符串而非嵌套对象
+                  maxLength: 524288
+      responses:
+        "200":
+          description: 信封 data.preset 为已保存的模板
+        "400":
+          description: 快照为空、JSON/字段不符、版本不受支持、引用悬空或超过上限
+        "401":
+          description: 未登录
+  /user-submap-presets/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [canvas]
+      summary: 更新当前用户的子画布模板
+      description: 保留模板 id 并递增 revision；其他用户访问返回 404。请求体规则与创建相同。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [manifestJson]
+              properties:
+                manifestJson:
+                  type: string
+                  maxLength: 524288
+      responses:
+        "200":
+          description: 信封 data.preset 为更新后的模板
+        "400":
+          description: 快照无效或超过上限
+        "401":
+          description: 未登录
+        "404":
+          description: 模板不存在或不属于当前用户
+    delete:
+      tags: [canvas]
+      summary: 删除当前用户的子画布模板
+      description: 只删除当前用户的模板；其他用户访问返回 404。已插入画布的节点不会回溯修改。
+      responses:
+        "200":
+          description: 信封 data.id 为已删除模板 ID
+        "401":
+          description: 未登录
+        "404":
+          description: 模板不存在或不属于当前用户
 components:
   parameters:
     AgentRunID:

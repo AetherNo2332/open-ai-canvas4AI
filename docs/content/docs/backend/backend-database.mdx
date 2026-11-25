@@ -125,6 +125,21 @@ description: 影策后端核心持久化表与状态边界
 
 版本 110 `agent_wake_notification` 在 PostgreSQL 的 `agent_wake_events` 上安装语句级 INSERT 触发器，提交时发送空载荷通知。SQLite 只登记迁移，不创建触发器。通知不是事件存储；事件表、游标、计数器锁和生产者事务均保持不变。
 
+## 用户子画布模板（Schema 111）
+
+版本 111 `user_submap_preset` 只新增用户私有的子画布模板表，不改写画布、历史快照或既有账户数据。迁移在空库和已升级到 110 的库副本上均只创建表与索引，重复执行保持幂等。
+
+| 字段 | 用途 |
+| --- | --- |
+| `id` | 模板主键。创建时由服务端生成，客户端提交的同名字段被覆盖。 |
+| `user_id` | 模板归属。所有读取、更新和删除都附带当前登录用户，不提供跨账号共享。 |
+| `name` | 模板显示名，最多 80 个字，来自已校验快照标题。 |
+| `manifest_json` | 规范化后的局部化节点快照，最多 512 KiB、200 个节点；包含普通节点的类型、标题、`localId` 和 metadata，不包含 submap 容器本身。 |
+| `revision` | 模板内容修订号。创建为 1，更新一次递增一次。 |
+| `created_at` / `updated_at` | 创建和最近更新时间；列表按 `updated_at` 倒序。 |
+
+复合索引 `idx_user_submap_presets_user_updated` 按 `(user_id, updated_at)` 支撑个人模板列表；`user_id` 另有单列索引供归属检查和计数。模板不是画布版本的一部分：删除模板不会修改已插入的画布子树，画布恢复也不会回滚模板。每个用户最多 200 个模板的限制在 service 创建路径检查，接口同时校验快照节点数、字节数、名称、类型和自包含引用。升级前先备份数据库，并使用匹配新二进制版本的迁移命令；回退旧二进制前需恢复升级前备份。
+
 ## Agent 记忆文件列补齐（Schema 77）
 
 版本 77 `agent_memory_document_columns` 只做补列：确保 `agent_memory_documents.next_entry_seq` 与 `agent_memory_document_revisions.call_id` 存在，并把空值回填为 `0` / 空串。开发期的早期构建执行 v76 时这两列还没加入模型，v76 已记为完成、校验和不能再改，缺列会让创建 Agent 轮次时读取记忆文件失败（`no column named next_entry_seq`）。新库由 v76 一次建全，v77 是空操作；不改写既有记忆内容。

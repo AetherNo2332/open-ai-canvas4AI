@@ -42,7 +42,7 @@ func browserPatchTitle(t *testing.T, repo *repository.Repository, canvasID, node
 	before, _ := json.Marshal(entity(doc, "node:"+nodeID)["title"])
 	value, _ := json.Marshal(title)
 	revision := row.Revision
-	req := canvasdomain.CanvasOperationsRequest{MutationID: mutationID, BaseRevision: &revision, Operations: []canvasdomain.CanvasOperation{{
+	req := canvasdomain.CanvasOperationsRequest{MutationID: mutationID, BaseRevision: &revision, ClientCapabilities: []string{canvasdomain.CanvasClientCapabilityReferenceFields}, Operations: []canvasdomain.CanvasOperation{{
 		Type: "patch_node", ID: nodeID, Patch: map[string]json.RawMessage{"title": value}, Before: map[string]json.RawMessage{"title": before},
 	}}}
 	if _, err := canvasdomain.New(repo, nil).ApplyUserCanvasOperations("owner", canvasID, req); err != nil {

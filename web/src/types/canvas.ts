@@ -44,6 +44,7 @@ export enum CanvasNodeType {
     ColorGrade = "colorgrade",
     MediaConversion = "media-conversion",
     BatchTable = "batch-table",
+    Submap = "submap",
 }
 
 /** Runtime IDs contributed by plugins share the persisted node type field. */
@@ -471,6 +472,9 @@ export type CanvasNodeMetadata = {
     workflowKind?: CanvasWorkflowKind;
     workflowTitle?: string;
     workflowDescription?: string;
+    /** 内置 submap 形式的创建模板标识与版本；模板实例化后不保留活链接。 */
+    workflowId?: string;
+    workflowVersion?: number;
     stylePresetId?: string;
     styleProfileJson?: string;
     styleExecutionPlan?: StyleExecutionPlan;
@@ -484,6 +488,14 @@ export type CanvasNodeMetadata = {
     characterIds?: string[];
     referenceSetId?: string;
     referenceAssetNodeIds?: string[];
+    /** 媒体参考声明；关系边的唯一真源。 */
+    referenceNodeIds?: string[];
+    /** 文本参考声明；与媒体参考族并列，顺序决定 @文本N。 */
+    referenceTextNodeIds?: string[];
+    /** 派生血缘；来源删除后一并清理。 */
+    derivedFromNodeIds?: string[];
+    /** submap 内容区折叠状态。 */
+    collapsed?: boolean;
     assetBindings?: StoryboardAssetBinding[];
     characterName?: string;
     characterPrompt?: string;
@@ -684,6 +696,8 @@ export type CanvasNodeData = {
     width: number;
     height: number;
     parentId?: string;
+    /** submap 容纳键；子节点仍在顶层 nodes 中，与 parentId 的背板归属互不混用。 */
+    scopeId?: string;
     metadata?: CanvasNodeMetadata;
 };
 
@@ -776,6 +790,8 @@ export type ContextMenuState =
           y: number;
           position: Position;
           createOpen?: boolean;
+          /** 右键命中 submap 内容区时，新节点归属到该容器。 */
+          scopeId?: string;
       }
     | {
           type: "node";

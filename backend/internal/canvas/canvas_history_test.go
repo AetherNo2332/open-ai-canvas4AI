@@ -136,3 +136,114 @@ func TestCanvasHistoryRestore(t *testing.T) {
 		t.Fatal("could not undo restore")
 	}
 }
+
+func TestApplyCanvasOperationsCapturesAndRollsBackDocumentHistory(t *testing.T) {
+	svc, db := newCanvasOperationTestServiceWithDB(t)
+	if err := db.Create(&model.CanvasProject{
+		ID: "canvas", UserID: "user", Title: "原始标题", Revision: 1,
+		PayloadJSON: `{"title":"原始标题","nodes":[{"id":"node-1","type":"text","metadata":{"title":"原始节点"}}],"connections":[]}`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	rename := func(mutation, before, title string) {
+		t.Helper()
+		_, err := svc.ApplyUserCanvasOperations("user", "canvas", CanvasOperationsRequest{
+			MutationID: mutation,
+			Operations: []CanvasOperation{{
+				Type: "set_field", Field: "title", Value: json.RawMessage(`"` + title + `"`), BeforeValue: json.RawMessage(`"` + before + `"`),
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	rename("history-save-1", "原始标题", "第一次保存")
+	list, err := svc.CanvasHistory("user", "canvas")
+	if err != nil || len(list.Snapshots) != 1 || list.Snapshots[0].Revision != 1 || list.CurrentRevision != 2 {
+		t.Fatalf("first operations save history = %#v, err = %v", list, err)
+	}
+	preview, err := svc.CanvasHistorySnapshot("user", "canvas", list.Snapshots[0].ID)
+	if err != nil || !strings.Contains(preview.PayloadJSON, "原始标题") || strings.Contains(preview.PayloadJSON, "第一次保存") {
+		t.Fatalf("operations history preimage = %#v, err = %v", preview, err)
+	}
+	rename("history-save-2", "第一次保存", "第二次保存")
+	list, err = svc.CanvasHistory("user", "canvas")
+	if err != nil || len(list.Snapshots) != 1 || list.CurrentRevision != 3 {
+		t.Fatalf("second operations save history = %#v, err = %v", list, err)
+	}
+
+	if err := db.Create(&model.CanvasProject{
+		ID: "rollback", UserID: "user", Title: "回滚前", Revision: 1,
+		PayloadJSON: `{"title":"回滚前","nodes":[],"connections":[]}`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TRIGGER fail_canvas_snapshot BEFORE INSERT ON canvas_snapshots BEGIN SELECT RAISE(ABORT, 'snapshot unavailable'); END;`).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ApplyUserCanvasOperations("user", "rollback", CanvasOperationsRequest{
+		MutationID: "history-rollback",
+		Operations: []CanvasOperation{{
+			Type: "set_field", Field: "title", Value: json.RawMessage(`"不应落库"`), BeforeValue: json.RawMessage(`"回滚前"`),
+		}},
+	})
+	if err == nil {
+		t.Fatal("snapshot failure did not roll back operations save")
+	}
+	var stored model.CanvasProject
+	if err := db.First(&stored, "id = ?", "rollback").Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Revision != 1 || stored.Title != "回滚前" || strings.Contains(stored.PayloadJSON, "不应落库") {
+		t.Fatalf("failed history write changed canvas: %#v", stored)
+	}
+}
+
+func TestCanvasHistoryRestoreKeepsFieldReferencesWithoutConnectionCache(t *testing.T) {
+	svc, db := newCanvasOperationTestServiceWithDB(t)
+	document := func(title, content string) string {
+		return `{"referenceFieldsVersion":1,"title":"` + title + `","nodes":[` +
+			`{"id":"source","type":"image","metadata":{}},` +
+			`{"id":"target","type":"image","metadata":{"content":"` + content + `","inputBindings":[{"id":"node:source:reference","nodeId":"source","mediaType":"image","role":"reference","order":0,"resolution":"latest"}]}}` +
+			`],"connections":[]}`
+	}
+	current := model.CanvasProject{
+		ID: "field-references", UserID: "user", Title: "当前", Revision: 2,
+		PayloadJSON: document("当前", "当前内容"),
+	}
+	if err := db.Create(&current).Error; err != nil {
+		t.Fatal(err)
+	}
+	snapshot := model.CanvasSnapshot{
+		ID: "field-references-v1", CanvasID: current.ID, UserID: current.UserID,
+		Revision: 1, Title: "历史", NodeCount: 2, ConnectionCount: 0,
+		PayloadJSON: document("历史", "恢复内容"), PayloadBytes: len(document("历史", "恢复内容")),
+		Reason: "automatic", ContentUpdatedAt: time.Now().Add(-time.Hour), CreatedAt: time.Now().Add(-time.Minute),
+	}
+	if err := db.Create(&snapshot).Error; err != nil {
+		t.Fatal(err)
+	}
+	revision := int64(2)
+	result, err := svc.RestoreCanvasHistory("user", current.ID, snapshot.ID, &revision)
+	if err != nil || result.Revision != 3 {
+		t.Fatalf("restore = %#v, err = %v", result, err)
+	}
+	stored, err := svc.repo.CanvasProjectForUser("user", current.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stored.PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["referenceFieldsVersion"] != float64(1) || len(payload["connections"].([]any)) != 0 {
+		t.Fatalf("restored field-reference document kept derived connections: %s", stored.PayloadJSON)
+	}
+	if !strings.Contains(stored.PayloadJSON, "恢复内容") || !strings.Contains(stored.PayloadJSON, `"inputBindings"`) {
+		t.Fatalf("restored field data missing: %s", stored.PayloadJSON)
+	}
+	list, err := svc.CanvasHistory("user", current.ID)
+	if err != nil || len(list.Snapshots) != 2 || list.Snapshots[0].Reason != "before_restore" || list.Snapshots[0].Revision != 2 {
+		t.Fatalf("restore backup = %#v, err = %v", list, err)
+	}
+}

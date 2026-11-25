@@ -1,7 +1,15 @@
 import { expect, test } from "bun:test";
 
 import parity from "../../backend/internal/canvas/references/testdata/reference-projection-parity.json";
-import { addReferenceConnections, applyConnectionToReferenceFields, FIRST_FRAME_REFERENCE_MESSAGE, projectReferenceConnections, removeReferenceConnection, SHARED_REFERENCE_MESSAGE } from "../src/lib/canvas/canvas-reference-fields";
+import {
+    addReferenceConnections,
+    applyConnectionToReferenceFields,
+    FIRST_FRAME_REFERENCE_MESSAGE,
+    projectCanvasReferenceConnections,
+    projectReferenceConnections,
+    removeReferenceConnection,
+    SHARED_REFERENCE_MESSAGE,
+} from "../src/lib/canvas/canvas-reference-fields";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
 const node = (id: string, type: CanvasNodeType, metadata: Record<string, unknown> = {}): CanvasNodeData => ({ id, type, title: id, position: { x: 0, y: 0 }, width: 300, height: 200, metadata });
@@ -16,6 +24,15 @@ test("Agent 写入的 inputBindings 投影为可见连线", () => {
     const connections = projectReferenceConnections(declared(), [], 1);
     expect(connections).toEqual([{ id: expect.any(String), fromNodeId: "img", toNodeId: "target", managedBy: "reference-fields-v1", referenceOwnerNodeId: "target", referenceBindingId: "node:img" }]);
     expect(projectReferenceConnections(declared(), connections, 1)).toBe(connections);
+});
+
+test("远端文档投影只替换编辑器连线，不改变其它字段", () => {
+    const project = { id: "canvas", nodes: declared(), connections: [] as CanvasConnection[], referenceFieldsVersion: 1 };
+    const projected = projectCanvasReferenceConnections(project);
+    expect(projected).not.toBe(project);
+    expect(projected.id).toBe("canvas");
+    expect(projected.connections).toHaveLength(1);
+    expect(projectCanvasReferenceConnections(projected)).toBe(projected);
 });
 
 test("删除投影连线后 inputBindings 为空数组", () => {

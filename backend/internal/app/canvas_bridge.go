@@ -16,21 +16,26 @@ import (
 )
 
 type (
-	CanvasShareRequest              = canvas.CanvasShareRequest
-	CanvasShareStatus               = canvas.CanvasShareStatus
-	PublicCanvasShare               = canvas.PublicCanvasShare
-	AssetsSyncRequest               = canvas.AssetsSyncRequest
-	CanvasHistoryList               = canvas.CanvasHistoryList
-	UserDataSummary                 = canvas.UserDataSummary
-	UserDataSnapshot                = canvas.UserDataSnapshot
-	CanvasLibrarySummary            = canvas.CanvasLibrarySummary
-	CanvasLibraryPage               = canvas.CanvasLibraryPage
-	CanvasOperationsRequest         = canvas.CanvasOperationsRequest
-	CanvasReferenceMigrationPreview = canvas.CanvasReferenceMigrationPreview
-	CanvasReferenceMigrationRequest = canvas.CanvasReferenceMigrationRequest
-	CanvasOperation                 = canvas.CanvasOperation
-	CanvasEditLeaseRequest          = canvas.CanvasEditLeaseRequest
-	CanvasSyncStatus                = canvas.CanvasSyncStatus
+	CanvasShareRequest                 = canvas.CanvasShareRequest
+	CanvasShareStatus                  = canvas.CanvasShareStatus
+	PublicCanvasShare                  = canvas.PublicCanvasShare
+	AssetsSyncRequest                  = canvas.AssetsSyncRequest
+	CanvasHistoryList                  = canvas.CanvasHistoryList
+	UserDataSummary                    = canvas.UserDataSummary
+	UserDataSnapshot                   = canvas.UserDataSnapshot
+	CanvasLibrarySummary               = canvas.CanvasLibrarySummary
+	CanvasLibraryPage                  = canvas.CanvasLibraryPage
+	CanvasOperationsRequest            = canvas.CanvasOperationsRequest
+	CanvasReferenceMigrationPreview    = canvas.CanvasReferenceMigrationPreview
+	CanvasReferenceMigrationRequest    = canvas.CanvasReferenceMigrationRequest
+	CanvasShotMigrationPreview         = canvas.CanvasShotMigrationPreview
+	CanvasShotMigrationRequest         = canvas.CanvasShotMigrationRequest
+	CanvasShotMigrationResult          = canvas.CanvasShotMigrationResult
+	CanvasShotMigrationRollbackRequest = canvas.CanvasShotMigrationRollbackRequest
+	CanvasShotMigrationRollbackResult  = canvas.CanvasShotMigrationRollbackResult
+	CanvasOperation                    = canvas.CanvasOperation
+	CanvasEditLeaseRequest             = canvas.CanvasEditLeaseRequest
+	CanvasSyncStatus                   = canvas.CanvasSyncStatus
 )
 
 type canvasHost struct {
@@ -266,6 +271,18 @@ func (s *Service) PreviewCanvasReferenceMigration(userID, canvasID string) (Canv
 
 func (s *Service) MigrateCanvasReferences(userID, canvasID string, req CanvasReferenceMigrationRequest) (UserDataSummary, error) {
 	return s.canvasDomain().MigrateCanvasReferences(userID, canvasID, req)
+}
+
+func (s *Service) PreviewCanvasShotMigration(userID, canvasID string) (CanvasShotMigrationPreview, error) {
+	return s.canvasDomain().PreviewCanvasShotMigration(userID, canvasID)
+}
+
+func (s *Service) MigrateCanvasShots(userID, canvasID string, req CanvasShotMigrationRequest) (CanvasShotMigrationResult, error) {
+	return s.canvasDomain().MigrateCanvasShots(userID, canvasID, req)
+}
+
+func (s *Service) RollbackCanvasShots(userID, canvasID string, req CanvasShotMigrationRollbackRequest) (CanvasShotMigrationRollbackResult, error) {
+	return s.canvasDomain().RollbackCanvasShots(userID, canvasID, req)
 }
 
 func (s *Service) RepairUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {

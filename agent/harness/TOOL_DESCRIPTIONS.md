@@ -22,6 +22,10 @@ summary 必填，内容为给用户的最终答复全文。通过后持久化回
 
 首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=media_versions 指定一个媒体节点，一次返回全部版本（最多30，不分页），含 currentMediaVersionId、每版 isCurrent，在途生成单列 generating.taskId（不是版本）；另给可否新建和阻断原因，不含存储地址。references 查有效引用，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断按 nextRead 续读；kind 是业务类型。角色卡读 character 的 resolvedImage 和来源；结构化行用专用 read。
 
+## canvas
+
+把画布投影成目录的命令面：节点是目录（./<节点ID>/），字段是文件（./<节点ID>/<字段>.<ext>）；submap 子节点写作 ./<submapID>/<localId>/<字段>.<ext>。只读：pwd、ls（--types 列可建类型，-l 带值）、cat（-n 带行号）、grep、wc、head、tail、find、help、log、preset list/delete。写：new [--in <submap>] <type> <title...> 由服务端按 idCounters 高水位发号；dup 复制节点，submap 连同子节点并重映射内部引用，外部引用不复制；mv 只改标题；rm 删除，submap 级联子节点，任何权限模式都要审批；edit 写字段（省略值清空）；sed -i s/原文/替换/ 要求唯一命中；正文用 cat > ./image-1/prompt.txt <<'EOF'。支持 &&、; 和换行，失败即整条不落库；不支持 ||。管道只支持 cat/head/tail 接 head/tail/grep/wc。写命令带最新 snapshotHash；审批前服务端会固化。锁定节点拒绝一切增删改；run 按节点字段批量生成并走批次审批，preset save 走 S07 页面入口。
+
 ## canvas_read_batch_table
 
 分页读取任务类型、并发数、参考列、任务行和就绪预览，每页最多20行，返回真实rowId/snapshotHash。参考列 mentionToken（如 @参考图1）可写提示词；后续编辑使用最新ID。

@@ -995,6 +995,30 @@
     },
     {
       "function": {
+        "description": "把画布投影成目录的命令面：节点是目录（./\u003c节点ID\u003e/），字段是文件（./\u003c节点ID\u003e/\u003c字段\u003e.\u003cext\u003e）；submap 子节点写作 ./\u003csubmapID\u003e/\u003clocalId\u003e/\u003c字段\u003e.\u003cext\u003e。只读：pwd、ls（--types 列可建类型，-l 带值）、cat（-n 带行号）、grep、wc、head、tail、find、help、log、preset list/delete。写：new [--in \u003csubmap\u003e] \u003ctype\u003e \u003ctitle...\u003e 由服务端按 idCounters 高水位发号；dup 复制节点，submap 连同子节点并重映射内部引用，外部引用不复制；mv 只改标题；rm 删除，submap 级联子节点，任何权限模式都要审批；edit 写字段（省略值清空）；sed -i s/原文/替换/ 要求唯一命中；正文用 cat \u003e ./image-1/prompt.txt \u003c\u003c'EOF'。支持 \u0026\u0026、; 和换行，失败即整条不落库；不支持 ||。管道只支持 cat/head/tail 接 head/tail/grep/wc。写命令带最新 snapshotHash；审批前服务端会固化。锁定节点拒绝一切增删改；run 按节点字段批量生成并走批次审批，preset save 走 S07 页面入口。",
+        "name": "canvas",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "description": "命令行：pwd/ls/cat/grep/wc/head/tail/find/help/log/preset 只读；new/dup/mv/rm/edit/sed 与 cat \u003e 写画布；run 按节点字段批量生成并走批次审批。支持 \u0026\u0026、;、换行与 cat/head/tail 管道；rm 任何权限模式都要审批",
+              "type": "string"
+            },
+            "snapshotHash": {
+              "description": "写命令使用的画布快照；审批前服务端会固化。只读命令可省略",
+              "type": "string"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
         "description": "分页读取任务类型、并发数、参考列、任务行和就绪预览，每页最多20行，返回真实rowId/snapshotHash。参考列 mentionToken（如 @参考图1）可写提示词；后续编辑使用最新ID。",
         "name": "canvas_read_batch_table",
         "parameters": {
@@ -3124,7 +3148,9 @@
                       "media-conversion",
                       "panorama",
                       "script",
+                      "shortplay-asset",
                       "skill",
+                      "submap",
                       "svg",
                       "text",
                       "video"

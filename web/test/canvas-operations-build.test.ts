@@ -101,6 +101,32 @@ describe("画布 operations 生成", () => {
         expect(operations).toEqual([{ type: "set_field", field: "title", value: "新", beforeValue: "旧" }]);
     });
 
+    test("字段引用文档只保存锚点，不把投影连线写回文档", () => {
+        const connection = { id: "conn:r1:b:a", fromNodeId: "a", toNodeId: "b" } as CanvasProject["connections"][number];
+        const before = canvas({ referenceFieldsVersion: 1, connections: [connection] });
+        const after = canvas({ referenceFieldsVersion: 1, connections: [{ ...connection, toAnchorRatio: 0.25 }] });
+        expect(buildCanvasOperations(before, after)).toEqual([
+            {
+                type: "set_field",
+                field: "edgePresentation",
+                value: { "conn:r1:b:a": { toAnchorRatio: 0.25 } },
+                beforeValue: null,
+            },
+        ]);
+    });
+
+    test("字段引用新画布在创建时固定格式和锚点", () => {
+        const connection = { id: "conn:frame:videoStartFrameNodeId:b:a", fromNodeId: "a", toNodeId: "b", fromAnchorRatio: 0.3 } as CanvasProject["connections"][number];
+        const [operation] = buildCanvasOperations(undefined, canvas({ referenceFieldsVersion: 1, connections: [connection], idCounters: { text: 2 } }));
+        expect(operation?.type).toBe("create_canvas");
+        if (operation?.type !== "create_canvas") throw new Error("missing create_canvas");
+        expect(operation.patch).toMatchObject({
+            referenceFieldsVersion: 1,
+            idCounters: { text: 2 },
+            edgePresentation: { "conn:frame:videoStartFrameNodeId:b:a": { fromAnchorRatio: 0.3 } },
+        });
+    });
+
     test("修复旧 journal：移除新画布中重复的 set_field，保留 mutationId", () => {
         const legacy = JSON.parse(
             JSON.stringify({

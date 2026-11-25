@@ -2,6 +2,9 @@ import type { Asset } from "@/stores/use-asset-store";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { compactApiParams, http } from "@/services/api/request";
 import type { CanvasReferenceMigrationChoice, CanvasReferenceMigrationPreview } from "@/lib/canvas/canvas-reference-migration";
+import type { CanvasShotMigrationPreview, CanvasShotMigrationResult, CanvasShotMigrationRollbackResult } from "@/lib/canvas/canvas-shot-migration";
+
+export const CANVAS_CLIENT_CAPABILITY_REFERENCE_FIELDS = "canvas-reference-fields/v1";
 
 export type RemoteUserDataSummary = {
     id: string;
@@ -50,22 +53,56 @@ export type CanvasOperation =
     | { type: "create_connection"; connection: CanvasProject["connections"][number] }
     | { type: "update_connection"; id: string; connection: CanvasProject["connections"][number]; expected: CanvasProject["connections"][number] }
     | { type: "remove_connection"; id: string; expected?: CanvasProject["connections"][number] }
-    | { type: "set_field"; field: "title" | "projectId" | "chatSessions" | "activeChatId" | "starterMode" | "appearance" | "backgroundMode" | "showImageInfo" | "previsScenes" | "timeline"; value: unknown; beforeValue: unknown };
+    | {
+          type: "set_field";
+          field: "title" | "projectId" | "chatSessions" | "activeChatId" | "starterMode" | "appearance" | "backgroundMode" | "showImageInfo" | "previsScenes" | "timeline" | "idCounters" | "edgePresentation";
+          value: unknown;
+          beforeValue: unknown;
+      };
 
 export type CanvasOperationsRequest = {
     mutationId: string;
     baseRevision?: number;
     operations: CanvasOperation[];
     editProofs?: CanvasEditProof[];
+    clientCapabilities?: string[];
 };
 
 export type CanvasEditProof = { nodeId: string; sessionId: string; token: string };
 export type CanvasEditLease = { nodeId: string; sessionId: string; expiresAt: string };
 export type CanvasAgentActivity = { runId: string; status: string; cleanupPending: boolean };
 export type CanvasSyncStatus = { revision: number; serverTime: string; leases: CanvasEditLease[]; agent?: CanvasAgentActivity | null };
+export type RemoteCanvasHistorySnapshot = {
+    id: string;
+    canvasId: string;
+    revision: number;
+    title: string;
+    nodeCount: number;
+    connectionCount: number;
+    payloadBytes: number;
+    reason: string;
+    contentUpdatedAt: string;
+    createdAt: string;
+};
+export type RemoteCanvasHistory = {
+    snapshots: RemoteCanvasHistorySnapshot[];
+    currentRevision: number;
+};
 
 export function getCanvasSyncStatus(id: string, signal?: AbortSignal) {
     return http.get<CanvasSyncStatus>(`/canvas-projects/${encodeURIComponent(id)}/sync-status`, { signal, timeout: 8000 });
+}
+
+export function listRemoteCanvasHistory(id: string, signal?: AbortSignal) {
+    return http.get<RemoteCanvasHistory>(`/canvas-projects/${encodeURIComponent(id)}/history`, { signal, timeout: 15_000 });
+}
+
+export function getRemoteCanvasHistorySnapshot(id: string, snapshotId: string, signal?: AbortSignal) {
+    return http.get<{ snapshot: RemoteCanvasHistorySnapshot; project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}/history/${encodeURIComponent(snapshotId)}`, { signal, timeout: 15_000 });
+}
+
+export function restoreRemoteCanvasHistory(id: string, snapshotId: string, revision: number) {
+    return http.post<{ project: CanvasProject }>(`/canvas-projects/${encodeURIComponent(id)}/history/${encodeURIComponent(snapshotId)}/restore`, { revision }, { timeout: 15_000 });
 }
 
 export function changeCanvasEditLease(id: string, proof: CanvasEditProof, action: "acquire" | "renew" | "release") {
@@ -163,7 +200,11 @@ export function getRemoteCanvasProject(id: string, knownProject?: CanvasProject)
 }
 
 export function applyRemoteCanvasOperations(id: string, request: CanvasOperationsRequest) {
-    return http.patch<{ project: RemoteUserDataSummary & { revision: number }; mutationId: string }>(`/canvas-projects/${encodeURIComponent(id)}/operations`, request, { timeout: 15_000 });
+    return http.patch<{ project: RemoteUserDataSummary & { revision: number }; mutationId: string }>(
+        `/canvas-projects/${encodeURIComponent(id)}/operations`,
+        { ...request, clientCapabilities: Array.from(new Set([...(request.clientCapabilities || []), CANVAS_CLIENT_CAPABILITY_REFERENCE_FIELDS])) },
+        { timeout: 15_000 },
+    );
 }
 
 export function deleteRemoteCanvasProject(id: string) {
@@ -177,4 +218,17 @@ export function getCanvasReferenceMigration(canvasId: string, signal?: AbortSign
 
 export function migrateCanvasReferences(canvasId: string, revision: number, choices: Record<string, CanvasReferenceMigrationChoice>) {
     return http.post<{ project: RemoteUserDataSummary & { revision: number } }>(`/canvas-projects/${encodeURIComponent(canvasId)}/reference-migration`, { revision, choices });
+}
+
+/** 旧分镜行切换为镜头子画布：预览只读，执行前必须在途任务为空。 */
+export function getCanvasShotMigration(canvasId: string, signal?: AbortSignal) {
+    return http.get<CanvasShotMigrationPreview>(`/canvas-projects/${encodeURIComponent(canvasId)}/shot-migration`, { signal });
+}
+
+export function migrateCanvasShots(canvasId: string, revision: number, choices: Record<string, CanvasReferenceMigrationChoice> = {}) {
+    return http.post<CanvasShotMigrationResult>(`/canvas-projects/${encodeURIComponent(canvasId)}/shot-migration`, { revision, choices });
+}
+
+export function rollbackCanvasShots(canvasId: string, revision: number, strategy: "restore" | "new_canvas" = "restore") {
+    return http.post<CanvasShotMigrationRollbackResult>(`/canvas-projects/${encodeURIComponent(canvasId)}/shot-migration/rollback`, { revision, strategy });
 }

@@ -17,7 +17,7 @@ const cloudAgentMaxReadToolCallsPerRun = platform.DefaultRuntimeAgentReadCallsPe
 
 func cloudAgentReadToolCacheable(name string) bool {
 	switch name {
-	case "canvas_get_state", "storyboard", "model_list":
+	case "canvas_get_state", "storyboard", "model_list", "canvas":
 		return true
 	default:
 		return false
@@ -25,6 +25,9 @@ func cloudAgentReadToolCacheable(name string) bool {
 }
 
 func cloudAgentReadCall(call cloudAgentCall) bool {
+	if call.Function.Name == "canvas" {
+		return !cloudAgentWriteCall(call)
+	}
 	return cloudAgentReadToolReadOnly(call.Function.Name) || (call.Function.Name == "storyboard" && !cloudAgentWriteCall(call))
 }
 
@@ -65,7 +68,7 @@ func cloudAgentReadCacheKeyForState(repo *repository.Repository, userID string, 
 		return key
 	}
 	switch call.Function.Name {
-	case "canvas_get_state", "storyboard", "canvas_read_content", "canvas_search_nodes", "model_list":
+	case "canvas_get_state", "storyboard", "canvas_read_content", "canvas_search_nodes", "model_list", "canvas":
 		if repo != nil {
 			if canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID); err == nil && canvas != nil {
 				return fmt.Sprintf("%s:canvas-revision:%d", key, canvas.Revision)

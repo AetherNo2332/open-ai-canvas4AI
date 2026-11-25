@@ -42,6 +42,8 @@ func BuiltinRegistry() *Registry {
 		generatedMediaDescriptor("audio", "2", "音频", 340, 120, "audio", ConnectionPolicy{
 			CanSource: true, CanTarget: true, CanReference: true, MaxInputCount: 1, AcceptedInputKinds: []string{"text", "character"},
 		}),
+		submapDescriptor(),
+		shortplayAssetDescriptor(),
 		characterDescriptor(),
 		{
 			Type: "frame", Version: "1", Label: "背板", DefaultWidth: 760, DefaultHeight: 520,
@@ -104,6 +106,7 @@ func BuiltinRegistry() *Registry {
 	descriptors = append(descriptors, remainingBuiltinDescriptors()...)
 	for index := range descriptors {
 		completeBuiltinEditableFields(&descriptors[index])
+		enrichKernelDescriptor(&descriptors[index])
 	}
 	registry, err := NewRegistry(descriptors)
 	if err != nil {

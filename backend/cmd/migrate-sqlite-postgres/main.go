@@ -471,6 +471,7 @@ var baseTableMigrations = []tableMigration{
 	migrateTable[model.CanvasSnapshot]("canvas_snapshots"),
 	migrateTable[model.CanvasSnapshotResource]("canvas_snapshot_resources"),
 	migrateTable[model.CanvasShare]("canvas_shares"),
+	migrateTable[model.UserSubmapPreset]("user_submap_presets"),
 	migrateTable[model.PromptTemplate]("prompt_templates"),
 	migrateTable[model.UserPromptCustomization]("user_prompt_customizations"),
 	migrateTable[model.Announcement]("announcements"),

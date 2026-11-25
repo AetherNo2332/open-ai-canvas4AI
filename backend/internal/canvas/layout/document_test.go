@@ -45,9 +45,12 @@ func TestDocumentProjectionKeepsCanvasScalarStringSemantics(t *testing.T) {
 	doc := map[string]any{
 		"nodes": []any{
 			map[string]any{"id": 7, "type": "text", "position": map[string]any{"x": 10.0, "y": 20.0}},
-			map[string]any{"id": "child", "type": "text", "parentId": 9},
+			map[string]any{
+				"id": "child", "type": "text", "parentId": 9,
+				"metadata": map[string]any{"referenceNodeIds": []any{7}},
+			},
 		},
-		"connections": []any{map[string]any{"fromNodeId": 7, "toNodeId": "child"}},
+		"connections": []any{map[string]any{"fromNodeId": "stale", "toNodeId": "child"}},
 	}
 	document := ParseDocument(doc)
 	nodes := document.Nodes()
@@ -56,7 +59,7 @@ func TestDocumentProjectionKeepsCanvasScalarStringSemantics(t *testing.T) {
 	}
 	edges := document.Edges()
 	if len(edges) != 1 || edges[0] != (Edge{From: "7", To: "child"}) {
-		t.Fatalf("scalar connection fields = %+v", edges)
+		t.Fatalf("field-projected edges = %+v", edges)
 	}
 	selected, skipped, err := document.Select(nil, nil)
 	if err != nil {
@@ -89,15 +92,41 @@ func TestDocumentArrangeRejectsEmptyGroups(t *testing.T) {
 	}
 }
 
-func TestDocumentEdgesIgnoreEmptySegments(t *testing.T) {
-	doc := map[string]any{"connections": []any{
-		map[string]any{"fromNodeId": "", "toNodeId": "b"},
-		map[string]any{"fromNodeId": "a", "toNodeId": ""},
-		map[string]any{"fromNodeId": "a", "toNodeId": "b"},
+func TestDocumentEdgesUseReferenceFieldsAndIgnorePersistedConnections(t *testing.T) {
+	doc := map[string]any{"nodes": []any{
+		map[string]any{"id": "a", "type": "image"},
+		map[string]any{
+			"id": "b", "type": "video",
+			"metadata": map[string]any{
+				"referenceNodeIds":      []any{"", "a", "a"},
+				"videoStartFrameNodeId": "a",
+			},
+		},
+	}, "connections": []any{
+		map[string]any{"fromNodeId": "stale", "toNodeId": "b"},
 	}}
 	edges := ParseDocument(doc).Edges()
 	if len(edges) != 1 || edges[0] != (Edge{From: "a", To: "b"}) {
-		t.Fatalf("incomplete connections were not ignored: %+v", edges)
+		t.Fatalf("reference fields were not projected without duplicates: %+v", edges)
+	}
+}
+
+func TestDocumentSubmapScopeDoesNotUseFrameParentSemantics(t *testing.T) {
+	doc := map[string]any{"nodes": []any{
+		map[string]any{"id": "submap-1", "type": "submap"},
+		map[string]any{"id": "submap-1__image-1", "type": "image", "scopeId": "submap-1"},
+		map[string]any{"id": "frame-1", "type": "frame"},
+		map[string]any{"id": "frame-child", "type": "image", "parentId": "frame-1"},
+	}}
+	nodes := ParseDocument(doc).Nodes()
+	if len(nodes) != 4 {
+		t.Fatalf("nodes = %+v", nodes)
+	}
+	if nodes[1].ScopeID != "submap-1" || !nodes[1].Movable {
+		t.Fatalf("submap child lost scope or movement semantics: %+v", nodes[1])
+	}
+	if nodes[3].Movable {
+		t.Fatalf("frame child must stay owned by parentId: %+v", nodes[3])
 	}
 }
 
