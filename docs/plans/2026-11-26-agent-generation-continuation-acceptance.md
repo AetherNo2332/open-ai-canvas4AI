@@ -15,6 +15,8 @@
 | 后端架构守卫 | `internal/architecture` 通过：队列绑定抽成 `admitQueuedMessageRun` 后，`CommitAgentMessageAdmission` 闭包复杂度回到基线内；未新增基线条目。 |
 | 工具目录预算 | `TestAgentCapabilityDirectorySizes` 通过：canvas/auto 63996 字节、canvas/read_only 13600、drama/read_only 4019、zero/read_only 2027；未放宽 64000 上限。 |
 | 分镜异步提交改走续接 | `TestCloudAgentStoryboardAsyncSubmitContinuation` 通过（2.01s）：拆镜回执立即返回并登记同一批次；`finish_run.continuation` 后 source 为 completed、批次 armed；末项终态前 `QueueReadyGenerationContinuations` 返回 0，终态后只排入一条内部消息，重复扫描返回 0；批次结果保留 `splitResult`/`rowId`，用户可见队列看不到内部消息。 |
+| SQLite→PostgreSQL 迁移清单 | `cmd/migrate-sqlite-postgres` 的 `TestMigrationListCoversSchemaModels`、`TestMigrationListCoversInitializedSchema` 通过：两张批次表已加入精确表清单，升级/复制不会漏表。 |
+| 策略元数据 | `TestLoadAgentPoliciesUsesDocumentMetadata` 通过：system 28、general 1、media 7，正文不含 frontmatter，media 保留“不轮询/续接/不自动重新收费”合同语句。 |
 | 提示词与制品一致 | `TestCloudAgentGenerationContinuationPrompts`、`TestAgentToolSchemaArtifactMatchesRuntime` 通过；`agent/scripts/sync-harness.mjs` 已同步 SYSTEM_POLICY/MEDIA_POLICY/TOOL_DESCRIPTIONS/SOURCE。制品版本 `cloud-agent-tools/v30`、`canvas-pi-wire/v8`。 |
 | Agent Worker | `cd agent && npm test` 退出 0：207 项，206 通过、1 跳过、0 失败；`npm run build` 退出 0。 |
 
@@ -32,7 +34,7 @@
 | `cd backend && TEST_AGENT_POSTGRES_DSN=... go test ./internal/handler -run '^TestAgentSDKRealHTTPWorkerRestart$' -count=1 -v -timeout 900s` | 退出 0（355.4s）。 |
 | `cd agent && npm test` | 退出 0（207 项，206 通过、1 跳过）。 |
 | `cd agent && npm run build` | 退出 0。 |
-| `cd backend && go test ./internal/app -count=1 -timeout 900s` | 退出 1（652.26s）：本功能相关的旧分镜 wait 用例已改为续接用例并通过；剩余失败仅为 `TestSettingsEncryptionKeyPublication`、`LinkFallback`、`ConcurrentFirstUse` 的 `key permissions = 666`。这些用例断言 Unix 0600 权限位，在 Windows 上必然失败；已用 `canvas4ai/main` 干净工作树（`c752f8b39` 临时 worktree）复现同一失败，与本次改动无关。300s 时限不足是总时长环境限制，不记为通过。 |
+| `cd backend && go test ./internal/app -count=1 -timeout 900s` | 见推送门禁的分片结果；300s 时限不足是总时长环境限制，不记为通过。分片里曾出现的 `TestSettingsEncryptionKey*` 失败是 Windows 无法观测 Unix 0600 权限位（生产 `settings_key.go` 本就按 GOOS 跳过 chmod）；已在测试中按 GOOS 保留 Unix 断言、Windows 跳过断言，行为用例仍执行，Linux CI 覆盖不变。 |
 | `bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full` | 见推送前门禁记录；选中项与结果写入 `.local/cache/verify/`，未选中项不作通过声明。 |
 
 ## 行为覆盖（对应任务书 Task 7）
