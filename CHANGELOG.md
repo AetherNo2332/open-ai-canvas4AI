@@ -1,4 +1,11 @@
 # CHANGELOG
+## v1.8.3(11d63dc)
+
+- 画布与短剧 Agent 的 `read` 收敛为只读本轮已授权 Skill 的文本文件；画布正文、识图与短剧分集分别改用 `canvas_read_content`、`canvas_inspect_image`、`drama_read_episode`，不再通过 `read` 的业务命名空间读取内容。
+- 短剧分析可按分集读取剧情与镜头并分页续读到末尾；读取计入共享读取次数，重放同一调用不会重复读取或重复计费。
+- 能力目录升到 2、内部协议升到 `canvas-pi-wire/v8`、工具 Schema 升到 `cloud-agent-tools/v30`。旧目录运行不再继续执行，会被标记失败并释放占用；历史消息、取消与归档仍可用，新对话使用新合同。
+- 升级需配套发布 backend 与 agent Worker，v7 Worker 会在领取前被拒绝；本次无数据库结构迁移。
+
 ## v1.8.3(7f6f31c)
 
 - 画布新增镜头子画布、顺序 ID、字段引用、个人子画布模板、版本历史和多端并发编辑；支持子画布分享及 ZIP 导出、重新导入。
