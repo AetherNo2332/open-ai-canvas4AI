@@ -75,7 +75,7 @@ func mustStoryboardDocument(t *testing.T, s *Service) map[string]any {
 	return doc
 }
 
-func TestCloudAgentStoryboardAsyncSubmitWaitAndNotice(t *testing.T) {
+func TestCloudAgentStoryboardAsyncSubmitContinuation(t *testing.T) {
 	s, db := storyboardSplitTestService(t)
 	req := agentTestRequest()
 	req.CanvasID = "split-canvas"
@@ -86,8 +86,8 @@ func TestCloudAgentStoryboardAsyncSubmitWaitAndNotice(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := piAgentTestCall("split-call", "storyboard", `{"action":"resplit","nodeId":"board","rowIds":["b"],"request":"延长对视","channelId":"channel","channelModelKey":"text-test"}`)
-	wait := piAgentTestCall("wait-call", "wait_generations", `{}`)
-	run, _ := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call, wait})
+	finish := piAgentTestCall("finish-call", "finish_run", `{"summary":"已提交拆镜，全部任务终态后继续。","continuation":{"when":"all_generations_terminal","instruction":"检查拆镜结果并写回，失败项只报告原因。"}}`)
+	run, _ := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call, finish})
 	if err := agentPiExecuteCallForTest(t, s, run.ID, call.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +96,13 @@ func TestCloudAgentStoryboardAsyncSubmitWaitAndNotice(t *testing.T) {
 		t.Fatalf("split must return immediately: %+v %d", state.PendingGenerations, state.CallIndex)
 	}
 	taskID := state.PendingGenerations[0].TaskID
+	if state.PendingGenerations[0].BatchID == "" {
+		t.Fatal("split receipt did not register a generation batch")
+	}
+	batch, err := s.repo.AgentGenerationBatchBySourceRun("user", run.ID)
+	if err != nil || batch.ExpectedTasks != 1 || batch.Status != model.AgentGenerationBatchCollecting {
+		t.Fatalf("split batch barrier is wrong: %+v %v", batch, err)
+	}
 	task, _ := s.repo.TaskForUser("user", taskID)
 	if task.AgentRunID != run.ID || !cloudAgentContainsString(state.TaskIDs, taskID) {
 		t.Fatal("split bypassed run admission")
@@ -109,9 +116,19 @@ func TestCloudAgentStoryboardAsyncSubmitWaitAndNotice(t *testing.T) {
 			t.Fatal("completion notice before writeback")
 		}
 	}
-	receipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, state.PiToolBatchTaskID, wait.ID)
-	if err != nil || !receipt.Suspended {
-		t.Fatalf("wait did not suspend: %+v %v", receipt, err)
+	if err := agentPiExecuteCallForTest(t, s, run.ID, finish.ID); err != nil {
+		t.Fatal(err)
+	}
+	run, err = s.repo.CloudAgent("user", run.ID)
+	if err != nil || run.Status != "completed" {
+		t.Fatalf("finish_run must complete the source run: %+v %v", run, err)
+	}
+	batch, err = s.repo.AgentGenerationBatchBySourceRun("user", run.ID)
+	if err != nil || batch.Status != model.AgentGenerationBatchArmed {
+		t.Fatalf("continuation was not armed: %+v %v", batch, err)
+	}
+	if queued, err := s.QueueReadyGenerationContinuations(10); err != nil || queued != 0 {
+		t.Fatalf("armed batch must not queue before every task is terminal: %d %v", queued, err)
 	}
 	if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": `{"rows":[{"plotDescription":"新的对视","durationSeconds":5}]}`}).Error; err != nil {
 		t.Fatal(err)
@@ -119,13 +136,28 @@ func TestCloudAgentStoryboardAsyncSubmitWaitAndNotice(t *testing.T) {
 	if settled, err := s.SettlePendingCloudAgentGenerations(); err != nil || settled != 1 {
 		t.Fatalf("settle=%d %v", settled, err)
 	}
-	run, state = agentInterjectionState(t, s, run.ID)
-	if run.WaitKind != "" || len(state.PendingGenerations) != 0 || state.CallIndex != 2 {
-		t.Fatalf("same run failed to resume: %s %d", run.WaitKind, state.CallIndex)
+	batch, err = s.repo.AgentGenerationBatchBySourceRun("user", run.ID)
+	if err != nil || batch.Status != model.AgentGenerationBatchReady {
+		t.Fatalf("last terminal task must reach the barrier: %+v %v", batch, err)
 	}
-	message := cloudAgentToolMessageForTest(t, state, wait.ID)
-	if !strings.Contains(message, "splitResult") || !strings.Contains(message, `"rowId":"b"`) {
-		t.Fatalf("wait receipt lost mapping: %s", message)
+	if !strings.Contains(batch.ResultsJSON, `"splitResult"`) || !strings.Contains(batch.ResultsJSON, `"rowId":"b"`) {
+		t.Fatalf("batch results lost the split mapping: %s", batch.ResultsJSON)
+	}
+	if queued, err := s.QueueReadyGenerationContinuations(10); err != nil || queued != 1 {
+		t.Fatalf("ready batch must queue exactly one continuation: %d %v", queued, err)
+	}
+	if queued, err := s.QueueReadyGenerationContinuations(10); err != nil || queued != 0 {
+		t.Fatalf("repeated scan duplicated the continuation: %d %v", queued, err)
+	}
+	var internal []model.AgentQueuedMessage
+	if err := db.Where("user_id = ? AND kind = ?", "user", model.AgentQueuedMessageGenerationContinuation).Find(&internal).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(internal) != 1 || internal[0].IdempotencyKey != "generation-batch:"+batch.ID || !strings.Contains(internal[0].Prompt, "系统生成结果") {
+		t.Fatalf("internal continuation message is wrong: %+v", internal)
+	}
+	if visible, err := s.repo.AgentQueuedMessages("user", run.ConversationID); err != nil || len(visible) != 0 {
+		t.Fatalf("internal continuation leaked into the user queue: %+v %v", visible, err)
 	}
 	task, _ = s.repo.TaskForUser("user", taskID)
 	if facts := cloudAgentTaskDiagnostic(s.repo, task); facts["splitResult"] == nil {
