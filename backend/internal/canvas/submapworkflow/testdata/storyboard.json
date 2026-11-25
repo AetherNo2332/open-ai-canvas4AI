@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "storyboard",
+  "title": "短剧镜头",
+  "children": [
+    { "localId": "text-1", "type": "text", "title": "图片提示词" },
+    { "localId": "text-2", "type": "text", "title": "视频提示词" },
+    { "localId": "text-3", "type": "text", "title": "台词/旁白" },
+    { "localId": "text-4", "type": "text", "title": "备注" },
+    { "localId": "image-1", "type": "image", "title": "首帧", "prompt": "@文本1" },
+    { "localId": "video-1", "type": "video", "title": "视频", "prompt": "@文本1\n@文本2\n台词/旁白：@文本3", "seconds": "4", "startFrame": "image-1" }
+  ],
+  "connections": [
+    { "from": "text-1", "to": "image-1" },
+    { "from": "text-1", "to": "video-1" },
+    { "from": "text-2", "to": "video-1" },
+    { "from": "text-3", "to": "video-1" }
+  ]
+}

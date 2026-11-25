@@ -34,8 +34,11 @@ func canvasOperationsPayload(canvasID string, existing *model.CanvasProject, req
 			"connections": json.RawMessage(`[]`),
 		}
 		for field, value := range create.Patch {
-			if !allowedCanvasOperationField(field) {
+			if !allowedCreateCanvasOperationField(field) {
 				return nil, nil, kernel.BadAuthRequest("不支持的新画布字段")
+			}
+			if err := validateCanvasCreateFormatField(field, value, req); err != nil {
+				return nil, nil, err
 			}
 			payload[field] = append(json.RawMessage(nil), value...)
 		}

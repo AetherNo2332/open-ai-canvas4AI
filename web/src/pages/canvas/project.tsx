@@ -29,12 +29,12 @@ import { filterCanvasDisplayConnections, persistCanvasHideNodeConnections, readC
 import { summarizeCanvasContext } from "@/lib/canvas/canvas-context-summary";
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
 import { flushAssetStorePersistence, useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
-import { flushCanvasStorePersistence } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useCanvasThemeStore, useCanvasThemeScope } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { App, Button } from "antd";
-import { ArrowLeftRight } from "lucide-react";
+import { ArrowLeftRight, Clapperboard, Link2 } from "lucide-react";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { getNodeSpec } from "@/constant/canvas";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
@@ -53,6 +53,8 @@ import { resolveProjectCanvasStyle } from "@/components/canvas/canvas-style-pick
 import { createStyleProfileSnapshot, resolveStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { CanvasNodeToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-toolbar";
 import { CanvasMediaVersionModal } from "@/components/canvas/canvas-media-version-modal";
+import { CanvasVersionHistoryDrawer } from "@/components/canvas/canvas-version-history-drawer";
+import { CanvasSubmapSavePresetModal } from "@/components/canvas/canvas-submap-save-preset-modal";
 import { CanvasSubtitleDialog } from "@/components/canvas/canvas-subtitle-dialog";
 import { CanvasVideoFrameDialog } from "@/components/canvas/canvas-video-frame-dialog";
 import { CanvasVideoSegmentDialog } from "@/components/canvas/canvas-video-segment-dialog";
@@ -134,6 +136,7 @@ import { stampCanvasNodeChanges, updateCanvasNode, updateCanvasNodes } from "@/l
 import { canvasAssetHandoffAttempt, finalizeCanvasAssetHandoff, uninsertedCanvasAssetHandoffPayloads } from "@/lib/canvas/canvas-asset-handoff";
 import { expandBatchSourceNodeIds } from "@/lib/canvas/canvas-batch-connection";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
+import { exportCanvasSubmap } from "@/lib/canvas/canvas-export";
 import { deriveStoryboardPipelineProgress } from "@/lib/canvas/canvas-storyboard-progress";
 import { CanvasOperationChangeToast, CanvasMergeStatusToast, CanvasUploadStatusToast } from "./canvas-project-feedback";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
@@ -144,8 +147,10 @@ import { CanvasAssetView } from "@/components/canvas/canvas-asset-view";
 import type { CanvasAssetVersion } from "@/lib/canvas/canvas-asset-catalog";
 import { canDownloadCanvasNodeMedia } from "@/lib/canvas/canvas-media-download";
 import { CanvasSyncStatus } from "./canvas-sync-status";
-import { CanvasReferenceMigrationBanner } from "./canvas-reference-migration-banner";
 import { useCanvasReferenceMigration } from "./use-canvas-reference-migration";
+import { CanvasShotMigrationPanel } from "@/components/canvas/canvas-shot-migration-panel";
+import { CanvasMigrationNotice, type CanvasMigrationNoticeItem } from "./canvas-migration-notice";
+import { useCanvasShotMigration } from "./use-canvas-shot-migration";
 import { CanvasReferenceMigrationPanel } from "@/components/canvas/canvas-reference-migration-panel";
 import { LibTVImportDialog } from "./components/libtv-import-dialog";
 import { TapNowImportDialog } from "./components/tapnow-import-dialog";
@@ -289,6 +294,7 @@ function CanvasViewportPage() {
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+    const [submapPresetSaveNodeId, setSubmapPresetSaveNodeId] = useState<string | null>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
     const [canvasAppearance, setCanvasAppearance] = useState<CanvasAppearance>(() => canvasAppearanceForTheme(colorTheme));
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>(DEFAULT_CANVAS_BACKGROUND_MODE);
@@ -337,6 +343,7 @@ function CanvasViewportPage() {
     const [batchScrollById, setBatchScrollById] = useState<Record<string, BatchScroll>>({});
     const [previsNodeId, setPrevisNodeId] = useState<string | null>(null);
     const [libTVImportOpen, setLibTVImportOpen] = useState(false);
+    const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
     const [titleEditing, setTitleEditing] = useState(false);
     const [titleDraft, setTitleDraft] = useState("");
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
@@ -405,6 +412,7 @@ function CanvasViewportPage() {
         },
         [backgroundMode, message],
     );
+    const referenceFieldsVersion = useCanvasStore((state) => state.projects.find((project) => project.id === projectId)?.referenceFieldsVersion);
 
     const { getHistoryCleanupContext, historyPausedRef, historyState, redoCanvas, resetHistory, undoCanvas } = useCanvasHistory({
         projectLoaded,
@@ -415,6 +423,7 @@ function CanvasViewportPage() {
         canvasAppearance,
         backgroundMode,
         showImageInfo,
+        referenceFieldsVersion,
         setNodes,
         setConnections,
         setChatSessions,
@@ -434,37 +443,51 @@ function CanvasViewportPage() {
         [cleanupAssetImages, getHistoryCleanupContext],
     );
 
-    const { loadError, retryLoad, addedSkills, agentFocus, clearCanvasFiles, createAndOpenProject, currentProject, deleteCurrentProject, renameCurrentProject, saveCanvasProject, persistLocalEdits, prepareCanvasForServerAction, updateProject } =
-        useCanvasProjectLifecycle({
-            projectId,
-            projectLoaded,
-            nodes,
-            connections,
-            chatSessions,
-            activeChatId,
-            canvasAppearance,
-            backgroundMode,
-            showImageInfo,
-            viewport,
-            nodesRef,
-            connectionsRef,
-            chatSessionsRef,
-            activeChatIdRef,
-            viewportRef,
-            historyPausedRef,
-            setNodes,
-            setConnections,
-            setChatSessions,
-            setActiveChatId,
-            setCanvasAppearance,
-            setBackgroundMode,
-            setShowImageInfo,
-            setViewport,
-            setProjectLoaded,
-            resetHistory,
-            cleanupAssetImages,
-            cleanupCanvasFiles,
-        });
+    const {
+        loadError,
+        retryLoad,
+        addedSkills,
+        agentFocus,
+        clearCanvasFiles,
+        createAndOpenProject,
+        currentProject,
+        deleteCurrentProject,
+        renameCurrentProject,
+        refreshCanvasAfterHistoryRestore,
+        saveCanvasProject,
+        persistLocalEdits,
+        prepareCanvasForServerAction,
+        updateProject,
+    } = useCanvasProjectLifecycle({
+        projectId,
+        projectLoaded,
+        nodes,
+        connections,
+        chatSessions,
+        activeChatId,
+        canvasAppearance,
+        backgroundMode,
+        showImageInfo,
+        viewport,
+        nodesRef,
+        connectionsRef,
+        chatSessionsRef,
+        activeChatIdRef,
+        viewportRef,
+        historyPausedRef,
+        setNodes,
+        setConnections,
+        setChatSessions,
+        setActiveChatId,
+        setCanvasAppearance,
+        setBackgroundMode,
+        setShowImageInfo,
+        setViewport,
+        setProjectLoaded,
+        resetHistory,
+        cleanupAssetImages,
+        cleanupCanvasFiles,
+    });
 
     useAgentPageDeclaration({
         declaration: { enabled: true, kind: "business", businessType: "canvas", agentDefinitionId: "canvas.default" },
@@ -739,6 +762,7 @@ function CanvasViewportPage() {
     const drama = useCanvasDrama({
         canvasId: projectId,
         dramaId: linkedProjectId,
+        referenceFieldsVersion,
         projectLoaded,
         nodes,
         nodesRef,
@@ -1064,6 +1088,7 @@ function CanvasViewportPage() {
         spreadSelectedNodes,
         copyNodesToClipboard,
         copySelectedNodes,
+        applySubmapPreset,
         createFolder,
         createNode,
         createReferenceGroup,
@@ -1075,8 +1100,10 @@ function CanvasViewportPage() {
         pasteCopiedNodes,
         restoreCopiedNodesFromText,
         releaseCopiedNodesPastePriority,
+        saveSubmapPreset,
         shouldPreferCopiedNodes,
         toggleNodeLocked,
+        userSubmapPresets,
         setPrimaryVersion,
         adoptNodeMediaVersion,
         deleteNodeMediaVersion,
@@ -1345,6 +1372,7 @@ function CanvasViewportPage() {
         setBatchPrimary,
         toggleBatchExpanded,
         toggleFrameCollapsed,
+        toggleSubmapCollapsed,
         toggleNodeFreeResize,
     } = useCanvasNodeEditor({
         canvasId: projectId,
@@ -1492,6 +1520,7 @@ function CanvasViewportPage() {
         cropNode,
         displayConnections,
         frameChildrenById,
+        submapChildrenById,
         infoNode,
         regionEditNode,
         imageEditNode,
@@ -2013,6 +2042,55 @@ function CanvasViewportPage() {
             setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position: screenToCanvas(event.clientX, event.clientY) });
         },
         [closeConnectionCreateMenu, screenToCanvas],
+    );
+
+    /** submap 内容区右键：发画布同款菜单，但带 scopeId 让新增节点归属该容器。 */
+    const handleSubmapContextMenu = useCallback(
+        (event: ReactMouseEvent, submapId: string) => {
+            event.preventDefault();
+            event.stopPropagation();
+            closeConnectionCreateMenu();
+            const selection = new Set([submapId]);
+            selectedNodeIdsRef.current = selection;
+            setSelectedNodeIds(selection);
+            setSelectedConnectionId(null);
+            setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position: screenToCanvas(event.clientX, event.clientY), scopeId: submapId });
+        },
+        [closeConnectionCreateMenu, screenToCanvas, selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds],
+    );
+
+    const openSubmapPresetSave = useCallback((nodeId: string) => {
+        setContextMenu(null);
+        setSubmapPresetSaveNodeId(nodeId);
+    }, []);
+
+    const exportSubmapWorkflow = useCallback(
+        (node: CanvasNodeData) => {
+            if (!currentProject) return;
+            setContextMenu(null);
+            void exportCanvasSubmap(
+                {
+                    ...currentProject,
+                    nodes: nodesRef.current,
+                    connections: connectionsRef.current,
+                },
+                node.id,
+                `${node.title || "子画布"}工作流`,
+            )
+                .then((exported) => message.success(`已导出「${exported.project.title}」工作流`))
+                .catch((error) => message.error(error instanceof Error ? error.message : "导出子画布工作流失败"));
+        },
+        [connectionsRef, currentProject, message, nodesRef],
+    );
+
+    const confirmSubmapPresetSave = useCallback(
+        (name: string) => {
+            if (!submapPresetSaveNodeId) return;
+            void saveSubmapPreset(submapPresetSaveNodeId, name).then((saved) => {
+                if (saved) setSubmapPresetSaveNodeId(null);
+            });
+        },
+        [saveSubmapPreset, submapPresetSaveNodeId],
     );
 
     const handleNodeContextMenu = useCallback(
@@ -2649,6 +2727,7 @@ function CanvasViewportPage() {
     const editCanvasPrevis = useCallback((node: CanvasNodeData) => openPrevisWorkbench(node.id), [openPrevisWorkbench]);
     const storyboardAssetNode = nodes.find((node) => node.id === storyboardAssetTarget?.nodeId);
     const storyboardAssetRow = storyboardAssetNode?.metadata?.storyboard?.rows.find((row) => row.id === storyboardAssetTarget?.rowId);
+    const submapPresetSaveNode = submapPresetSaveNodeId ? nodeById.get(submapPresetSaveNodeId) || null : null;
     const storyboardAssetBindings =
         storyboardAssetNode && storyboardAssetRow
             ? normalizeStoryboardAssetBindings([
@@ -2791,6 +2870,37 @@ function CanvasViewportPage() {
         [setDialogNodeId, setSearchParams],
     );
     const referenceMigration = useCanvasReferenceMigration(projectId, { enabled: projectLoaded, legacy: currentProject?.referenceFieldsVersion !== 1 });
+    const shotMigration = useCanvasShotMigration(projectId, {
+        enabled: projectLoaded,
+        referenceFieldsVersion,
+        onOpenCanvas: (canvasId) => navigate(`/canvas/${encodeURIComponent(canvasId)}`),
+    });
+    const migrationNoticeItems: CanvasMigrationNoticeItem[] = [
+        ...(referenceMigration.required
+            ? [
+                  {
+                      key: "reference",
+                      title: "素材引用待迁移",
+                      description: "旧版素材关联需要转换一次，完成后 Agent 才能稳定引用素材和生成。",
+                      action: "处理引用",
+                      onAction: () => referenceMigration.setOpen(true),
+                      icon: <Link2 className="size-4" />,
+                  },
+              ]
+            : []),
+        ...(shotMigration.required && shotMigration.preview
+            ? [
+                  {
+                      key: "shot",
+                      title: "旧分镜可升级为镜头子画布",
+                      description: referenceMigration.required ? `检测到 ${shotMigration.preview.rows} 条旧分镜行；建议先完成素材引用迁移，存在冲突时会阻止升级。` : `检测到 ${shotMigration.preview.rows} 条旧分镜行；已出图、素材和任务绑定会保留。`,
+                      action: "升级分镜",
+                      onAction: () => shotMigration.setOpen(true),
+                      icon: <Clapperboard className="size-4" />,
+                  },
+              ]
+            : []),
+    ];
     const locateAssetNode = useCallback(
         (nodeId: string) => {
             changeCanvasView("canvas");
@@ -2941,6 +3051,9 @@ function CanvasViewportPage() {
                                     onUndo={undoCanvas}
                                     onRedo={redoCanvas}
                                     onShare={() => setShareModalOpen(true)}
+                                    onOpenVersionHistory={() => setVersionHistoryOpen(true)}
+                                    shotMigrationRollbackAvailable={shotMigration.rollbackAvailable}
+                                    onOpenShotMigrationRollback={() => shotMigration.setOpen(true)}
                                     shortcutRequestNonce={shortcutRequestNonce}
                                     syncIcon={<CanvasSyncStatus projectId={projectId} />}
                                     onOpenSearch={() => setNodeSearchOpen(true)}
@@ -2958,7 +3071,7 @@ function CanvasViewportPage() {
                                     shortDramaGuide={shortDramaGuide}
                                 />
                             ) : null}
-                            {referenceMigration.required ? <CanvasReferenceMigrationBanner onOpen={() => referenceMigration.setOpen(true)} /> : null}
+                            {!focusMode && canvasView === "canvas" ? <CanvasMigrationNotice items={migrationNoticeItems} /> : null}
                             <CanvasReferenceMigrationPanel
                                 open={referenceMigration.open}
                                 conflicts={referenceMigration.conflicts}
@@ -2972,6 +3085,15 @@ function CanvasViewportPage() {
                                 error={referenceMigration.error}
                                 onCancel={() => referenceMigration.setOpen(false)}
                                 onApply={(choices) => void referenceMigration.apply(choices)}
+                            />
+                            <CanvasShotMigrationPanel
+                                open={shotMigration.open}
+                                preview={shotMigration.preview}
+                                applying={shotMigration.applying}
+                                error={shotMigration.error}
+                                onCancel={() => shotMigration.setOpen(false)}
+                                onApply={() => void shotMigration.apply()}
+                                onRollback={(strategy) => void shotMigration.rollback(strategy)}
                             />
 
                             <CanvasNodeSearchModal
@@ -2998,6 +3120,14 @@ function CanvasViewportPage() {
 
                             {batchReferencePickerModal}
                             <CanvasShareModal projectId={projectId} open={shareModalOpen} onClose={() => setShareModalOpen(false)} beforeCreate={saveCanvasProject} />
+                            <CanvasVersionHistoryDrawer
+                                projectId={projectId}
+                                open={versionHistoryOpen}
+                                currentRevision={currentProject?.revision}
+                                onClose={() => setVersionHistoryOpen(false)}
+                                onBeforeRestore={prepareCanvasForServerAction}
+                                onRestored={refreshCanvasAfterHistoryRestore}
+                            />
                             <LibTVImportDialog open={libTVImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setLibTVImportOpen(false)} onApply={applyImportedCanvas} />
                             <TapNowImportDialog open={tapNowImportOpen} projectId={projectId} viewport={viewport} viewportSize={size} onClose={() => setTapNowImportOpen(false)} onApply={applyImportedCanvas} />
 
@@ -3063,6 +3193,7 @@ function CanvasViewportPage() {
                                                     nodeRenderLODById={nodeRenderLODById}
                                                     nodeStackOrder={nodeStackOrder}
                                                     frameChildrenById={frameChildrenById}
+                                                    submapChildrenById={submapChildrenById}
                                                     linkedFolderPreviewNodesById={linkedFolderPreviewNodesById}
                                                     dragPreview={dragPreview}
                                                     selectedNodeIds={selectedNodeIds}
@@ -3092,10 +3223,15 @@ function CanvasViewportPage() {
                                                     onConnectStart={handleConnectStart}
                                                     onNodeResize={handleNodeResize}
                                                     onToggleFrame={handleFrameToggle}
+                                                    onToggleSubmap={toggleSubmapCollapsed}
+                                                    onSubmapPresetChange={applySubmapPreset}
+                                                    userSubmapPresets={userSubmapPresets}
+                                                    onSubmapSavePreset={openSubmapPresetSave}
                                                     onFolderStyleChange={handleFolderStyleChange}
                                                     onFolderThemeChange={handleFolderThemeChange}
                                                     onNodeTitleChange={handleNodeTitleChange}
                                                     onNodeContextMenu={handleNodeContextMenu}
+                                                    onSubmapContextMenu={handleSubmapContextMenu}
                                                     onNodeContentChange={handleNodeContentChange}
                                                     onToggleBatch={toggleBatchExpanded}
                                                     onSetBatchPrimary={setBatchPrimary}
@@ -3413,7 +3549,7 @@ function CanvasViewportPage() {
                                 selectedCount={selectedNodeIds.size}
                                 screenToCanvas={screenToCanvas}
                                 onClose={() => setContextMenu(null)}
-                                onAddNode={(type, position) => createNode(type, position)}
+                                onAddNode={(type, position, content, scopeId) => createNode(type, position, undefined, content, scopeId)}
                                 onAddFolder={createFolder}
                                 onChooseStyle={() => setStylePickerOpen(true)}
                                 onOpenPrevis={(position) => setPrevisTemplateRequest({ position })}
@@ -3446,14 +3582,26 @@ function CanvasViewportPage() {
                                 onUploadToArkPrivateAsset={confirmUploadNodeImageToArkPrivateAsset}
                                 onSetAssetCategory={(nodeId, assetCategory) => handleConfigNodeChange(nodeId, { assetCategory })}
                                 onToggleFrame={(node) => handleFrameToggle(node.id)}
+                                onToggleSubmap={(node) => toggleSubmapCollapsed(node.id)}
+                                onSaveSubmapPresetAs={(node) => openSubmapPresetSave(node.id)}
+                                onExportSubmapWorkflow={exportSubmapWorkflow}
                                 onSpreadSelection={spreadSelectedNodes}
                                 onCopySelection={copySelectedNodes}
                                 onDeleteSelection={() => deleteNodes(selectedNodeIds)}
-                                onSendToAgent={() => sendSelectionToAgent(contextMenu?.type === "node" && selectedNodeIds.size <= 1 ? contextMenu.nodeId : undefined)}
+                                onSendToAgent={() => sendSelectionToAgent(contextMenu?.type === "node" && selectedNodeIds.size <= 1 ? contextMenu.nodeId : contextMenu?.type === "canvas" ? contextMenu.scopeId : undefined)}
                                 downloadableSelectionCount={contextMenu && selectedNodeIds.size > 1 ? nodes.filter((node) => selectedNodeIds.has(node.id) && canDownloadCanvasNodeMedia(node)).length : 0}
                                 onDownloadSelection={() => void downloadNodesMedia(nodesRef.current.filter((node) => selectedNodeIds.has(node.id)))}
                                 onAdoptToDrama={drama.active ? drama.openAdopt : undefined}
                                 onCreateDramaFromStoryboard={shortDramaEnabled ? createDramaFromStoryboard : undefined}
+                            />
+
+                            <CanvasSubmapSavePresetModal
+                                open={Boolean(submapPresetSaveNode)}
+                                initialTitle={Array.from(submapPresetSaveNode?.title || "镜头模板")
+                                    .slice(0, 80)
+                                    .join("")}
+                                onCancel={() => setSubmapPresetSaveNodeId(null)}
+                                onSave={confirmSubmapPresetSave}
                             />
 
                             <CanvasUploadModal open={uploadModalOpen} onClose={closeUploadModal} onUpload={handleUploadFiles} />

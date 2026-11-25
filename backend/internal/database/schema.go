@@ -125,6 +125,7 @@ func businessModels() []any {
 		&model.EcommerceAgentPage{},
 		&model.EcommerceAgentCanvasVersion{},
 		&model.StyleProfile{},
+		&model.UserSubmapPreset{},
 		&model.ProjectUnit{},
 		&model.CanvasUnitLink{},
 		&model.Shot{},

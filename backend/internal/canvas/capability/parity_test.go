@@ -34,7 +34,7 @@ func TestRegistryGraphPermissionChangesInvalidateContract(t *testing.T) {
 
 func TestBuiltinEditableParity(t *testing.T) {
 	registry := BuiltinRegistry()
-	types := []string{"image", "text", "drawing", "script", "skill", "config", "video", "audio", "frame", "markdown", "svg", "html", "panorama", "compare", "chart", "colorgrade", "media-conversion", "batch-table"}
+	types := []string{"image", "text", "drawing", "script", "skill", "config", "video", "audio", "frame", "markdown", "svg", "html", "panorama", "compare", "chart", "colorgrade", "media-conversion", "batch-table", "submap", "shortplay-asset"}
 	if len(registry.Types()) != len(types) {
 		t.Fatalf("createable builtins = %v", registry.Types())
 	}

@@ -19,6 +19,8 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { remapImportedCanvasNodeMedia } from "@/lib/canvas/canvas-import-media-remap";
+import { normalizeCanvasRelations } from "@/lib/canvas/canvas-relation-normalize";
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-task-state";
 import { saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
 import { createCanvasProjectWithRemoteSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, scheduleRemoteUserDataSync } from "@/services/user-data-sync";
@@ -247,9 +249,6 @@ export default function CanvasPage() {
                         const oldKey = node.metadata?.storageKey;
                         const mapped = oldKey ? storageKeyMap.get(oldKey) : undefined;
                         const isDeadBlob = (val?: string) => typeof val === "string" && val.startsWith("blob:");
-                        const nextStorageKey = mapped ? mapped.storageKey : oldKey && !isDeadBlob(oldKey) ? oldKey : undefined;
-                        const content = mapped ? mapped.url : isDeadBlob(node.metadata?.content) ? "" : node.metadata?.content;
-                        const previewContent = mapped ? mapped.url : isDeadBlob(node.metadata?.previewContent) ? "" : node.metadata?.previewContent;
                         const isMedia = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio;
                         // 包内媒体已重新写入当前账号，节点是导入副本：与复制节点一致，不继承源画布的任务绑定和素材 ID。
                         // 否则素材登记会把它当作未加载的受管生成结果拒绝，或去读取当前账号无权访问的旧素材，整次导入失败。
@@ -258,19 +257,18 @@ export default function CanvasPage() {
                             baseMetadata = resetGenerationTaskMetadata(node.metadata, "success");
                             delete baseMetadata.assetId;
                         }
+                        const remapped = remapImportedCanvasNodeMedia({ ...node, metadata: baseMetadata }, storageKeyMap, isDeadBlob);
                         return {
-                            ...node,
-                            metadata: {
-                                ...baseMetadata,
-                                ...(nextStorageKey !== undefined ? { storageKey: nextStorageKey } : {}),
-                                ...(content !== undefined ? { content } : {}),
-                                ...(previewContent !== undefined ? { previewContent } : {}),
-                                drawingEngine: node.type === "drawing" && node.metadata?.drawingId ? drawingEngineById.get(node.metadata.drawingId) || node.metadata.drawingEngine || "tldraw" : node.metadata?.drawingEngine,
-                            },
+                            ...remapped,
+                            metadata: { ...remapped.metadata, drawingEngine: node.type === "drawing" && node.metadata?.drawingId ? drawingEngineById.get(node.metadata.drawingId) || node.metadata.drawingEngine || "tldraw" : node.metadata?.drawingEngine },
                         };
                     };
 
-                    let remappedNodes = (item.project.nodes || []).map(remapNodeMedia);
+                    const normalized = normalizeCanvasRelations((item.project.nodes || []).map(remapNodeMedia), item.project.connections || [], {
+                        edgePresentation: item.project.edgePresentation,
+                    });
+                    const remappedNodes = normalized.nodes.slice();
+                    const remappedConnections = normalized.connections;
                     let remappedTimeline = item.project.timeline
                         ? {
                               ...item.project.timeline,
@@ -295,7 +293,7 @@ export default function CanvasPage() {
                               }),
                           }
                         : undefined;
-                    updateProject(importedProjectId, { nodes: remappedNodes, timeline: remappedTimeline });
+                    updateProject(importedProjectId, { nodes: remappedNodes, connections: remappedConnections, timeline: remappedTimeline });
 
                     const assetIdByStorageKey = new Map<string, string>();
                     for (let index = 0; index < remappedNodes.length; index += 1) {
@@ -340,7 +338,7 @@ export default function CanvasPage() {
                         }
                         remappedTimeline = { ...remappedTimeline, clips };
                     }
-                    updateProject(importedProjectId, { nodes: remappedNodes, timeline: remappedTimeline });
+                    updateProject(importedProjectId, { nodes: remappedNodes, connections: remappedConnections, timeline: remappedTimeline });
 
                     await Promise.all(
                         (item.drawingDocuments || []).map((document) => {

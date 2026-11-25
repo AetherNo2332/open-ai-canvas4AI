@@ -67,6 +67,9 @@ export function syncBatchColumnReferences(nodes: CanvasNodeData[], connections: 
                 return source?.type === "image" && Boolean(source.metadata?.content || source.metadata?.storageKey);
             }),
         );
+        // 字段文档重开时列连线可能尚未回填；行输入是持久真源，不能因为暂时没有
+        // 可见列边就把整张表的 inputNodeIds 清空。
+        if (!inputs.some((ids) => ids.length)) return node;
         const previousInputs = table.referenceColumnInputs;
         const changedColumns = columns.map((column, index) => {
             const previous = previousInputs?.[column.id];

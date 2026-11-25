@@ -1,0 +1,31 @@
+{
+    "_note": "前端 submap 形式下拉的预置清单。storyboard 项逐字段镜像 backend/internal/canvas/submapworkflow/testdata/storyboard.json（由 canvas-submap-presets.test.ts 的 parity 测试守住）；id 为空表示空白子画布。新增预置须同时在后端 testdata 落同名 manifest。",
+    "presets": [
+        {
+            "version": 1,
+            "id": "",
+            "title": "空白子画布",
+            "children": [],
+            "connections": []
+        },
+        {
+            "version": 1,
+            "id": "storyboard",
+            "title": "分镜行（storyboard）",
+            "children": [
+                { "localId": "text-1", "type": "text", "title": "图片提示词" },
+                { "localId": "text-2", "type": "text", "title": "视频提示词" },
+                { "localId": "text-3", "type": "text", "title": "台词/旁白" },
+                { "localId": "text-4", "type": "text", "title": "备注" },
+                { "localId": "image-1", "type": "image", "title": "首帧", "prompt": "@文本1" },
+                { "localId": "video-1", "type": "video", "title": "视频", "prompt": "@文本1\n@文本2\n台词/旁白：@文本3", "seconds": "4", "startFrame": "image-1" }
+            ],
+            "connections": [
+                { "from": "text-1", "to": "image-1" },
+                { "from": "text-1", "to": "video-1" },
+                { "from": "text-2", "to": "video-1" },
+                { "from": "text-3", "to": "video-1" }
+            ]
+        }
+    ]
+}

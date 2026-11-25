@@ -1,0 +1,17 @@
+{
+  "project": {
+    "id": "canvas-shortplay-s01",
+    "userId": "user",
+    "title": "shortplay S01",
+    "revision": 1
+  },
+  "payloadJson": "{\"connections\":[],\"nodes\":[]}",
+  "document": {
+    "connections": [],
+    "nodes": []
+  },
+  "nodeOrder": [],
+  "nodes": [],
+  "connections": [],
+  "projectedEdges": []
+}

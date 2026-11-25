@@ -14,6 +14,17 @@ func (r *Repository) ActiveCanvasTaskBindings(owner, canvas, epoch string) ([]mo
 	return rows, err
 }
 
+// ActiveCanvasProjectTasks guards document-format switches: a late write-back
+// must not land on a document whose row/output identities were just replaced.
+func (r *Repository) ActiveCanvasProjectTasks(owner, canvas string) ([]model.Task, error) {
+	rows := []model.Task{}
+	err := r.db.Select("id", "user_id", "project_id", "status", "type").
+		Where("user_id = ? AND project_id = ? AND status IN ?", owner, canvas, []model.TaskStatus{
+			model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain,
+		}).Order("created_at").Find(&rows).Error
+	return rows, err
+}
+
 func (r *Repository) SaveCanvasTaskResource(task, owner, resource string) error {
 	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.CanvasTaskResource{TaskID: task, OwnerID: owner, ResourceID: resource}).Error
 }

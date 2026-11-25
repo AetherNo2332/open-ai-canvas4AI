@@ -242,6 +242,18 @@ type StyleProfile struct {
 	UpdatedAt   time.Time  `json:"updatedAt" gorm:"index:idx_style_profiles_user_updated,priority:2"`
 }
 
+// UserSubmapPreset 是用户私有的 submap 预制件：ManifestJSON 保存一组普通画布
+// 节点的局部化快照（历史列名保留），加载时由目标画布重新发号并重映射引用。
+type UserSubmapPreset struct {
+	ID           string    `json:"id" gorm:"primaryKey;size:36"`
+	UserID       string    `json:"userId" gorm:"size:36;index;index:idx_user_submap_presets_user_updated,priority:1"`
+	Name         string    `json:"name" gorm:"size:160"`
+	ManifestJSON string    `json:"manifestJson" gorm:"type:text;not null"`
+	Revision     int64     `json:"revision"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt" gorm:"index:idx_user_submap_presets_user_updated,priority:2"`
+}
+
 type ProjectUnit struct {
 	ID         string            `json:"id" gorm:"primaryKey;size:36"`
 	ProjectID  string            `json:"projectId" gorm:"index;size:36;index:idx_project_units_project_position,priority:1"`

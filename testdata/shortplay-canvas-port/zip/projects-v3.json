@@ -1,0 +1,88 @@
+{
+  "app": "infinite-canvas",
+  "version": 3,
+  "exportedAt": "2026-08-03T06:58:49.000Z",
+  "projects": [
+    {
+      "project": {
+        "id": "project-import-1",
+        "revision": 7,
+        "title": "ZIP v3 分镜样本",
+        "createdAt": "2026-08-01T10:00:00.000Z",
+        "updatedAt": "2026-08-03T06:58:49.000Z",
+        "nodes": [
+          {
+            "id": "image-1",
+            "type": "image",
+            "title": "首帧",
+            "position": { "x": 120, "y": 80 },
+            "width": 720,
+            "height": 405,
+            "metadata": {
+              "content": "blob:image-1",
+              "storageKey": "image:frame-1",
+              "mimeType": "image/png",
+              "assetId": "asset-frame-1",
+              "status": "success"
+            }
+          },
+          {
+            "id": "drawing-1",
+            "type": "drawing",
+            "title": "绘图",
+            "position": { "x": 900, "y": 80 },
+            "width": 640,
+            "height": 420,
+            "metadata": {
+              "drawingId": "drawing:1",
+              "drawingEngine": "tldraw",
+              "drawingRevision": 3
+            }
+          },
+          {
+            "id": "text-1",
+            "type": "text",
+            "title": "画面提示",
+            "position": { "x": 120, "y": 540 },
+            "width": 340,
+            "height": 220,
+            "metadata": { "content": "旧 ZIP 的文本", "status": "idle" }
+          }
+        ],
+        "connections": [
+          {
+            "id": "conn-1",
+            "fromNodeId": "text-1",
+            "toNodeId": "image-1"
+          }
+        ],
+        "chatSessions": [],
+        "activeChatId": null,
+        "backgroundMode": "dots",
+        "showImageInfo": true,
+        "viewport": { "x": 0, "y": 0, "k": 1 },
+        "previsScenes": []
+      },
+      "files": [
+        {
+          "storageKey": "image:frame-1",
+          "path": "projects/project-import-1/files/image%3Aframe-1",
+          "mimeType": "image/png",
+          "bytes": 68
+        }
+      ],
+      "drawingDocuments": [
+        {
+          "version": 1,
+          "drawingId": "drawing:1",
+          "previewPath": "projects/project-import-1/drawings/drawing%3A1.png",
+          "snapshot": { "version": 1, "pages": [] },
+          "revision": 3,
+          "updatedAt": "2026-08-02T10:00:00.000Z",
+          "shapeCount": 2,
+          "pageCount": 1
+        }
+      ]
+    }
+  ]
+}

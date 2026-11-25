@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "evidence": "reconstructed",
+  "source": "history of web/src/lib/canvas/canvas-export.ts",
+  "productionHistory": false,
+  "versions": {
+    "v3": {
+      "app": "infinite-canvas",
+      "exportedBefore": "72420895b",
+      "drawingDocumentVersion": 1
+    },
+    "v4": {
+      "app": "yingce",
+      "exportedAtCurrentBaseline": "295374650",
+      "drawingDocumentVersion": 2,
+      "engine": "tldraw"
+    }
+  },
+  "notes": [
+    "No historical ZIP was available locally; these are exporter-schema reconstructions.",
+    "The media entries are base64 copies of a one-pixel PNG so the archive paths and import remap can be tested.",
+    "The v3 and v4 differences are app identity, version number and drawing JSON engine/version fields."
+  ]
+}

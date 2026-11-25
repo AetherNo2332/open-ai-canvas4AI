@@ -23,6 +23,16 @@ import (
 const canvasHistoryLimit = 20
 const canvasHistoryInterval = 5 * time.Minute
 
+// 这些原因代表不可重建的审计前像，必须绕过自动快照的 5 分钟节流。
+func canvasHistoryForceCapture(reason string) bool {
+	switch reason {
+	case "before_restore", "before_resource_repair", "before_shot_migration":
+		return true
+	default:
+		return false
+	}
+}
+
 // 浏览器、云端 Agent 和创作任务共用此入口；外层事务仍负责任务和画布的一致性。
 func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasProject, after *model.CanvasProject, reason string) error {
 	var candidate map[string]any
@@ -41,6 +51,9 @@ func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasPr
 		if err != nil {
 			return err
 		}
+		if reason == "before_restore" {
+			result.Document["connections"] = []any{}
+		}
 		raw, err := json.Marshal(result.Document)
 		if err != nil {
 			return err
@@ -55,26 +68,36 @@ func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasPr
 	if err := assets.CollectOwnedDocumentReferences(after.PayloadJSON, refs); err != nil {
 		return err
 	}
-	if len(resourceIDs) > 0 {
-		resources, err := repo.ResourcesForUserIDs(after.UserID, resourceIDs)
-		if err != nil {
-			return err
-		}
-		ready := make(map[string]struct{}, len(resources))
-		for _, resource := range resources {
-			if resource.Status == model.ResourceStatusReady {
-				ready[resource.ID] = struct{}{}
-			}
-		}
-		retained := resourceIDs[:0]
-		for _, id := range resourceIDs {
-			if _, exists := ready[id]; exists {
-				retained = append(retained, id)
-			}
-		}
-		resourceIDs = retained
+	resourceIDs, err = retainReadyCanvasHistoryResources(repo, after.UserID, resourceIDs)
+	if err != nil {
+		return err
 	}
-	return repo.SaveCanvasWithSnapshot(after, snapshot, resourceIDs, assets.SortedIDs(refs), after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, reason == "before_restore" || reason == "before_resource_repair")
+	return repo.SaveCanvasWithSnapshot(after, snapshot, resourceIDs, assets.SortedIDs(refs), after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, canvasHistoryForceCapture(reason))
+}
+
+// 历史快照保存的是修改前文档。旧文档引用的资源可能已被清理，不能在正常保存时
+// 因这份历史前像阻断；仍被当前文档引用的资源由 CaptureCanvasSnapshot 严格校验。
+func retainReadyCanvasHistoryResources(repo *repository.Repository, userID string, resourceIDs []string) ([]string, error) {
+	if len(resourceIDs) == 0 {
+		return nil, nil
+	}
+	resources, err := repo.ResourcesForUserIDs(userID, resourceIDs)
+	if err != nil {
+		return nil, err
+	}
+	ready := make(map[string]struct{}, len(resources))
+	for _, resource := range resources {
+		if resource.Status == model.ResourceStatusReady {
+			ready[resource.ID] = struct{}{}
+		}
+	}
+	retained := resourceIDs[:0]
+	for _, id := range resourceIDs {
+		if _, exists := ready[id]; exists {
+			retained = append(retained, id)
+		}
+	}
+	return retained, nil
 }
 
 // Explicit repair keeps the damaged preimage for audit/undo, but only protects

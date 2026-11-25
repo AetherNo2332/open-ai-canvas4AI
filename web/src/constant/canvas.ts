@@ -13,6 +13,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Image]: { width: 720, height: 405, title: "图片" },
     [CanvasNodeType.Text]: { width: 340, height: 240, title: "Note" },
     [CanvasNodeType.Drawing]: { width: 440, height: 300, title: "绘图" },
+    [CanvasNodeType.Submap]: { width: 920, height: 360, title: "子画布" },
     [CanvasNodeType.Script]: { width: 920, height: 360, title: "分镜脚本" },
     [CanvasNodeType.Skill]: { width: 360, height: 220, title: "技能" },
     // 配置节点同时承载模式、渠道、工作流和参数；预留稳定空间，避免控件和错误状态互相挤压。
@@ -43,6 +44,10 @@ export const NODE_SPECS = {
     [CanvasNodeType.Drawing]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Drawing],
         metadata: { status: "success" },
+    },
+    [CanvasNodeType.Submap]: {
+        ...NODE_DEFAULT_SIZE[CanvasNodeType.Submap],
+        metadata: { status: "idle", collapsed: false },
     },
     [CanvasNodeType.Script]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Script],

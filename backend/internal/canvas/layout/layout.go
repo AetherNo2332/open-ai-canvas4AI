@@ -24,15 +24,13 @@ var LaneOrder = []string{"text", "image", "video", "audio"}
 
 // Node 是排布所需的节点快照。Width/Height 为 0 时按默认尺寸补齐。
 type Node struct {
-	ID      string
-	Type    string
-	Lane    string
-	X, Y    float64
-	Width   float64
-	Height  float64
-	Locked  bool
-	NoMove  bool // 容器节点（背板/文件夹）本身不参与整理
-	Movable bool
+	ID, Type, Lane, Title, ScopeID string
+	X, Y                           float64
+	Width                          float64
+	Height                         float64
+	Locked                         bool
+	NoMove                         bool // 容器节点（背板/文件夹）本身不参与整理
+	Movable                        bool
 }
 
 // Position 是排布结果。

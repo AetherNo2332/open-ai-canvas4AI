@@ -19,7 +19,9 @@ const paths: Record<string, string> = {
     "@/lib/canvas/sync-recovery": fileURLToPath(new URL("lib/canvas/sync-recovery.ts", root)),
     "@/lib/canvas/canvas-sync-rebase": join(dir, "rebase.ts"),
     "@/lib/canvas/canvas-text-merge": fileURLToPath(new URL("lib/canvas/canvas-text-merge.ts", root)),
+    "@/lib/canvas/canvas-node-id": fileURLToPath(new URL("lib/canvas/canvas-node-id.ts", root)),
     "@/lib/canvas/canvas-content": join(dir, "content.ts"),
+    "@/lib/canvas/canvas-edge-presentation": fileURLToPath(new URL("lib/canvas/canvas-edge-presentation.ts", root)),
     "@/stores/use-sync-progress-store": join(dir, "progress.ts"),
     "@/lib/canvas/canvas-task-mutation": fileURLToPath(new URL("../src/lib/canvas/canvas-task-mutation.ts", import.meta.url)),
     "./canvas-mutation-batches": fileURLToPath(new URL("services/canvas-mutation-batches.ts", root)),
@@ -56,6 +58,7 @@ export const appQueryClient = { invalidateQueries: async () => {} };
 export const repairMissingCanvasAssets = () => ({ createdAssets: 0, updatedProjects: 0 });
 export const rebindInconsistentCanvasAssets = () => ({ createdAssets: 0, updatedProjects: 0, reboundNodes: 0 });
 export const canvasPromptAssetMentionIds = text => [...new Set([...String(text).matchAll(/@\\[asset:([^\\]]+)\\]/g)].map(match => match[1]).filter(id => id === id.trim()))];
+export const projectCanvasReferenceConnections = project => project;
 export class ApiError extends Error { retryable = false; constructor(message, options = {}) { super(message); Object.assign(this, options); } }
 export const apiBaseURL = "/api";
 const unexpected = () => { throw new Error("unexpected dependency call"); };
@@ -68,7 +71,7 @@ export async function applyRemoteCanvasOperations(id, request) {
     const error = fixture.errors.get(id + ":" + writes.length);
     if (error) throw error;
     const key = id + ":" + request.mutationId;
-    const { editProofs, ...payload } = request;
+    const { editProofs, clientCapabilities, ...payload } = request;
     const digest = JSON.stringify(payload);
     const receipts = fixture.remoteState?.receipts ?? fixture.receipts;
     const receipt = receipts.get(key);

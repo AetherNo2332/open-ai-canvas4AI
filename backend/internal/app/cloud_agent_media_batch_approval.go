@@ -15,6 +15,13 @@ func (s *Service) requestCloudAgentMediaBatchApproval(run *model.CloudAgentExecu
 	if err != nil {
 		return s.cloudAgentMediaError(run, state, "admission", false, false, err)
 	}
+	return s.requestCloudAgentMediaBatchApprovalWithArgs(run, state, call, args)
+}
+
+// requestCloudAgentMediaBatchApprovalWithArgs 给 canvas run 复用同一套批次审批：
+// call 保持模型实际发出的 canvas 调用（审批哈希与检查点重放因此不变），args 是
+// run 解析出的等价批量参数。
+func (s *Service) requestCloudAgentMediaBatchApprovalWithArgs(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, args cloudAgentMediaBatchArgs) error {
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return s.terminateCloudAgent(run, "Agent 运行策略不可用，本轮已停止")

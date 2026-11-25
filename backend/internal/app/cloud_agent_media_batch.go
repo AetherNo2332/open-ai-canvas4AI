@@ -260,6 +260,11 @@ func cloudAgentMediaBatchItemArgs(doc map[string]any, args cloudAgentMediaBatchA
 		a.VideoArkPrivateAssetUpload = args.VideoArkPrivateAssetUpload
 	}
 	cloudAgentBatchItemReferences(doc, nodes, item.NodeID, &a)
+	composed, composeErr := cloudAgentCanvasComposePrompt(prompt, node, nodes, a.ReferenceNodeIDs)
+	if composeErr != nil {
+		return cloudAgentMediaArgs{}, cloudAgentFieldError(field("prompt"), "invalid_value", composeErr.Error())
+	}
+	a.Prompt = composed
 	if len(a.ReferenceNodeIDs) > 16 {
 		return cloudAgentMediaArgs{}, cloudAgentFieldError(field("nodeId"), "item_count", "占位节点的参考连线超过 16 个；请减少参考后再生成")
 	}
@@ -369,22 +374,40 @@ type cloudAgentMediaBatchPrepared struct {
 // requestCloudAgentMediaBatchApproval 逐条做无扣费准入，建好草稿节点后发出一张审批卡。
 
 func cloudAgentBatchItemReferences(doc map[string]any, nodes map[string]map[string]any, nodeID string, a *cloudAgentMediaArgs) {
+	node := nodes[nodeID]
 	seen := map[string]bool{}
+	addMedia := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] || nodes[id] == nil {
+			return
+		}
+		seen[id] = true
+		a.ReferenceNodeIDs = append(a.ReferenceNodeIDs, id)
+	}
+	for _, id := range cloudAgentCanvasMediaInputIDs(node) {
+		addMedia(id)
+	}
+	if a.SourceNodeID == "" {
+		if texts := cloudAgentCanvasTextInputIDs(node); len(texts) > 0 {
+			a.SourceNodeID = texts[0]
+		}
+	}
+	connectionSeen := map[string]bool{}
 	for _, edge := range creationMaps(doc["connections"]) {
 		if stringValue(edge["toNodeId"]) != nodeID || stringValue(edge["fromHandleId"]) != "" || stringValue(edge["toHandleId"]) != "" {
 			continue
 		}
 		fromID := stringValue(edge["fromNodeId"])
 		source := nodes[fromID]
-		if source == nil || seen[fromID] {
+		if source == nil || connectionSeen[fromID] {
 			continue
 		}
-		seen[fromID] = true
+		connectionSeen[fromID] = true
 		switch {
 		case cloudAgentCharacterNode(source):
-			a.ReferenceNodeIDs = append(a.ReferenceNodeIDs, fromID)
+			addMedia(fromID)
 		case stringValue(source["type"]) == "image" || stringValue(source["type"]) == "video" || stringValue(source["type"]) == "audio":
-			a.ReferenceNodeIDs = append(a.ReferenceNodeIDs, fromID)
+			addMedia(fromID)
 		case (stringValue(source["type"]) == "text" || stringValue(source["type"]) == "markdown") && a.SourceNodeID == "":
 			a.SourceNodeID = fromID
 		}

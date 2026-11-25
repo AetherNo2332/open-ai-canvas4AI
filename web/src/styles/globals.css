@@ -943,6 +943,9 @@
     --card-foreground: var(--foreground);
     --popover: oklch(1 0 0);
     --popover-foreground: var(--foreground);
+    /* 画布迁移提示必须始终是不透明表面：不能跟随可配置的 --popover，
+       否则自定义皮肤把浮层设为半透明后，画布网格会透进提示卡。 */
+    --canvas-notice-surface: oklch(1 0 0);
     --primary: oklch(0.205 0.005 286);
     --primary-foreground: oklch(0.985 0.002 286);
     --secondary: oklch(0.97 0.003 286);
@@ -989,6 +992,7 @@
     --card-foreground: var(--foreground);
     --popover: #222226;
     --popover-foreground: var(--foreground);
+    --canvas-notice-surface: #222226;
     --primary: oklch(0.922 0 0);
     --primary-foreground: oklch(0.205 0 0);
     --secondary: oklch(0.269 0 0);

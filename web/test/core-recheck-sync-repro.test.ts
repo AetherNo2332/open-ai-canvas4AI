@@ -98,6 +98,16 @@ beforeEach(async () => {
                 } else if (op.type === "create_node") {
                     expect(remote.nodes.some((item) => item.id === op.node.id)).toBe(false);
                     remote.nodes.push(structuredClone(op.node));
+                } else if (op.type === "patch_node") {
+                    const target = remote.nodes.find((item) => item.id === op.id);
+                    if (!target) throw new Error(`Missing patch target: ${op.id}`);
+                    for (const [path, value] of Object.entries(op.patch)) {
+                        const keys = path.split(".");
+                        const last = keys.pop()!;
+                        let owner = target as unknown as Record<string, unknown>;
+                        for (const key of keys) owner = (owner[key] ??= {}) as Record<string, unknown>;
+                        owner[last] = value;
+                    }
                 } else throw new Error(`Unexpected review fixture operation: ${op.type}`);
             }
             remote.revision = (remote.revision || 0) + 1;
@@ -242,4 +252,47 @@ test("independent new nodes and an unfinished task survive reopening and save", 
     expect(remote.nodes.map((item) => item.id).sort()).toEqual(["local-task", "original", "remote-node"]);
     expect(remote.nodes.find((item) => item.id === pending.id)?.metadata).toEqual(pending.metadata);
     expect(mutations.flatMap((item) => item.operations).some((op) => op.type === "remove_node")).toBe(false);
+});
+
+test("declarative reference fields keep projected connections through save and reopen", async () => {
+    const text = {
+        ...node("text"),
+        metadata: { content: "雨夜天台", prompt: "雨夜天台" },
+    };
+    const image = {
+        ...node("image"),
+        type: CanvasNodeType.Image,
+        metadata: {
+            generationSpec: {
+                version: 1,
+                mode: "image",
+                prompt: "雨夜天台的回眸",
+                options: {},
+                referenceBindings: [{ id: "node:text", nodeId: "text", mediaType: "text", role: "source-text", order: 0, resolution: "latest" }],
+                textInputMode: "append-sources",
+            },
+        },
+    };
+    remote = { ...remote, referenceFieldsVersion: 1, nodes: [text, image] as CanvasProject["nodes"], connections: [] };
+    resetRemoteUserDataSync();
+    await initializeRemoteUserDataSession(scope);
+    const loaded = await loadCanvasProjectForEditing("canvas");
+    expect(loaded?.connections).toHaveLength(1);
+
+    useCanvasStore.getState().updateProject("canvas", {
+        nodes: useCanvasStore
+            .getState()
+            .openProject("canvas")!
+            .nodes.map((item) => (item.id === "text" ? { ...item, metadata: { ...item.metadata, content: "雨夜天台的回眸", prompt: "雨夜天台的回眸" } } : item)),
+    });
+    await saveRemoteUserDataNow("canvas");
+
+    expect(useCanvasStore.getState().openProject("canvas")?.connections).toHaveLength(1);
+    expect(remote.connections).toEqual([]);
+    expect(mutations.flatMap((item) => item.operations).some((op) => op.type === "patch_node" && op.id === "text")).toBe(true);
+
+    resetRemoteUserDataSync();
+    await initializeRemoteUserDataSession(scope);
+    const reopened = await loadCanvasProjectForEditing("canvas");
+    expect(reopened?.connections).toHaveLength(1);
 });

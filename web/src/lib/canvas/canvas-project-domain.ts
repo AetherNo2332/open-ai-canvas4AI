@@ -18,12 +18,11 @@ import type { GenerationTask } from "@/services/api/task-center";
 import { synchronizeGenerationSpec } from "@/lib/canvas/generation-contract";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ConnectionHandle, type Position, type StoryboardColumn, type StoryboardRow } from "@/types/canvas";
 
-export function createCanvasNode(type: CanvasNodeTypeId, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
+export function createCanvasNode(type: CanvasNodeTypeId, position: Position, metadata?: CanvasNodeMetadata, id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`): CanvasNodeData {
     const builtinSpec = type in NODE_DEFAULT_SIZE ? getNodeSpec(type as CanvasNodeType) : undefined;
     const pluginDefinition = getNodeDefinition(type);
     const spec = builtinSpec || (pluginDefinition ? { width: pluginDefinition.defaultSize.width, height: pluginDefinition.defaultSize.height, title: pluginDefinition.defaultTitle, metadata: pluginDefinition.defaultMetadata } : undefined);
     if (!spec) throw new Error(`未注册的画布节点类型：${type}`);
-    const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const now = new Date().toISOString();
 
     return {
@@ -523,7 +522,9 @@ export function sameStringSet(left: Set<string>, right: Set<string>) {
 }
 
 export function sameNodeSemanticData(left: CanvasNodeData, right: CanvasNodeData) {
-    return left.id === right.id && left.type === right.type && left.title === right.title && left.parentId === right.parentId && left.width === right.width && left.height === right.height && left.metadata === right.metadata;
+    return (
+        left.id === right.id && left.type === right.type && left.title === right.title && left.parentId === right.parentId && left.scopeId === right.scopeId && left.width === right.width && left.height === right.height && left.metadata === right.metadata
+    );
 }
 
 export function applyBatchPrimaryImage(root: CanvasNodeData, primary: CanvasNodeData): CanvasNodeData {
@@ -557,6 +558,12 @@ export function removeCanvasNodes(nodes: CanvasNodeData[], requestedIds: Set<str
     nodes.forEach((node) => {
         if (requestedIds.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => removedIds.add(childId));
         if (requestedIds.has(node.id)) node.metadata?.experimentalLayerPlan?.requests.forEach((request) => removedIds.add(request.nodeId));
+        // submap 删除是级联：子节点随容器一起删，不 detach 成顶层孤儿。
+        if (requestedIds.has(node.id) && node.type === CanvasNodeType.Submap) {
+            nodes.forEach((child) => {
+                if (child.scopeId === node.id) removedIds.add(child.id);
+            });
+        }
     });
     const remainingNodes = nodes.filter((node) => !removedIds.has(node.id));
     const cleanedNodes = remainingNodes.map((node) => {

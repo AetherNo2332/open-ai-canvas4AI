@@ -1,5 +1,6 @@
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
+import type { CanvasConnection } from "@/types/canvas";
 
 export type CanvasExportFile = {
     app: "yingce";
@@ -9,7 +10,8 @@ export type CanvasExportFile = {
 };
 
 export type CanvasProjectExportItem = {
-    project: CanvasProject;
+    /** Current exports are field-only; the optional cache keeps old archives readable. */
+    project: Omit<CanvasProject, "connections"> & { connections?: CanvasConnection[] };
     files: CanvasExportAsset[];
     drawingDocuments?: CanvasDrawingExport[];
 };

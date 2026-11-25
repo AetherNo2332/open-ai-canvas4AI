@@ -5,6 +5,7 @@ import { App } from "antd";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, FRAME_COLLAPSED_HEIGHT, FRAME_COLLAPSED_WIDTH, getFrameChildIds, isCanvasFolderNode, isFrameNode } from "@/lib/canvas/canvas-frame";
+import { getSubmapChildIds, isSubmapNode } from "@/lib/canvas/canvas-submap";
 import { buildCanvasMediaDownloadFileName, canDownloadCanvasNodeMedia, canvasMediaFileExtension, downloadImageConvertedToFormat, isCanvasMediaCompositePending, preferredImageDownloadFormat, withFileExtension } from "@/lib/canvas/canvas-media-download";
 import { resourceIdFromStorageKey, resourceFileUrl } from "@/services/api/resources";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
@@ -97,6 +98,23 @@ export function useCanvasNodeEditor({ canvasId, canvasTitle, domainProjectId, no
             );
             setSelectedNodeIds(new Set([nodeId]));
             setSelectedConnectionId(null);
+            setDialogNodeId((current) => (current && childIds.has(current) ? null : current));
+            setToolbarNodeId(null);
+            setHoveredNodeId(null);
+        },
+        [nodesRef, setDialogNodeId, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId],
+    );
+
+    const toggleSubmapCollapsed = useCallback(
+        (nodeId: string) => {
+            const submap = nodesRef.current.find((node) => node.id === nodeId && isSubmapNode(node));
+            if (!submap) return;
+            const collapsed = Boolean(submap.metadata?.collapsed);
+            setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, collapsed: !collapsed } } : node)));
+            setSelectedNodeIds(new Set([nodeId]));
+            setSelectedConnectionId(null);
+            if (collapsed) return;
+            const childIds = getSubmapChildIds(nodeId, nodesRef.current);
             setDialogNodeId((current) => (current && childIds.has(current) ? null : current));
             setToolbarNodeId(null);
             setHoveredNodeId(null);
@@ -386,6 +404,7 @@ export function useCanvasNodeEditor({ canvasId, canvasTitle, domainProjectId, no
         setBatchPrimary,
         toggleBatchExpanded,
         toggleFrameCollapsed,
+        toggleSubmapCollapsed,
         toggleNodeFreeResize,
     };
 }

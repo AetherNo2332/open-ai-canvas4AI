@@ -91,9 +91,8 @@ func NewRegistry(descriptors []Descriptor) (*Registry, error) {
 		}
 		descriptor.Connection.AcceptedInputKinds = accepted
 		descriptor.Connection.RejectedInputKinds = rejected
-		descriptor.PatchFields, err = normalizePatchFields(descriptor.PatchFields)
-		if err != nil {
-			return nil, fmt.Errorf("capability %q: %w", descriptor.Type, err)
+		if err := normalizeDescriptorFields(&descriptor); err != nil {
+			return nil, err
 		}
 		if descriptor.CanUpdate != (len(descriptor.PatchFields) > 0) {
 			return nil, fmt.Errorf("capability %q must declare both canUpdate and patch fields, or neither", descriptor.Type)
@@ -127,6 +126,22 @@ func NewRegistry(descriptors []Descriptor) (*Registry, error) {
 		}
 	}
 	return &Registry{descriptors: items, variants: variants}, nil
+}
+
+func normalizeDescriptorFields(descriptor *Descriptor) error {
+	patchFields, err := normalizePatchFields(descriptor.PatchFields)
+	if err != nil {
+		return fmt.Errorf("capability %q: %w", descriptor.Type, err)
+	}
+	descriptor.PatchFields = patchFields
+	if len(descriptor.Fields) == 0 {
+		descriptor.Fields = kernelFieldsFromPatch(descriptor.PatchFields, descriptor.SummaryFields, descriptor.DetailFields)
+	}
+	descriptor.Fields, err = normalizeDeclaredFields(descriptor.Fields)
+	if err != nil {
+		return fmt.Errorf("capability %q fields: %w", descriptor.Type, err)
+	}
+	return nil
 }
 
 func (r *Registry) Resolve(nodeType string) (Descriptor, bool) {
@@ -175,6 +190,32 @@ func (r *Registry) Types() []string {
 	}
 	return out
 }
+
+// AgentList is the kernel-facing descriptor set. VisualOnly types remain
+// available to the editor but are absent from Agent creation, state projection
+// and document discovery.
+func (r *Registry) AgentList() []Descriptor {
+	items := r.List()
+	out := make([]Descriptor, 0, len(items))
+	for _, d := range items {
+		if !d.VisualOnly {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func (r *Registry) AgentTypes() []string {
+	items := r.AgentList()
+	out := make([]string, 0, len(items))
+	for _, d := range items {
+		if d.Variant == nil {
+			out = append(out, d.Type)
+		}
+	}
+	return out
+}
+
 func (r *Registry) GenerationModeNames() []string {
 	seen := map[string]struct{}{}
 	for _, d := range r.List() {
@@ -239,6 +280,7 @@ func cloneDescriptor(descriptor Descriptor) Descriptor {
 	descriptor.Actions = append([]string(nil), descriptor.Actions...)
 	descriptor.SummaryFields = append([]string(nil), descriptor.SummaryFields...)
 	descriptor.DetailFields = append([]string(nil), descriptor.DetailFields...)
+	descriptor.Fields = cloneDeclaredFieldMap(descriptor.Fields)
 	patchFields := make(map[string]PatchField, len(descriptor.PatchFields))
 	for key, field := range descriptor.PatchFields {
 		patchFields[key] = clonePatchField(field)
@@ -271,6 +313,7 @@ type hashDescriptor struct {
 	ProjectionKind  string
 	ProjectionField string
 	PatchFields     []hashPatchField
+	DeclaredFields  []hashDeclaredField
 	Variant         *NodeVariant
 }
 
@@ -296,6 +339,27 @@ type hashPatchField struct {
 	Schema      map[string]any
 }
 
+type hashDeclaredField struct {
+	Key         string
+	Path        string
+	Kind        string
+	Label       string
+	Order       int
+	Description string
+	MaxRunes    int
+	MaxItems    int
+	Enum        []string
+	Element     []hashDeclaredField
+	Writable    bool
+	Editable    bool
+	Projected   bool
+	Summary     bool
+	Searchable  bool
+	Secret      bool
+	Reference   bool
+	Wrap        bool
+}
+
 func registryHashItems(descriptors []Descriptor) []hashDescriptor {
 	items := make([]hashDescriptor, 0, len(descriptors))
 	for _, descriptor := range descriptors {
@@ -309,6 +373,11 @@ func registryHashItems(descriptors []Descriptor) []hashDescriptor {
 			field := descriptor.PatchFields[key]
 			patchFields = append(patchFields, hashPatchField{Key: key, Path: field.Path, Kind: field.Kind, Label: field.Label, Order: field.Order, Description: field.Description, MaxRunes: field.MaxRunes, Schema: field.JSONSchema()})
 		}
+		declaredKeys := descriptor.Fields.Keys()
+		declaredFields := make([]hashDeclaredField, 0, len(declaredKeys))
+		for _, key := range declaredKeys {
+			declaredFields = append(declaredFields, hashDeclaredFieldOf(key, descriptor.Fields[key]))
+		}
 		items = append(items, hashDescriptor{
 			Type: descriptor.Type, Version: descriptor.Version, Label: descriptor.Label,
 			Purpose: descriptor.Purpose, GoodFor: descriptor.GoodFor, NotIdealFor: descriptor.NotIdealFor,
@@ -318,8 +387,44 @@ func registryHashItems(descriptors []Descriptor) []hashDescriptor {
 			ProjectionKind: descriptor.ProjectionKind, ProjectionField: descriptor.ProjectionField,
 			Connection: hashConnectionPolicy{CanSource: descriptor.Connection.CanSource, CanTarget: descriptor.Connection.CanTarget, CanReference: descriptor.Connection.CanReference, CanGraphSource: descriptor.Connection.CanGraphSource, CanGraphTarget: descriptor.Connection.CanGraphTarget, AcceptedInputKinds: descriptor.Connection.AcceptedInputKinds, RejectedInputKinds: descriptor.Connection.RejectedInputKinds, MaxInputCount: descriptor.Connection.MaxInputCount},
 			CanUpdate:  descriptor.CanUpdate, SummaryFields: descriptor.SummaryFields, DetailFields: descriptor.DetailFields, PatchFields: patchFields,
-			Variant: descriptor.Variant,
+			DeclaredFields: declaredFields, Variant: descriptor.Variant,
 		})
 	}
 	return items
+}
+
+func hashDeclaredFieldOf(key string, field Field) hashDeclaredField {
+	element := make([]hashDeclaredField, 0, len(field.Element))
+	for _, elementKey := range field.Element.Keys() {
+		element = append(element, hashDeclaredFieldOf(elementKey, field.Element[elementKey]))
+	}
+	return hashDeclaredField{
+		Key: key, Path: field.Path, Kind: field.Kind, Label: field.Label, Order: field.Order,
+		Description: field.Description, MaxRunes: field.MaxRunes, MaxItems: field.MaxItems,
+		Enum: field.Enum, Element: element,
+		Writable: field.Writable, Editable: field.Editable, Projected: field.Projected,
+		Summary: field.Summary, Searchable: field.Searchable, Secret: field.Secret,
+		Reference: field.Reference, Wrap: field.Wrap,
+	}
+}
+
+func cloneDeclaredFieldMap(fields Fields) Fields {
+	out := make(Fields, len(fields))
+	for key, field := range fields {
+		out[key] = cloneDeclaredField(field)
+	}
+	return out
+}
+
+func cloneDeclaredField(field Field) Field {
+	field.Enum = append([]string(nil), field.Enum...)
+	field.Element = cloneDeclaredFieldMap(field.Element)
+	if field.Bounds != nil {
+		bounds := *field.Bounds
+		field.Bounds = &bounds
+	}
+	if values, ok := field.Default.([]any); ok {
+		field.Default = append([]any(nil), values...)
+	}
+	return field
 }

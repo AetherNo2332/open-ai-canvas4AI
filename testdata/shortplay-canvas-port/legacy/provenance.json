@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "evidence": "runtime",
+  "source": "4AI baseline schema reconstructed from web/src/types/canvas.ts and backend/internal/canvas/commands/native_connections.go",
+  "reconstructed": true,
+  "productionHistory": false,
+  "portFamilies": [
+    "row:<rowId>",
+    "batch-text:<columnId>"
+  ],
+  "notes": [
+    "This is a schema-faithful sample, not a copy of a production archive.",
+    "The sample is written through the target SQLite repository in the S01 Go test before it is read back.",
+    "Unknown fields are intentionally present at document, node, row and batch-table levels."
+  ]
+}

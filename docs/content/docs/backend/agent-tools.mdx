@@ -29,6 +29,8 @@ split/resplit 与媒体共用 PendingGenerations、系统通知和 wait_generati
 
 ## 参数语义与运行回执
 
+`canvas` 按命令区分只读与写入。`preset list` 只列当前账号的子画布模板；模板保存和删除由用户在页面完成。`preset delete` 会明确拒绝，审批预览也不会删除模板。
+
 - `storyboard` 的 `add_assets` 增加且保留原角色/资产，`remove_assets` 按节点及用途移除，`upsert_assets` 增加或改用途；`add_references` / `remove_references` 增减共享输入。增量数组须非空。`set_assets` / `set_references` 是明确替换；清空行资产不会清共享输入。回执分别列出行级与共享影响。
 - `set_references` 整体替换共享引用列表，各行继承输入和派生连线随之更新，显式行级资产保留。`update.patch` 对全部选中行相同；逐行不同内容使用 `update.updates`；镜头数量变化用 resplit，每批最多100项、表内最多100行。任一目标、字段或引用无效则整批拒绝。景别、运镜、光影等创作列与领域字段合同一致。
 - `storyboard` 的 `read` 用 fields 选择创作字段、missingAnyFields 筛选任一列缺失的行。summary 默认 rows=[]，显式 fields 也返回所选正文；长文本按 nextReads 读原文，分页按 nextRead。coverage 分别表达选择范围已到末尾、整表行覆盖和正文截断；提示词覆盖为空不等于生成被阻塞。`canvas_get_state.nodeIds` 精读单次最多8个；整画布目录省略该字段。

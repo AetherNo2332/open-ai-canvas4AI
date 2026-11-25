@@ -236,6 +236,12 @@ export function projectReferenceConnections(nodes: CanvasNodeData[], connections
     return reconcileOwners(nodes, connections, new Set(nodes.filter(ownerScoped).map((node) => node.id)), createId);
 }
 
+/** Projects a server document into the editor view without mutating the persisted connection cache. */
+export function projectCanvasReferenceConnections<T extends { nodes: CanvasNodeData[]; connections: CanvasConnection[]; referenceFieldsVersion?: number }>(project: T): T {
+    const connections = projectReferenceConnections(project.nodes, project.connections, project.referenceFieldsVersion);
+    return connections === project.connections ? project : { ...project, connections };
+}
+
 function withBindings(node: CanvasNodeData, bindings: ReferenceBinding[], spec?: GenerationSpec): CanvasNodeData {
     const ordered = bindings.map((binding, order) => ({ ...binding, order }));
     if (spec) return { ...node, metadata: { ...node.metadata, generationSpec: validateGenerationSpec({ ...spec, referenceBindings: ordered }) } };
