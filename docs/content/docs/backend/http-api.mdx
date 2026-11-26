@@ -927,6 +927,9 @@ fork 云端 Agent 尚未接入已安装技能的自动发现目录（随后续 A
 | `POST /shortplays` | 32 MiB | 建档：容器行 + 域配置 + 全部分集原文。同名作品返回 409（`reason=project_name_conflict`）。 |
 | `GET /shortplays/:id` | — | 详情：容器、设置、全部集与最近 40 条 job。`:id` 是项目容器 ID，非短剧作品返回 404。 |
 | `PATCH /shortplays/:id/settings` | 64 KiB | 整份保存设置；服务端归一后回传 `settingsJson`，回执为权威值。`:id` 同时接受短剧 ID 与项目 ID。 |
+| `GET /shortplays/:id/assets` | — | 资产列表：角色/道具/场景、当前图音投影、分集绑定与行版本。跨账号或跨作品返回 404。 |
+| `POST /shortplays/:id/assets` | 1 MiB | 新建（`assetId=0`）或更新一条资产；`kind` 不可改，衍生形象的父资产不可改挂，跨作品写入返回 404。 |
+| `POST /shortplays/:id/extract` | — | 入队一次提取；已有在途提取时返回那一条（`queued=false`），游标取最近一次成功 job。 |
 
 设置是整份提交而不是逐字段 patch：参考图方案、模型选择与画幅互相牵制，逐字段写会落库「各自合法、组合非法」的中间态。未注册路径或方法仍按信封返回错误码。
 ## 信封

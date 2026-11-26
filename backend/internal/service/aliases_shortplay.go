@@ -13,4 +13,7 @@ type (
 	ShortplayListItem              = app.ShortplayListItem
 	ShortplayDetail                = app.ShortplayDetail
 	ShortplaySettingsUpdateResult  = app.ShortplaySettingsUpdateResult
+	UpsertShortplayAssetRequest    = app.UpsertShortplayAssetRequest
+	ShortplayAssetSummary          = app.ShortplayAssetSummary
+	ShortplayExtractQueueResult    = app.ShortplayExtractQueueResult
 )

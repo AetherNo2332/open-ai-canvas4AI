@@ -5717,3 +5717,11 @@ URL 使用归属校验后的资源访问地址，本地存储也可签发厂商�
 - [ ] 在正式 PostgreSQL 部署上重复建档与设置保存；本轮 PostgreSQL 只覆盖迁移与仓储并发专项，未跑 HTTP。
 - [ ] 资产提取、参考图/音色生成、集画布创建、收录与 Agent 工具（W04–W07）尚未接入；「进精修画布」按钮当前禁用。
 - [ ] 未使用真实模型渠道，本页没有生成请求；真实渠道回执留给 W05/W08。
+## 独立短剧工作台（W04）
+
+- 已实现后端最小链路：`GET/POST /api/shortplays/:id/assets`（列表、新建/更新，`:id` 接受短剧或项目 ID，跨账号/跨作品 404，`kind` 不可改，衍生形象父资产不可改挂，revision CAS）与 `POST /api/shortplays/:id/extract`（入队在途去重，重复点击返回同一 job 且 `queued=false`）。
+- 提取调度：job 领取用条件更新（多 worker 只一个成功），游标从最近一次成功 job 的 `payload.cursor` 续跑；提取结果按 `assetId` 或 `kind+标准名/别名` 合并，锁定行只并入别名与分集绑定、不覆盖设定，新行按项目内序号分配；每批按原文命中标准名/别名回写集 `assetIdsJson`（两集同时提及的角色绑定到两集）；失败写 `last_error`，结束后去重键释放可重试。
+- 自动化：`go test -count=1 ./internal/shortplay`；`go test -count=1 -run 'TestDedupeKeyBlocksSecondActiveExtract|TestClaimShortplayJobHandsEachJobToOneWorker|TestShortplayAsset' ./internal/repository`；`go test -count=1 -run 'TestQueueShortplayExtract|TestRunShortplayExtract|TestUpsertShortplayAsset|TestExtractKeepsLocked' ./internal/app`；`go test -count=1 -run 'TestShortplayAssetRoutes|TestOpenAPI' ./internal/handler`，均通过（两集绑定、锁定设定保留、失败可重试、连点去重、跨项目 404）。
+- [ ] 真实模型执行器尚未接线：当前用注入 `ShortplayExtractFunc` 的确定性回复验证调度与落库，真实渠道回执留 W05/W08。
+- [ ] 前端资产库（角色/场景/道具列表、提取按钮、收件箱失败定位）尚未接入；提取 scheduler 常驻循环未启动。
+- [ ] job 队列的领取与去重只在 SQLite 验证，PostgreSQL 专项待补。

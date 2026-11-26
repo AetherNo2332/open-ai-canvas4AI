@@ -13,4 +13,7 @@ type (
 	ShortplayDetail                = shortplay.ShortplayDetail
 	UpdateShortplaySettingsRequest = shortplay.UpdateSettingsRequest
 	ShortplaySettingsUpdateResult  = shortplay.SettingsUpdateResult
+	UpsertShortplayAssetRequest    = shortplay.UpsertAssetRequest
+	ShortplayAssetSummary          = shortplay.AssetSummary
+	ShortplayExtractQueueResult    = shortplay.ExtractQueueResult
 )

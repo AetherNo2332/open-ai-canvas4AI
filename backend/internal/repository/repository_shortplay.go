@@ -172,18 +172,19 @@ func (r *Repository) UpdateShortplayAsset(row *model.ShortplayAsset, expectedRev
 	result := r.db.Model(&model.ShortplayAsset{}).
 		Where("shortplay_id = ? AND id = ? AND revision = ?", row.ShortplayID, row.ID, expectedRevision).
 		Updates(map[string]any{
-			"kind":         row.Kind,
-			"name":         row.Name,
-			"aliases_json": row.AliasesJSON,
-			"description":  row.Description,
-			"appearance":   row.Appearance,
-			"voice":        row.Voice,
-			"locked":       row.Locked,
-			"derived_from": row.DerivedFrom,
-			"variant_name": row.VariantName,
-			"render_rule":  row.RenderRule,
-			"revision":     expectedRevision + 1,
-			"updated_at":   time.Now(),
+			"kind":                 row.Kind,
+			"name":                 row.Name,
+			"aliases_json":         row.AliasesJSON,
+			"description":          row.Description,
+			"appearance":           row.Appearance,
+			"voice":                row.Voice,
+			"locked":               row.Locked,
+			"derived_from":         row.DerivedFrom,
+			"variant_name":         row.VariantName,
+			"render_rule":          row.RenderRule,
+			"episode_numbers_json": row.EpisodeNumbersJSON,
+			"revision":             expectedRevision + 1,
+			"updated_at":           time.Now(),
 		})
 	if result.Error != nil {
 		return false, result.Error
@@ -202,8 +203,33 @@ func (r *Repository) ShortplayJobs(shortplayID string, limit int) ([]model.Short
 	return rows, err
 }
 
-// UpdateShortplaySettings 保存归一后的 settingsJson，并在同一事务里推进容器行的 updated_at。
-// 列表按 projects.updated_at 倒序，只写域配置行会让「刚改过设置的作品」仍排在旧位置。
+// ShortplayJobByDedupeKey 查同键且未结束的 job；没有时返回 gorm.ErrRecordNotFound。
+func (r *Repository) ShortplayJobByDedupeKey(dedupeKey string) (*model.ShortplayJob, error) {
+	var row model.ShortplayJob
+	if err := r.db.Where("dedupe_key = ? AND status IN ?", dedupeKey, []string{"queued", "running"}).
+		First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// EnqueueShortplayJob 入队一条 job。唯一索引只覆盖未结束行：并发或连点同键时，
+// 第二次插入冲突返回已有行与 created=false，调用方据此回「已在途」而不是报错。
+func (r *Repository) EnqueueShortplayJob(row *model.ShortplayJob) (*model.ShortplayJob, bool, error) {
+	if err := r.db.Create(row).Error; err != nil {
+		if !isUniqueConstraintError(err) {
+			return nil, false, err
+		}
+		existing, findErr := r.ShortplayJobByDedupeKey(row.DedupeKey)
+		if findErr != nil {
+			return nil, false, findErr
+		}
+		return existing, false, nil
+	}
+	return row, true, nil
+}
+
+// UpdateShortplaySettings 保存归一后的 settingsJson，并在同一事务里推进容器行的 updated_at。// 列表按 projects.updated_at 倒序，只写域配置行会让「刚改过设置的作品」仍排在旧位置。
 func (r *Repository) UpdateShortplaySettings(shortplayID, settingsJSON string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.Shortplay{}).Where("id = ?", shortplayID).

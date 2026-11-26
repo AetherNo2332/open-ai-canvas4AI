@@ -2963,6 +2963,76 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /shortplays/{id}/assets:
+    get:
+      tags: [shortplay]
+      summary: 资产列表（角色、道具、场景及分集绑定）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, description: shortplayId 或 projectId }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [shortplay]
+      summary: 新建或更新一条资产（assetId=0 新建，非 0 更新同作品那一行）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, description: shortplayId 或 projectId }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, name]
+              properties:
+                assetId: { type: integer, description: 0 表示新建 }
+                kind: { type: string, enum: [character, prop, scene] }
+                name: { type: string }
+                aliases: { type: array, items: { type: string } }
+                description: { type: string }
+                appearance: { type: string }
+                voice: { type: string }
+                locked: { type: boolean }
+                derivedFrom: { type: integer }
+                variantName: { type: string }
+                renderRule: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /shortplays/{id}/extract:
+    post:
+      tags: [shortplay]
+      summary: 入队资产提取（已有在途提取时返回那一条，queued=false）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, description: shortplayId 或 projectId }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /shortplays/{id}/settings:
     patch:
       tags: [shortplay]

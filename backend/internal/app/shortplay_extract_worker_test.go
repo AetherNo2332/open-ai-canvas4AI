@@ -1,0 +1,232 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
+	"yingce/backend/internal/shortplay"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+func newShortplayWorkflowService(t *testing.T) (*Service, *gorm.DB) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
+	if err := db.AutoMigrate(&model.Project{}, &model.Shortplay{}, &model.ShortplayEpisode{},
+		&model.ShortplayAsset{}, &model.ShortplayAssetImage{}, &model.ShortplayAssetAudio{},
+		&model.ShortplayJob{}, &model.SystemSetting{}); err != nil {
+		t.Fatal(err)
+	}
+	return New(repository.New(db), t.TempDir()), db
+}
+
+// seedShortplay 建一个两集作品；第二集提到道具，验证跨集绑定。
+func seedShortplay(t *testing.T, db *gorm.DB, owner, projectID, shortplayID string) {
+	t.Helper()
+	project := &model.Project{ID: projectID, UserID: owner, Name: "雨夜回眸 " + projectID, Type: "shortplay", AspectRatio: "9:16"}
+	if err := db.Create(project).Error; err != nil {
+		t.Fatal(err)
+	}
+	row := &model.Shortplay{ID: shortplayID, ProjectID: projectID, UserID: owner,
+		SettingsJSON: `{"aspectRatio":"9:16","language":"中文","stylePrompt":"霓虹雨夜"}`}
+	if err := db.Create(row).Error; err != nil {
+		t.Fatal(err)
+	}
+	episodes := []model.ShortplayEpisode{
+		{ID: shortplayID + "-ep1", ShortplayID: shortplayID, Number: 1, Title: "第一集", CanvasID: shortplayID + "-c1", ScriptText: "沈青禾撑伞站在巷口。"},
+		{ID: shortplayID + "-ep2", ShortplayID: shortplayID, Number: 2, Title: "第二集", CanvasID: shortplayID + "-c2", ScriptText: "沈青禾接过那把油纸伞。"},
+	}
+	for index := range episodes {
+		if err := db.Create(&episodes[index]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func extractReply() string {
+	return `{"characters":[{"name":"沈青禾","aliases":["青禾"],"description":"二十岁女性","appearance":"齐肩黑发","voice":"青年女声"}],` +
+		`"props":[{"name":"油纸伞","description":"定情信物","appearance":"深青油纸"}],"scenes":[]}`
+}
+
+func TestQueueShortplayExtractDeduplicatesActiveJob(t *testing.T) {
+	svc, db := newShortplayWorkflowService(t)
+	seedShortplay(t, db, "owner", "p-queue", "sp-queue")
+
+	first, err := svc.QueueShortplayExtract("owner", "sp-queue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.QueueShortplayExtract("owner", "p-queue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Queued || second.Queued || first.JobID == "" || first.JobID != second.JobID {
+		t.Fatalf("queue result = %#v / %#v", first, second)
+	}
+	var count int64
+	if err := db.Model(&model.ShortplayJob{}).Where("shortplay_id = ?", "sp-queue").Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("jobs = %d, err = %v", count, err)
+	}
+	if _, err := svc.QueueShortplayExtract("intruder", "sp-queue"); err == nil {
+		t.Fatal("other user queued extraction on someone else's shortplay")
+	}
+}
+
+func TestRunShortplayExtractBindsAssetsToBothEpisodes(t *testing.T) {
+	svc, db := newShortplayWorkflowService(t)
+	seedShortplay(t, db, "owner", "p-run", "sp-run")
+	if _, err := svc.QueueShortplayExtract("owner", "sp-run"); err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := svc.RunShortplayExtractOnce(context.Background(), func(_ context.Context, systemPrompt, userPrompt string) (string, error) {
+		if !strings.Contains(userPrompt, "## 第 1 集") || !strings.Contains(userPrompt, "沈青禾撑伞") {
+			return "", errors.New("prompt 缺少批次正文")
+		}
+		if !strings.Contains(systemPrompt, "资产提取") {
+			return "", errors.New("system prompt 不对")
+		}
+		return extractReply(), nil
+	})
+	if err != nil || jobID == "" {
+		t.Fatalf("run = %q, %v", jobID, err)
+	}
+	assets, err := svc.ShortplayAssets("owner", "sp-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) != 2 {
+		t.Fatalf("assets = %#v", assets)
+	}
+	byName := map[string]shortplay.AssetSummary{}
+	for _, asset := range assets {
+		byName[asset.Name] = asset
+	}
+	character, ok := byName["沈青禾"]
+	if !ok || len(character.EpisodeNumbers) != 2 || character.EpisodeNumbers[0] != 1 || character.EpisodeNumbers[1] != 2 {
+		t.Fatalf("character = %#v", character)
+	}
+	prop, ok := byName["油纸伞"]
+	if !ok || len(prop.EpisodeNumbers) != 1 || prop.EpisodeNumbers[0] != 2 {
+		t.Fatalf("prop = %#v", prop)
+	}
+	if len(character.Aliases) != 1 || character.Aliases[0] != "青禾" || character.Voice != "青年女声" {
+		t.Fatalf("character fields = %#v", character)
+	}
+	var episode1, episode2 model.ShortplayEpisode
+	if err := db.First(&episode1, "id = ?", "sp-run-ep1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&episode2, "id = ?", "sp-run-ep2").Error; err != nil {
+		t.Fatal(err)
+	}
+	if episode1.AssetIDsJSON != "[1]" || episode2.AssetIDsJSON != "[1,2]" {
+		t.Fatalf("episode bindings = %s / %s", episode1.AssetIDsJSON, episode2.AssetIDsJSON)
+	}
+	var job model.ShortplayJob
+	if err := db.First(&job, "id = ?", jobID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != shortplay.JobSucceeded || job.Attempt != 1 {
+		t.Fatalf("job = %#v", job)
+	}
+}
+
+func TestRunShortplayExtractFailureIsRecorded(t *testing.T) {
+	svc, db := newShortplayWorkflowService(t)
+	seedShortplay(t, db, "owner", "p-fail", "sp-fail")
+	if _, err := svc.QueueShortplayExtract("owner", "sp-fail"); err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := svc.RunShortplayExtractOnce(context.Background(), func(context.Context, string, string) (string, error) {
+		return "", errors.New("上游模型超时")
+	})
+	if err == nil || jobID == "" {
+		t.Fatalf("expected failure, got %q / %v", jobID, err)
+	}
+	var job model.ShortplayJob
+	if err := db.First(&job, "id = ?", jobID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != shortplay.JobFailed || !strings.Contains(job.LastError, "上游模型超时") {
+		t.Fatalf("job = %#v", job)
+	}
+	// 失败后同一作品可以再次入队（去重键只覆盖未结束行）。
+	next, err := svc.QueueShortplayExtract("owner", "sp-fail")
+	if err != nil || !next.Queued || next.JobID == jobID {
+		t.Fatalf("retry queue = %#v, %v", next, err)
+	}
+}
+
+func TestUpsertShortplayAssetRejectsCrossProjectWrite(t *testing.T) {
+	svc, db := newShortplayWorkflowService(t)
+	seedShortplay(t, db, "owner", "p-a", "sp-a")
+	seedShortplay(t, db, "owner", "p-b", "sp-b")
+	created, err := svc.UpsertShortplayAsset("owner", "sp-a", shortplay.UpsertAssetRequest{Kind: "character", Name: "沈青禾", Description: "A 作品"})
+	if err != nil || created.ID != 1 {
+		t.Fatalf("create = %#v, %v", created, err)
+	}
+	if _, err := svc.UpsertShortplayAsset("owner", "sp-b", shortplay.UpsertAssetRequest{AssetID: created.ID, Kind: "character", Name: "沈青禾"}); err == nil {
+		t.Fatal("cross-project asset update was accepted")
+	}
+	if _, err := svc.UpsertShortplayAsset("owner", "sp-b", shortplay.UpsertAssetRequest{Kind: "wrong", Name: "x"}); err == nil {
+		t.Fatal("invalid kind was accepted")
+	}
+	listA, err := svc.ShortplayAssets("owner", "sp-a")
+	if err != nil || len(listA) != 1 || listA[0].Name != "沈青禾" {
+		t.Fatalf("list A = %#v, %v", listA, err)
+	}
+	listB, err := svc.ShortplayAssets("owner", "sp-b")
+	if err != nil || len(listB) != 0 {
+		t.Fatalf("list B = %#v, %v", listB, err)
+	}
+}
+
+func TestExtractKeepsLockedSettingsButMergesAliases(t *testing.T) {
+	svc, db := newShortplayWorkflowService(t)
+	seedShortplay(t, db, "owner", "p-lock", "sp-lock")
+	locked, err := svc.UpsertShortplayAsset("owner", "sp-lock", shortplay.UpsertAssetRequest{
+		Kind: "character", Name: "沈青禾", Description: "用户确认的设定", Locked: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.QueueShortplayExtract("owner", "sp-lock"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunShortplayExtractOnce(context.Background(), func(context.Context, string, string) (string, error) {
+		return extractReply(), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assets, err := svc.ShortplayAssets("owner", "sp-lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var character shortplay.AssetSummary
+	for _, asset := range assets {
+		if asset.Name == "沈青禾" {
+			character = asset
+		}
+	}
+	if character.ID != locked.ID || character.Description != "用户确认的设定" {
+		t.Fatalf("locked row overwritten: %#v", character)
+	}
+	if len(character.Aliases) != 1 || character.Aliases[0] != "青禾" {
+		t.Fatalf("aliases not merged: %#v", character.Aliases)
+	}
+	if len(character.EpisodeNumbers) != 2 {
+		t.Fatalf("episode binding missing: %#v", character.EpisodeNumbers)
+	}
+}

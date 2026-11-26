@@ -29,6 +29,26 @@ func registerShortplayRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.GET("/shortplays/:id", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		return svc.ShortplayDetail(userID, c.Param("id"))
 	}))
+	// 资产列表与写入：:id 同时接受 shortplayId 与 projectId。POST 一次提交身份行 + 设定，
+	// assetId=0 新建、非 0 更新；跨作品一律 404。
+	r.GET("/shortplays/:id/assets", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		items, err := svc.ShortplayAssets(userID, c.Param("id"))
+		if err != nil {
+			return nil, err
+		}
+		return gin.H{"assets": items}, nil
+	}))
+	r.POST("/shortplays/:id/assets", dramaRoute(svc, 1<<20, func(c *gin.Context, userID string) (any, error) {
+		var req shortplay.UpsertAssetRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.UpsertShortplayAsset(userID, c.Param("id"), req)
+	}))
+	// 提取入队：已在途时返回那一条（queued=false），不排第二条。
+	r.POST("/shortplays/:id/extract", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		return svc.QueueShortplayExtract(userID, c.Param("id"))
+	}))
 	// 设置：整份提交（分步骤模型 + 参考图方案 + 风格与语言），服务端归一后回传 settingsJson。
 	// 整份写而不是逐字段 patch：设置之间互相牵制，逐字段写会落库「各自合法、组合非法」的中间态。
 	r.PATCH("/shortplays/:id/settings", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
