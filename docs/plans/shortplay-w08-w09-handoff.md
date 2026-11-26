@@ -19,6 +19,7 @@
 9. **门禁根因（backend:full）**：`TestAgentSDKRealHTTPWorkerRestart` 在本机 SQLite 下报 `database is locked`（16 路并发 run）→ 任务 `result_persistence_failed` → run failed。基线对照：把 protocol 三个文件回退到 `db16a0f9` 后仍失败（同一 run/task ID），与音频补丁无关。按 CI 契约补 `TEST_AGENT_POSTGRES_DSN`（隔离 PostgreSQL）后通过：2/2 pass，258.54s。
 10. **门禁根因（docs:types）**：本机 `node_modules` 里的原生二进制（`@esbuild/win32-x64/esbuild.exe`、TypeScript 7 的 `@typescript/typescript-win32-x64/lib/tsc.exe`）被环境拒绝创建目录/写文件（`Access is denied`，连 TEMP 也拒），把同一份字节以新文件落地后恢复；`docs:types` 与 tsc 均通过。属本机环境问题，不改仓库代码。
 11. **web:test 波动**：满载并行时 `canvas-connection-controller` 触发 bun 5 秒默认超时，单独运行 3.1–3.3 秒通过，判定为负载相关而非本改动回归；最终门禁按 CI 的 `--jobs 2` 运行。
+12. **门禁根因（backend:full 第二处，worker 注册）**：补上 PostgreSQL 后 `TestAgentWakePostgresWorkerClaimsDuringFallback` 失败，真实错误是 `Invalid worker slot`。根因：`agent/src/server.ts` 用 `os.hostname()` 直接拼 worker 槽位，而桥接/后端契约要求 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`；本机主机名是中文，worker 在 capacity/claim 之前就抛错，永远注册不上（CI 主机名为 ASCII 所以不复现）。修复：新增 `workerSlotId()`，把非契约字符压成 `-`、空则回落 `agent-host`、整体截断 64；`agent/test/worker-slot.test.ts` 覆盖中文、空格、超长主机名。另把两处“外部 node worker 启动等待”从 5 秒改成独立 30 秒超时（`waitWakeWorkerSignal`），避免负载下把启动慢误判成失败。验证：该用例句连续两次通过（21.5s / 20.4s），`agent` 全量 209 pass / 1 skip。
 
 ## 门禁矩阵（HEAD `6d1f0fe27`，2026-11-26 19:16–20:02）
 
@@ -27,6 +28,8 @@
 - 失败：`backend:full`（上述 SQLite 锁）、`docs:types`（上述本机原生二进制）、`web:test`（上述负载超时）。
 - 依赖阻断：`docs:check`、`web:e2e`（dependency failed）。
 - 通过：agent:check、backend:agent-lint、backend:app-shard-1..4、backend:baseline、backend:gofmt、backend:vet、backend:tool-contract、changelog、docs:metadata、docs:deployment、deployment:commands、verification:tests、payment:artifacts、payment:platforms、agent:smoke、web:format、web:lint、web:typecheck。
+
+该轮在本机被工具重启终止、未收尾，因此不作为最终结论：修复 worker 注册与超时后，以最终干净 HEAD 的全量门禁结果为准（记录在 PR154 正文与验收证据里）。
 
 ## 证据源码身份
 
