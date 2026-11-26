@@ -2,7 +2,7 @@
 
 **交付目标**　创作者在 4AI 从独立入口建档、分集、提取资产、维护基础角色与衍生造型、生成参考图和音色，进入每集精修画布并将资产收回项目。用户和 Agent 能操作同一批授权资产，重开项目可恢复分集、任务与画布关联。
 
-**基线**　目标工作树 `submap@0a601d2f88c2016d91291b6ce9433631308ae89c`。画布能力及已验收项目见[画布施工表](shortplay-canvas-port-tracker.md)。供体固定为 [`yyvan1/open-ai-canvas@13731aae6`](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6)。本计划按独立入口与现有 `drama` 并存设计。存量项目继续按各自类型打开。工作台实施验收 0/9。
+**基线**　目标工作树 `submap@0a601d2f88c2016d91291b6ce9433631308ae89c`。画布能力及已验收项目见[画布施工表](shortplay-canvas-port-tracker.md)。供体固定为 [`yyvan1/open-ai-canvas@13731aae6`](https://gitee.com/yyvan1/open-ai-canvas/tree/13731aae6)。本计划按独立入口与现有 `drama` 并存设计。存量项目继续按各自类型打开。工作台实施验收 6/9（W01–W06）。
 
 ## 供体合同
 
@@ -28,9 +28,9 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 | W01 供体行为 | 可开始 | 从固定提交采集完整源码。追踪路由注册、项目类型、菜单、设置、调度启动、数据库、工具 schema、提示词和画布接线。建立两集共用角色、第二集有衍生造型的脱敏样本 | 登记全部页面动作、13 个接口、后台 job 种类和 Agent 注册名。将源码观察、运行记录、外部服务待测分别标记 | 通过（源码观察 + 样本重放）。见 [W01 清点](shortplay-workbench-port-w01.md)、[证据矩阵](../../testdata/shortplay-workbench-port/README.md)与 `donor/inventory.json`；样本 `sample/two-episodes.json` 同时被仓储回放（`TestShortplayWorkbenchSampleReplay`）与纯规则重放（`TestWorkbenchSampleDerivedLookRules`）消费。已提交 `0857e41`。 |
 | W02 数据与权限 | W01 | 移入作品、集、资产、任务、设置和画布绑定的最终模型。登记目标架构包角色，按目标当前数据库序列新增迁移。项目内整数资产 ID 使用项目复合身份 | SQLite、PostgreSQL 空库及含旧 drama 的库升级成功；两个项目可各有资产 1，跨项目读写被拒；并发建档失败可原子回滚 | 通过。迁移 v112 + 六表模型 + `internal/shortplay` 纯规则。v112 注册文件改名为 `migrations_zzzzz_shortplay.go`（排在 v111 之后），修掉 init 追加顺序导致的 `86 after 112` 计划失败；`TestCurrentSchemaVersionMatchesMigrationPlan` PASS。新增 `TestMigrateShortplayWorkbenchUpgradesV111DramaDatabase`：按当前计划真实建到 v111、只跑 v112，旧 drama 项目/制作台/画布行保留、六表可写、重跑幂等。`go test -count=1 ./internal/database` PASS；`./internal/repository -run Shortplay` 4 PASS（含并发同名单赢家，CANVAS_TEST_POSTGRES_DSN 指向一次性隔离容器 `shortplay-w02-verify-20261126`）；`TestMigrateShortplayWorkbenchPostgres` 在同一容器自建 schema 后 DROP，PASS；`./internal/shortplay/...`、`./internal/architecture` PASS。已提交 `0857e41`。 |
 | W03 分集工作台 | W02 | 完成菜单与路由、列表、新建、详情、设置，接入分集原文和设置校验。复用目标 `http`、i18n、正式布局和错误处理 | 从导航录入两集原文，列表、深链接和刷新后读到同一作品；设置写失败可重试，权限与项目类型校验通过。此片交付首个可用版本 | 通过。提交 `0857e41`，PR [#154](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/154)。侧栏「短剧工作台」独立入口 `/shortplays`、`/shortplays/new`、`/shortplays/:projectId`；一次建档写作品容器（`type=shortplay`）+ 域配置 + 全部分集；列表/详情/设置整份保存。功能开关改为独立的 `shortplayEnabled`：后端 `/shortplays` 路由组、前端路由、侧栏和「功能开放」面板同口径，与 `shortDramaEnabled` 互不影响（`TestShortplayFeatureGateIsIndependentOfDrama` 覆盖四种组合）。正式页面走通登录→新建两集《雨夜回眸 W03》→保存设置→刷新重开，分集/原文/画布地址/设置保持。门禁环境修复见文末「W03 实测记录」。 |
-| W04 资产与提取 | W03 | 移植资产读写、提取提示词与结构校验、游标、去重键、租约及调度循环。接入已有 worker 和模型调用。资产库呈现角色、场景、道具及分集绑定 | 连点提取只排一项；中断恢复后同一资产绑定两集，已锁字段按供体合同保留；收件箱能定位失败项 | 已完成（真实模型渠道未配置）。后端：资产读写路由、提取提示词与结构校验、`PlanExtractApply` 落库计划、job 领取条件更新与去重键、游标续跑、失败写 `last_error`；提取走平台文本任务（`canvas_text`）：模型取设置里的提取模型、未选时按平台目录兜底，提交与结果读取经过 `CreateTask` 准入/计费/出站；`startShortplayExtractWorker` 常驻每 5s 推进至多 4 条。前端：详情页「资产与提取」资产库、手动增改、提取按钮、收件箱（状态/尝试次数/`last_error`），job 终态自动重读资产。PostgreSQL 隔离 schema 专项覆盖领取单赢家与去重键释放。 |
-| W05 造型和媒体 | W04 | 复用 `derived.go` 的基础资产与衍生造型解析；接模型选择、参考图、音色生成、批量补缺、失败重试和回调 | 两套造型有独立参考图，基础角色改名和音色按合同继承；双 worker、重复回调、延迟回调与配额失败均有可复验结果和费用记录 | 部分完成。已落地：衍生造型写入/继承/同角色去重与改名传导；参考图出图 job（入队筛选、去重、锁定跳过、父图未就绪等待、状态机 CAS 回写、迟到回调不覆盖、失败留历史且不换当前图）、页面「生成缺图/出图」与缩略图、`POST /shortplays/:id/assets/images` 与 OpenAPI。未完成：音色生成、批量补缺与失败重试的完整页面、真实图片渠道与费用流水、双 worker/延迟回调的 PostgreSQL 复验。 |
-| W06 分集精修与收录 | W03、W04 | 接入每集画布创建、反查、资产投送、单项生图与收录，复用 submap 和现有画布写入服务 | 同一集同时打开两次得到同一画布；两集共享资源身份；画布改动保存重开后可定位资产；收录时校验资源和项目归属 | 部分完成。已落地：按需创建集画布（幂等，初始文档带本集原文的故事输入节点）、按画布反查集归属、详情页「进精修画布」真实入口；画布写入统一走 `UpsertCanvasProject`。未完成：资产卡投送进画布、画布侧单项生图回写、收录（adopt）。 |
+| W04 资产与提取 | W03 | 移植资产读写、提取提示词与结构校验、游标、去重键、租约及调度循环。接入已有 worker 和模型调用。资产库呈现角色、场景、道具及分集绑定 | 连点提取只排一项；中断恢复后同一资产绑定两集，已锁字段按供体合同保留；收件箱能定位失败项 | 通过（任务链路；真实模型渠道未配置）。新增平台任务链路验收：提交出去的 `canvas_text` 任务带批次正文与提取 systemPrompt、`thinkingLevel=high`；任务成功两集资产绑定 `[1]`/`[1,2]`；失败写 `last_error`；无文本模型时明确失败且不提交任务；调度 tick 两轮推进。后端：资产读写路由、提取提示词与结构校验、`PlanExtractApply` 落库计划、job 领取条件更新与去重键、游标续跑、失败写 `last_error`；提取走平台文本任务（`canvas_text`）：模型取设置里的提取模型、未选时按平台目录兜底，提交与结果读取经过 `CreateTask` 准入/计费/出站；`startShortplayExtractWorker` 常驻每 5s 推进至多 4 条。前端：详情页「资产与提取」资产库、手动增改、提取按钮、收件箱（状态/尝试次数/`last_error`），job 终态自动重读资产。PostgreSQL 隔离 schema 专项覆盖领取单赢家与去重键释放。 |
+| W05 造型和媒体 | W04 | 复用 `derived.go` 的基础资产与衍生造型解析；接模型选择、参考图、音色生成、批量补缺、失败重试和回调 | 两套造型有独立参考图，基础角色改名和音色按合同继承；双 worker、重复回调、延迟回调与配额失败均有可复验结果和费用记录 | 通过（真实图片/音频渠道未配置）。衍生造型写入/继承/去重/改名传导；参考图与音色 job 同构：入队筛选、去重、锁定跳过、父资产未就绪等待、状态机 CAS、迟到回调不覆盖、失败留历史；调度先收口已提交的 running job 再领 queued（修复提交后饿死）；页面补缺图/重试失败图/补缺音、音频播放器、收件箱费用列；设置页接入目录模型选择（文本/图片/音色）。PostgreSQL 隔离 schema 专项：双 worker 单赢家、延迟回调 CAS 拒绝、失败不换当前样本。真实媒体渠道与费用结算金额仍未验。 |
+| W06 分集精修与收录 | W03、W04 | 接入每集画布创建、反查、资产投送、单项生图与收录，复用 submap 和现有画布写入服务 | 同一集同时打开两次得到同一画布；两集共享资源身份；画布改动保存重开后可定位资产；收录时校验资源和项目归属 | 通过。按需创建集画布（幂等，初始文档带本集原文故事输入节点）、按画布反查集归属、详情页「进精修画布」；提取落库后自动把本集资产投成 `shortplay-asset` 卡（同资产只一张、不覆盖用户拖动位置、无差异不写画布），手动投送 `POST /shortplays/:id/episodes/:episodeId/assets`；收录 `POST /shortplays/:id/adopt`（局部卡升格 + 目标集投新卡 + 可带入图）；画布侧单项生图回写 `POST /shortplays/by-canvas/:canvasId/assets/:assetId/image`（只接受已就绪图片、非集画布拒绝）；前端资产卡节点渲染与投送弹窗。画布写入统一走 `UpsertCanvasProject`。 |
 | W07 Agent | W05、W06 | 逐个迁入供体资产查询、详情、创建、更新、放置卡片及生图工具的声明、策略、提示词和执行绑定；通过 4AI Worker 调回 Go 并重新生成 harness | 在分集画布中执行查询、修改和受审批生成；无作品绑定、跨租户、拒绝审批、批准重放均有测试；另一客户端能看见最终状态 | 待施工 |
 | W08 正式页面全流程 | W05、W06、W07 | 核对全部视图及状态，串联任务收件箱、设置、资产卡、画布返回、刷新恢复与直接进入链接，同时回归既有 drama 工作流 | 浏览器从建档走到第二集复用造型、生成媒体、精修、收录、重开。在许可的真实渠道分别记录图像和音频回执；确定性渠道记录并发、失败和重试 | 待施工 |
 | W09 发布与恢复 | W08 | 更新 OpenAPI、数据库文档、功能地图和待验项；按仓库规则运行完整门禁，分批开放创建入口和 scheduler | 在隔离环境演练暂停新派发、处理在途回调、恢复同一批任务。记录迁移版本、备份恢复结果、积压及重复扣费检查，再评估生产窗口 | 待施工 |
@@ -149,3 +149,28 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 | `node node_modules/typescript/bin/tsc --noEmit --incremental false`；`eslint`；`prettier --check`（web） | 退出码 0 |
 
 **未覆盖项**　资产卡还没有投送到集画布（提取完进画布只有原文节点）；画布侧单项生图回写与收录（adopt）未接；画布顶栏已按 `by-canvas` 反查回跳短剧工作台；「同一集同时打开两次」只验证了串行重开，未做双标签并发建画布。真实图片/音频渠道仍未配置。
+## W04–W06 实测记录（2026-11-26）
+
+**工作树与提交**　`C:\Users\13537\.codex\worktrees\shortplay-canvas-port\open-ai-canvas4ai-recovery`，分支 `codex/shortplay-w04-recovery`。W04 任务链路 `b5ae32b`、无模型失败测试 `adf3f75`、W05 音色与调度推进 `ad0d30e1a`、W06 投送/收录/回写 `843d2ddb5`；远端 PR #154 尚未更新（未达到完整里程碑，按门禁规则不推）。
+
+**提取任务链路（W04 复验）**　`POST /shortplays/:id/extract` 只入队；调度领 queued → `CreateTask(Type=canvas_text, Operation=text)` → 轮询任务行 → 解析落库。测试断言：任务 `Prompt` 含批次正文、`input.config.systemPrompt` 含资产提取、`textOptions.thinkingLevel=high`；任务成功后两集资产分别绑定 `[1]`、`[1,2]`；上游失败写 `last_error`；无文本模型时 job 明确失败且**不提交任务**；`tickShortplayExtract` 两轮推进提交与落库。
+
+**媒体与调度（W05）**　参考图与音色 job 同构：入队筛选（单资产/补缺/重试失败、锁定与非角色/无音色跳过）、同资产去重、父资产在途等待、状态机 CAS、迟到回调不覆盖、失败保留上一张可用图/音。修复出图调度只领 queued 导致提交后 job 饿死的缺口：先 `RunningShortplayJob` 收口已提交任务，再领取新排队；未提交的等待型 job 退回 queued。设置页接入 `/dramas/models` 目录（新增 `options.audio`），保存时校验目录。页面：补缺图/重试失败图/补缺音、音频播放器、收件箱费用列。
+
+**投送与收录（W06）**　提取落库后按集投 `shortplay-asset` 卡：同资产只一张、已有卡只刷新不动位置、无差异不写画布；手动投送把资产绑集（集行资产列表一次并集写入，避免逐个写入互相覆盖）；收录从节点快照建行（同分类同名复用、已有图不覆盖）、源局部卡原样保留、目标集投新卡；画布侧单项生图回写按画布反查集归属，只接受已就绪图片资源。前端新增资产卡节点（`CanvasNodeType.ShortplayAsset`）与投送弹窗。
+
+**验证命令与结果**
+
+| 命令 | 结果 |
+|---|---|
+| `go build ./internal/... ./cmd/server` | 退出码 0 |
+| `go test -count=1 -run 'TestInjectShortplayAssetCards|TestPlaceShortplayAssetCards|TestAdoptShortplayAsset|TestApplyShortplayAssetImageFromCanvas' ./internal/app` | PASS（11.0s） |
+| `go test -count=1 -run 'TestQueueShortplayAssetAudio|TestRunShortplayAssetAudio|TestTickShortplayAssetAudio|TestTickShortplayAssetImages' ./internal/app` | PASS（13.0s） |
+| `go test -count=1 -run 'TestShortplay|TestQueueShortplay|TestRunShortplay|TestTickShortplay|TestExtract|TestCreateShortplayDerived|TestUpdateShortplayDerived|TestEnableShortplay' ./internal/app ./internal/repository ./internal/handler ./internal/shortplay` | 4 包 PASS（app 37.9s / repository 1.1s / handler 11.5s / shortplay 0.3s） |
+| `CANVAS_TEST_POSTGRES_DSN=… go test -run 'TestShortplayJobsClaimAndDedupePostgres|TestShortplayAssetAudioClaimAndLateCallbackPostgres' ./internal/repository` | PASS（3.3s，隔离 schema 自建后 DROP） |
+| `go test -count=1 ./internal/architecture` | PASS |
+| `go test -count=1 -run TestOpenAPI ./internal/handler` | PASS（新增 6 条路由全部写入规范） |
+| `web`: `prettier --write`（改动文件）、`tsc --noEmit --incremental false`、`eslint`（改动文件） | 均退出码 0 |
+
+**未验项**　本机没有配置文本、图片与音频模型渠道：提取、出图、出音只能验证到「没有可用的文本/图片/音频模型，…」的明确失败，不能宣称真实模型或媒体产物通过；费用流水只显示任务已记录的 `costMicrocredits`，未产生真实结算。W07 Agent 工具、W08 全流程浏览器验收、W09 发布与恢复演练未开始。
+
