@@ -3017,6 +3017,40 @@ paths:
           $ref: "#/components/responses/Error"
         "409":
           $ref: "#/components/responses/Error"
+  /shortplays/{id}/episodes/{episodeId}/canvas:
+    post:
+      tags: [shortplay]
+      summary: 按需创建（或读取已有的）某集精修画布
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, description: shortplayId 或 projectId }
+        - in: path
+          name: episodeId
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /shortplays/by-canvas/{canvasId}:
+    get:
+      tags: [shortplay]
+      summary: 按画布反查集归属（自由画布返回 linked=false）
+      parameters:
+        - in: path
+          name: canvasId
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
   /shortplays/{id}/assets/images:
     post:
       tags: [shortplay]

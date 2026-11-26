@@ -45,6 +45,28 @@ func registerShortplayRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		return svc.UpsertShortplayAsset(userID, c.Param("id"), req)
 	}))
+	// 集画布按需创建：第一次「进精修画布」时建出画布行；已存在返回 created=false。
+	r.POST("/shortplays/:id/episodes/:episodeId/canvas", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		return svc.EnsureShortplayEpisodeCanvas(userID, c.Param("id"), c.Param("episodeId"))
+	}))
+	// 按画布反查集归属；未命中返回 {linked:false} 而不是 404（自由画布是正常状态）。
+	r.GET("/shortplays/by-canvas/:canvasId", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
+		binding, found, err := svc.ShortplayByCanvas(userID, c.Param("canvasId"))
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return gin.H{"linked": false}, nil
+		}
+		return gin.H{
+			"linked":        true,
+			"shortplayId":   binding.ShortplayID,
+			"projectId":     binding.ProjectID,
+			"episodeId":     binding.EpisodeID,
+			"episodeNumber": binding.EpisodeNumber,
+			"episodeTitle":  binding.EpisodeTitle,
+		}, nil
+	}))
 	// 提取入队：已在途时返回那一条（queued=false），不排第二条。
 	r.POST("/shortplays/:id/extract", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		return svc.QueueShortplayExtract(userID, c.Param("id"))

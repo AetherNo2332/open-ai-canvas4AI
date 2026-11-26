@@ -83,3 +83,18 @@ type UpdateSettingsRequest struct {
 type SettingsUpdateResult struct {
 	SettingsJSON string `json:"settingsJson"`
 }
+
+// EnsureCanvasResult 是「进精修画布」的回执：created=false 表示这一集早就建过画布。
+type EnsureCanvasResult struct {
+	CanvasID string `json:"canvasId"`
+	Created  bool   `json:"created"`
+}
+
+// CanvasBinding 是按画布反查到的集归属；只在画布确实属于当前用户的作品时返回。
+type CanvasBinding struct {
+	ShortplayID   string `json:"shortplayId"`
+	ProjectID     string `json:"projectId"`
+	EpisodeID     string `json:"episodeId"`
+	EpisodeNumber int    `json:"episodeNumber"`
+	EpisodeTitle  string `json:"episodeTitle"`
+}

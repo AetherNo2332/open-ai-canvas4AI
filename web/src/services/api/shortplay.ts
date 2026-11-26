@@ -201,6 +201,16 @@ export function queueShortplayAssetImages(projectId: string, body: ShortplayImag
     return http.post<ShortplayImageQueueResult>(`/shortplays/${encodeURIComponent(projectId)}/assets/images`, body);
 }
 
+/** 集画布按需创建：第一次调用建出画布行，已存在返回 created=false。 */
+export function ensureShortplayEpisodeCanvas(projectId: string, episodeId: string) {
+    return http.post<{ canvasId: string; created: boolean }>(`/shortplays/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/canvas`);
+}
+
+/** 按画布反查集归属；自由画布返回 linked=false，调用方按普通画布处理。 */
+export function getShortplayCanvasBinding(canvasId: string, signal?: AbortSignal) {
+    return http.get<{ linked: boolean; shortplayId?: string; projectId?: string; episodeId?: string; episodeNumber?: number; episodeTitle?: string }>(`/shortplays/by-canvas/${encodeURIComponent(canvasId)}`, { signal });
+}
+
 /**
  * 保存设置（整份提交）。服务端归一后回传 settingsJson，回执里的值才是权威。
  * 整份提交而不是逐字段 patch：设置之间互相牵制，逐字段写会落库组合非法的中间态。

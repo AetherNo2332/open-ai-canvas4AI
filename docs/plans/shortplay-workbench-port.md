@@ -30,7 +30,7 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 | W03 分集工作台 | W02 | 完成菜单与路由、列表、新建、详情、设置，接入分集原文和设置校验。复用目标 `http`、i18n、正式布局和错误处理 | 从导航录入两集原文，列表、深链接和刷新后读到同一作品；设置写失败可重试，权限与项目类型校验通过。此片交付首个可用版本 | 通过。提交 `0857e41`，PR [#154](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/154)。侧栏「短剧工作台」独立入口 `/shortplays`、`/shortplays/new`、`/shortplays/:projectId`；一次建档写作品容器（`type=shortplay`）+ 域配置 + 全部分集；列表/详情/设置整份保存。功能开关改为独立的 `shortplayEnabled`：后端 `/shortplays` 路由组、前端路由、侧栏和「功能开放」面板同口径，与 `shortDramaEnabled` 互不影响（`TestShortplayFeatureGateIsIndependentOfDrama` 覆盖四种组合）。正式页面走通登录→新建两集《雨夜回眸 W03》→保存设置→刷新重开，分集/原文/画布地址/设置保持。门禁环境修复见文末「W03 实测记录」。 |
 | W04 资产与提取 | W03 | 移植资产读写、提取提示词与结构校验、游标、去重键、租约及调度循环。接入已有 worker 和模型调用。资产库呈现角色、场景、道具及分集绑定 | 连点提取只排一项；中断恢复后同一资产绑定两集，已锁字段按供体合同保留；收件箱能定位失败项 | 已完成（真实模型渠道未配置）。后端：资产读写路由、提取提示词与结构校验、`PlanExtractApply` 落库计划、job 领取条件更新与去重键、游标续跑、失败写 `last_error`；`ConfigureShortplayExtractExecutorFromEnv` 接 OpenAI 兼容 `chat/completions`，`startShortplayExtractWorker` 常驻每 5s 领取至多 4 条。前端：详情页「资产与提取」资产库、手动增改、提取按钮、收件箱（状态/尝试次数/`last_error`），job 终态自动重读资产。PostgreSQL 隔离 schema 专项覆盖领取单赢家与去重键释放。 |
 | W05 造型和媒体 | W04 | 复用 `derived.go` 的基础资产与衍生造型解析；接模型选择、参考图、音色生成、批量补缺、失败重试和回调 | 两套造型有独立参考图，基础角色改名和音色按合同继承；双 worker、重复回调、延迟回调与配额失败均有可复验结果和费用记录 | 部分完成。已落地：衍生造型写入/继承/同角色去重与改名传导；参考图出图 job（入队筛选、去重、锁定跳过、父图未就绪等待、状态机 CAS 回写、迟到回调不覆盖、失败留历史且不换当前图）、页面「生成缺图/出图」与缩略图、`POST /shortplays/:id/assets/images` 与 OpenAPI。未完成：音色生成、批量补缺与失败重试的完整页面、真实图片渠道与费用流水、双 worker/延迟回调的 PostgreSQL 复验。 |
-| W06 分集精修与收录 | W03、W04 | 接入每集画布创建、反查、资产投送、单项生图与收录，复用 submap 和现有画布写入服务 | 同一集同时打开两次得到同一画布；两集共享资源身份；画布改动保存重开后可定位资产；收录时校验资源和项目归属 | 待施工 |
+| W06 分集精修与收录 | W03、W04 | 接入每集画布创建、反查、资产投送、单项生图与收录，复用 submap 和现有画布写入服务 | 同一集同时打开两次得到同一画布；两集共享资源身份；画布改动保存重开后可定位资产；收录时校验资源和项目归属 | 部分完成。已落地：按需创建集画布（幂等，初始文档带本集原文的故事输入节点）、按画布反查集归属、详情页「进精修画布」真实入口；画布写入统一走 `UpsertCanvasProject`。未完成：资产卡投送进画布、画布侧单项生图回写、收录（adopt）、画布面包屑回短剧工作台。 |
 | W07 Agent | W05、W06 | 逐个迁入供体资产查询、详情、创建、更新、放置卡片及生图工具的声明、策略、提示词和执行绑定；通过 4AI Worker 调回 Go 并重新生成 harness | 在分集画布中执行查询、修改和受审批生成；无作品绑定、跨租户、拒绝审批、批准重放均有测试；另一客户端能看见最终状态 | 待施工 |
 | W08 正式页面全流程 | W05、W06、W07 | 核对全部视图及状态，串联任务收件箱、设置、资产卡、画布返回、刷新恢复与直接进入链接，同时回归既有 drama 工作流 | 浏览器从建档走到第二集复用造型、生成媒体、精修、收录、重开。在许可的真实渠道分别记录图像和音频回执；确定性渠道记录并发、失败和重试 | 待施工 |
 | W09 发布与恢复 | W08 | 更新 OpenAPI、数据库文档、功能地图和待验项；按仓库规则运行完整门禁，分批开放创建入口和 scheduler | 在隔离环境演练暂停新派发、处理在途回调、恢复同一批任务。记录迁移版本、备份恢复结果、积压及重复扣费检查，再评估生产窗口 | 待施工 |
@@ -132,3 +132,20 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 | `node node_modules/typescript/bin/tsc --noEmit --incremental false`（web）；`eslint`；`prettier --check` | 退出码 0 |
 
 **未覆盖项**　真实图片模型渠道、音色生成、批量补缺的完整页面、费用流水与双 worker/延迟回调的 PostgreSQL 复验仍未完成；冻结「同一集两套造型各自独立参考图」要等真实渠道出图后才能宣称。
+## W06 实测记录（增量，2026-11-26）
+
+**集画布按需创建**　`POST /shortplays/:id/episodes/:episodeId/canvas` 在建档分配的 `canvas_id` 上按需建画布行：先查已有（`created=false`），再在事务里 `UpsertCanvasProject`（并发建同一张画布由 OnConflict 单赢家 + 冲突按「已存在」返回）。画布行必须写 `ProjectID=作品容器 ID`，否则会退化成自由画布，资产卡与同步失效。初始文档含一个「故事输入」文本节点（本集原文），并按目标端画布合同带 `connections / appearance / referenceFieldsVersion` 等必填键——首版漏了 `connections`，前端会命中旧缓存并在 `applyRestoredProject` 里 `.map` 崩溃；补齐后清缓存重开正常。
+
+**按画布反查**　`GET /shortplays/by-canvas/:canvasId` 只在画布属于当前用户、且集行属于同一作品时返回 `{linked:true, shortplayId, projectId, episodeId, episodeNumber, episodeTitle}`；自由画布、他人画布、集不匹配都返回 `linked:false`。
+
+**页面验收（浏览器）**　账号 `shortplay-w04`：《雨夜回眸 W04》第 1 集点「进精修画布」→ 进入 `canvas/ec07d2d9…`，标题「雨夜借伞」、节点显示本集原文、面包屑显示作品名；刷新后仍是同一张画布、同一节点。第 2 集进入 `canvas/f45381a5…`，标题「伞骨藏诗」、正文是本集原文，两集画布互不串。再次点击同一集返回同一画布（`created=false`）。
+
+**验证命令与结果**
+
+| 命令 | 结果 |
+|---|---|
+| `go test -count=1 -run 'TestEnsureShortplayEpisodeCanvas\|TestShortplayByCanvas' ./internal/app` | PASS |
+| `go build ./internal/... ./cmd/server`；`go test ./internal/architecture` | 退出码 0；PASS |
+| `node node_modules/typescript/bin/tsc --noEmit --incremental false`；`eslint`；`prettier --check`（web） | 退出码 0 |
+
+**未覆盖项**　资产卡还没有投送到集画布（提取完进画布只有原文节点）；画布侧单项生图回写与收录（adopt）未接；画布面包屑仍指向 `/projects/:id`（drama 制作台），短剧应回 `/shortplays/:id`；「同一集同时打开两次」只验证了串行重开，未做双标签并发建画布。真实图片/音频渠道仍未配置。

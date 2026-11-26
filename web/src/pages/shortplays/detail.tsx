@@ -7,7 +7,7 @@ import { useNavigate, useParams } from "react-router";
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { RelativeTime } from "@/components/ui/product/relative-time";
-import { getShortplayDetail, updateShortplaySettings, type ShortplaySettings } from "@/services/api/shortplay";
+import { getShortplayDetail, ensureShortplayEpisodeCanvas, updateShortplaySettings, type ShortplaySettings } from "@/services/api/shortplay";
 import { ShortplayAssetsPanel } from "./assets-panel";
 import { ASSET_MODES, parseShortplaySettings, settingsDirty } from "./shortplay-shared";
 
@@ -40,6 +40,13 @@ export default function ShortplayDetailPage() {
             void queryClient.invalidateQueries({ queryKey: ["shortplays"] });
         },
         onError: (error) => message.error(error instanceof Error ? error.message : "保存失败"),
+    });
+
+    // 集画布按需创建：第一次点「进精修画布」时建出来，之后直接进入同一张画布。
+    const openCanvas = useMutation({
+        mutationFn: (episodeId: string) => ensureShortplayEpisodeCanvas(projectId, episodeId),
+        onSuccess: (result) => navigate(`/canvas/${result.canvasId}`),
+        onError: (error) => message.error(error instanceof Error ? error.message : "画布创建失败"),
     });
 
     if (query.isLoading) {
@@ -99,8 +106,10 @@ export default function ShortplayDetailPage() {
                                                     {episode.assetIds.length ? ` · ${episode.assetIds.length} 个资产` : ""}
                                                 </div>
                                             </div>
-                                            <Tooltip title="集画布在 W06 接入后创建">
-                                                <Button disabled>进精修画布</Button>
+                                            <Tooltip title="第一次进入时按需建出这一集的画布">
+                                                <Button type="primary" loading={openCanvas.isPending && openCanvas.variables === episode.id} onClick={() => openCanvas.mutate(episode.id)}>
+                                                    进精修画布
+                                                </Button>
                                             </Tooltip>
                                         </div>
                                         {episode.scriptText ? <div className="mt-3 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-[var(--surface-2)] p-3 text-xs leading-6 text-foreground/70">{episode.scriptText}</div> : null}
