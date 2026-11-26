@@ -44,6 +44,16 @@ func (r *Repository) ReadyAgentGenerationBatches(limit int) ([]model.AgentGenera
 	return rows, err
 }
 
+// TouchReadyAgentGenerationBatch rotates a ready batch that could not be queued
+// to the back of the fair scan order. Ordering is by updated_at, so a failed
+// batch must not keep the first window occupied: without this, limit+ failures
+// would starve every later account forever.
+func (r *Repository) TouchReadyAgentGenerationBatch(userID, batchID string) error {
+	return r.db.Model(&model.AgentGenerationBatch{}).
+		Where("id = ? AND user_id = ? AND status = ?", batchID, userID, model.AgentGenerationBatchReady).
+		Update("updated_at", time.Now().UTC()).Error
+}
+
 // EnsureAgentGenerationBatchTask registers exactly the tasks the source run
 // actually submitted. The barrier size is derived from inserted rows, never a
 // fixed threshold.

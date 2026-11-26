@@ -62,6 +62,7 @@ skip 口径（首轮遗留问题，本轮修正）：
 - `agent:smoke`：生产冒烟内部探针硬编码 `canvas-pi-wire/v7`，已同步 `v8`（`scripts/verify-production-agent-smoke.py`）。
 - `web:test` 的 10 条失败是工作树 CRLF 与仓库 LF 文本断言不一致；规范为 LF 后 3708 通过 / 7 跳过 / 0 失败，未改断言。
 - `TestSettingsEncryptionKey*` 按平台限定 `0600` 位比较：Windows 仍执行发布、完整性、并发一致性、防覆盖、回退与临时文件清理检查，Linux 容器实跑原始断言（见上表）。
+- wake 用例在本机与「监听器 1s 级自动重连」存在竞争：现在每次监听器重连都重新终止它，直到观察到 worker 认领或到达有界超时（`agent_wake_worker_fallback_test.go`，只改测试；断言不变，仍是「认领必须发生在监听器离线期间」，产品代码未动）。本机连续 3 次通过，认领耗时约 0.6s。
 
 ## 复审修复（首轮独立审阅，P1 + 3×P2）
 
@@ -69,6 +70,12 @@ skip 口径（首轮遗留问题，本轮修正）：
 2. **P2 合法长度 instruction 曾生成必然无法准入的续接。** 续接提示词由后端拼装，现在与运行提示词共用 `cloudAgentPromptMaxRunes`（16000 字，单点常量）：`finish_run` 在拿到批次后按 `generationContinuationInstructionLimit(实际任务数)` 校验 instruction（超出返回 `too_long` 字段错误，附带本批次上限，source run 不结束）；拼装侧保留任务身份行，结果明细超预算时压缩摘要并追加省略计数，保证拼装结果一定通过新 run 的同一校验。回归 `TestGenerationContinuationInstructionSharesPromptBudget`（16000 字被拒、预算内通过且提示词 ≤16000、可通过 `validateCloudAgentPrompt`）、`TestGenerationContinuationPromptStaysWithinLimitWithManyTasks`（48 个任务 + 600 字摘要/错误）。
 3. **P2 内部消息曾未进入累计存储计量。** `UserStorageUsage` 的 `task_bytes` 现在累计 `agent_queued_messages`（prompt / request_json / last_error）与 `agent_generation_batches`（instruction / request_json / results_json）；未迁移该表或只读 fixture 缺表时按表存在性跳过，累计计量不会整体失败。准入沿用「任务正文减去队列正文」的增量公式，同一份文本不重复计费。回归 `TestUserStorageUsageCountsQueuedMessagesAndBatches`（累计、跨账号隔离、清理后扣减）与 P1 回归里的准入增量核对。
 4. **P2 source 失败 / 取消 / 停止曾未关闭 collecting 批次。** 取消与停止在 `CancelCloudAgent` 内联关闭批次；worker 致命失败在 `PiFailRun` 内联关闭；收尾次数耗尽的终止在 finish_run 事务内关闭（`detachTerminatedGenerationBatch`）；其余终态与崩溃窗口由 `QueueReadyGenerationContinuations` 开头的 `DetachOrphanAgentGenerationBatches` 收口，重启后第一轮派发即修复。回归 `TestGenerationBatchDetachedWhenSourceCancelled`（生成任务行与账单保留）与 `TestGenerationBatchDetachedAfterSourceFailureAndRestart`（失败 + 重启 + 重复扫描幂等）。
+
+## 第二轮复审修复（P1×1 + P2×2）
+
+1. **P1 失败批次占满扫描窗口会饿死其它账号。** `ReadyAgentGenerationBatches` 按 `updated_at` 取最旧的前 `limit` 条；失败的批次保持 ready 时位置不变，前 64 条都失败会让后面的正常续接永远进不了窗口。现在续接入队失败后调用 `TouchReadyAgentGenerationBatch` 把该批次轮转到队尾（只改 `updated_at`，不改状态、不增版本），失败原因写入门禁日志并作为首个错误回传给调用方。回归 `TestContinuationScanRotatesFailedBatchesSoLaterAccountsAdvance`：A 账号 64 条 ready 批次占满窗口并配额耗尽，第一轮 0 入队且 B 仍在窗口外；第二轮失败批次让位后 B 入队，A 的 64 条仍保持 ready。
+2. **P2 提示词压缩会丢掉任务身份。** 现在按身份行预算（`generationContinuationTaskIdentityRunes`=240，覆盖 80 字符 taskId、80 字符 nodeId、序号、mode 与状态）计算 instruction 上限与拼装预算：逐级降级顺序是「明细 → 去摘要 → 去标题 → 只留 taskId/status」，任何一级都保留全部任务身份，只有任务数量本身超出提示词预算（正常预算达不到）才列出可截断的 taskId 列表并以批次 ID 明示剩余范围。回归 `TestGenerationContinuationPromptStaysWithinLimitWithManyTasks`：48 个任务、240 字标题、80 字符 taskId/nodeId、instruction 取到上限，逐项断言每个 taskId 仍在提示词里、提示词 ≤16000 且能通过 `validateCloudAgentPrompt`。
+3. **P2 存储计量漏掉批次任务结果副本。** `UserStorageUsage` 的 `task_bytes` 现在同时累计 `agent_generation_batch_tasks.outcome_json`（与批次正文同属 Schema 113，缺表时同样跳过）。回归 `TestUserStorageUsageCountsQueuedMessagesAndBatches` 扩展为真实结算路径：写入 `agent_generation_batch_tasks` 即计入、`SettleAgentGenerationBatchTask` 的增量等于新 outcome 与 results 正文之差、重放结算不重复计量、删除任务行后回到基线。
 
 ## 行为覆盖（对应任务书 Task 7）
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strings"
@@ -44,6 +45,12 @@ func (s *Service) QueueReadyGenerationContinuations(limit int) (int, error) {
 			if firstErr == nil {
 				firstErr = err
 			}
+			// 公平扫描：失败批次让出扫描窗口，否则前 limit 条全失败会把后面的
+			// 正常账号永久挡在窗口外。
+			if touchErr := s.repo.TouchReadyAgentGenerationBatch(batch.UserID, batch.ID); touchErr != nil {
+				log.Printf("[agent] rotate deferred generation batch %s: %v", batch.ID, touchErr)
+			}
+			log.Printf("[agent] generation continuation for batch %s deferred: %v", batch.ID, err)
 			continue
 		}
 		if ok {
@@ -137,23 +144,26 @@ func (s *Service) generationContinuationRequest(batch model.AgentGenerationBatch
 }
 
 const (
-	// 续接提示词的固定开销和每个任务的最小行宽；与运行提示词的字符上限共用
+	// 续接提示词的固定开销和每个任务的身份行预算；与运行提示词的字符上限共用
 	// 同一预算，避免内部续接在 source run 已完成后才被 400 拒绝。
-	generationContinuationHeaderRunes         = 160
-	generationContinuationFooterRunes         = 90
-	generationContinuationTaskLineRunes       = 96
-	generationContinuationTaskDetailRunes     = 240
+	generationContinuationHeaderRunes = 160
+	generationContinuationFooterRunes = 90
+	// 每个任务至少要能放下序号、taskId、nodeId、mode 和状态。taskId 与 nodeId
+	// 都是 80 字符上限，按最坏情况留 240 字，保证身份行永远不被省略。
+	generationContinuationTaskIdentityRunes = 240
+	generationContinuationTaskTitleRunes    = 48
+	generationContinuationTaskDetailRunes   = 160
 	generationContinuationMinInstructionRunes = 200
 )
 
 // generationContinuationInstructionLimit 返回本批次允许登记的指令字符数。
-// 批次大小来自实际登记行，指令加上头部、结尾和任务行后一定装得进运行提示词
-// 的同一上限，不需要放宽任何安全限制。
+// 批次大小来自实际登记行，指令加上头部、结尾和每个任务的身份行后一定装得进
+// 运行提示词的同一上限，不需要放宽任何安全限制。
 func generationContinuationInstructionLimit(expectedTasks int) int {
 	if expectedTasks < 0 {
 		expectedTasks = 0
 	}
-	limit := cloudAgentPromptMaxRunes - generationContinuationHeaderRunes - generationContinuationFooterRunes - expectedTasks*generationContinuationTaskLineRunes
+	limit := cloudAgentPromptMaxRunes - generationContinuationHeaderRunes - generationContinuationFooterRunes - expectedTasks*generationContinuationTaskIdentityRunes
 	if limit < generationContinuationMinInstructionRunes {
 		return generationContinuationMinInstructionRunes
 	}
@@ -174,16 +184,27 @@ func cloudAgentGenerationContinuationPrompt(batch model.AgentGenerationBatch, ta
 		footer = truncateRunes(footer, max(0, runeCount(footer)-over))
 	}
 	budget := cloudAgentPromptMaxRunes - runeCount(header) - runeCount(footer)
-	lines := continuationTaskLines(tasks, results, generationContinuationTaskDetailRunes)
-	if totalRunes(lines) > budget {
-		// 结果明细超预算时退化成身份行：任务、状态、ID 仍完整，摘要改为按 taskId 查。
-		lines = continuationTaskLines(tasks, results, 0)
+	// 逐级降级，但每一级都保留全部任务身份：先丢结果明细，再缩短标题，最后只留
+	// taskId/nodeId/status。任何一级都不会整行省略任务，否则模型无法按 taskId 取回。
+	for _, mode := range []struct{ title, detail int }{
+		{generationContinuationTaskTitleRunes, generationContinuationTaskDetailRunes},
+		{generationContinuationTaskTitleRunes, 0},
+		{0, 0},
+	} {
+		if lines := continuationTaskLines(tasks, results, mode.title, mode.detail); totalRunes(lines) <= budget {
+			return header + strings.Join(lines, "") + footer
+		}
 	}
-	lines = trimContinuationTaskLines(lines, budget)
+	// 任务数量超过身份行预算时（正常预算远达不到），列出全部 taskId 供逐条取回，
+	// 再不够才截断并以批次 ID 明示剩余范围。
+	lines := continuationTaskIdLines(tasks)
+	if totalRunes(lines) > budget {
+		lines = append(truncateContinuationTaskIds(tasks, budget), fmt.Sprintf("其余 taskId 见批次 %s 的任务明细。\n", batch.ID))
+	}
 	return header + strings.Join(lines, "") + footer
 }
 
-func continuationTaskLines(tasks []model.AgentGenerationBatchTask, results map[string]json.RawMessage, detailRunes int) []string {
+func continuationTaskLines(tasks []model.AgentGenerationBatchTask, results map[string]json.RawMessage, titleRunes, detailRunes int) []string {
 	lines := make([]string, 0, len(tasks))
 	for index, task := range tasks {
 		var outcome struct {
@@ -196,8 +217,17 @@ func continuationTaskLines(tasks []model.AgentGenerationBatchTask, results map[s
 		if label == "" {
 			label = task.Mode
 		}
+		if titleRunes > 0 {
+			label = truncateRunes(label, titleRunes)
+		} else {
+			label = ""
+		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "%d. %s（taskId %s，nodeId %s，mode %s）：%s", index+1, label, task.TaskID, task.NodeID, task.Mode, firstNonEmpty(outcome.Status, "terminal"))
+		if label != "" {
+			fmt.Fprintf(&b, "%d. %s（taskId %s，nodeId %s，mode %s）：%s", index+1, label, task.TaskID, task.NodeID, task.Mode, firstNonEmpty(outcome.Status, "terminal"))
+		} else {
+			fmt.Fprintf(&b, "%d. taskId %s，nodeId %s，mode %s：%s", index+1, task.TaskID, task.NodeID, task.Mode, firstNonEmpty(outcome.Status, "terminal"))
+		}
 		if detailRunes > 0 {
 			if outcome.Summary != "" {
 				b.WriteString("；" + truncateRunes(outcome.Summary, detailRunes))
@@ -212,26 +242,27 @@ func continuationTaskLines(tasks []model.AgentGenerationBatchTask, results map[s
 	return lines
 }
 
-// trimContinuationTaskLines 只保留装进预算的任务行，剩余任务用一行计数代替，
-// 保证拼装出的提示词一定不超过运行提示词上限。
-func trimContinuationTaskLines(lines []string, budget int) []string {
-	kept := make([]string, 0, len(lines))
+// continuationTaskIdLines 是最后的降级形态：只保留 taskId 与状态，确保每个任务
+// 都能被逐条取回。
+func continuationTaskIdLines(tasks []model.AgentGenerationBatchTask) []string {
+	lines := make([]string, 0, len(tasks))
+	for index, task := range tasks {
+		lines = append(lines, fmt.Sprintf("%d. taskId %s：%s\n", index+1, task.TaskID, task.Status))
+	}
+	return lines
+}
+
+// truncateContinuationTaskIds 只用于任务数量本身超出提示词预算的极端情况：尽量
+// 多列 taskId，剩余部分由批次 ID 指向任务明细。
+func truncateContinuationTaskIds(tasks []model.AgentGenerationBatchTask, budget int) []string {
+	kept := []string{}
 	used := 0
-	for index, line := range lines {
-		width := runeCount(line)
-		remaining := len(lines) - index
-		reserve := 0
-		if remaining > 1 {
-			reserve = runeCount(fmt.Sprintf("…其余 %d 个任务已省略，可按 taskId 查询。\n", remaining))
-		}
-		if used+width+reserve > budget {
-			if note := fmt.Sprintf("…其余 %d 个任务已省略，可按 taskId 查询。\n", remaining); used+runeCount(note) <= budget {
-				kept = append(kept, note)
-			}
-			return kept
+	for _, line := range continuationTaskIdLines(tasks) {
+		if used+runeCount(line) > budget {
+			break
 		}
 		kept = append(kept, line)
-		used += width
+		used += runeCount(line)
 	}
 	return kept
 }

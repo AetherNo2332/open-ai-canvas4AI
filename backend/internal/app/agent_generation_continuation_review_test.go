@@ -3,10 +3,10 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -172,36 +172,108 @@ func TestGenerationContinuationInstructionSharesPromptBudget(t *testing.T) {
 }
 
 func TestGenerationContinuationPromptStaysWithinLimitWithManyTasks(t *testing.T) {
-	batch := model.AgentGenerationBatch{ID: "batch-many", ExpectedTasks: 48, TerminalTasks: 48, Instruction: strings.Repeat("检", generationContinuationInstructionLimit(48))}
-	tasks := make([]model.AgentGenerationBatchTask, 0, 48)
+	const taskCount = 48
+	instruction := strings.Repeat("检", generationContinuationInstructionLimit(taskCount))
+	batch := model.AgentGenerationBatch{ID: "batch-many", ExpectedTasks: taskCount, TerminalTasks: taskCount, Instruction: instruction}
+	tasks := make([]model.AgentGenerationBatchTask, 0, taskCount)
 	results := map[string]json.RawMessage{}
-	for index := 0; index < 48; index++ {
-		taskID := "task-" + strings.Repeat("0", 2) + string(rune('a'+index%26)) + time.Unix(int64(index), 0).Format("05")
-		tasks = append(tasks, model.AgentGenerationBatchTask{BatchID: batch.ID, TaskID: taskID, NodeID: "node-" + taskID, Mode: "image", Title: "镜头", Status: model.AgentGenerationBatchTaskTerminal})
+	taskIDs := make([]string, 0, taskCount)
+	for index := 0; index < taskCount; index++ {
+		// 合法上限的身份信息：80 字符 taskId / nodeId 与 240 字标题。
+		taskID := "task-" + fmt.Sprintf("%02d", index) + strings.Repeat("t", 73)
+		nodeID := "node-" + fmt.Sprintf("%02d", index) + strings.Repeat("n", 73)
+		tasks = append(tasks, model.AgentGenerationBatchTask{BatchID: batch.ID, TaskID: taskID, NodeID: nodeID, Mode: "image", Title: strings.Repeat("镜", 240), Status: model.AgentGenerationBatchTaskTerminal})
+		taskIDs = append(taskIDs, taskID)
 		outcome, _ := json.Marshal(map[string]any{"status": "succeeded", "summary": strings.Repeat("摘", 600), "error": strings.Repeat("错", 600)})
 		results[taskID] = outcome
 	}
 	encoded, _ := json.Marshal(results)
 	batch.ResultsJSON = string(encoded)
 	prompt := cloudAgentGenerationContinuationPrompt(batch, tasks)
-	for _, r := range prompt {
-		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' {
-			t.Fatalf("control rune %U in prompt", r)
-		}
-	}
-	t.Logf("debug valid=%v runes=%d bytes=%d", utf8.ValidString(prompt), runeCount(prompt), len(prompt))
 	if got := runeCount(prompt); got > cloudAgentPromptMaxRunes {
-		t.Fatalf("prompt with 48 tasks exceeds limit: %d", got)
+		t.Fatalf("prompt with %d tasks exceeds limit: %d", taskCount, got)
 	}
 	if err := validateCloudAgentPrompt(prompt, cloudAgentPromptMaxRunes); err != nil {
-		t.Fatalf("prompt with 48 tasks rejected by admission: %v", err)
+		t.Fatalf("prompt with %d tasks rejected by admission: %v", taskCount, err)
 	}
-	if !strings.Contains(prompt, "task-") {
-		t.Fatal("prompt lost task identity lines")
+	// 每个任务都必须能从续接上下文里按 taskId 取回（身份行不允许被省略）。
+	for _, taskID := range taskIDs {
+		if !strings.Contains(prompt, taskID) {
+			t.Fatalf("task %s lost from continuation prompt", taskID)
+		}
 	}
-	// 结果明细被压缩时仍保留可执行的指令和失败不重试的合同。
+	if !strings.Contains(prompt, "node-00") {
+		t.Fatal("prompt lost node identity")
+	}
 	if !strings.Contains(prompt, "检") || !strings.Contains(prompt, "不要自动重新提交付费生成") {
 		t.Fatal("prompt lost instruction or no-retry contract")
+	}
+}
+
+func TestContinuationScanRotatesFailedBatchesSoLaterAccountsAdvance(t *testing.T) {
+	s, db, args := agentMediaFixture(t)
+	_, anchor := queueReadyContinuationForUser(t, s, db, args, "user", "检查本批结果")
+	base := time.Now().UTC().Add(-2 * time.Hour)
+	// A 账号：64 条 ready 批次占满整个扫描窗口，且随后配额耗尽。
+	backlog := make([]model.AgentGenerationBatch, 0, 63)
+	for index := 0; index < 63; index++ {
+		batch := seedReadyContinuationBatch(t, db, "user", "agent-canvas", anchor.ConversationID,
+			fmt.Sprintf("src-backlog-%02d", index), agentTestRequest(), fmt.Sprintf("task-backlog-%02d", index))
+		if err := db.Model(&model.AgentGenerationBatch{}).Where("id = ?", batch.ID).
+			Updates(map[string]any{"updated_at": base.Add(time.Duration(index) * time.Second)}).Error; err != nil {
+			t.Fatal(err)
+		}
+		backlog = append(backlog, *batch)
+	}
+	if err := db.Model(&model.AgentGenerationBatch{}).Where("id = ?", anchor.ID).
+		Update("updated_at", base.Add(90*time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.TaskTextDelta{ID: "quota-fill-scan", UserID: "user", TaskID: "quota-fill-scan", Sequence: 1, ByteCount: gigabytes(policy.Resource.TaskDataGB)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// B 账号的批次更新时间最新，第一轮窗口装不下。
+	seedAgentContinuationAccount(t, db, "user-b", "canvas-b")
+	reqB := agentTestRequest()
+	reqB.CanvasID, reqB.IdempotencyKey = "canvas-b", "scan-user-b-root"
+	rootB, err := s.CreateCloudAgentRun("user-b", reqB, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runB, err := s.repo.CloudAgent("user-b", rootB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationB := firstNonEmpty(runB.ConversationID, runB.ID)
+	finishConversationTestRun(t, db, rootB.ID)
+	batchB := seedReadyContinuationBatch(t, db, "user-b", "canvas-b", conversationB, rootB.ID, reqB, "task-scan-b")
+	if err := db.Model(&model.AgentGenerationBatch{}).Where("id = ?", batchB.ID).Update("updated_at", base.Add(180*time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if queued, err := s.QueueReadyGenerationContinuations(64); err == nil || queued != 0 {
+		t.Fatalf("first window should only meet the exhausted account: queued=%d err=%v", queued, err)
+	}
+	if current, err := s.repo.AgentGenerationBatch("user-b", batchB.ID); err != nil || current.Status != model.AgentGenerationBatchReady {
+		t.Fatalf("B must still be outside the first window: %+v %v", current, err)
+	}
+	// 失败批次让出窗口后，B 在下一轮就能推进；A 的批次保持 ready 等额度。
+	if queued, err := s.QueueReadyGenerationContinuations(64); err == nil || queued != 1 {
+		t.Fatalf("second window should reach B: queued=%d err=%v", queued, err)
+	}
+	if current, err := s.repo.AgentGenerationBatch("user-b", batchB.ID); err != nil || current.Status != model.AgentGenerationBatchQueued {
+		t.Fatalf("B did not advance after rotation: %+v %v", current, err)
+	}
+	if current, err := s.repo.AgentGenerationBatch("user", anchor.ID); err != nil || current.Status != model.AgentGenerationBatchReady {
+		t.Fatalf("A batch must stay ready while quota is exhausted: %+v %v", current, err)
+	}
+	for _, batch := range backlog {
+		if current, err := s.repo.AgentGenerationBatch("user", batch.ID); err != nil || current.Status != model.AgentGenerationBatchReady {
+			t.Fatalf("backlog batch %s changed: %+v %v", batch.ID, current, err)
+		}
 	}
 }
 
@@ -236,6 +308,46 @@ func TestUserStorageUsageCountsQueuedMessagesAndBatches(t *testing.T) {
 	if got := usage("user"); got != want {
 		t.Fatalf("queue/batch body not counted: got %d want %d", got, want)
 	}
+	// 批次任务的结果副本同样计入；结算写入、重放不重复、清理后扣减。
+	task := &model.AgentGenerationBatchTask{
+		BatchID: batch.ID, TaskID: "task-storage-1", UserID: "user", NodeID: "node-storage-1", Mode: "image",
+		Status: model.AgentGenerationBatchTaskTerminal, OutcomeJSON: strings.Repeat("o", 90),
+	}
+	if err := db.Create(task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := usage("user"); got != want+90 {
+		t.Fatalf("batch task outcome not counted: got %d want %d", got, want+90)
+	}
+	// 真实结算路径（写入 outcome_json 与 results_json）后的增量按两行正文核对。
+	pending := &model.AgentGenerationBatchTask{
+		BatchID: batch.ID, TaskID: "task-storage-2", UserID: "user", NodeID: "node-storage-2", Mode: "image",
+		Status: model.AgentGenerationBatchTaskPending,
+	}
+	if err := db.Create(pending).Error; err != nil {
+		t.Fatal(err)
+	}
+	beforeSettle := usage("user")
+	settled, changed, err := s.repo.SettleAgentGenerationBatchTask("user", batch.ID, pending.TaskID, map[string]any{"status": "succeeded", "summary": strings.Repeat("结", 120)})
+	if err != nil || !changed {
+		t.Fatalf("settle batch task: %v %v", changed, err)
+	}
+	var settledTask model.AgentGenerationBatchTask
+	if err := db.Where("batch_id = ? AND task_id = ?", batch.ID, pending.TaskID).First(&settledTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	expectedSettle := int64(len(settledTask.OutcomeJSON) + len(settled.ResultsJSON) - 70)
+	if got := usage("user") - beforeSettle; got != expectedSettle {
+		t.Fatalf("settlement storage delta = %d want %d", got, expectedSettle)
+	}
+	// 重放同一结算不重复计量。
+	afterSettle := usage("user")
+	if _, changed, err := s.repo.SettleAgentGenerationBatchTask("user", batch.ID, pending.TaskID, map[string]any{"status": "succeeded", "summary": strings.Repeat("结", 120)}); err != nil || changed {
+		t.Fatalf("replayed settlement changed rows: %v %v", changed, err)
+	}
+	if got := usage("user"); got != afterSettle {
+		t.Fatalf("replayed settlement changed usage: %d want %d", got, afterSettle)
+	}
 	// 跨账号隔离：别人的未消费内部项不占本账号额度。
 	if err := db.Create(&model.AgentQueuedMessage{
 		ID: "am-storage-2", UserID: "other", CanvasID: "agent-canvas", ConversationID: "conv-other",
@@ -244,10 +356,13 @@ func TestUserStorageUsageCountsQueuedMessagesAndBatches(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if got := usage("user"); got != want {
+	if got := usage("user"); got != afterSettle {
 		t.Fatalf("other account's queue leaked into usage: %d", got)
 	}
 	// 消费/清理后同一份正文不再占用配额。
+	if err := db.Where("batch_id = ?", batch.ID).Delete(&model.AgentGenerationBatchTask{}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Where("id = ?", row.ID).Delete(&model.AgentQueuedMessage{}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +535,7 @@ func seedReadyContinuationBatch(t *testing.T, db *gorm.DB, userID, canvasID, con
 	}
 	now := time.Now().UTC()
 	batch := &model.AgentGenerationBatch{
-		ID: "batch-" + userID, UserID: userID, CanvasID: canvasID, ConversationID: conversationID,
+		ID: "batch-" + sourceRunID, UserID: userID, CanvasID: canvasID, ConversationID: conversationID,
 		SourceRunID: sourceRunID, Status: model.AgentGenerationBatchReady,
 		TriggerWhen: model.AgentGenerationContinuationAllTerminal, Instruction: "检查B批次结果",
 		RequestJSON: string(raw), ExpectedTasks: 1, TerminalTasks: 1, Revision: 2, CreatedAt: now, UpdatedAt: now,

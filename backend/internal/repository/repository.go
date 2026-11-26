@@ -120,8 +120,9 @@ func (r *Repository) UserStorageUsage(userID string) (UserStorageUsage, error) {
 	}
 	if r.agentGenerationBatchEnabled {
 		query += `
-			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(instruction, '') AS BLOB)) + length(CAST(COALESCE(request_json, '') AS BLOB)) + length(CAST(COALESCE(results_json, '') AS BLOB))), 0) FROM agent_generation_batches WHERE user_id = ?)`
-		args = append(args, userID)
+			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(instruction, '') AS BLOB)) + length(CAST(COALESCE(request_json, '') AS BLOB)) + length(CAST(COALESCE(results_json, '') AS BLOB))), 0) FROM agent_generation_batches WHERE user_id = ?)
+			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(outcome_json, '') AS BLOB))), 0) FROM agent_generation_batch_tasks WHERE user_id = ?)`
+		args = append(args, userID, userID)
 	}
 	query += ` AS task_bytes,
 			(SELECT COUNT(*) FROM api_call_logs WHERE user_id = ?) AS api_call_count
