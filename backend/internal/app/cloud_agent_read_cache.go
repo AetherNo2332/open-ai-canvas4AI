@@ -33,7 +33,7 @@ func cloudAgentReadCall(call cloudAgentCall) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "task_get":
+	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "shortplay_list_assets", "canvas_search_nodes", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "task_get":
 		return true
 	default:
 		return false
@@ -188,3 +188,4 @@ func cloudAgentCacheReadOutcome(state *cloudAgentRuntime, key string, result any
 	state.ToolReadResults[key] = cloudAgentCachedToolResult{Result: encoded}
 	return nil
 }
+

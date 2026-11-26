@@ -830,6 +830,36 @@
     },
     {
       "function": {
+        "description": "当前集画布所属短剧项目的资产库：角色/道具/场景的项目内整数 id、设定、外貌、音色与图/音状态；非集画布返回 linked=false。只读，不含下载凭证。",
+        "name": "shortplay_list_assets",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "character",
+                "prop",
+                "scene"
+              ],
+              "type": "string"
+            },
+            "page": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "query": {
+              "description": "可选搜索文字，匹配名称与别名",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
         "description": "分页读取节点正文或分镜行文本。分镜续读须同时指定 rowId 和 field。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。",
         "name": "canvas_read_content",
         "parameters": {

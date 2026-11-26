@@ -94,6 +94,7 @@ func (c *cloudAgentToolCompiler) addCanvasReadTools(req CloudAgentRequest) {
 	c.add("director", cloudAgentToolText("director"), cloudAgentDirectorToolSchema(directorReadOnly), "action")
 	c.add("canvas_list_node_types", "查询可创建节点和可编辑字段。传 nodeType 返回该类型的完整字段 schema；编辑复杂内容前先查字段合同。", map[string]any{"nodeType": str("可选节点类型；空值列出摘要")})
 	c.add("canvas_list_assets", "搜索当前用户素材库，返回可用于绑定的 assetId、标题和类型，不暴露下载凭证。", map[string]any{"query": str("可选搜索文字"), "kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio", "text"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
+	c.add("shortplay_list_assets", "当前集画布所属短剧项目的资产库：角色/道具/场景的项目内整数 id、设定、外貌、音色与图/音状态；非集画布返回 linked=false。只读，不含下载凭证。", map[string]any{"query": str("可选搜索文字，匹配名称与别名"), "kind": map[string]any{"type": "string", "enum": []string{"character", "prop", "scene"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
 	c.add("canvas_read_content", "分页读取节点正文或分镜行文本。分镜续读须同时指定 rowId 和 field。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。", map[string]any{
 		"nodeId": str("当前画布节点 ID"), "rowId": str("分镜行 ID，普通正文省略"), "field": map[string]any{"type": "string", "enum": append([]string{"content", "composerContent"}, cloudAgentStoryboardTextFields...)},
 		"offset": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 16000},

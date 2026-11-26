@@ -36,6 +36,8 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentReadNodeTypes(call)
 	case "canvas_list_assets":
 		return cloudAgentListScopedAssets(repo, userID, state, call)
+	case "shortplay_list_assets":
+		return cloudAgentListShortplayAssets(repo, userID, state, call)
 	case "canvas_read_content", "canvas_search_nodes":
 		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":
