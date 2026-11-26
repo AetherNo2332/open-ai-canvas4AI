@@ -6,7 +6,7 @@
     "scripts": {
         "dev": "vite --host 0.0.0.0 --port 3000",
         "build": "tsc --noEmit && vite build",
-        "typecheck": "tsc --noEmit",
+        "typecheck": "tsc --noEmit --incremental false",
         "test:canvas": "bun test test/canvas-media-performance.test.ts test/canvas-node-title-interaction.test.ts test/canvas-spatial-index.test.ts",
         "test": "bun scripts/run-tests.mjs",
         "test:previs:e2e": "bun scripts/previs-p0-chrome-e2e.mjs",

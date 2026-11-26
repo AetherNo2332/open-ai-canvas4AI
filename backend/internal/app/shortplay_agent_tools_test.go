@@ -48,4 +48,3 @@ func TestCloudAgentListShortplayAssetsReadsBoundProject(t *testing.T) {
 		t.Fatalf("free canvas = %#v", freeRaw)
 	}
 }
-

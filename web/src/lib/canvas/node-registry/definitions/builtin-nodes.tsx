@@ -210,4 +210,3 @@ export const BUILTIN_NODE_DEFINITIONS: CanvasNodeDefinition[] = (Object.keys(BUI
 });
 
 registerNodeDefinitions(BUILTIN_NODE_DEFINITIONS);
-

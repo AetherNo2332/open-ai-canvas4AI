@@ -47,11 +47,11 @@ func cloudAgentShortplayAssetSchema() map[string]any {
 		return map[string]any{"type": "string", "description": description}
 	}
 	return map[string]any{
-		"action":  map[string]any{"type": "string", "enum": []string{"create", "update", "place", "image", "audio"}, "description": "create 建行；update 改设定/解锁；place 投送卡到本集；image/audio 入队生成"},
-		"assetId": map[string]any{"type": "integer", "minimum": 0, "description": "update 必填：项目内整数资产 id"},
-		"kind":    map[string]any{"type": "string", "enum": []string{"character", "prop", "scene"}, "description": "create 必填；update 不可改分类"},
-		"name":    str("create 必填；update 留空不改"),
-		"aliases": map[string]any{"type": "array", "maxItems": 16, "items": str("别称")},
+		"action":      map[string]any{"type": "string", "enum": []string{"create", "update", "place", "image", "audio"}, "description": "create 建行；update 改设定/解锁；place 投送卡到本集；image/audio 入队生成"},
+		"assetId":     map[string]any{"type": "integer", "minimum": 0, "description": "update 必填：项目内整数资产 id"},
+		"kind":        map[string]any{"type": "string", "enum": []string{"character", "prop", "scene"}, "description": "create 必填；update 不可改分类"},
+		"name":        str("create 必填；update 留空不改"),
+		"aliases":     map[string]any{"type": "array", "maxItems": 16, "items": str("别称")},
 		"description": str("叙事设定；update 留空不改"),
 		"appearance":  str("可直接生图的外貌描述；update 留空不改"),
 		"voice":       str("仅角色使用的音色描述；留空不改"),

@@ -188,4 +188,3 @@ func cloudAgentCacheReadOutcome(state *cloudAgentRuntime, key string, result any
 	state.ToolReadResults[key] = cloudAgentCachedToolResult{Result: encoded}
 	return nil
 }
-

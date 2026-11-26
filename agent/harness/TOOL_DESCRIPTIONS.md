@@ -387,6 +387,14 @@ Tavily 公开网页搜索，query 用问题或关键词，最多5条标题/URL/�
 
 搜索本人素材库，返回assetId、标题、类型。
 
+## shortplay_list_assets
+
+读当前集画布所属短剧的资产库：项目内整数 id、设定、外貌、音色与图/音状态；可查关键词与角色/道具/场景。
+
+## shortplay_asset
+
+改当前集画布所属短剧的资产：create 建角色/道具/场景行，update 改设定或解锁（assetId 必填）；批准后执行并刷新资产卡。
+
 ## canvas_bind_asset
 
 使用本人assetId替换同类型节点，需新快照；运行中任务不可替换。

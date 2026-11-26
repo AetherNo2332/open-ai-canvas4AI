@@ -137,4 +137,3 @@ export const NODE_SPECS = {
 export function getNodeSpec(type: CanvasNodeType) {
     return NODE_SPECS[type];
 }
-

@@ -807,4 +807,3 @@ export type ContextMenuState =
           y: number;
           connectionId: string;
       };
-
