@@ -85,7 +85,7 @@ func builtinAgentToolPolicy(name string) agentToolRegistration {
 	case "director", "canvas_list_node_types", "canvas_list_assets", "shortplay_list_assets", "canvas_read_content",
 		"canvas_search_nodes", "canvas_get_state", "canvas_read_batch_table", "canvas":
 		tool.allowed = canvas
-	case "canvas_undo", "canvas_redo", "canvas_bind_asset", "model_list", "canvas_create_character",
+	case "canvas_undo", "canvas_redo", "canvas_bind_asset", "shortplay_asset", "model_list", "canvas_create_character",
 		"canvas_edit_batch_table", "canvas_apply_ops", "canvas_arrange_nodes", "generate_media", "wait_generations",
 		"generate_media_batch", "media_batch_control", "canvas_build_board", "canvas_preflight":
 		tool.allowed, tool.writeOnly = canvas, true

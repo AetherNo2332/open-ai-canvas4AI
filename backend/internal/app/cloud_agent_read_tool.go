@@ -22,7 +22,7 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 	case "canvas_preflight":
 		return cloudAgentHandleCanvasPreflight(repo, userID, state, call, services...)
 	case "director":
-		if state == nil || cloudAgentWriteCall(call) {
+		if cloudAgentWriteCall(call) {
 			return nil, BadAuthRequest("director 写操作不能走只读通道")
 		}
 		return cloudAgentDirectorRead(repo, userID, state.Request.CanvasID, call)
@@ -34,10 +34,11 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentAskUser(call)
 	case "canvas_list_node_types":
 		return cloudAgentReadNodeTypes(call)
-	case "canvas_list_assets":
+	case "canvas_list_assets", "shortplay_list_assets":
+		if call.Function.Name == "shortplay_list_assets" {
+			return cloudAgentListShortplayAssets(repo, userID, state, call)
+		}
 		return cloudAgentListScopedAssets(repo, userID, state, call)
-	case "shortplay_list_assets":
-		return cloudAgentListShortplayAssets(repo, userID, state, call)
 	case "canvas_read_content", "canvas_search_nodes":
 		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":

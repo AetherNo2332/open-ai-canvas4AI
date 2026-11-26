@@ -285,7 +285,7 @@ func cloudAgentWrite(name string) bool {
 		return true
 	}
 	// director 按名字判定为写，具体调用用 cloudAgentWriteCall 按 action 放过 read。
-	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == cloudAgentDirectorTool
+	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == "shortplay_asset" || name == cloudAgentDirectorTool
 }
 
 // cloudAgentCanvasWriteTool 标记"调用返回即表示已经落到画布上"的写入工具。

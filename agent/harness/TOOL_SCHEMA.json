@@ -1316,6 +1316,72 @@
     },
     {
       "function": {
+        "description": "改当前集画布所属短剧的资产：create 建角色/道具/场景行，update 改设定或解锁（assetId 必填）；批准后执行并刷新资产卡。",
+        "name": "shortplay_asset",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "description": "create 建行；update 改既有行（含解锁）",
+              "enum": [
+                "create",
+                "update"
+              ],
+              "type": "string"
+            },
+            "aliases": {
+              "items": {
+                "description": "别称",
+                "type": "string"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            "appearance": {
+              "description": "可直接生图的外貌描述；update 留空不改",
+              "type": "string"
+            },
+            "assetId": {
+              "description": "update 必填：当前短剧项目内的整数资产 id",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "description": {
+              "description": "叙事设定；update 留空不改",
+              "type": "string"
+            },
+            "kind": {
+              "description": "create 必填；update 不可改分类",
+              "enum": [
+                "character",
+                "prop",
+                "scene"
+              ],
+              "type": "string"
+            },
+            "locked": {
+              "description": "true 锁定防自动重做；false 解锁；省略不改",
+              "type": "boolean"
+            },
+            "name": {
+              "description": "create 必填；update 留空不改",
+              "type": "string"
+            },
+            "voice": {
+              "description": "仅角色使用的音色描述；留空不改",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
         "description": "用当前用户素材库的 assetId 替换匹配类型节点的内容；先读取画布并查询素材，不接受任意 URL。运行中的生成节点不能替换。",
         "name": "canvas_bind_asset",
         "parameters": {
