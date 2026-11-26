@@ -228,6 +228,34 @@ func TestRunShortplayExtractFailureIsRecorded(t *testing.T) {
 	}
 }
 
+func TestRunShortplayExtractFailsWithoutTextModel(t *testing.T) {
+	svc, db := newShortplayWorkflowService(t)
+	seedShortplay(t, db, "owner", "p-nomodel", "sp-nomodel")
+	// 清掉设置里的模型选择，且目录里没有可用文本模型：必须明确失败而不是静默跳过。
+	if err := db.Model(&model.Shortplay{}).Where("id = ?", "sp-nomodel").
+		Update("settings_json", `{"aspectRatio":"9:16"}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	useShortplayTextTask(t, svc, db, "task-should-not-exist")
+	if _, err := svc.QueueShortplayExtract("owner", "sp-nomodel"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunShortplayExtractOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var job model.ShortplayJob
+	if err := db.Where("shortplay_id = ?", "sp-nomodel").First(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != shortplay.JobFailed || !strings.Contains(job.LastError, "文本模型") {
+		t.Fatalf("job = %#v", job)
+	}
+	var tasks int64
+	if err := db.Model(&model.Task{}).Where("id = ?", "task-should-not-exist").Count(&tasks).Error; err != nil || tasks != 0 {
+		t.Fatalf("unexpected task submitted: %d, %v", tasks, err)
+	}
+}
+
 func TestUpsertShortplayAssetRejectsCrossProjectWrite(t *testing.T) {
 	svc, db := newShortplayWorkflowService(t)
 	seedShortplay(t, db, "owner", "p-a", "sp-a")
