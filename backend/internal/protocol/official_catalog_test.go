@@ -995,6 +995,36 @@ func TestOfficialOpenAIAudioUsesBinaryPayload(t *testing.T) {
 	if result.Status != StatusSucceeded || result.Result == nil || len(result.Result.Audios) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
+	// MP3 没有标准库可识别的魔数：音频结果必须按 MPEG 帧/ID3 头认定成 audio/mpeg，
+	// 否则会被降级成 application/octet-stream 而无法保存。
+	if got := result.Result.Audios[0].MIMEType; got != "audio/mpeg" {
+		t.Fatalf("mimeType = %q", got)
+	}
+}
+
+func TestOfficialOpenAIAudioBinaryPayloadFrameSyncIsMP3(t *testing.T) {
+	adapter := officialPackageAdapter(t, "openai-audio.yingce-plugin", "openai-audio")
+	frame := append([]byte{}, 0xff, 0xfb, 0x90, 0xc0)
+	frame = append(frame, make([]byte, 413)...)
+	result, err := adapter.ParseCreate(context.Background(), frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result == nil || len(result.Result.Audios) != 1 || result.Result.Audios[0].MIMEType != "audio/mpeg" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestOfficialOpenAIAudioBinaryPayloadKeepsUnknownBytesGeneric(t *testing.T) {
+	adapter := officialPackageAdapter(t, "openai-audio.yingce-plugin", "openai-audio")
+	result, err := adapter.ParseCreate(context.Background(), []byte{0x00, 0x01, 0x02, 0x03, 0x04})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 无法认定为音频的字节不能被伪装成 audio/*。
+	if got := result.Result.Audios[0].MIMEType; got == "audio/mpeg" || strings.HasPrefix(got, "audio/") {
+		t.Fatalf("mimeType = %q", got)
+	}
 }
 
 func TestOfficialOpenAIAudioSpeedDefaultsInvalidAndZeroValues(t *testing.T) {

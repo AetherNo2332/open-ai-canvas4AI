@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"regexp"
 	"strings"
 )
@@ -278,7 +277,7 @@ func binaryPayloadCreateResult(resultKind string, body []byte) (CreateResult, er
 	if len(body) == 0 {
 		return CreateResult{}, fmt.Errorf("binary payload response is empty")
 	}
-	mimeType := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(body), ";")[0]))
+	mimeType := detectBinaryPayloadMime(resultKind, body)
 	reference := MediaReference{DataURL: "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(body), MIMEType: mimeType}
 	result := &Result{}
 	switch resultKind {

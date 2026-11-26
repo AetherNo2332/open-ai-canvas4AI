@@ -40,7 +40,7 @@ curl "{channel_base_url}/v1/audio/speech" \
 
 ## 响应与当前实现差异
 
-OpenAI 官方 Speech API 通常直接返回音频二进制流；当前 `parseAudioResponse` 却按 JSON 中的 `url/audio_url/data` 解析。因此本插件当前更适合“返回音频 URL JSON”的兼容渠道，不能宣称已经正确处理 OpenAI 官方二进制响应。直连官方服务前必须增加二进制响应合同、MIME/文件名处理和资源保存测试。
+OpenAI 官方 Speech API 通常直接返回音频二进制流，本插件以 `response.binaryPayload` 包装该响应，按字节嗅探媒体类型；MP3 没有标准库可识别的魔数，因此宿主在音频结果上额外按 ID3 头或 MPEG 帧同步认定 `audio/mpeg`，识别不出的字节仍按通用二进制处理，不会伪装成音频。`voice`、`response_format`、`speed`、`instructions` 已由请求模板映射（默认 `alloy` / `mp3`）。
 
 ## 官方资料
 

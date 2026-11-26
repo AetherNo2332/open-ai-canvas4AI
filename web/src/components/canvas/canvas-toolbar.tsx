@@ -17,6 +17,7 @@ import { canvasThemes, type CanvasBackgroundMode, type CanvasTheme } from "@/lib
 import { defaultToolbarPrefs, readToolbarPrefs, resolveToolbarEntries, type ToolContext, type ToolbarHandlers, type ToolbarPrefs } from "@/lib/canvas/tool-registry";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useTranslation } from "react-i18next";
+import type { ShortplayAssetCategory } from "@/lib/canvas/canvas-shortplay-asset";
 import type { CanvasNodeTypeId, CanvasToolMode, CanvasWorkspaceMode } from "@/types/canvas";
 
 export function CanvasToolbar({
@@ -40,6 +41,7 @@ export function CanvasToolbar({
     onAddFolder,
     onAddDrawing,
     onAddExtensionNode,
+    onAddShortplayAsset,
     onAddWorkflow,
     onOpenPrevis,
     onUndo,
@@ -78,6 +80,7 @@ export function CanvasToolbar({
     onAddFolder: () => void;
     onAddDrawing: () => void;
     onAddExtensionNode: (type: CanvasNodeTypeId) => void;
+    onAddShortplayAsset?: (category: ShortplayAssetCategory) => void;
     onAddWorkflow: () => void;
     onOpenPrevis: () => void;
     onUndo: () => void;
@@ -163,6 +166,7 @@ export function CanvasToolbar({
         onOpenMyAssets,
         onOpenProjectCharacters,
         onOpenPoseLibrary,
+        onAddShortplayAsset,
         onBackgroundModeChange,
         onShowImageInfoChange,
         onToggleAddPanel: (event: ReactMouseEvent<HTMLElement>) => {

@@ -65,6 +65,8 @@ export function canvasNodeUsesCustomContent(node: CanvasNodeData, isEditingConte
         node.type === CanvasNodeType.Config ||
         node.type === CanvasNodeType.Script ||
         node.type === CanvasNodeType.BatchTable ||
+        // 短剧资产卡的内容由页面按节点快照渲染；不在这里登记就会落到「未知节点」。
+        node.type === CanvasNodeType.ShortplayAsset ||
         Boolean(node.metadata?.previsSceneId) ||
         (node.metadata?.workflowKind === "character" && Boolean(node.metadata.characterAssetId)) ||
         (node.metadata?.workflowKind === "story_input" && !isEditingContent) ||

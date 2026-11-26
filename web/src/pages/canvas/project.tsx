@@ -42,6 +42,7 @@ import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-pa
 import { CanvasActiveTaskPanel } from "@/components/canvas/canvas-active-task-panel";
 import { CanvasDramaSidebar } from "@/components/canvas/canvas-drama-sidebar";
 import { CanvasDramaAdoptModal } from "@/components/canvas/canvas-drama-adopt-modal";
+import { CanvasShortplayAdoptModal } from "@/components/canvas/canvas-shortplay-adopt-modal";
 import { canvasStoryboardToDramaSource } from "@/lib/canvas/drama-canvas-projection";
 import { CanvasProjectAssetModal } from "@/components/canvas/canvas-project-asset-modal";
 import { CanvasCharacterLibraryModal } from "@/components/canvas/canvas-character-library-modal";
@@ -336,6 +337,7 @@ function CanvasViewportPage() {
     const [subtitleNodeId, setSubtitleNodeId] = useState<string | null>(null);
     const [timelineNodeId, setTimelineNodeId] = useState<string | null>(null);
     const [mediaVersionNodeId, setMediaVersionNodeId] = useState<string | null>(null);
+    const [shortplayAdoptNodeId, setShortplayAdoptNodeId] = useState<string | null>(null);
     const [superResolveNodeId, setSuperResolveNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
     const [scriptEditorNodeId, setScriptEditorNodeId] = useState<string | null>(null);
@@ -1103,6 +1105,7 @@ function CanvasViewportPage() {
         applySubmapPreset,
         createFolder,
         createNode,
+        createShortplayAssetNode,
         createReferenceGroup,
         createStoryboardGroup,
         deleteConnection,
@@ -1630,6 +1633,7 @@ function CanvasViewportPage() {
     const subtitleNode = subtitleNodeId ? nodeById.get(subtitleNodeId) || null : null;
     const timelineNode = timelineNodeId ? nodeById.get(timelineNodeId) || null : null;
     const dramaAdoptNode = drama.adoptNodeId ? nodeById.get(drama.adoptNodeId) || null : null;
+    const shortplayAdoptNode = shortplayAdoptNodeId ? nodeById.get(shortplayAdoptNodeId) || null : null;
     const mediaVersionNode = mediaVersionNodeId ? nodeById.get(mediaVersionNodeId) || null : null;
     const frameNode = frameDialogNodeId ? nodeById.get(frameDialogNodeId) || null : null;
     const segmentNode = segmentDialogNodeId ? nodeById.get(segmentDialogNodeId) || null : null;
@@ -2771,6 +2775,7 @@ function CanvasViewportPage() {
             onAddDrawing: () => createNode(CanvasNodeType.Drawing),
             onAddWorkflow: () => createNode(CanvasNodeType.Config),
             onAddExtensionNode: (type) => createNode(type),
+            onAddShortplayAsset: createShortplayAssetNode,
             onChooseStyle: () => setStylePickerOpen(true),
             onOpenPrevis: () => setPrevisTemplateRequest({}),
             onUpload: () => handleUploadRequest(),
@@ -3309,6 +3314,7 @@ function CanvasViewportPage() {
                                             onAddFolder={createFolder}
                                             onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
                                             onAddExtensionNode={(type) => createNode(type)}
+                                            onAddShortplayAsset={createShortplayAssetNode}
                                             onAddWorkflow={() => createNode(CanvasNodeType.Config)}
                                             onOpenPrevis={() => setPrevisTemplateRequest({})}
                                             onUndo={undoCanvas}
@@ -3515,6 +3521,7 @@ function CanvasViewportPage() {
                                 onTimeline={(node) => setTimelineNodeId(node.id)}
                                 onVersions={(node) => setMediaVersionNodeId(node.id)}
                                 onAdoptToDrama={drama.active ? drama.openAdopt : undefined}
+                                onAdoptToShortplay={currentProject?.projectId ? undefined : (node) => setShortplayAdoptNodeId(node.id)}
                                 onRefreshFromDrama={toolbarNode && drama.staleNodeIds.has(toolbarNode.id) ? drama.refreshNode : undefined}
                                 extractingVideoFrames={toolbarNode?.id === extractingVideoFramesNodeId}
                                 extractingAudio={segmentRunningMode === "audio"}
@@ -3627,6 +3634,8 @@ function CanvasViewportPage() {
                             <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} onMetadataChange={handleConfigNodeChange} />
 
                             {drama.summary && dramaAdoptNode ? <CanvasDramaAdoptModal node={dramaAdoptNode} nodes={nodes} summary={drama.summary} cast={drama.cast} onClose={drama.closeAdopt} onAdopted={drama.markAdopted} /> : null}
+
+                            <CanvasShortplayAdoptModal open={Boolean(shortplayAdoptNode)} canvasId={projectId} node={shortplayAdoptNode} onClose={() => setShortplayAdoptNodeId(null)} />
 
                             <CanvasMediaVersionModal
                                 node={mediaVersionNode}
