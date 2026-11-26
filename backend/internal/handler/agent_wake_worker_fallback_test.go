@@ -101,8 +101,8 @@ func TestAgentWakePostgresWorkerClaimsDuringFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	waitWakeTestSignal(t, streamStarted, "worker event stream")
-	waitWakeTestSignal(t, firstClaim, "worker initial empty claim")
+	waitWakeWorkerSignal(t, streamStarted, "worker event stream")
+	waitWakeWorkerSignal(t, firstClaim, "worker initial empty claim")
 	var terminated bool
 	if err := db.Raw(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
 		WHERE datname=current_database() AND application_name='canvas-agent-wake-listener'`).Scan(&terminated).Error; err != nil || !terminated {
