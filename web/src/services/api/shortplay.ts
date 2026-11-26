@@ -98,7 +98,7 @@ export type ShortplayAssetSummary = {
     renderRule?: string;
 };
 
-/** 资产写入：assetId>0 是更新，否则按作品内下一个序号新建。 */
+/** 资产写入：assetId>0 是更新，否则按作品内下一个序号新建。derivedFrom>0 表示新建衍生造型。 */
 export type ShortplayAssetWrite = {
     assetId?: number;
     kind: string;
@@ -108,7 +108,21 @@ export type ShortplayAssetWrite = {
     appearance?: string;
     voice?: string;
     locked?: boolean;
+    derivedFrom?: number;
+    variantName?: string;
+    renderRule?: string;
 };
+
+/** 参考图入队筛选：单个资产、某类缺图或某类失败项。 */
+export type ShortplayImageQueueRequest = {
+    kind?: string;
+    assetIds?: number[];
+    onlyMissing?: boolean;
+    onlyFailed?: boolean;
+};
+
+/** 三档计数：新排队 / 已在途复用 / 跳过（锁定或不在筛选范围）。 */
+export type ShortplayImageQueueResult = { queued: number; reused: number; skipped: number; jobIds: string[] };
 
 /** 提取入队回执：queued=false 表示已有在途提取，返回的是那一条。 */
 export type ShortplayExtractQueueResult = { jobId: string; queued: boolean; cursor: number };
@@ -177,6 +191,14 @@ export function upsertShortplayAsset(projectId: string, body: ShortplayAssetWrit
  */
 export function queueShortplayExtract(projectId: string) {
     return http.post<ShortplayExtractQueueResult>(`/shortplays/${encodeURIComponent(projectId)}/extract`);
+}
+
+/**
+ * 参考图出图入队。页面只表达意图，任务提交与计费在服务端调度里；
+ * 同一资产已有在途 job 时复用（reused ），不排第二条。
+ */
+export function queueShortplayAssetImages(projectId: string, body: ShortplayImageQueueRequest) {
+    return http.post<ShortplayImageQueueResult>(`/shortplays/${encodeURIComponent(projectId)}/assets/images`, body);
 }
 
 /**

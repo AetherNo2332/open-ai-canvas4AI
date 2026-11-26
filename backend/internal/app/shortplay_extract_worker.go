@@ -47,6 +47,7 @@ func (s *Service) startShortplayExtractWorker() {
 		defer ticker.Stop()
 		for {
 			s.tickShortplayExtract(ctx)
+			s.tickShortplayAssetImages(ctx)
 			select {
 			case <-ctx.Done():
 				return

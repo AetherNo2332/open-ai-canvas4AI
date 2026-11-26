@@ -49,6 +49,14 @@ func registerShortplayRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/shortplays/:id/extract", dramaRoute(svc, 0, func(c *gin.Context, userID string) (any, error) {
 		return svc.QueueShortplayExtract(userID, c.Param("id"))
 	}))
+	// 页面出图入口：只入队 asset_image job，与后续 Agent 工具走同一条去重与锁定判断。
+	r.POST("/shortplays/:id/assets/images", dramaRoute(svc, 1<<20, func(c *gin.Context, userID string) (any, error) {
+		var req shortplay.QueueAssetImagesRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.QueueShortplayAssetImages(userID, c.Param("id"), req)
+	}))
 	// 设置：整份提交（分步骤模型 + 参考图方案 + 风格与语言），服务端归一后回传 settingsJson。
 	// 整份写而不是逐字段 patch：设置之间互相牵制，逐字段写会落库「各自合法、组合非法」的中间态。
 	r.PATCH("/shortplays/:id/settings", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {

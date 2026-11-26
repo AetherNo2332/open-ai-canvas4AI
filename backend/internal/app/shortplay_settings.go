@@ -104,6 +104,15 @@ func (m shortplayModels) extractText() shortplayModelChoice {
 	return m.Text
 }
 
+// applyShortplayChannelSelection 把渠道模型写进任务 config：channelModelKey 与 model
+// 同值，前者是准入侧读的键，后者是执行侧读的键。
+func applyShortplayChannelSelection(config map[string]any, choice shortplayModelChoice) {
+	if strings.TrimSpace(choice.ChannelID) == "" {
+		return
+	}
+	config["channelId"], config["model"], config["channelModelKey"] = choice.ChannelID, choice.ModelKey, choice.ModelKey
+}
+
 // shortplaySkillRef 指向用户技能库里的一个技能文件，作为资产提取的写作方法。
 // 与 DramaSkillRef 同形（字段名也一致），便于复用 drama 的技能选择器与读取逻辑。
 type shortplaySkillRef struct {

@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Input, Switch, Tag, Tooltip } from "antd";
-import { Inbox, Plus, RefreshCw, Sparkles } from "lucide-react";
+import { App, Button, Input, InputNumber, Switch, Tag, Tooltip } from "antd";
+import { Image as ImageIcon, Inbox, Plus, RefreshCw, Sparkles } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { RelativeTime } from "@/components/ui/product/relative-time";
-import { listShortplayAssets, queueShortplayExtract, upsertShortplayAsset, type ShortplayAssetSummary, type ShortplayAssetWrite, type ShortplayJob } from "@/services/api/shortplay";
+import { resourceFileUrl } from "@/services/api/resources";
+import { listShortplayAssets, queueShortplayAssetImages, queueShortplayExtract, upsertShortplayAsset, type ShortplayAssetSummary, type ShortplayAssetWrite, type ShortplayImageQueueRequest, type ShortplayJob } from "@/services/api/shortplay";
 
-// W04 资产库与提取收件箱：列角色/道具/场景、手写或修订单条资产、把提取排进 job 队列，
-// 并在同一处查看 job 状态与失败原因。参考图/音色生成与收录在 W05–W06 接入。
+// W04/W05 资产库、提取收件箱与参考图：列角色/道具/场景、手写或修订单条资产、
+// 新建衍生造型、把提取或出图排进 job 队列，并在同一处查看状态与失败原因。
 
 const KIND_LABELS: Record<string, string> = { character: "角色", prop: "道具", scene: "场景" };
 
@@ -37,6 +38,9 @@ type AssetDraft = {
     appearance: string;
     voice: string;
     locked: boolean;
+    /** 非空 = 新建衍生造型：父资产的作品内序号。 */
+    derivedFrom: string;
+    variantName: string;
 };
 
 function draftFromAsset(asset?: ShortplayAssetSummary): AssetDraft {
@@ -49,11 +53,14 @@ function draftFromAsset(asset?: ShortplayAssetSummary): AssetDraft {
         appearance: asset?.appearance || "",
         voice: asset?.voice || "",
         locked: asset?.locked || false,
+        derivedFrom: "",
+        variantName: "",
     };
 }
 
 function draftToWrite(draft: AssetDraft): ShortplayAssetWrite {
-    return {
+    const parentID = Number.parseInt(draft.derivedFrom.trim(), 10);
+    const base: ShortplayAssetWrite = {
         assetId: draft.assetId,
         kind: draft.kind,
         name: draft.name.trim(),
@@ -66,6 +73,11 @@ function draftToWrite(draft: AssetDraft): ShortplayAssetWrite {
         voice: draft.kind === "character" ? draft.voice.trim() : "",
         locked: draft.locked,
     };
+    if (!draft.assetId && Number.isFinite(parentID) && parentID > 0) {
+        // 衍生造型：名称由父名 + 造型名合成，别名/音色/分类继承父资产，服务端会拒绝单独指定。
+        return { ...base, name: "", aliases: [], voice: "", derivedFrom: parentID, variantName: draft.variantName.trim() };
+    }
+    return base;
 }
 
 export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; jobs: ShortplayJob[] }) {
@@ -100,6 +112,15 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
         onError: (error) => message.error(error instanceof Error ? error.message : "提取排队失败"),
     });
 
+    const imageQueue = useMutation({
+        mutationFn: (body: ShortplayImageQueueRequest) => queueShortplayAssetImages(projectId, body),
+        onSuccess: (result) => {
+            message.success(`参考图：新排队 ${result.queued}，复用 ${result.reused}，跳过 ${result.skipped}`);
+            refresh();
+        },
+        onError: (error) => message.error(error instanceof Error ? error.message : "参考图排队失败"),
+    });
+
     const save = useMutation({
         mutationFn: (current: AssetDraft) => upsertShortplayAsset(projectId, draftToWrite(current)),
         onSuccess: () => {
@@ -125,6 +146,11 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                         <Button icon={<Plus />} onClick={() => setDraft(draftFromAsset())}>
                             手动添加
                         </Button>
+                        <Tooltip title="为所有从未生成过参考图的资产排队；锁定的资产会被跳过">
+                            <Button icon={<ImageIcon />} loading={imageQueue.isPending} disabled={assets.length === 0} onClick={() => imageQueue.mutate({ onlyMissing: true })}>
+                                生成缺图
+                            </Button>
+                        </Tooltip>
                         <Button type="primary" icon={<Sparkles />} loading={extract.isPending} onClick={() => extract.mutate()}>
                             提取资产
                         </Button>
@@ -142,7 +168,7 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                             </div>
                             <div className="grid gap-2 md:grid-cols-2">
                                 {group.items.map((asset) => (
-                                    <AssetCard key={asset.id} asset={asset} onEdit={() => setDraft(draftFromAsset(asset))} />
+                                    <AssetCard key={asset.id} asset={asset} onEdit={() => setDraft(draftFromAsset(asset))} onQueueImage={() => imageQueue.mutate({ assetIds: [asset.id] })} />
                                 ))}
                             </div>
                         </div>
@@ -181,12 +207,14 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                 </div>
             </aside>
             <AppModal
-                title={draft?.assetId ? `编辑资产 #${draft.assetId}` : "新建资产"}
+                title={draft?.assetId ? `编辑资产 #${draft.assetId}` : draft?.derivedFrom ? "新建衍生造型" : "新建资产"}
                 open={Boolean(draft)}
                 onCancel={() => setDraft(null)}
                 okText="保存"
                 confirmLoading={save.isPending}
-                okButtonProps={{ disabled: !draft?.name.trim() }}
+                okButtonProps={{
+                    disabled: draft ? (Boolean(draft.derivedFrom) ? !draft.variantName.trim() : !draft.name.trim()) : true,
+                }}
                 onOk={() => draft && save.mutate(draft)}
             >
                 {draft ? (
@@ -195,20 +223,35 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                             <div className="mb-1 text-xs text-foreground/60">类型</div>
                             <div className="flex gap-2">
                                 {["character", "prop", "scene"].map((kind) => (
-                                    <Button key={kind} size="small" type={draft.kind === kind ? "primary" : "default"} onClick={() => setDraft({ ...draft, kind })}>
+                                    <Button key={kind} size="small" type={draft.kind === kind ? "primary" : "default"} disabled={Boolean(draft.derivedFrom) && kind !== "character"} onClick={() => setDraft({ ...draft, kind })}>
                                         {KIND_LABELS[kind]}
                                     </Button>
                                 ))}
                             </div>
                         </div>
-                        <div>
-                            <div className="mb-1 text-xs text-foreground/60">名称</div>
-                            <Input value={draft.name} maxLength={120} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-                        </div>
-                        <div>
-                            <div className="mb-1 text-xs text-foreground/60">别名（逗号或空格分隔）</div>
-                            <Input value={draft.aliases} onChange={(event) => setDraft({ ...draft, aliases: event.target.value })} />
-                        </div>
+                        {!draft.assetId && draft.kind === "character" ? (
+                            <div className="rounded-lg border border-[var(--line-soft)] p-2">
+                                <div className="text-xs text-foreground/60">衍生造型（留空父资产 = 新建基础角色）</div>
+                                <div className="mt-2 flex items-center gap-2">
+                                    <span className="text-[11px] text-foreground/50">父资产序号</span>
+                                    <InputNumber className="w-24" min={1} precision={0} value={draft.derivedFrom ? Number(draft.derivedFrom) : null} onChange={(value) => setDraft({ ...draft, derivedFrom: value ? String(value) : "" })} />
+                                </div>
+                                {draft.derivedFrom ? <Input className="mt-2" placeholder="造型名，例如：战袍" value={draft.variantName} onChange={(event) => setDraft({ ...draft, variantName: event.target.value })} /> : null}
+                                <div className="mt-1 text-[11px] leading-5 text-foreground/45">造型继承父角色的别名、音色与分类；显示名由父名 + 造型名合成，父角色改名会自动传导。</div>
+                            </div>
+                        ) : null}
+                        {draft.derivedFrom ? null : (
+                            <>
+                                <div>
+                                    <div className="mb-1 text-xs text-foreground/60">名称</div>
+                                    <Input value={draft.name} maxLength={120} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+                                </div>
+                                <div>
+                                    <div className="mb-1 text-xs text-foreground/60">别名（逗号或空格分隔）</div>
+                                    <Input value={draft.aliases} onChange={(event) => setDraft({ ...draft, aliases: event.target.value })} />
+                                </div>
+                            </>
+                        )}
                         <div>
                             <div className="mb-1 text-xs text-foreground/60">设定</div>
                             <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
@@ -234,34 +277,52 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
     );
 }
 
-function AssetCard({ asset, onEdit }: { asset: ShortplayAssetSummary; onEdit: () => void }) {
+function AssetCard({ asset, onEdit, onQueueImage }: { asset: ShortplayAssetSummary; onEdit: () => void; onQueueImage: () => void }) {
     return (
         <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-1)] p-3">
-            <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">
-                        #{asset.id} {asset.name}
-                        {asset.variantName ? ` · ${asset.variantName}` : ""}
+            <div className="flex items-start gap-3">
+                {asset.imageResourceId ? (
+                    <img src={resourceFileUrl(asset.imageResourceId)} alt={`${asset.name} 参考图`} className="h-16 w-16 shrink-0 rounded-lg border border-[var(--line-soft)] object-cover" />
+                ) : (
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-dashed border-[var(--line-soft)] text-foreground/30">
+                        <ImageIcon className="h-5 w-5" />
                     </div>
-                    <div className="mt-0.5 text-[11px] text-foreground/50">
-                        {KIND_LABELS[asset.kind] || asset.kind}
-                        {asset.aliases.length ? ` · 别名 ${asset.aliases.join("、")}` : ""}
-                        {asset.episodeNumbers.length ? ` · 第 ${asset.episodeNumbers.join("/")} 集` : ""}
+                )}
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">
+                                #{asset.id} {asset.name}
+                                {asset.variantName ? ` · ${asset.variantName}` : ""}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-foreground/50">
+                                {KIND_LABELS[asset.kind] || asset.kind}
+                                {asset.aliases.length ? ` · 别名 ${asset.aliases.join("、")}` : ""}
+                                {asset.episodeNumbers.length ? ` · 第 ${asset.episodeNumbers.join("/")} 集` : ""}
+                            </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                            {asset.locked ? <Tag className="m-0">已锁定</Tag> : null}
+                            <Tooltip title="编辑这一条资产">
+                                <Button size="small" onClick={onEdit}>
+                                    编辑
+                                </Button>
+                            </Tooltip>
+                        </div>
+                    </div>
+                    {asset.description ? <div className="mt-2 line-clamp-3 text-xs leading-5 text-foreground/60">{asset.description}</div> : null}
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                        <div className="text-[11px] text-foreground/40">
+                            图 {asset.imageStatus || "未生成"}
+                            {asset.audioStatus ? ` · 音 ${asset.audioStatus}` : ""} · rev {asset.revision}
+                        </div>
+                        <Tooltip title={asset.locked ? "参考图已锁定，出图会跳过；先解除锁定" : "为这一条资产排队出参考图"}>
+                            <Button size="small" icon={<ImageIcon />} disabled={asset.locked} onClick={onQueueImage}>
+                                出图
+                            </Button>
+                        </Tooltip>
                     </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
-                    {asset.locked ? <Tag className="m-0">已锁定</Tag> : null}
-                    <Tooltip title="编辑这一条资产">
-                        <Button size="small" onClick={onEdit}>
-                            编辑
-                        </Button>
-                    </Tooltip>
-                </div>
-            </div>
-            {asset.description ? <div className="mt-2 line-clamp-3 text-xs leading-5 text-foreground/60">{asset.description}</div> : null}
-            <div className="mt-2 text-[11px] text-foreground/40">
-                图 {asset.imageStatus || "未生成"}
-                {asset.audioStatus ? ` · 音 ${asset.audioStatus}` : ""} · rev {asset.revision}
             </div>
         </div>
     );

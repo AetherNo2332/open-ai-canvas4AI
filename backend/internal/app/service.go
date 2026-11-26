@@ -128,6 +128,9 @@ type Service struct {
 	// shortplayExtractFunc 是短剧资产提取的模型执行器；nil 表示未配置，任务会明确失败。
 	shortplayExtractMu   sync.Mutex
 	shortplayExtractFunc ShortplayExtractFunc
+	// shortplayTaskHook 仅用于测试注入任务提交；生产路径走 CreateTask 准入 + 唤醒执行器。
+	shortplayTaskMu   sync.Mutex
+	shortplayTaskHook func(userID string, req CreateTaskRequest) (*model.Task, error)
 }
 
 const taskWorkerConcurrency = 3

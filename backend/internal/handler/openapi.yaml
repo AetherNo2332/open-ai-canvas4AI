@@ -3017,6 +3017,35 @@ paths:
           $ref: "#/components/responses/Error"
         "409":
           $ref: "#/components/responses/Error"
+  /shortplays/{id}/assets/images:
+    post:
+      tags: [shortplay]
+      summary: 入队参考图出图（按资产、类别或失败项筛选；已在途的复用同一 job）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, description: shortplayId 或 projectId }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind: { type: string, enum: [character, prop, scene], description: 留空表示三类都算 }
+                assetIds: { type: array, items: { type: integer }, description: 非空时只处理这些资产 }
+                onlyMissing: { type: boolean, description: 只排从未生成过图的 }
+                onlyFailed: { type: boolean, description: 只排上次失败的 }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /shortplays/{id}/extract:
     post:
       tags: [shortplay]
