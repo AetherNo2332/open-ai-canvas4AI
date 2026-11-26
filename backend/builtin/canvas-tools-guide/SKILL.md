@@ -17,7 +17,7 @@ metadata:
 
 把用户的目标落到真实画布操作。只在操作画布时使用；创作方法、风格和提示词质量交给相应创作技能。
 
-拆镜与媒体生成都异步执行：工具当前步骤只返回 submitted/taskId；写回结果在同一运行的下一模型步骤通知，不另起用户轮次。依赖结果时 wait_generations，恢复后 read。split 和 resplit 都是文本任务：模型选择凭证可以完全省略，服务端回退本轮运行的文本模型（回执 modelFallback:true）；需要指定时 selectionId、logicalModelId、channelId+channelModelKey 三选一互斥且必须是文本模型，`model_list` 只返回生成媒体的模型目录，不要拿图像模型凭证调用拆镜。用户只对某一段不满意时，用 storyboard 的 resplit 并带真实连续 rowIds 和用户原话；满意且资产绑定完成的镜头可 lock。所有写 action 拒绝锁定目标，只有 unlock 例外。一对一重拆保留 ID 和媒体并标待复核，拆分/合并保留旧媒体节点而只解绑。
+拆镜与媒体生成都异步执行：工具当前步骤只返回 submitted/taskId；写回结果在同一运行的下一模型步骤通知，不另起用户轮次。必须拿到结果才能继续时，用 finish_run 的 continuation（when=all_generations_terminal，instruction 写明要看什么）结束本轮；全部实际登记任务终态后后端只开一个续接 run，再 read 结果，不要轮询 task_get。split 和 resplit 都是文本任务：模型选择凭证可以完全省略，服务端回退本轮运行的文本模型（回执 modelFallback:true）；需要指定时 selectionId、logicalModelId、channelId+channelModelKey 三选一互斥且必须是文本模型，`model_list` 只返回生成媒体的模型目录，不要拿图像模型凭证调用拆镜。用户只对某一段不满意时，用 storyboard 的 resplit 并带真实连续 rowIds 和用户原话；满意且资产绑定完成的镜头可 lock。所有写 action 拒绝锁定目标，只有 unlock 例外。一对一重拆保留 ID 和媒体并标待复核，拆分/合并保留旧媒体节点而只解绑。
 
 ## 从目标选工具
 

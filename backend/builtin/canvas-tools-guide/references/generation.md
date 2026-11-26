@@ -30,7 +30,7 @@
 ## 提交后
 
 - 当前审批模式由运行时决定：待审批表示尚未提交生成，不声称已生成；auto 模式也需通过模型、预算和资源准入。
-- 生成是异步的：提交成功立即返回 `status=submitted`，提交后继续其他工作，不要用 `task_get` 轮询。生成结束时会收到「[系统通知] 生成结果」；必须等结果才能继续时调用 `wait_generations`。
+- 生成是异步的：提交成功立即返回 `status=submitted`，提交后继续其他工作，不要用 `task_get` 轮询。生成结束时会收到「[系统通知] 生成结果」；必须等结果才能继续时用 `finish_run.continuation`（`when=all_generations_terminal`，`instruction` 必填）：本轮正常结束，全部实际登记任务终态后自动续接，不要轮询。
 - taskId 从提交回执取得。需要核对某个任务时用 `task_get` 查一次；succeeded 后读取实际产物并核对目标节点。不要用节点 ID 查询任务。
 - `taskSubmitted` 只表示曾提交后台任务，true/false 都不能证明生成成功；预演存在 `taskSubmitted=true` 且 `status=failed` 的回执。以 `status` 或 `task_get` 及实际产物为准，失败不能汇报为交付完成。
 - 确需视觉验收时用 `canvas_inspect_image` 接收真实图片，再按其回执记录摘要。相同版本已看过时使用画面或缓存，不循环请求附图。

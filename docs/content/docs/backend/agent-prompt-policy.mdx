@@ -19,7 +19,7 @@ Agent 的任务来自用户消息及仍有效的对话约束。默认工作方�
 
 工具参数的条件合同在 `cloud_agent_tool_contracts.go` 定义，与共享 schema 一起进入 Go 预检与 Pi 本地校验。`generate_media` 的图片/视频必须提供 size，视频还需正数 durationSeconds；分镜追加需完整镜头，更新使用部分 patch，删除不传 patch；批量表各 action 只接收对应配置字段。
 
-`canvas_inspect_image` 读取使用 nodeId，保存观察使用同一 nodeId、实际附图回执的 sha256 与 summary。summary.short 是简述，summary.detailed 只接受 subjects、composition、lighting、color、style、text、uncertainties；服务端在接收和写回时核对图片 SHA，保存不附图。普通读取命中有效摘要时返回 visionCache、imageAttached=false；需要再次读取真实图片时传 refresh=true，单图也有效。重看回执标记 repeat=true，同一内容为 imageChanged=false；该次真实图片输入不会被旧摘要替换，交付后按调用身份去重。每节点本轮最多附图2次，文字回执只计本轮调用预算。普通历史仍可由摘要降载，持久化原图不删除，不改变Pi记忆或压缩算法。当前工具目录为 `cloud-agent-tools/v29`、画布系统策略为 27，分镜批量写入、字段查缺、资产增量、稳定句柄、批次恢复及表级版本说明与共享制品同步，新合同在新运行中验收。
+`canvas_inspect_image` 读取使用 nodeId，保存观察使用同一 nodeId、实际附图回执的 sha256 与 summary。summary.short 是简述，summary.detailed 只接受 subjects、composition、lighting、color、style、text、uncertainties；服务端在接收和写回时核对图片 SHA，保存不附图。普通读取命中有效摘要时返回 visionCache、imageAttached=false；需要再次读取真实图片时传 refresh=true，单图也有效。重看回执标记 repeat=true，同一内容为 imageChanged=false；该次真实图片输入不会被旧摘要替换，交付后按调用身份去重。每节点本轮最多附图2次，文字回执只计本轮调用预算。普通历史仍可由摘要降载，持久化原图不删除，不改变Pi记忆或压缩算法。当前工具目录为 `cloud-agent-tools/v30`、画布系统策略为 28，分镜批量写入、字段查缺、资产增量、稳定句柄、批次恢复及表级版本说明与共享制品同步，新合同在新运行中验收。
 
 | 内容 | 唯一维护入口 | 作用 |
 | --- | --- | --- |
@@ -100,9 +100,9 @@ Pi SDK 的允许目录包含运行的合格具体函数，但初始只注册已�
 
 自动回归覆盖新目标继承、插话保留、否定参考需求、消息来源、计划取消、未完成清单正常收尾、子代理协议有界恢复、恢复事件及 OpenAI Chat/Responses、Claude、Gemini 协议转换。测试使用临时 SQLite 和模拟模型结果，不证明真实模型的创作质量或指令遵循率。
 
-媒体策略（`cloud-agent-media`）当前版本为 6：生成是异步的，提交后继续其他工作、不用 `task_get` 轮询；结束时以「[系统通知] 生成结果」告知，它是事实同步不是新任务；需要结果才能决定下一步时调用 `wait_generations`；仍有生成在进行时可以照常收尾，并在答复里说明。
+媒体策略（`cloud-agent-media`）当前版本为 7：生成是异步的，提交后继续其他工作、不用 `task_get` 轮询；结束时以「[系统通知] 生成结果」告知，它是事实同步不是新任务；必须拿到结果才能决定下一步时，用 `finish_run` 的 `continuation`（`when=all_generations_terminal`，`instruction` 必填），本轮正常结束、全部实际登记任务终态后自动开一个续接 run；仍有生成在进行时也可以直接收尾，并在答复里说明。旧的生成等待工具已移除。
 
-当前画布系统策略版本为 27，通用策略 `cloud-agent-general` 为版本 1，新运行使用编译器 `cloud-agent-policy-compiler/v8`。通用策略只保留运行协议、工具失败纠正、输出和收尾规则，画布节点、媒体和预演细则只在画布策略中。运行快照同时冻结策略 ID、版本、哈希、业务类型、能力集和工具目录。升级后，`v6` 画布和短剧运行在冻结提示完整、原策略和能力集仍匹配的情况下可继续使用原快照，执行时仍须通过当前运行合同校验。不兼容的运行应在发布前排空或取消，终态历史仍可读取。回滚前也需要确认目标版本是否支持在途运行的冻结合同。
+当前画布系统策略版本为 28，通用策略 `cloud-agent-general` 为版本 1，新运行使用编译器 `cloud-agent-policy-compiler/v8`。通用策略只保留运行协议、工具失败纠正、输出和收尾规则，画布节点、媒体和预演细则只在画布策略中。运行快照同时冻结策略 ID、版本、哈希、业务类型、能力集和工具目录。升级后，`v6` 画布和短剧运行在冻结提示完整、原策略和能力集仍匹配的情况下可继续使用原快照，执行时仍须通过当前运行合同校验。不兼容的运行应在发布前排空或取消，终态历史仍可读取。回滚前也需要确认目标版本是否支持在途运行的冻结合同。
 
 本轮治理覆盖对话主链路。批量创作表的业务默认词属于独立生成入口，尚未迁移到版本化资源（旧版经验压缩已随经验库下线）；后续应分别明确空提示词语义和结构化输出合同，并建立真实模型场景评估，不能把本轮回归称为全仓提示词治理完成。
 

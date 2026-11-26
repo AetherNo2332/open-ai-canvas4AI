@@ -137,7 +137,7 @@ func cloudAgentExternalToolErrorClass(err error) (string, bool, string) {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return cloudAgentToolErrorUpstream, true, "report_to_user"
 	}
-	// 账号活动任务已满：生成没有提交，不是参数错。等已提交的生成结束（wait_generations）再重发。
+	// 账号活动任务已满：生成没有提交，不是参数错。等已提交的生成结束（下一步或续接 run）再重发。
 	if cloudAgentActiveTaskLimitError(err) {
 		return cloudAgentToolErrorStateConflict, true, "wait_for_generations"
 	}
