@@ -47,6 +47,7 @@ import { CanvasProjectAssetModal } from "@/components/canvas/canvas-project-asse
 import { CanvasCharacterLibraryModal } from "@/components/canvas/canvas-character-library-modal";
 import { CanvasPoseLibraryModal } from "@/components/canvas/canvas-pose-library-modal";
 import { CanvasCharacterReferenceNodeContent } from "@/components/canvas/canvas-character-reference-node";
+import { ShortplayAssetNodeContent } from "@/components/canvas/canvas-shortplay-asset-node";
 import { CanvasCharacterReferenceModal } from "@/components/canvas/canvas-character-reference-modal";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { resolveProjectCanvasStyle } from "@/components/canvas/canvas-style-picker-modal";
@@ -2503,6 +2504,10 @@ function CanvasViewportPage() {
 
     const renderCanvasNodeContent = useCallback(
         (contentNode: CanvasNodeData) => {
+            if (contentNode.type === CanvasNodeType.ShortplayAsset) {
+                // 资产卡只渲染节点快照；归属徽标需要知道当前画布是不是集画布。
+                return <ShortplayAssetNodeContent node={contentNode} linked={Boolean(shortplayBinding)} />;
+            }
             if (contentNode.metadata?.workflowKind === "character" && contentNode.metadata.characterAssetId) {
                 return <CanvasCharacterReferenceNodeContent node={contentNode} />;
             }
@@ -3986,3 +3991,4 @@ function CanvasViewportPage() {
         </CanvasNodeResizeMotionProvider>
     );
 }
+

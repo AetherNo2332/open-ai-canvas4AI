@@ -123,7 +123,7 @@ export default function ShortplayDetailPage() {
                     {
                         key: "assets",
                         label: "资产与提取",
-                        children: <ShortplayAssetsPanel projectId={projectId} jobs={detail.jobs} />,
+                        children: <ShortplayAssetsPanel projectId={projectId} jobs={detail.jobs} episodes={episodes} />,
                     },
                     {
                         key: "settings",

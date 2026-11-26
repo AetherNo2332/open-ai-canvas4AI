@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, InputNumber, Switch, Tag, Tooltip } from "antd";
-import { AudioLines, Image as ImageIcon, Inbox, Plus, RefreshCw, Sparkles } from "lucide-react";
+import { AudioLines, Image as ImageIcon, Inbox, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
+import { Select } from "antd";
 import { RelativeTime } from "@/components/ui/product/relative-time";
 import { resourceFileUrl } from "@/services/api/resources";
 import {
     listShortplayAssets,
+    placeShortplayAssetCards,
     queueShortplayAssetAudio,
     queueShortplayAssetImages,
     queueShortplayExtract,
@@ -15,6 +17,7 @@ import {
     type ShortplayAssetSummary,
     type ShortplayAssetWrite,
     type ShortplayAudioQueueRequest,
+    type ShortplayEpisodeSummary,
     type ShortplayImageQueueRequest,
     type ShortplayJob,
 } from "@/services/api/shortplay";
@@ -98,10 +101,12 @@ function draftToWrite(draft: AssetDraft): ShortplayAssetWrite {
     return base;
 }
 
-export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; jobs: ShortplayJob[] }) {
+export function ShortplayAssetsPanel({ projectId, jobs, episodes }: { projectId: string; jobs: ShortplayJob[]; episodes: ShortplayEpisodeSummary[] }) {
     const queryClient = useQueryClient();
     const { message } = App.useApp();
     const [draft, setDraft] = useState<AssetDraft | null>(null);
+    const [placing, setPlacing] = useState<ShortplayAssetSummary | null>(null);
+    const [placeEpisode, setPlaceEpisode] = useState<string>("");
 
     const assetsQuery = useQuery({
         queryKey: ["shortplay-assets", projectId],
@@ -146,6 +151,17 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
             refresh();
         },
         onError: (error) => message.error(error instanceof Error ? error.message : "音色排队失败"),
+    });
+
+    const place = useMutation({
+        mutationFn: (input: { assetId: number; episodeId: string }) => placeShortplayAssetCards(projectId, input.episodeId, [input.assetId]),
+        onSuccess: (result) => {
+            message.success(`已投送 ${result.placed} 张资产卡到第 ${result.episodeNumbers.join("/") || "目标"} 集画布`);
+            setPlacing(null);
+            setPlaceEpisode("");
+            refresh();
+        },
+        onError: (error) => message.error(error instanceof Error ? error.message : "投送失败"),
     });
 
     const save = useMutation({
@@ -205,7 +221,14 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                             </div>
                             <div className="grid gap-2 md:grid-cols-2">
                                 {group.items.map((asset) => (
-                                    <AssetCard key={asset.id} asset={asset} onEdit={() => setDraft(draftFromAsset(asset))} onQueueImage={() => imageQueue.mutate({ assetIds: [asset.id] })} onQueueAudio={() => audioQueue.mutate({ assetIds: [asset.id] })} />
+                                    <AssetCard
+                                        key={asset.id}
+                                        asset={asset}
+                                        onEdit={() => setDraft(draftFromAsset(asset))}
+                                        onQueueImage={() => imageQueue.mutate({ assetIds: [asset.id] })}
+                                        onQueueAudio={() => audioQueue.mutate({ assetIds: [asset.id] })}
+                                        onPlace={() => setPlacing(asset)}
+                                    />
                                 ))}
                             </div>
                         </div>
@@ -244,6 +267,24 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                     <div className="mt-2 text-[11px] leading-5 text-foreground/45">失败的提取、出图与音色都不会自动重试，避免重复计费；修好渠道或设置后重新点对应按钮，提取游标会从上次成功的批次继续。费用列是任务已记录的账务口径，空表示尚未结算。</div>
                 </div>
             </aside>
+            <AppModal
+                title={placing ? `投送资产卡 #${placing.id} ${placing.name}` : "投送资产卡"}
+                open={Boolean(placing)}
+                onCancel={() => {
+                    setPlacing(null);
+                    setPlaceEpisode("");
+                }}
+                okText="投送"
+                confirmLoading={place.isPending}
+                okButtonProps={{ disabled: !placeEpisode }}
+                onOk={() => placing && placeEpisode && place.mutate({ assetId: placing.id, episodeId: placeEpisode })}
+            >
+                <div className="space-y-2">
+                    <div className="text-xs text-foreground/60">目标集（画布已建好才能投送）</div>
+                    <Select className="w-full" placeholder="选择目标集" value={placeEpisode || undefined} onChange={setPlaceEpisode} options={episodes.map((episode) => ({ value: episode.id, label: `第 ${episode.number} 集 · ${episode.title}` }))} />
+                    <div className="text-[11px] leading-5 text-foreground/45">投送会把这套资产绑到该集，并在集画布上放一张资产卡；同一张卡重复投送只刷新，不叠第二张。</div>
+                </div>
+            </AppModal>
             <AppModal
                 title={draft?.assetId ? `编辑资产 #${draft.assetId}` : draft?.derivedFrom ? "新建衍生造型" : "新建资产"}
                 open={Boolean(draft)}
@@ -315,7 +356,7 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
     );
 }
 
-function AssetCard({ asset, onEdit, onQueueImage, onQueueAudio }: { asset: ShortplayAssetSummary; onEdit: () => void; onQueueImage: () => void; onQueueAudio: () => void }) {
+function AssetCard({ asset, onEdit, onQueueImage, onQueueAudio, onPlace }: { asset: ShortplayAssetSummary; onEdit: () => void; onQueueImage: () => void; onQueueAudio: () => void; onPlace: () => void }) {
     const canVoice = asset.kind === "character";
     return (
         <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-1)] p-3">
@@ -345,6 +386,11 @@ function AssetCard({ asset, onEdit, onQueueImage, onQueueAudio }: { asset: Short
                             <Tooltip title="编辑这一条资产">
                                 <Button size="small" onClick={onEdit}>
                                     编辑
+                                </Button>
+                            </Tooltip>
+                            <Tooltip title="投送这张卡到某一集画布">
+                                <Button size="small" icon={<Send />} onClick={onPlace}>
+                                    投送
                                 </Button>
                             </Tooltip>
                         </div>

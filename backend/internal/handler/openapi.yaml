@@ -3080,6 +3080,34 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /shortplays/{id}/assets/audio:
+    post:
+      tags: [shortplay]
+      summary: 入队音色样本生成（只排角色；无音色文本、锁定与非角色计入跳过）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, description: shortplayId 或 projectId }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assetIds:
+                  type: array
+                  items: { type: integer }
+                onlyMissing: { type: boolean }
+                onlyFailed: { type: boolean }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /shortplays/{id}/extract:
     post:
       tags: [shortplay]
@@ -3095,6 +3123,97 @@ paths:
         "401":
           $ref: "#/components/responses/Error"
         "404":
+          $ref: "#/components/responses/Error"
+  /shortplays/{id}/episodes/{episodeId}/assets:
+    post:
+      tags: [shortplay]
+      summary: 投送资产卡进某一集（绑集后在该集画布上投卡，已有卡只刷新）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, description: shortplayId 或 projectId }
+        - in: path
+          name: episodeId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetIds]
+              properties:
+                assetIds:
+                  type: array
+                  items: { type: integer }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /shortplays/{id}/adopt:
+    post:
+      tags: [shortplay]
+      summary: 收录自由画布上的一张局部卡为项目资产并投进目标集画布
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [canvasId, nodeId, episodeId]
+              properties:
+                canvasId: { type: string }
+                nodeId: { type: string }
+                episodeId: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /shortplays/by-canvas/{canvasId}/assets/{assetId}/image:
+    post:
+      tags: [shortplay]
+      summary: 画布侧单项生图结果回写资产表（只接受已就绪图片资源）
+      parameters:
+        - in: path
+          name: canvasId
+          required: true
+          schema: { type: string }
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resourceId]
+              properties:
+                resourceId: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
           $ref: "#/components/responses/Error"
   /shortplays/{id}/settings:
     patch:
@@ -7072,3 +7191,5 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/PlatformErrorEnvelope"
+
+

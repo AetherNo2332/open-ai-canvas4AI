@@ -30,6 +30,7 @@ export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.ColorGrade]: { width: 420, height: 360, title: "调色" },
     [CanvasNodeType.MediaConversion]: { width: 480, height: 460, title: "转换" },
     [CanvasNodeType.BatchTable]: { width: 1280, height: 560, title: "批量创作表" },
+    [CanvasNodeType.ShortplayAsset]: { width: 264, height: 352, title: "资产卡" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
 export const NODE_SPECS = {
@@ -110,6 +111,10 @@ export const NODE_SPECS = {
         metadata: { status: "idle" },
     },
     [CanvasNodeType.MediaConversion]: { ...NODE_DEFAULT_SIZE[CanvasNodeType.MediaConversion], metadata: { status: "idle" } },
+    [CanvasNodeType.ShortplayAsset]: {
+        ...NODE_DEFAULT_SIZE[CanvasNodeType.ShortplayAsset],
+        metadata: { status: "success", fontSize: 14 },
+    },
     [CanvasNodeType.BatchTable]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.BatchTable],
         metadata: {
@@ -132,3 +137,4 @@ export const NODE_SPECS = {
 export function getNodeSpec(type: CanvasNodeType) {
     return NODE_SPECS[type];
 }
+

@@ -175,6 +175,16 @@ const BUILTIN_NODE_TRAITS = {
         maxInputCount: 1,
         inputKind: "image",
     },
+    [CanvasNodeType.ShortplayAsset]: {
+        label: "资产卡",
+        icon: <ImageIcon />,
+        minSize: DEFAULT_MIN_SIZE,
+        // 资产卡由短剧详情页的「投送」或提取后注入落进集画布，不占创建菜单格位。
+        showInCreateMenu: false,
+        // 只有拿到生效参考图的卡才作为图片素材参与生成输入。
+        resourceKind: (node: CanvasNodeData) => (node.metadata?.storageKey ? "image" : null),
+        inputKind: "image",
+    },
     [CanvasNodeType.ColorGrade]: {
         label: "调色",
         icon: <Palette />,
@@ -200,3 +210,4 @@ export const BUILTIN_NODE_DEFINITIONS: CanvasNodeDefinition[] = (Object.keys(BUI
 });
 
 registerNodeDefinitions(BUILTIN_NODE_DEFINITIONS);
+

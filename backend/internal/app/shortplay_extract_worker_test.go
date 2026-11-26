@@ -27,7 +27,7 @@ func newShortplayWorkflowService(t *testing.T) (*Service, *gorm.DB) {
 	}
 	if err := db.AutoMigrate(&model.Project{}, &model.Shortplay{}, &model.ShortplayEpisode{},
 		&model.ShortplayAsset{}, &model.ShortplayAssetImage{}, &model.ShortplayAssetAudio{},
-		&model.ShortplayJob{}, &model.CanvasProject{}, &model.Task{}, &model.SystemSetting{}); err != nil {
+		&model.ShortplayJob{}, &model.CanvasProject{}, &model.CanvasEditLease{}, &model.Task{}, &model.SystemSetting{}); err != nil {
 		t.Fatal(err)
 	}
 	return New(repository.New(db), t.TempDir()), db
@@ -363,3 +363,4 @@ func TestShortplayExtractSchedulerTickDrainsQueuedJobs(t *testing.T) {
 		t.Fatalf("job changed after empty tick: %#v", again)
 	}
 }
+

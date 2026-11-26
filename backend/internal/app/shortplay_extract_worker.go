@@ -291,6 +291,8 @@ func (s *Service) applyShortplayExtractAssets(owner *model.Shortplay, job *model
 			return 0, err
 		}
 	}
+	// 落库后把本集资产投成画布卡：幂等、无差异不写画布；失败只记录，下一次提取再对齐。
+	s.injectShortplayAssetCards(owner.ID)
 	return next, nil
 }
 

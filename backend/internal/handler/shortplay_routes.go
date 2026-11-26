@@ -87,6 +87,40 @@ func registerShortplayRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		return svc.QueueShortplayAssetAudio(userID, c.Param("id"), req)
 	}))
+	// 投送资产卡进某一集：绑集（集行资产列表 + 资产行集号并集）后在该集画布上投卡。
+	r.POST("/shortplays/:id/episodes/:episodeId/assets", dramaRoute(svc, 1<<20, func(c *gin.Context, userID string) (any, error) {
+		var req shortplay.PlaceAssetRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.PlaceShortplayAssetCards(userID, c.Param("id"), c.Param("episodeId"), req)
+	}))
+	// 收录：自由画布上的一张局部卡 → 项目资产 + 目标集上的一张域卡。
+	r.POST("/shortplays/:id/adopt", dramaRoute(svc, 1<<20, func(c *gin.Context, userID string) (any, error) {
+		var req shortplay.AdoptAssetRequest
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		return svc.AdoptShortplayAsset(userID, c.Param("id"), req)
+	}))
+	// 画布侧单项生图回写：按画布反查集归属，是集画布才写资产表。
+	r.POST("/shortplays/by-canvas/:canvasId/assets/:assetId/image", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {
+		var req struct {
+			ResourceID string `json:"resourceId"`
+		}
+		if err := bindDramaJSON(c, &req); err != nil {
+			return nil, err
+		}
+		assetID, ok := shortplay.ParseAssetID(c.Param("assetId"))
+		if !ok {
+			return nil, service.BadAuthRequest("资产 ID 非法")
+		}
+		asset, applied, err := svc.ApplyShortplayAssetImageFromCanvas(userID, c.Param("canvasId"), assetID, req.ResourceID)
+		if err != nil {
+			return nil, err
+		}
+		return gin.H{"applied": applied, "asset": asset}, nil
+	}))
 	// 设置：整份提交（分步骤模型 + 参考图方案 + 风格与语言），服务端归一后回传 settingsJson。
 	// 整份写而不是逐字段 patch：设置之间互相牵制，逐字段写会落库「各自合法、组合非法」的中间态。
 	r.PATCH("/shortplays/:id/settings", dramaRoute(svc, 64<<10, func(c *gin.Context, userID string) (any, error) {

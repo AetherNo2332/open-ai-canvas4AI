@@ -218,6 +218,37 @@ export function queueShortplayAssetAudio(projectId: string, body: ShortplayAudio
     return http.post<ShortplayAudioQueueResult>(`/shortplays/${encodeURIComponent(projectId)}/assets/audio`, body);
 }
 
+/** 投送结果：实际投出的卡数、目标节点 ID（顺序同请求）与涉及的集号。 */
+export type ShortplayPlaceResult = { placed: number; nodeIds: string[]; episodeNumbers: number[] };
+
+/** 收录结果：新资产行、目标集新卡节点、是否新建与是否带入了图。 */
+export type ShortplayAdoptResult = {
+    assetId: number;
+    nodeId: string;
+    created: boolean;
+    imageAdopted: boolean;
+    revision: number;
+    kind: string;
+    name: string;
+    episodeNumbers: number[];
+    note?: string;
+};
+
+/** 投送资产卡进某一集：绑集后在该集画布上投卡，已有卡只刷新。 */
+export function placeShortplayAssetCards(projectId: string, episodeId: string, assetIds: number[]) {
+    return http.post<ShortplayPlaceResult>(`/shortplays/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/assets`, { assetIds });
+}
+
+/** 收录自由画布上的一张局部卡为项目资产，并投进目标集画布。 */
+export function adoptShortplayAsset(projectId: string, body: { canvasId: string; nodeId: string; episodeId: string }) {
+    return http.post<ShortplayAdoptResult>(`/shortplays/${encodeURIComponent(projectId)}/adopt`, body);
+}
+
+/** 画布侧单项生图回写：按画布反查集归属后写资产表；只接受已就绪图片资源。 */
+export function applyShortplayCanvasAssetImage(canvasId: string, assetId: number, resourceId: string) {
+    return http.post<{ applied: boolean; asset: ShortplayAssetSummary }>(`/shortplays/by-canvas/${encodeURIComponent(canvasId)}/assets/${assetId}/image`, { resourceId });
+}
+
 /** 集画布按需创建：第一次调用建出画布行，已存在返回 created=false。 */
 export function ensureShortplayEpisodeCanvas(projectId: string, episodeId: string) {
     return http.post<{ canvasId: string; created: boolean }>(`/shortplays/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/canvas`);
