@@ -103,7 +103,7 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 | 命令 | 结果 |
 |---|---|
 | `go build ./internal/... ./cmd/server` | 退出码 0 |
-| `go test -count=1 -run 'TestShortplay\|TestQueueShortplayExtract\|TestRunShortplayExtract\|TestUpsertShortplayAsset\|TestExtract\|TestClaimShortplayJob\|TestDedupeKey\|TestConfigureShortplayExtractExecutor' ./internal/shortplay ./internal/repository ./internal/app ./internal/handler` | 4 包 PASS（1.3s / 1.8s / 14.0s / 11.6s） |
+| `go test -count=1 -run 'TestShortplay\|TestQueueShortplayExtract\|TestRunShortplayExtract\|TestShortplayExtractSchedulerTick\|TestRunShortplayExtractFailsWithoutTextModel\|TestUpsertShortplayAsset\|TestExtract\|TestClaimShortplayJob\|TestDedupeKey' ./internal/shortplay ./internal/repository ./internal/app ./internal/handler` | 4 包 PASS（含任务提交形状、无文本模型明确失败、锁行只并别名） |
 | `CANVAS_TEST_POSTGRES_DSN=postgres://canvas:canvas@127.0.0.1:15432/canvas_event_integration?sslmode=disable go test -count=1 -run TestShortplayJobsClaimAndDedupePostgres ./internal/repository` | PASS（1.45s） |
 | `CANVAS_TEST_POSTGRES_DSN=... go test -count=1 -run 'TestMigrateShortplayWorkbenchPostgres\|TestMigrateShortplayWorkbenchOnEmptyDatabase\|TestMigrateShortplayWorkbenchUpgradesOldDramaCopy' ./internal/database` | PASS（11.0s） |
 | `node node_modules/typescript/bin/tsc --noEmit --incremental false`（web） | 退出码 0 |
@@ -127,7 +127,7 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 | 命令 | 结果 |
 |---|---|
 | `go test -count=1 -run 'TestCreateShortplayDerivedAsset\|TestUpdateShortplayDerivedAsset\|TestQueueShortplayAssetImages\|TestRunShortplayAssetImageJob' ./internal/app` | PASS |
-| `go test -count=1 -run 'TestShortplay\|TestQueueShortplay\|TestRunShortplay\|TestCreateShortplayDerivedAsset\|TestUpdateShortplayDerivedAsset\|TestConfigureShortplayExtractExecutor' ./internal/app ./internal/repository ./internal/handler` | PASS（19.6s / 1.0s / 8.4s） |
+| `go test -count=1 -run 'TestShortplay\|TestQueueShortplay\|TestRunShortplay\|TestCreateShortplayDerivedAsset\|TestUpdateShortplayDerivedAsset\|TestShortplayExtractSchedulerTick' ./internal/app ./internal/repository ./internal/handler` | PASS（19.6s / 1.0s / 8.4s） |
 | `go build ./internal/... ./cmd/server`；`go test ./internal/architecture` | 退出码 0；PASS |
 | `node node_modules/typescript/bin/tsc --noEmit --incremental false`（web）；`eslint`；`prettier --check` | 退出码 0 |
 
