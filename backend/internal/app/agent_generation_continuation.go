@@ -150,9 +150,9 @@ const (
 	generationContinuationFooterRunes = 90
 	// 每个任务至少要能放下序号、taskId、nodeId、mode 和状态。taskId 与 nodeId
 	// 都是 80 字符上限，按最坏情况留 240 字，保证身份行永远不被省略。
-	generationContinuationTaskIdentityRunes = 240
-	generationContinuationTaskTitleRunes    = 48
-	generationContinuationTaskDetailRunes   = 160
+	generationContinuationTaskIdentityRunes   = 240
+	generationContinuationTaskTitleRunes      = 48
+	generationContinuationTaskDetailRunes     = 160
 	generationContinuationMinInstructionRunes = 200
 )
 
