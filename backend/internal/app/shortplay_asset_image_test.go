@@ -29,7 +29,7 @@ func seedImageJob(t *testing.T, svc *Service, shortplayID, taskID string, assetI
 	job := &model.ShortplayJob{
 		ID: "job-" + taskID, ShortplayID: shortplayID, Kind: shortplay.JobAssetImage,
 		Status: shortplay.JobRunning, TaskID: taskID,
-		PayloadJSON: shortplay.AssetImageJobPayload{AssetID: assetID, Prompt: "提示词", Appearance: "外貌"} .Encode(),
+		PayloadJSON: shortplay.AssetImageJobPayload{AssetID: assetID, Prompt: "提示词", Appearance: "外貌"}.Encode(),
 	}
 	if err := svc.repo.CreateShortplayJob(job); err != nil {
 		t.Fatal(err)
