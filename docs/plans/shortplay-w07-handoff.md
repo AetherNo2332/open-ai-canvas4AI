@@ -53,12 +53,28 @@
   PASS（39.9s）；`go test ./internal/architecture` PASS。
 - 未改 schema/描述，harness 无需再生成。
 
+## Done（W06 正式页面回归，c03d0603a 之后）
+
+- 浏览器实测（`127.0.0.1:13100` + 重建的 `127.0.0.1:18081`）发现并修复两个真实缺陷：
+  1. 手动新建资产后整页崩溃：`AssetSummary` 的别名/分集列表为 nil 被序列化成 `null`，
+     `AssetCard` 调 `null.length`。修复为 `SplitAliasesJSON`/`SplitEpisodeNumbersJSON`
+     始终返回空切片，补 `TestBuildAssetSummaryEncodesEmptyListsAsArrays`。
+  2. 首次投送 500：分集只记录画布地址、画布行尚未按需创建，注入阶段拿到原始
+     `record not found`。修复为投送/收录前调用 `EnsureShortplayEpisodeCanvas`，并把缺失
+     画布转成明确业务错误；补 `TestPlaceShortplayAssetCardsCreatesMissingEpisodeCanvas`。
+- 页面复验：资产库分组与卡片渲染正常；投送成功（`nodeIds=4de567bc…`，卡片
+  `shortplay-asset`《沈青禾》在 (620,120)）；重复投送同一卡片 nodeId 不变、节点数仍 2、
+  位置不变；刷新后卡片仍在且无错误边界。
+- 未验：收录的页面全流程（源局部卡在自由画布，需要另建自由画布卡片）、真实双账号
+  隔离（当前第二浏览器上下文未登录，只验证到 401 拒绝；跨账号写入拒绝仍由 Go 测试覆盖）。
+
 ## Next（按序，第一项是下一动作）
 
-1. W06 正式页面回归：投送、拖动后重跑、刷新、收录、回写、双账号隔离。
-2. W08 确定性渠道跨进程全流程；W09 隔离恢复演练与完整门禁。
-3. 最后：先 bump `VERSION` + `CHANGELOG` 提交，再在最终 HEAD 跑完整门禁，成功才
-   普通快进更新同一 PR154。
+1. W08 确定性渠道跨进程全流程；W09 隔离恢复演练（暂停派发、在途回调、恢复同批、
+   积压与重复扣费检查）。
+2. W06 收录页面全流程与真实双账号隔离（需第二个可用账号；不阻塞 W08/W09）。
+3. 最后：最终干净 HEAD 跑完整门禁（`bun scripts/verify-before-push.mjs --base
+   origin/codex/shortplay-workbench-port --mode full`），成功才普通快进更新同一 PR154。
 
 ## Open questions
 
