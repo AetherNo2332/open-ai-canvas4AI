@@ -37,21 +37,38 @@
 | `cd agent && npm test` | 退出 0（207 项，206 通过、1 跳过）。 |
 | `cd agent && npm run build` | 退出 0。 |
 | `cd backend && go test ./internal/app -count=1 -timeout 900s` | 见推送门禁的分片结果；300s 时限不足是总时长环境限制，不记为通过。分片里曾出现的 `TestSettingsEncryptionKey*` 失败是 Windows 无法观测 Unix 0600 权限位（生产 `settings_key.go` 本就按 GOOS 跳过 chmod）；已在测试中按 GOOS 保留 Unix 断言、Windows 跳过断言，行为用例仍执行，Linux CI 覆盖不变。 |
-| `bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full` | 见下方「推送前门禁」：26 项 25 通过，唯一失败是 `backend:full` 里的 `TestAgentWakePostgresWorkerClaimsDuringFallback`；该用例在干净的 `canvas4ai/main` 工作树用其自带 v7 Worker 同样失败。 |
+| `bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full` | 按提交分别记录在下方「推送前门禁」的表里，不跨提交合并结论。 |
 
 ## 推送前门禁
 
-最后一次完整门禁在功能分支提交 `f16c4d70f` 上执行（`GOTOOLCHAIN=go1.25.0`、`CHROME_BIN=C:\Program Files\Google\Chrome\Application\chrome.exe`、`TEST_AGENT_POSTGRES_DSN` 指向隔离库 `canvas_event_integration`，容器 `task7-continuation-pg-20261126` / `127.0.0.1:4908`）：
+门禁命令固定为 `bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full`。环境：`GOTOOLCHAIN=go1.25.0`、`CHROME_BIN=C:\Program Files\Google\Chrome\Application\chrome.exe`、`TEST_AGENT_POSTGRES_DSN` 与 `CANVAS_TEST_POSTGRES_DSN` 同时指向隔离库 `canvas_event_integration`（容器 `task7-continuation-pg-20261126`，`127.0.0.1:4908`）。每轮的提交、计划、逐项日志和 skip 统计都在 `.local/cache/verify/`，门禁输出在 `.local/cache/continuation/`。
 
-- 结果：26 项全部通过，失败 0 项，用时 2214.1s，退出 0；计划与逐项日志在 `.local/cache/verify/`（`verification-plan.json`、`result-local.json`、`*.log`），门禁输出在 `.local/cache/continuation/gate-full-9.log`。
-- 通过项：`backend:agent-lint`、`agent:check`、`backend:app-shard-1..4`、`backend:full`、`backend:baseline`、`backend:gofmt`、`backend:vet`、`backend:tool-contract`、`changelog`、`docs:metadata/deployment/types/check`、`deployment:commands`、`verification:tests`、`payment:artifacts/platforms`、`agent:smoke`、`web:format/lint/test/typecheck/e2e`。
-- 门禁过程中定位并修掉的问题（都在本分支内，未降低断言、未放宽安全合同）：
-  - `backend:full → TestAgentWakePostgresWorkerClaimsDuringFallback` 超时：根因是主机名非 ASCII（本机 `你猜猜我是谁`）时 Worker 用主机名派生租约槽位被 `^[A-Za-z0-9._-]+$` 拒绝并抛 `Invalid worker slot`，事件流因此永不建立。在干净的 `canvas4ai/main` 工作树、用它自带的 `canvas-pi-wire/v7` Worker 构建复现同一失败（`.local/cache/continuation/main-baseline-evidence.log`），修复前源码在 `golang:1.25-alpine` 容器内同样失败（`.local/cache/continuation/linux-wake.log`），确认是既有缺陷而非本次改动。修复：`agent/src/bridge.ts` 先归一化 Worker id 再截取槽位，`bridge-wire-contract` 新增用例钉住；后端用例只把等待 Worker 冷启动的预算从 5s 提到 60s，不改服务超时。修复后该用例退出 0（PASS 21.90s，`.local/cache/continuation/wake-postfix.log`）。
-  - `agent:smoke`：生产冒烟内部探针硬编码 `canvas-pi-wire/v7`，已同步 `v8`（`scripts/verify-production-agent-smoke.py`）。
-  - `web:test` 的 10 条失败是工作树 CRLF 与仓库 LF 文本断言不一致；规范为 LF 后 3708 通过/7 跳过/0 失败，未改断言。
-  - `TestSettingsEncryptionKey*` 按平台限定 `0600` 位比较：Windows 仍执行全部行为检查，Linux 容器实跑原始断言（见上表）。
-- 隔离 PG 下 SDK 跨进程用例通过；`TestPasswordResetRecordsSkipReasonsAndDeliveries` 的 60 秒冷却顺序缺陷在 `canvas4ai/main` 上同样出现（1/3），属既有测试时序问题，本次未改动。
-- 本文件后续只增加这段证据更新与内部版本号，没有代码或测试改动；这部分文本增量在最终提交上用 `--mode affected` 复验，完整结果同样保存在 `.local/cache/verify/`，并写入 PR 描述。
+结果按提交分别记录，不把不同提交、不同模式（full / affected）混写：
+
+| 提交 | 模式 | 退出码 | 结果 |
+| --- | --- | --- | --- |
+| `f16c4d70f`（首轮交付的代码提交） | full | 0 | 26 项全部通过，失败 0，用时 2214.1s |
+| `9454771`（首轮交付的最终提交，相对上一行仅文档与版本号） | full | 1 | 25 项通过；`backend:full` 失败于 `internal/hostupdate TestDocsHealthFailureRestoresSourceOnly`（整包并行偶发，模拟容器恢复报「文档恢复失败」）。该用例在本分支与干净 `canvas4ai/main` 上单跑均通过；同一命令单跑 `backend:full` 退出 0，但那次只设置了 `TEST_AGENT_POSTGRES_DSN`，见下方 skip 口径 |
+| 复审修复后的代码与最终提交 | full | 见下 | 修复期间首次门禁因工作区变脏被中止（`Working tree changes included`），不计入任何结论；最终提交的完整门禁结果以 `.local/cache/verify/verification-plan.json` 的 `head` 与 `result-local.json` 为准，并写入 PR 描述 |
+
+skip 口径（首轮遗留问题，本轮修正）：
+
+- 首轮单跑 `backend:full` 时只设置了 `TEST_AGENT_POSTGRES_DSN`，依赖 `CANVAS_TEST_POSTGRES_DSN` 的 PostgreSQL 用例被 skip，那次 `EXIT=0` 不能记为完整覆盖。
+- 复审修复起，两个 DSN 同时设置；结论以 `result-local.json` 的 `head` 对应提交和实际 skip 统计为准，skip 不计为通过，PR 描述列出通过项与 skip 数。
+
+首轮定位并修掉的门禁问题（保留记录，均在分支内修复，未降低断言或安全合同）：
+
+- `backend:full → TestAgentWakePostgresWorkerClaimsDuringFallback` 超时：根因是主机名非 ASCII（本机 `你猜猜我是谁`）时 Worker 用主机名派生租约槽位被 `^[A-Za-z0-9._-]+$` 拒绝并抛 `Invalid worker slot`，事件流永不建立。在与基线一致的干净 `canvas4ai/main` 工作树用其自带 v7 Worker 复现（`.local/cache/continuation/main-baseline-evidence.log`），修复前源码在 `golang:1.25-alpine` 容器内同样失败（`.local/cache/continuation/linux-wake.log`），确认是既有缺陷。修复：`agent/src/bridge.ts` 先归一化 Worker id 再截取槽位，`bridge-wire-contract` 新增用例；后端用例只把等待 Worker 冷启动的预算从 5s 提到 60s，不改服务超时。修复后该用例退出 0（PASS 21.90s，`.local/cache/continuation/wake-postfix.log`）。
+- `agent:smoke`：生产冒烟内部探针硬编码 `canvas-pi-wire/v7`，已同步 `v8`（`scripts/verify-production-agent-smoke.py`）。
+- `web:test` 的 10 条失败是工作树 CRLF 与仓库 LF 文本断言不一致；规范为 LF 后 3708 通过 / 7 跳过 / 0 失败，未改断言。
+- `TestSettingsEncryptionKey*` 按平台限定 `0600` 位比较：Windows 仍执行发布、完整性、并发一致性、防覆盖、回退与临时文件清理检查，Linux 容器实跑原始断言（见上表）。
+
+## 复审修复（首轮独立审阅，P1 + 3×P2）
+
+1. **P1 单账号续接入队失败曾阻断全局周期派发。** `DispatchAgentMessages` 原来在扫描普通消息前调用续接入队并直接返回错误，任一 ready 批次配额不足会让整轮提前退出。现在续接入队是尽力而为：`QueueReadyGenerationContinuations` 每个批次独立处理、保留首个真实错误并继续，`DispatchAgentMessages` 在派发普通消息后回传该错误。失败批次保持 `ready` 等额度恢复，其它账号的普通消息与续接照常推进。回归 `TestDispatchContinuesAfterContinuationQuotaRejection`：A 账号任务存储耗尽时，B 账号的普通消息与续接在同一轮推进，A 的配额错误原样回传、批次仍 `ready`。
+2. **P2 合法长度 instruction 曾生成必然无法准入的续接。** 续接提示词由后端拼装，现在与运行提示词共用 `cloudAgentPromptMaxRunes`（16000 字，单点常量）：`finish_run` 在拿到批次后按 `generationContinuationInstructionLimit(实际任务数)` 校验 instruction（超出返回 `too_long` 字段错误，附带本批次上限，source run 不结束）；拼装侧保留任务身份行，结果明细超预算时压缩摘要并追加省略计数，保证拼装结果一定通过新 run 的同一校验。回归 `TestGenerationContinuationInstructionSharesPromptBudget`（16000 字被拒、预算内通过且提示词 ≤16000、可通过 `validateCloudAgentPrompt`）、`TestGenerationContinuationPromptStaysWithinLimitWithManyTasks`（48 个任务 + 600 字摘要/错误）。
+3. **P2 内部消息曾未进入累计存储计量。** `UserStorageUsage` 的 `task_bytes` 现在累计 `agent_queued_messages`（prompt / request_json / last_error）与 `agent_generation_batches`（instruction / request_json / results_json）；未迁移该表或只读 fixture 缺表时按表存在性跳过，累计计量不会整体失败。准入沿用「任务正文减去队列正文」的增量公式，同一份文本不重复计费。回归 `TestUserStorageUsageCountsQueuedMessagesAndBatches`（累计、跨账号隔离、清理后扣减）与 P1 回归里的准入增量核对。
+4. **P2 source 失败 / 取消 / 停止曾未关闭 collecting 批次。** 取消与停止在 `CancelCloudAgent` 内联关闭批次；worker 致命失败在 `PiFailRun` 内联关闭；收尾次数耗尽的终止在 finish_run 事务内关闭（`detachTerminatedGenerationBatch`）；其余终态与崩溃窗口由 `QueueReadyGenerationContinuations` 开头的 `DetachOrphanAgentGenerationBatches` 收口，重启后第一轮派发即修复。回归 `TestGenerationBatchDetachedWhenSourceCancelled`（生成任务行与账单保留）与 `TestGenerationBatchDetachedAfterSourceFailureAndRestart`（失败 + 重启 + 重复扫描幂等）。
 
 ## 行为覆盖（对应任务书 Task 7）
 
@@ -64,11 +81,16 @@
 - 内部续接消息不出现在用户队列列表/计数里，不能被普通编辑、提升或取消；确定性准入失败保留批次与真实错误，只停止该内部项自动派发，不暂停用户会话队列，不自动重试失败的付费生成。
 - 旧 `WaitKind=generations` 检查点在 Pi 快照构建前修复：清等待、写一条兼容回执、推进调用索引，不重放已提交的收费生成；审批、子代理与预演等待不受影响。
 - `wait_generations` 已从工具 Schema、类别、定义、执行器、提示词与制品中移除。
+- 派发隔离：一个账号的续接入队失败（配额、存储、冲突）只让它自己的批次保持 `ready` 等重试，不阻断同周期其它账号的普通消息和续接；失败原因如实回传。
+- 长度预算：续接提示词与运行提示词共用 16000 字上限，instruction 按实际任务数扣减后校验，拼装结果始终能通过新 run 准入。
+- 累计存储：未消费的内部续接消息与生成批次正文计入账号任务存储；准入按「任务正文 − 队列正文」计增量，跨账号隔离，清理后扣减。
+- 终态收口：source run 失败、取消、停止或崩溃后仍在 `collecting` 的批次会转为 `detached`（取消/worker 致命失败内联，其余由派发前孤儿扫描在重启后第一轮完成），生成任务、结果与账务记录保留。
+- 保留审批、报价、预算、资源、媒体版本与画布回写合同；失败付费生成不自动重试。
 
 ## 环境、隔离与限制
 
 - 本机 Docker Server；复用 `postgres:17-alpine`（PostgreSQL 17.12，镜像摘要 `sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7`）。独立容器 `task7-continuation-pg-20261126` 仅绑定 `127.0.0.1:4908`，独享匿名卷，无业务挂载、无 Compose 项目；未 `prune`、未 `--no-cache`、未清理他人容器或镜像。Go/Node/Bun 在宿主机运行，本轮未构建 Docker 镜像。
-- `TEST_AGENT_POSTGRES_DSN` 指向该容器内的 `canvas_event_integration`；每个 HTTP 用例创建并删除独立 schema，不使用业务库 DSN。健康检查不计为验收。
+- `TEST_AGENT_POSTGRES_DSN` 与 `CANVAS_TEST_POSTGRES_DSN` 都指向该容器内的 `canvas_event_integration`；每个 HTTP 用例创建并删除独立 schema，不使用业务库 DSN。只设置其中一个会让另一组 PostgreSQL 用例 skip，这类结果不计为完整覆盖。
 - Windows 上多包 `go test` 并行、SQLite 与真实跨进程用例互相拖慢；300 秒整包时限对全量套件不足，这是环境限制，未通过扩大产品超时或降低安全合同绕过。
 - 真实模型效果、生产计费、浏览器交互、真实素材交付，以及「在每个状态杀死整个 Go 后端进程」未作为本轮真实证据；进程级恢复用新 Service/新连接读取同一数据库文件与真实 Worker 接管覆盖。
 - 迁移编号：本功能取 Schema **113**；短剧工作台移植取 **112**。迁移文件按注册顺序排列为 `migrations_zzzzz_shortplay.go`(112) → `migrations_zzzzzz_agent_generation.go`(113)，合并后 `CurrentSchemaVersion` 取 113；两 PR 表无交集，预期冲突仅在 `VERSION`/`CHANGELOG.md`。

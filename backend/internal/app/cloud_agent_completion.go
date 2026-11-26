@@ -283,6 +283,12 @@ func cloudAgentFinishRun(tc *cloudAgentToolCheckpoint, current *model.CloudAgent
 		if batch.Status == model.AgentGenerationBatchDetached {
 			return nil, cloudAgentFieldError("continuation", "detached", "本轮生成批次已结束且未登记续接")
 		}
+		// 续接提示词由后端拼装，必须与运行提示词共用同一长度预算；否则指令合法
+		// 但拼装后必然 400，source run 已 completed，内部项只能被停派。
+		if limit := generationContinuationInstructionLimit(batch.ExpectedTasks); runeCount(continuation.Instruction) > limit {
+			return nil, cloudAgentFieldError("continuation.instruction", "too_long",
+				fmt.Sprintf("continuation.instruction 过长：本批次 %d 个任务最多 %d 字（续接提示词与运行提示词共用 %d 字上限）", batch.ExpectedTasks, limit, cloudAgentPromptMaxRunes))
+		}
 		tc.finishBatch = batch
 	}
 	tc.finishContinuation = continuation

@@ -585,7 +585,11 @@ func (s *Service) settleCloudAgentFinishRun(tc *cloudAgentToolCheckpoint, curren
 		block := cloudAgentEvaluateCompletion(state)
 		block.Attempt = state.CompletionNudgeAttempt
 		cloudAgentRecordToolResult(current, state, call, result, nil)
-		return true, cloudAgentFailBlockedCompletion(current, state, run.ID, block)
+		if err := cloudAgentFailBlockedCompletion(current, state, run.ID, block); err != nil {
+			return true, err
+		}
+		// 终止的 source run 不会再登记续接：同一事务里关闭仍在 collecting 的批次。
+		return true, s.detachTerminatedGenerationBatch(tc.repo, run.UserID, run.ID)
 	}
 	return false, nil
 }

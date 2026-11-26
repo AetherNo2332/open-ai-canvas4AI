@@ -47,8 +47,12 @@ func (s *Service) DispatchAgentMessages(limit int) (int, error) {
 	if limit < 1 || limit > 100 {
 		limit = 64
 	}
+	// 续接入队是尽力而为：某个账号的批次因配额/存储被拒时，它的批次保持 ready
+	// 等下一周期，但普通消息和其它账号的续接必须继续派发。真实错误仍然返回给
+	// 调用方记录。
+	var continuationErr error
 	if _, err := s.QueueReadyGenerationContinuations(limit); err != nil {
-		return 0, err
+		continuationErr = err
 	}
 	queues, err := s.repo.PendingAgentMessageConversations(limit)
 	if err != nil {
@@ -64,7 +68,7 @@ func (s *Service) DispatchAgentMessages(limit int) (int, error) {
 			dispatched++
 		}
 	}
-	return dispatched, nil
+	return dispatched, continuationErr
 }
 
 func (s *Service) dispatchAgentConversation(userID, conversationID string) (bool, error) {

@@ -272,6 +272,10 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] 让 Agent 生成一张图后说「看看效果」：Agent 先说明条件并调用 `finish_run.continuation`；生成终态后新 run 查看图片，失败项只报告、不自动重生成。
 - [ ] 生成期间先发用户消息，并在 armed、ready、queued 阶段重启；用户消息先执行，重放结算不重复内部消息、run 或费用。自动化证据与环境限制见仓库 `docs/plans/2026-11-26-agent-generation-continuation-acceptance.md`。
 - 已修复：主机名不是 ASCII（例如中文计算机名）时，Worker 用它派生租约槽位被 `^[A-Za-z0-9._-]+$` 拒绝而启动失败，后端事件流因此一直不建立；现在先归一化 Worker id 再截取槽位。`TestAgentWakePostgresWorkerClaimsDuringFallback` 与前端 `bridge-wire-contract` 用例覆盖，真实非 ASCII 主机部署仍待验。
+- 已修复：一个账号的续接入队被配额或存储拒绝时不再阻断周期派发；该批次保持 ready 等额度恢复，其它账号的普通消息与续接照常推进，真实错误仍回传。回归 `TestDispatchContinuesAfterContinuationQuotaRejection`。
+- 已修复：`finish_run.continuation` 的指令按本批次实际任务数占用提示词预算，超限直接返回字段错误（source run 不结束）；拼装后的续接提示词一定不超过运行提示词的 16000 字上限。回归 `TestGenerationContinuationInstructionSharesPromptBudget`、`TestGenerationContinuationPromptStaysWithinLimitWithManyTasks`。
+- 已修复：未消费的内部续接消息与生成批次正文计入账号累计任务存储，准入时按「任务正文减去队列正文」计算增量，消费清理后随行扣减；跨账号隔离。回归 `TestUserStorageUsageCountsQueuedMessagesAndBatches`。
+- 已修复：source run 失败、取消、停止或进程崩溃后仍停留在 collecting 的批次会关闭为 detached（取消/worker 致命失败内联，其余由派发前的孤儿扫描在重启后第一轮收口），保留生成结果与账务记录。回归 `TestGenerationBatchDetachedWhenSourceCancelled`、`TestGenerationBatchDetachedAfterSourceFailureAndRestart`。
 - [ ] 生成进行中取消本轮：视频照常生成完成并写入画布节点。
 - [ ] 用一个只接受公网 HTTPS 素材的视频渠道让上游拒收：分镜行不再提示「该分镜行已有活动任务」，可以换渠道重新生成。
 - [ ] 明暗主题、0px 与非零圆角皮肤下检查思考过程、操作记录、系统提示与生成结果行；开启减少动态效果后活动行无呼吸动画。

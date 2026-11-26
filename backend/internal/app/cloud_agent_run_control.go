@@ -143,6 +143,11 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 			return err
 		}
 	}
+	// 取消/停止的 source run 不会再登记续接，仍在 collecting 的批次必须关闭，
+	// 否则它会永远占着一个 ready 缺口却等不到续接指令。
+	if err := s.repo.DetachAgentGenerationBatchBySourceRun(userID, id); err != nil {
+		log.Printf("[cloud-agent] detach generation batch for cancelled run %s: %v", id, err)
+	}
 	latest, err := s.repo.CloudAgent(userID, id)
 	if err != nil {
 		return err

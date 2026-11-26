@@ -140,6 +140,32 @@ func (r *Repository) DetachAgentGenerationBatch(userID, batchID string) error {
 	return result.Error
 }
 
+// DetachAgentGenerationBatchBySourceRun closes a still-collecting batch when its
+// source run reached a terminal state without registering a continuation. It is
+// idempotent and never touches armed/ready/queued/consumed batches, so existing
+// results and billing rows stay untouched.
+func (r *Repository) DetachAgentGenerationBatchBySourceRun(userID, sourceRunID string) error {
+	if sourceRunID == "" {
+		return nil
+	}
+	result := r.db.Model(&model.AgentGenerationBatch{}).
+		Where("user_id = ? AND source_run_id = ? AND status = ?", userID, sourceRunID, model.AgentGenerationBatchCollecting).
+		Updates(map[string]any{"status": model.AgentGenerationBatchDetached, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()})
+	return result.Error
+}
+
+// DetachOrphanAgentGenerationBatches repairs batches whose source run is already
+// terminal but still collecting. It covers crash windows and the failure,
+// cancel and stop paths that finish a run outside finish_run.
+func (r *Repository) DetachOrphanAgentGenerationBatches() (int64, error) {
+	terminal := []string{"completed", "failed", "cancelled", "rejected"}
+	result := r.db.Model(&model.AgentGenerationBatch{}).
+		Where("status = ? AND source_run_id IN (?)", model.AgentGenerationBatchCollecting,
+			r.db.Model(&model.CloudAgentExecution{}).Select("id").Where("status IN ?", terminal)).
+		Updates(map[string]any{"status": model.AgentGenerationBatchDetached, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()})
+	return result.RowsAffected, result.Error
+}
+
 func (r *Repository) SettleAgentGenerationBatchTask(userID, batchID, taskID string, outcome any) (*model.AgentGenerationBatch, bool, error) {
 	batch, err := r.AgentGenerationBatch(userID, batchID)
 	if err != nil {

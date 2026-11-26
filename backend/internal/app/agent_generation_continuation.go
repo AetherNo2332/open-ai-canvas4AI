@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
@@ -17,6 +18,11 @@ import (
 // dispatch, admission and lease machinery; it does not create a second run
 // admission path.
 func (s *Service) QueueReadyGenerationContinuations(limit int) (int, error) {
+	// 失败、取消、停止路径在 source run 终态时可能留下仍在 collecting 的批次；
+	// 这里统一收口，重启后第一轮派发就会修复。
+	if _, err := s.repo.DetachOrphanAgentGenerationBatches(); err != nil {
+		return 0, err
+	}
 	batches, err := s.repo.ReadyAgentGenerationBatches(limit)
 	if err != nil || len(batches) == 0 {
 		return 0, err
@@ -26,13 +32,19 @@ func (s *Service) QueueReadyGenerationContinuations(limit int) (int, error) {
 		return 0, err
 	}
 	queued := 0
+	var firstErr error
 	for _, batch := range batches {
 		ok, err := s.queueGenerationContinuation(batch, policy)
 		if errors.Is(err, repository.ErrCreationConflict) {
 			continue
 		}
 		if err != nil {
-			return queued, err
+			// 一个批次的配额/存储拒绝必须只影响它自己：保留 ready 让下一周期
+			// 重试，同时不让其它账号的续接与普通消息被跳过。
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if ok {
 			queued++
@@ -41,7 +53,7 @@ func (s *Service) QueueReadyGenerationContinuations(limit int) (int, error) {
 	if queued > 0 {
 		s.wakeAgentMessages()
 	}
-	return queued, nil
+	return queued, firstErr
 }
 
 func (s *Service) queueGenerationContinuation(batch model.AgentGenerationBatch, policy RuntimePolicySetting) (bool, error) {
@@ -124,14 +136,55 @@ func (s *Service) generationContinuationRequest(batch model.AgentGenerationBatch
 	return state.Request, nil
 }
 
+const (
+	// 续接提示词的固定开销和每个任务的最小行宽；与运行提示词的字符上限共用
+	// 同一预算，避免内部续接在 source run 已完成后才被 400 拒绝。
+	generationContinuationHeaderRunes         = 160
+	generationContinuationFooterRunes         = 90
+	generationContinuationTaskLineRunes       = 96
+	generationContinuationTaskDetailRunes     = 240
+	generationContinuationMinInstructionRunes = 200
+)
+
+// generationContinuationInstructionLimit 返回本批次允许登记的指令字符数。
+// 批次大小来自实际登记行，指令加上头部、结尾和任务行后一定装得进运行提示词
+// 的同一上限，不需要放宽任何安全限制。
+func generationContinuationInstructionLimit(expectedTasks int) int {
+	if expectedTasks < 0 {
+		expectedTasks = 0
+	}
+	limit := cloudAgentPromptMaxRunes - generationContinuationHeaderRunes - generationContinuationFooterRunes - expectedTasks*generationContinuationTaskLineRunes
+	if limit < generationContinuationMinInstructionRunes {
+		return generationContinuationMinInstructionRunes
+	}
+	return limit
+}
+
 func cloudAgentGenerationContinuationPrompt(batch model.AgentGenerationBatch, tasks []model.AgentGenerationBatchTask) string {
 	results := map[string]json.RawMessage{}
 	if batch.ResultsJSON != "" {
 		_ = json.Unmarshal([]byte(batch.ResultsJSON), &results)
 	}
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].TaskID < tasks[j].TaskID })
-	var b strings.Builder
-	fmt.Fprintf(&b, "[系统生成结果] 这是你在上一轮提交的生成任务结果，不是用户新消息。\n批次：%s；任务数：%d；已终态：%d。\n", batch.ID, batch.ExpectedTasks, batch.TerminalTasks)
+	header := fmt.Sprintf("[系统生成结果] 这是你在上一轮提交的生成任务结果，不是用户新消息。\n批次：%s；任务数：%d；已终态：%d。\n", batch.ID, batch.ExpectedTasks, batch.TerminalTasks)
+	footer := "请按以下指令继续：\n" + batch.Instruction + "\n失败、取消或缺失的任务只报告原因，不要自动重新提交付费生成。"
+	// 指令在 finish_run 已按同一预算校验；这里再兜一次底，防止历史批次或人工
+	// 改库把永远无法准入的提示词写进队列。
+	if over := runeCount(header) + runeCount(footer) - cloudAgentPromptMaxRunes; over > 0 {
+		footer = truncateRunes(footer, max(0, runeCount(footer)-over))
+	}
+	budget := cloudAgentPromptMaxRunes - runeCount(header) - runeCount(footer)
+	lines := continuationTaskLines(tasks, results, generationContinuationTaskDetailRunes)
+	if totalRunes(lines) > budget {
+		// 结果明细超预算时退化成身份行：任务、状态、ID 仍完整，摘要改为按 taskId 查。
+		lines = continuationTaskLines(tasks, results, 0)
+	}
+	lines = trimContinuationTaskLines(lines, budget)
+	return header + strings.Join(lines, "") + footer
+}
+
+func continuationTaskLines(tasks []model.AgentGenerationBatchTask, results map[string]json.RawMessage, detailRunes int) []string {
+	lines := make([]string, 0, len(tasks))
 	for index, task := range tasks {
 		var outcome struct {
 			Status  string `json:"status"`
@@ -143,17 +196,62 @@ func cloudAgentGenerationContinuationPrompt(batch model.AgentGenerationBatch, ta
 		if label == "" {
 			label = task.Mode
 		}
+		var b strings.Builder
 		fmt.Fprintf(&b, "%d. %s（taskId %s，nodeId %s，mode %s）：%s", index+1, label, task.TaskID, task.NodeID, task.Mode, firstNonEmpty(outcome.Status, "terminal"))
-		if outcome.Summary != "" {
-			b.WriteString("；" + outcome.Summary)
-		}
-		if outcome.Error != "" {
-			b.WriteString("；错误：" + outcome.Error)
+		if detailRunes > 0 {
+			if outcome.Summary != "" {
+				b.WriteString("；" + truncateRunes(outcome.Summary, detailRunes))
+			}
+			if outcome.Error != "" {
+				b.WriteString("；错误：" + truncateRunes(outcome.Error, detailRunes))
+			}
 		}
 		b.WriteString("\n")
+		lines = append(lines, b.String())
 	}
-	b.WriteString("请按以下指令继续：\n")
-	b.WriteString(batch.Instruction)
-	b.WriteString("\n失败、取消或缺失的任务只报告原因，不要自动重新提交付费生成。")
-	return b.String()
+	return lines
+}
+
+// trimContinuationTaskLines 只保留装进预算的任务行，剩余任务用一行计数代替，
+// 保证拼装出的提示词一定不超过运行提示词上限。
+func trimContinuationTaskLines(lines []string, budget int) []string {
+	kept := make([]string, 0, len(lines))
+	used := 0
+	for index, line := range lines {
+		width := runeCount(line)
+		remaining := len(lines) - index
+		reserve := 0
+		if remaining > 1 {
+			reserve = runeCount(fmt.Sprintf("…其余 %d 个任务已省略，可按 taskId 查询。\n", remaining))
+		}
+		if used+width+reserve > budget {
+			if note := fmt.Sprintf("…其余 %d 个任务已省略，可按 taskId 查询。\n", remaining); used+runeCount(note) <= budget {
+				kept = append(kept, note)
+			}
+			return kept
+		}
+		kept = append(kept, line)
+		used += width
+	}
+	return kept
+}
+
+// detachTerminatedGenerationBatch closes a still-collecting batch for a run that
+// terminated without registering a continuation. It is idempotent and keeps the
+// batch rows, task results and billing untouched.
+func (s *Service) detachTerminatedGenerationBatch(repo *repository.Repository, userID, runID string) error {
+	if repo == nil {
+		return nil
+	}
+	return repo.DetachAgentGenerationBatchBySourceRun(userID, runID)
+}
+
+func runeCount(value string) int { return utf8.RuneCountInString(value) }
+
+func totalRunes(values []string) int {
+	total := 0
+	for _, value := range values {
+		total += runeCount(value)
+	}
+	return total
 }
