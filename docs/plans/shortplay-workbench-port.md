@@ -29,7 +29,7 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 | W02 数据与权限 | W01 | 移入作品、集、资产、任务、设置和画布绑定的最终模型。登记目标架构包角色，按目标当前数据库序列新增迁移。项目内整数资产 ID 使用项目复合身份 | SQLite、PostgreSQL 空库及含旧 drama 的库升级成功；两个项目可各有资产 1，跨项目读写被拒；并发建档失败可原子回滚 | 通过。迁移 v112 + 六表模型 + `internal/shortplay` 纯规则。v112 注册文件改名为 `migrations_zzzzz_shortplay.go`（排在 v111 之后），修掉 init 追加顺序导致的 `86 after 112` 计划失败；`TestCurrentSchemaVersionMatchesMigrationPlan` PASS。新增 `TestMigrateShortplayWorkbenchUpgradesV111DramaDatabase`：按当前计划真实建到 v111、只跑 v112，旧 drama 项目/制作台/画布行保留、六表可写、重跑幂等。`go test -count=1 ./internal/database` PASS；`./internal/repository -run Shortplay` 4 PASS（含并发同名单赢家，CANVAS_TEST_POSTGRES_DSN 指向一次性隔离容器 `shortplay-w02-verify-20261126`）；`TestMigrateShortplayWorkbenchPostgres` 在同一容器自建 schema 后 DROP，PASS；`./internal/shortplay/...`、`./internal/architecture` PASS。已提交 `0857e41`。 |
 | W03 分集工作台 | W02 | 完成菜单与路由、列表、新建、详情、设置，接入分集原文和设置校验。复用目标 `http`、i18n、正式布局和错误处理 | 从导航录入两集原文，列表、深链接和刷新后读到同一作品；设置写失败可重试，权限与项目类型校验通过。此片交付首个可用版本 | 通过。提交 `0857e41`，PR [#154](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/154)。侧栏「短剧工作台」独立入口 `/shortplays`、`/shortplays/new`、`/shortplays/:projectId`；一次建档写作品容器（`type=shortplay`）+ 域配置 + 全部分集；列表/详情/设置整份保存。功能开关改为独立的 `shortplayEnabled`：后端 `/shortplays` 路由组、前端路由、侧栏和「功能开放」面板同口径，与 `shortDramaEnabled` 互不影响（`TestShortplayFeatureGateIsIndependentOfDrama` 覆盖四种组合）。正式页面走通登录→新建两集《雨夜回眸 W03》→保存设置→刷新重开，分集/原文/画布地址/设置保持。门禁环境修复见文末「W03 实测记录」。 |
 | W04 资产与提取 | W03 | 移植资产读写、提取提示词与结构校验、游标、去重键、租约及调度循环。接入已有 worker 和模型调用。资产库呈现角色、场景、道具及分集绑定 | 连点提取只排一项；中断恢复后同一资产绑定两集，已锁字段按供体合同保留；收件箱能定位失败项 | 已完成（真实模型渠道未配置）。后端：资产读写路由、提取提示词与结构校验、`PlanExtractApply` 落库计划、job 领取条件更新与去重键、游标续跑、失败写 `last_error`；`ConfigureShortplayExtractExecutorFromEnv` 接 OpenAI 兼容 `chat/completions`，`startShortplayExtractWorker` 常驻每 5s 领取至多 4 条。前端：详情页「资产与提取」资产库、手动增改、提取按钮、收件箱（状态/尝试次数/`last_error`），job 终态自动重读资产。PostgreSQL 隔离 schema 专项覆盖领取单赢家与去重键释放。 |
-| W05 造型和媒体 | W04 | 复用 `derived.go` 的基础资产与衍生造型解析；接模型选择、参考图、音色生成、批量补缺、失败重试和回调 | 两套造型有独立参考图，基础角色改名和音色按合同继承；双 worker、重复回调、延迟回调与配额失败均有可复验结果和费用记录 | 待施工 |
+| W05 造型和媒体 | W04 | 复用 `derived.go` 的基础资产与衍生造型解析；接模型选择、参考图、音色生成、批量补缺、失败重试和回调 | 两套造型有独立参考图，基础角色改名和音色按合同继承；双 worker、重复回调、延迟回调与配额失败均有可复验结果和费用记录 | 部分完成。已落地：衍生造型写入/继承/同角色去重与改名传导；参考图出图 job（入队筛选、去重、锁定跳过、父图未就绪等待、状态机 CAS 回写、迟到回调不覆盖、失败留历史且不换当前图）、页面「生成缺图/出图」与缩略图、`POST /shortplays/:id/assets/images` 与 OpenAPI。未完成：音色生成、批量补缺与失败重试的完整页面、真实图片渠道与费用流水、双 worker/延迟回调的 PostgreSQL 复验。 |
 | W06 分集精修与收录 | W03、W04 | 接入每集画布创建、反查、资产投送、单项生图与收录，复用 submap 和现有画布写入服务 | 同一集同时打开两次得到同一画布；两集共享资源身份；画布改动保存重开后可定位资产；收录时校验资源和项目归属 | 待施工 |
 | W07 Agent | W05、W06 | 逐个迁入供体资产查询、详情、创建、更新、放置卡片及生图工具的声明、策略、提示词和执行绑定；通过 4AI Worker 调回 Go 并重新生成 harness | 在分集画布中执行查询、修改和受审批生成；无作品绑定、跨租户、拒绝审批、批准重放均有测试；另一客户端能看见最终状态 | 待施工 |
 | W08 正式页面全流程 | W05、W06、W07 | 核对全部视图及状态，串联任务收件箱、设置、资产卡、画布返回、刷新恢复与直接进入链接，同时回归既有 drama 工作流 | 浏览器从建档走到第二集复用造型、生成媒体、精修、收录、重开。在许可的真实渠道分别记录图像和音频回执；确定性渠道记录并发、失败和重试 | 待施工 |
@@ -113,3 +113,22 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 **本机环境说明**　`bun run typecheck` 在本机失败于 `tsconfig.tsbuildinfo` 写入被拒（TypeScript 7 的原生 `tsc.exe` 在当前 Windows 环境写任何 buildinfo 路径都报 `Access is denied`，而 Node 脚本写同一路径成功）。改用 `--incremental false` 复跑同一类型检查，退出码 0；增量缓存只影响速度，不影响诊断。CI 为 Linux，不受影响。
 
 **未覆盖项**　没有配置真实模型渠道：执行器用本机 OpenAI 兼容桩验证了 HTTP 请求形状、落库、收件箱与失败路径，不能宣称真实模型提取通过。真实参考图/音色、集画布、收录与 Agent 工具仍属 W05–W07。
+
+## W05 实测记录（增量，2026-11-26）
+
+**衍生造型（写入与读模型）**　`POST /shortplays/:id/assets` 新增 `derivedFrom + variantName` 分支：父资产必须是同一作品下的基础角色；分类、别名、音色继承父资产，单独指定会被拒绝；同角色形象名归一化去重；派生行显示名 `父名-造型名` 不落库，父资产改名随读模型传导。更新时不能改挂父资产，锁定/设定/外观可改。读资产列表统一走 `resolveShortplayAssetRows`，衍生行按父资产合成显示名与继承值。
+
+**参考图出图 job**　`POST /shortplays/:id/assets/images` 按 `assetIds / kind / onlyMissing / onlyFailed` 筛选入队，锁定资产跳过，同资产已有在途 job 复用（`reused`）。调度器每 tick 领取 `asset_image`：未提交时按设置/目录选图片模型并提交 `canvas_image` 任务（衍生造型以父资产当前图为参考图，父图在换或未就绪则本轮等待），已提交时读任务结果并回写。回写是三条不变量：状态机 CAS 只在 `queued/running` 收口（迟到回调不覆盖新图）、新图落 `shortplay_asset_images` 再推进 `current_image_id` 且 `image_version +1`、失败只落 failed 历史行且保留上一张可用图。画幅不匹配（模型出方图）判失败并说明，不把错图的产物设为当前图。
+
+**页面验收（浏览器）**　本机后端 `127.0.0.1:18081` + 前端 `127.0.0.1:13100`，账号 `shortplay-w04`：《雨夜回眸 W04》资产库出现「生成缺图」与每条资产的「出图」；锁定角色沈青禾的「出图」呈禁用。手动新建衍生造型（父资产 1 + 造型名「战袍」）后列表出现 `#5 沈青禾-战袍`，别名继承「青禾、沈姑娘」，设定继承父资产。给顾行舟点「出图」→ 入队回执「新排队 1，复用 0，跳过 4」；job 进入 `failed`，收件箱显示 `没有可用的图片模型，无法出参考图`——本机未配置任何图片模型渠道，这是真实缺口，不是确定性用例通过。
+
+**验证命令与结果**
+
+| 命令 | 结果 |
+|---|---|
+| `go test -count=1 -run 'TestCreateShortplayDerivedAsset\|TestUpdateShortplayDerivedAsset\|TestQueueShortplayAssetImages\|TestRunShortplayAssetImageJob' ./internal/app` | PASS |
+| `go test -count=1 -run 'TestShortplay\|TestQueueShortplay\|TestRunShortplay\|TestCreateShortplayDerivedAsset\|TestUpdateShortplayDerivedAsset\|TestConfigureShortplayExtractExecutor' ./internal/app ./internal/repository ./internal/handler` | PASS（19.6s / 1.0s / 8.4s） |
+| `go build ./internal/... ./cmd/server`；`go test ./internal/architecture` | 退出码 0；PASS |
+| `node node_modules/typescript/bin/tsc --noEmit --incremental false`（web）；`eslint`；`prettier --check` | 退出码 0 |
+
+**未覆盖项**　真实图片模型渠道、音色生成、批量补缺的完整页面、费用流水与双 worker/延迟回调的 PostgreSQL 复验仍未完成；冻结「同一集两套造型各自独立参考图」要等真实渠道出图后才能宣称。
