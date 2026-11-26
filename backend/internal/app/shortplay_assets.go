@@ -25,7 +25,7 @@ func (s *Service) ShortplayAssets(userID, idOrProject string) ([]shortplay.Asset
 		return nil, err
 	}
 	items := make([]shortplay.AssetSummary, 0, len(rows))
-	for _, row := range rows {
+	for _, row := range resolveShortplayAssetRows(rows) {
 		items = append(items, shortplay.BuildAssetSummary(row))
 	}
 	return items, nil
@@ -41,6 +41,9 @@ func (s *Service) UpsertShortplayAsset(userID, idOrProject string, req shortplay
 	if req.AssetID > 0 {
 		return s.updateShortplayAsset(owner.ID, req)
 	}
+	if req.DerivedFrom != 0 {
+		return s.createShortplayDerivedAsset(owner.ID, req)
+	}
 	return s.createShortplayAsset(owner.ID, req)
 }
 
@@ -51,6 +54,9 @@ func (s *Service) updateShortplayAsset(shortplayID string, req shortplay.UpsertA
 	}
 	if err != nil {
 		return shortplay.AssetSummary{}, err
+	}
+	if existing.DerivedFrom != 0 {
+		return s.updateShortplayDerivedAsset(shortplayID, existing, req)
 	}
 	row, err := shortplay.ApplyBaseAssetWrite(*existing, req)
 	if err != nil {

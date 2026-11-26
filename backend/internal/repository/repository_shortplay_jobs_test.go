@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -14,20 +15,27 @@ import (
 
 func newShortplayJobsRepo(t *testing.T) *Repository {
 	t.Helper()
-	// 与生产 SQLite 同配置（database.Open）：并发领取靠 busy_timeout 串行化，
-	// 否则 Windows 上并发写会立刻 database is locked，测出的是 DSN 而非仓储行为。
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared&_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on"),
+	// 与生产 SQLite 同配置（database.Open）：文件库 + busy_timeout + WAL。
+	// 共享缓存内存库对并发写会返回 SQLITE_LOCKED，busy_timeout 不重试这种锁，
+	// 测到的会是测试 DSN 的限制而不是仓储行为。
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "shortplay-jobs.db")+"?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on"),
 		&gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sqlDB, err := db.DB(); err == nil {
-		sqlDB.SetMaxOpenConns(4)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
 	}
+	sqlDB.SetMaxOpenConns(4)
 	if err := db.AutoMigrate(&model.ShortplayJob{}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Exec("DROP TABLE shortplay_jobs").Error })
+	t.Cleanup(func() {
+		_ = db.Exec("DROP TABLE shortplay_jobs").Error
+		// TempDir 在 Windows 上删不掉仍被连接占用的文件：先关连接再让 testing 清理。
+		_ = sqlDB.Close()
+	})
 	return New(db)
 }
 

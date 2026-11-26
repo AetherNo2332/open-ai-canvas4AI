@@ -146,6 +146,16 @@ func (r *Repository) ShortplayAssetByID(shortplayID string, id int) (*model.Shor
 	return &rows[0], nil
 }
 
+// ShortplayAssetsByParent 返回某基础角色下的全部衍生形象，按序号升序；用于同父形象重名检查。
+func (r *Repository) ShortplayAssetsByParent(shortplayID string, parentID int) ([]model.ShortplayAsset, error) {
+	var rows []model.ShortplayAsset
+	if err := r.db.Where("shortplay_id = ? AND derived_from = ?", shortplayID, parentID).
+		Order("id asc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // ErrShortplayAssetNotFound 表示资产不在该作品内（含跨项目访问）。
 var ErrShortplayAssetNotFound = errors.New("shortplay asset not found")
 
