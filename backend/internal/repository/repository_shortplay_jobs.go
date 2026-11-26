@@ -47,6 +47,21 @@ func (r *Repository) CreateShortplayJob(row *model.ShortplayJob) error {
 	return r.db.Create(row).Error
 }
 
+// RunningShortplayJob 取一条「已提交任务、等待结果」的在途 job（按更新时间升序轮转）；
+// 没有则 (nil,nil)。任务型 job 提交后状态是 running，不能只靠 queued 领取来推进。
+func (r *Repository) RunningShortplayJob(kind string) (*model.ShortplayJob, error) {
+	var row model.ShortplayJob
+	err := r.db.Where("kind = ? AND status = ? AND task_id <> ''", kind, shortplay.JobRunning).
+		Order("updated_at asc").First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
 // ClaimShortplayJob 领取一条指定 kind 的最早 queued job：先选后条件更新，
 // 只有把 status 从 queued 改成 running 成功的那一方拿到它。没有可领取的返回 (nil,nil)。
 func (r *Repository) ClaimShortplayJob(kind string) (*model.ShortplayJob, error) {

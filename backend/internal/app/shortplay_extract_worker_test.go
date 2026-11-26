@@ -2,7 +2,8 @@ package app
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -40,7 +41,7 @@ func seedShortplay(t *testing.T, db *gorm.DB, owner, projectID, shortplayID stri
 		t.Fatal(err)
 	}
 	row := &model.Shortplay{ID: shortplayID, ProjectID: projectID, UserID: owner,
-		SettingsJSON: `{"aspectRatio":"9:16","language":"中文","stylePrompt":"霓虹雨夜"}`}
+		SettingsJSON: `{"aspectRatio":"9:16","language":"中文","stylePrompt":"霓虹雨夜","models":{"text":{"logicalModelId":"lm-text"}}}`}
 	if err := db.Create(row).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +59,35 @@ func seedShortplay(t *testing.T, db *gorm.DB, owner, projectID, shortplayID stri
 func extractReply() string {
 	return `{"characters":[{"name":"沈青禾","aliases":["青禾"],"description":"二十岁女性","appearance":"齐肩黑发","voice":"青年女声"}],` +
 		`"props":[{"name":"油纸伞","description":"定情信物","appearance":"深青油纸"}],"scenes":[]}`
+}
+
+// useShortplayTextTask 注入任务提交桩：记录提交出去的请求，并把一条 running 任务写库，
+// 与生产路径的 CreateTask → 任务行 → 读结果同形（不绕过任务合同）。
+func useShortplayTextTask(t *testing.T, svc *Service, db *gorm.DB, taskID string) {
+	t.Helper()
+	svc.SetShortplayTaskHook(func(userID string, req CreateTaskRequest) (*model.Task, error) {
+		input, _ := json.Marshal(req.Input)
+		task := &model.Task{
+			ID: taskID, UserID: userID, ProjectID: req.ProjectID, Type: req.Type,
+			Operation: req.Operation, Prompt: req.Prompt, InputJSON: string(input),
+			Status: model.TaskStatusRunning,
+		}
+		if err := db.Create(task).Error; err != nil {
+			t.Fatal(err)
+		}
+		return task, nil
+	})
+}
+
+func completeShortplayTextTask(t *testing.T, db *gorm.DB, taskID, status, result, failure string) {
+	t.Helper()
+	if status == string(model.TaskStatusSucceeded) && result == "" {
+		result = `{"text":` + strconv.Quote(extractReply()) + `}`
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", taskID).
+		Updates(map[string]any{"status": model.TaskStatus(status), "result_json": result, "error": failure}).Error; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestQueueShortplayExtractDeduplicatesActiveJob(t *testing.T) {
@@ -90,17 +120,42 @@ func TestRunShortplayExtractBindsAssetsToBothEpisodes(t *testing.T) {
 	if _, err := svc.QueueShortplayExtract("owner", "sp-run"); err != nil {
 		t.Fatal(err)
 	}
-	jobID, err := svc.RunShortplayExtractOnce(context.Background(), func(_ context.Context, systemPrompt, userPrompt string) (string, error) {
-		if !strings.Contains(userPrompt, "## 第 1 集") || !strings.Contains(userPrompt, "沈青禾撑伞") {
-			return "", errors.New("prompt 缺少批次正文")
-		}
-		if !strings.Contains(systemPrompt, "资产提取") {
-			return "", errors.New("system prompt 不对")
-		}
-		return extractReply(), nil
-	})
+	useShortplayTextTask(t, svc, db, "task-run")
+	jobID, err := svc.RunShortplayExtractOnce(context.Background())
 	if err != nil || jobID == "" {
-		t.Fatalf("run = %q, %v", jobID, err)
+		t.Fatalf("submit = %q, %v", jobID, err)
+	}
+	var submitted model.Task
+	if err := db.First(&submitted, "id = ?", "task-run").Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(submitted.Prompt, "## 第 1 集") || !strings.Contains(submitted.Prompt, "沈青禾撑伞") {
+		t.Fatalf("prompt 缺少批次正文：%s", submitted.Prompt)
+	}
+	var input struct {
+		Config struct {
+			SystemPrompt string `json:"systemPrompt"`
+		} `json:"config"`
+		Mode        string         `json:"mode"`
+		TextOptions map[string]any `json:"textOptions"`
+	}
+	if err := json.Unmarshal([]byte(submitted.InputJSON), &input); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(input.Config.SystemPrompt, "资产提取") || input.Mode != "text" || input.TextOptions["thinkingLevel"] != ThinkingLevelHigh {
+		t.Fatalf("task input = %s", submitted.InputJSON)
+	}
+	var running model.ShortplayJob
+	if err := db.First(&running, "id = ?", jobID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if running.Status != shortplay.JobRunning || running.TaskID != "task-run" {
+		t.Fatalf("job after submit = %#v", running)
+	}
+
+	completeShortplayTextTask(t, db, "task-run", string(model.TaskStatusSucceeded), "", "")
+	if _, err := svc.RunShortplayExtractOnce(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	assets, err := svc.ShortplayAssets("owner", "sp-run")
 	if err != nil {
@@ -149,11 +204,15 @@ func TestRunShortplayExtractFailureIsRecorded(t *testing.T) {
 	if _, err := svc.QueueShortplayExtract("owner", "sp-fail"); err != nil {
 		t.Fatal(err)
 	}
-	jobID, err := svc.RunShortplayExtractOnce(context.Background(), func(context.Context, string, string) (string, error) {
-		return "", errors.New("上游模型超时")
-	})
-	if err == nil || jobID == "" {
-		t.Fatalf("expected failure, got %q / %v", jobID, err)
+	useShortplayTextTask(t, svc, db, "task-fail")
+	jobID, err := svc.RunShortplayExtractOnce(context.Background())
+	if err != nil || jobID == "" {
+		t.Fatalf("submit = %q, %v", jobID, err)
+	}
+	completeShortplayTextTask(t, db, "task-fail", string(model.TaskStatusFailed), "", "上游模型超时")
+	// 业务失败写进 job.LastError，调用方通过 job 行判断结果，不需要错误返回值。
+	if _, err := svc.RunShortplayExtractOnce(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	var job model.ShortplayJob
 	if err := db.First(&job, "id = ?", jobID).Error; err != nil {
@@ -205,9 +264,12 @@ func TestExtractKeepsLockedSettingsButMergesAliases(t *testing.T) {
 	if _, err := svc.QueueShortplayExtract("owner", "sp-lock"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.RunShortplayExtractOnce(context.Background(), func(context.Context, string, string) (string, error) {
-		return extractReply(), nil
-	}); err != nil {
+	useShortplayTextTask(t, svc, db, "task-lock")
+	if _, err := svc.RunShortplayExtractOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	completeShortplayTextTask(t, db, "task-lock", string(model.TaskStatusSucceeded), "", "")
+	if _, err := svc.RunShortplayExtractOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	assets, err := svc.ShortplayAssets("owner", "sp-lock")
@@ -238,9 +300,16 @@ func TestShortplayExtractSchedulerTickDrainsQueuedJobs(t *testing.T) {
 	if err != nil || !queued.Queued {
 		t.Fatalf("queue = %#v, %v", queued, err)
 	}
-	svc.SetShortplayExtractExecutor(func(context.Context, string, string) (string, error) {
-		return extractReply(), nil
-	})
+	useShortplayTextTask(t, svc, db, "task-tick")
+	svc.tickShortplayExtract(context.Background())
+	var submitted model.ShortplayJob
+	if err := db.Where("id = ?", queued.JobID).First(&submitted).Error; err != nil {
+		t.Fatal(err)
+	}
+	if submitted.Status != shortplay.JobRunning || submitted.TaskID != "task-tick" {
+		t.Fatalf("job after tick = %#v", submitted)
+	}
+	completeShortplayTextTask(t, db, "task-tick", string(model.TaskStatusSucceeded), "", "")
 	svc.tickShortplayExtract(context.Background())
 	var job model.ShortplayJob
 	if err := db.Where("id = ?", queued.JobID).First(&job).Error; err != nil {
@@ -256,7 +325,7 @@ func TestShortplayExtractSchedulerTickDrainsQueuedJobs(t *testing.T) {
 	if len(episodes) != 2 || !strings.Contains(episodes[1].AssetIDsJSON, "[1") {
 		t.Fatalf("episode bindings = %#v", episodes)
 	}
-	// 第二次 tick 没有待领取 job，不应重复执行或报错。
+	// 第三次 tick 没有待推进 job，不应重复执行或报错。
 	svc.tickShortplayExtract(context.Background())
 	var again model.ShortplayJob
 	if err := db.Where("id = ?", queued.JobID).First(&again).Error; err != nil {
