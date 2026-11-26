@@ -44,8 +44,8 @@ type CanvasTopBarProps = {
     shortcutRequestNonce: number;
     syncIcon?: ReactNode;
     onOpenSearch: () => void;
-    /** kind=drama 表示关联的是自动制作短剧，链接回短剧制作台。 */
-    projectContext?: CanvasContextSummary & { projectId: string; projectName: string; kind?: "drama" };
+    /** kind=drama 表示关联的是自动制作短剧；kind=shortplay 表示某部作品的分集画布。 */
+    projectContext?: CanvasContextSummary & { projectId: string; projectName: string; kind?: "drama" | "shortplay" };
     onEnterFocusMode: () => void;
     shortDramaGuide?: { progress: CanvasShortDramaProgress; collapsed: boolean; onToggle: () => void };
 };
@@ -183,11 +183,13 @@ export function CanvasTopBar({
                         {projectContext && !isTitleEditing ? (
                             <div className="canvas-topbar-project-context mt-0.5 flex w-full min-w-0 items-center gap-2 overflow-hidden text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
                                 <Link
-                                    to={`/projects/${encodeURIComponent(projectContext.projectId)}`}
+                                    to={(projectContext.kind === "shortplay" ? "/shortplays/" : "/projects/") + encodeURIComponent(projectContext.projectId)}
                                     className="inline-flex min-w-0 items-center gap-1 hover:underline"
-                                    title={projectContext.kind === "drama" ? `打开短剧制作台：${projectContext.projectName}` : `返回项目：${projectContext.projectName}`}
+                                    title={
+                                        projectContext.kind === "shortplay" ? `返回短剧工作台：${projectContext.projectName}` : projectContext.kind === "drama" ? `打开短剧制作台：${projectContext.projectName}` : `返回项目：${projectContext.projectName}`
+                                    }
                                 >
-                                    {projectContext.kind === "drama" ? <Clapperboard className="size-3 shrink-0" /> : <FolderKanban className="size-3 shrink-0" />}
+                                    {projectContext.kind === "drama" || projectContext.kind === "shortplay" ? <Clapperboard className="size-3 shrink-0" /> : <FolderKanban className="size-3 shrink-0" />}
                                     <span className="max-w-[120px] truncate">{projectContext.projectName}</span>
                                 </Link>
                                 <span aria-hidden>·</span>

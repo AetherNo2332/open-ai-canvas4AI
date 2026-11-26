@@ -81,6 +81,7 @@ import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { useCanvasCreateCommands } from "@/components/canvas/use-canvas-create-commands";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { getProject, listCharacters, type ProjectAsset } from "@/services/api/projects";
+import { getShortplayCanvasBinding } from "@/services/api/shortplay";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasAgentHud } from "@/components/canvas/canvas-agent-hud";
 import { persistCanvasAgentCameraFollow, readCanvasAgentCameraFollow } from "@/lib/canvas/canvas-agent-camera-follow";
@@ -275,6 +276,7 @@ function CanvasViewportPage() {
     const theme = canvasThemes[colorTheme];
     const defaultDrawingEngine = useUserStore((state) => state.drawingEngine.defaultEngine);
     const shortDramaEnabled = useUserStore((state) => state.features.shortDramaEnabled);
+    const shortplayEnabled = useUserStore((state) => state.features.shortplayEnabled);
     const previsOnboardingScope = useUserStore((state) => state.user?.id?.trim() || "");
     const nodesRef = useRef<CanvasNodeData[]>([]);
     const [nodes, setNodesState] = useState<CanvasNodeData[]>([]);
@@ -563,6 +565,15 @@ function CanvasViewportPage() {
     );
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
+    // 这张画布是不是某部短剧的分集画布：是的话顶栏回跳短剧工作台，而不是 drama 制作台。
+    const shortplayBindingQuery = useQuery({
+        queryKey: ["shortplay-canvas-binding", projectId],
+        queryFn: ({ signal }) => getShortplayCanvasBinding(projectId, signal),
+        enabled: shortplayEnabled && Boolean(projectId),
+        retry: false,
+        staleTime: 60_000,
+    });
+    const shortplayBinding = shortplayBindingQuery.data?.linked ? shortplayBindingQuery.data : undefined;
     const refetchLinkedProject = linkedProjectQuery.refetch;
     const archiveNodesToLinkedFolder = useCallback(
         (folder: CanvasNodeData, droppedNodes: CanvasNodeData[]) => {
@@ -3058,12 +3069,12 @@ function CanvasViewportPage() {
                                     syncIcon={<CanvasSyncStatus projectId={projectId} />}
                                     onOpenSearch={() => setNodeSearchOpen(true)}
                                     projectContext={
-                                        shortDramaEnabled && currentProject?.projectId
+                                        currentProject?.projectId && (shortDramaEnabled || shortplayBinding)
                                             ? {
                                                   ...canvasContext,
                                                   projectId: currentProject.projectId,
-                                                  projectName: drama.summary?.project.name || linkedProjectQuery.data?.project.name || currentProject.title,
-                                                  ...(drama.active ? { kind: "drama" as const } : {}),
+                                                  projectName: shortplayBinding ? linkedProjectQuery.data?.project.name || currentProject.title : drama.summary?.project.name || linkedProjectQuery.data?.project.name || currentProject.title,
+                                                  ...(shortplayBinding ? { kind: "shortplay" as const } : drama.active ? { kind: "drama" as const } : {}),
                                               }
                                             : undefined
                                     }
