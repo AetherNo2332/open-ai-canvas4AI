@@ -412,6 +412,8 @@ func runCloudAgentCanvasWriteTool(tc *cloudAgentToolCheckpoint, repo *repository
 		result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 	case call.Function.Name == "canvas_create_character":
 		result, toolErr = applyCloudAgentCharacterCreate(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+	case call.Function.Name == "shortplay_asset":
+		result, toolErr = applyCloudAgentShortplayAsset(repo, run.UserID, state.Request.CanvasID, call, policy)
 	case call.Function.Name == "canvas":
 		result, toolErr = applyCloudAgentCanvasCommand(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 	default:
