@@ -101,8 +101,12 @@ func TestAgentWakePostgresWorkerClaimsDuringFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	waitWakeTestSignal(t, streamStarted, "worker event stream")
-	waitWakeTestSignal(t, firstClaim, "worker initial empty claim")
+	// The worker boots Node, loads the harness and reports capacity before it opens the event
+	// stream; a failed startup report is retried after 5s, so a single missed attempt must not
+	// exhaust the wait. Windows cold start was measured at ~3.6s.
+	workerStart := 60 * time.Second
+	waitWakeTestSignalWithin(t, streamStarted, "worker event stream", workerStart)
+	waitWakeTestSignalWithin(t, firstClaim, "worker initial empty claim", workerStart)
 	var terminated bool
 	if err := db.Raw(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
 		WHERE datname=current_database() AND application_name='canvas-agent-wake-listener'`).Scan(&terminated).Error; err != nil || !terminated {

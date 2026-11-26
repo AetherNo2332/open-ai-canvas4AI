@@ -422,3 +422,16 @@ test("claim installs a lease grant and run routes never send the worker credenti
     assert.deepEqual(sent.map(x => x.owner), ["", "provisioned-worker:lease-owner", "provisioned-worker:lease-owner", "provisioned-worker:lease-owner"]);
   } finally { globalThis.fetch = original; }
 });
+
+test('worker slot stays wire-safe when the host name is not ASCII', async () => {
+  const original = globalThis.fetch; let owner = "";
+  try {
+    globalThis.fetch = (async (_input, init) => {
+      owner = (JSON.parse(String(init?.body)) as { owner: string }).owner;
+      return new Response(JSON.stringify({ code: 0, data: { run: null } }));
+    }) as typeof fetch;
+    const bridge = new CanvasBridge("http://backend:8080", "worker-secret", "你猜猜我是谁-39212-events", undefined, undefined, undefined, "provisioned-worker");
+    assert.equal(await bridge.claim(), null);
+    assert.match(owner, /^provisioned-worker:[A-Za-z0-9._-]+$/);
+  } finally { globalThis.fetch = original; }
+});
