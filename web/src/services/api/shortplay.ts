@@ -75,6 +75,44 @@ export type ShortplayJob = {
     updatedAt: string;
 };
 
+/** 资产读模型：身份 + 设定 + 当前图/音投影 + 分集绑定 + 行版本。 */
+export type ShortplayAssetSummary = {
+    id: number;
+    kind: string;
+    name: string;
+    aliases: string[];
+    description: string;
+    appearance: string;
+    voice: string;
+    locked: boolean;
+    imageResourceId?: string;
+    imageStatus: string;
+    imageVersion: number;
+    audioResourceId?: string;
+    audioStatus?: string;
+    audioVersion?: number;
+    episodeNumbers: number[];
+    revision: number;
+    derivedFrom?: number;
+    variantName?: string;
+    renderRule?: string;
+};
+
+/** 资产写入：assetId>0 是更新，否则按作品内下一个序号新建。 */
+export type ShortplayAssetWrite = {
+    assetId?: number;
+    kind: string;
+    name: string;
+    aliases?: string[];
+    description?: string;
+    appearance?: string;
+    voice?: string;
+    locked?: boolean;
+};
+
+/** 提取入队回执：queued=false 表示已有在途提取，返回的是那一条。 */
+export type ShortplayExtractQueueResult = { jobId: string; queued: boolean; cursor: number };
+
 /** 作品详情：容器行 + 域配置 + 全部集 + 最近 job（jobs 恒为数组）。 */
 export type ShortplayDetail = {
     projectId: string;
@@ -121,6 +159,24 @@ export function getShortplayDetail(projectId: string, signal?: AbortSignal) {
  */
 export function deleteShortplay(projectId: string) {
     return http.delete<{ id: string }>(`/projects/${encodeURIComponent(projectId)}`);
+}
+
+/** 资产库：角色 / 道具 / 场景的身份与设定；图与音的生成在 W05 接入。 */
+export function listShortplayAssets(projectId: string, signal?: AbortSignal) {
+    return http.get<{ assets: ShortplayAssetSummary[] | null }>(`/shortplays/${encodeURIComponent(projectId)}/assets`, { signal });
+}
+
+/** 写一条基础资产：带 assetId 是 revision CAS 更新，不带则新建。 */
+export function upsertShortplayAsset(projectId: string, body: ShortplayAssetWrite) {
+    return http.post<ShortplayAssetSummary>(`/shortplays/${encodeURIComponent(projectId)}/assets`, body);
+}
+
+/**
+ * 把资产提取排进 job 队列。重复点击返回已有在途 job（queued=false），
+ * 不在前端做去重，去重键与游标都在服务端。
+ */
+export function queueShortplayExtract(projectId: string) {
+    return http.post<ShortplayExtractQueueResult>(`/shortplays/${encodeURIComponent(projectId)}/extract`);
 }
 
 /**

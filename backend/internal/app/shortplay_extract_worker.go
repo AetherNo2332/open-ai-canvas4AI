@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/shortplay"
@@ -16,6 +18,62 @@ import (
 // ShortplayExtractFunc 执行一次提取模型调用：给定系统提示词与正文提示词，返回模型原始回复。
 // W04 只接调度与落库，真实模型渠道在执行器实现里注入，调度层不做渠道判断。
 type ShortplayExtractFunc func(ctx context.Context, systemPrompt, userPrompt string) (string, error)
+
+// shortplayExtractTickInterval 是常驻提取调度的轮询间隔；与 drama 调度同量级。
+const (
+	shortplayExtractTickInterval = 5 * time.Second
+	shortplayExtractPerTick      = 4
+)
+
+// SetShortplayExtractExecutor 注入真实模型执行器；调度循环每轮读取一次。
+// 未注入时任务以「提取执行器未配置」失败并写 last_error，不静默跳过。
+func (s *Service) SetShortplayExtractExecutor(executor ShortplayExtractFunc) {
+	s.shortplayExtractMu.Lock()
+	defer s.shortplayExtractMu.Unlock()
+	s.shortplayExtractFunc = executor
+}
+
+func (s *Service) shortplayExtractExecutor() ShortplayExtractFunc {
+	s.shortplayExtractMu.Lock()
+	defer s.shortplayExtractMu.Unlock()
+	return s.shortplayExtractFunc
+}
+
+// startShortplayExtractWorker 是提取 job 的常驻调度：每 tick 领取至多若干条，
+// 排空或出错就让出；排空时不空转 CPU（等下一个 tick）。
+func (s *Service) startShortplayExtractWorker() {
+	s.runWorkerLoop(func(ctx context.Context) {
+		ticker := time.NewTicker(shortplayExtractTickInterval)
+		defer ticker.Stop()
+		for {
+			s.tickShortplayExtract(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	})
+}
+
+// tickShortplayExtract 领取并执行至多 shortplayExtractPerTick 条提取 job；
+// 单条失败只记录日志，循环继续（失败已由 RunShortplayExtractOnce 写入 job）。
+func (s *Service) tickShortplayExtract(ctx context.Context) {
+	if s.IsDraining() {
+		return
+	}
+	executor := s.shortplayExtractExecutor()
+	for i := 0; i < shortplayExtractPerTick; i++ {
+		jobID, err := s.RunShortplayExtractOnce(ctx, executor)
+		if err != nil {
+			slog.Warn("shortplay extract failed", "jobId", jobID, "error", err)
+			return
+		}
+		if jobID == "" {
+			return
+		}
+	}
+}
 
 // QueueShortplayExtract 入队一次提取；已有在途提取时返回那一条（queued=false），
 // 游标取最近一次成功 job 的 payload，保证「中断后继续」而不是从头重跑。
@@ -61,9 +119,10 @@ func (s *Service) RunShortplayExtractOnce(ctx context.Context, extract Shortplay
 	if err != nil || job == nil {
 		return "", err
 	}
+	// 未配置执行器时明确失败并写 last_error：排队中的任务不能悄悄消失。
 	if extract == nil {
 		failure := errors.New("提取执行器未配置")
-		_ = s.repo.FinishShortplayJob(job.ID, shortplay.JobFailed, failure.Error(), "")
+		_ = s.repo.FinishShortplayJob(job.ID, shortplay.JobFailed, failure.Error(), shortplay.ExtractCursorPayload(shortplay.ParseExtractCursor(job.PayloadJSON)))
 		return job.ID, failure
 	}
 	next, err := s.runShortplayExtractJob(ctx, job, extract)

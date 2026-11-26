@@ -125,6 +125,9 @@ type Service struct {
 	dramaTails            dramaTailWorker
 	dramaBackgroundRunner func(fn func()) bool
 	memoryDoc             *document.Service
+	// shortplayExtractFunc 是短剧资产提取的模型执行器；nil 表示未配置，任务会明确失败。
+	shortplayExtractMu   sync.Mutex
+	shortplayExtractFunc ShortplayExtractFunc
 }
 
 const taskWorkerConcurrency = 3
@@ -216,6 +219,8 @@ func (s *Service) taskBilling() *taskBillingCoordinator {
 }
 
 func (s *Service) StartWorker() {
+	// 短剧资产提取的真实执行器：只读部署环境的 TEXT_* 渠道；未配置时在途任务明确失败。
+	s.ConfigureShortplayExtractExecutorFromEnv()
 	runtime := s.backgroundWorkers()
 	ctx, started := runtime.Start()
 	if !started {
@@ -230,6 +235,7 @@ func (s *Service) StartWorker() {
 	s.startBillingAutoRefundWorker()
 	s.startArkPortraitWorker()
 	s.startDramaScheduler()
+	s.startShortplayExtractWorker()
 	if s.canvasTasks != nil {
 		s.startCanvasMaterializer()
 	}

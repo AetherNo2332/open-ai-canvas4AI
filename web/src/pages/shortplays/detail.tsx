@@ -8,10 +8,11 @@ import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
 import { RelativeTime } from "@/components/ui/product/relative-time";
 import { getShortplayDetail, updateShortplaySettings, type ShortplaySettings } from "@/services/api/shortplay";
+import { ShortplayAssetsPanel } from "./assets-panel";
 import { ASSET_MODES, parseShortplaySettings, settingsDirty } from "./shortplay-shared";
 
-// 详情：分集（原文、字数、画布地址）与设置（整份保存，回执为权威）。
-// 资产、提取收件箱、集画布与收录按 W04–W06 接入同一页。
+// 详情：分集（原文、字数、画布地址）、资产库与提取收件箱、设置（整份保存，回执为权威）。
+// 集画布与收录按 W06 接入同一页。
 export default function ShortplayDetailPage() {
     const { projectId = "" } = useParams();
     const navigate = useNavigate();
@@ -22,6 +23,8 @@ export default function ShortplayDetailPage() {
         queryKey: ["shortplay", projectId],
         queryFn: ({ signal }) => getShortplayDetail(projectId, signal),
         enabled: Boolean(projectId),
+        // 提取 job 在后台跑：有在途任务时轮询详情，收件箱不需要手动刷新也能看到结果。
+        refetchInterval: (state) => (state.state.data?.jobs.some((job) => job.status === "queued" || job.status === "running") ? 3000 : false),
     });
 
     const savedSettings = useMemo(() => parseShortplaySettings(query.data?.settingsJson, query.data?.aspectRatio), [query.data?.settingsJson, query.data?.aspectRatio]);
@@ -108,6 +111,11 @@ export default function ShortplayDetailPage() {
                         ),
                     },
                     {
+                        key: "assets",
+                        label: "资产与提取",
+                        children: <ShortplayAssetsPanel projectId={projectId} jobs={detail.jobs} />,
+                    },
+                    {
                         key: "settings",
                         label: "设置",
                         children: (
@@ -162,18 +170,6 @@ export default function ShortplayDetailPage() {
                                         保存设置
                                     </Button>
                                     <div className="text-[11px] leading-5 text-foreground/45">{dirty ? "有未保存的改动。" : "设置与服务端一致。"}整份提交，服务端归一后的回执才是权威值。</div>
-                                    {detail.jobs.length ? (
-                                        <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-1)] p-3">
-                                            <div className="text-xs font-medium text-foreground/70">最近任务</div>
-                                            <div className="mt-2 space-y-1 text-[11px] text-foreground/55">
-                                                {detail.jobs.slice(0, 6).map((job) => (
-                                                    <div key={job.id}>
-                                                        {job.kind} · {job.status}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ) : null}
                                 </aside>
                             </div>
                         ),

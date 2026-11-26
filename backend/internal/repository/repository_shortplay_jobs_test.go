@@ -14,7 +14,10 @@ import (
 
 func newShortplayJobsRepo(t *testing.T) *Repository {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	// 与生产 SQLite 同配置（database.Open）：并发领取靠 busy_timeout 串行化，
+	// 否则 Windows 上并发写会立刻 database is locked，测出的是 DSN 而非仓储行为。
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared&_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on"),
+		&gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		t.Fatal(err)
 	}

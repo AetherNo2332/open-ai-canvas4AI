@@ -28,7 +28,7 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 | W01 供体行为 | 可开始 | 从固定提交采集完整源码。追踪路由注册、项目类型、菜单、设置、调度启动、数据库、工具 schema、提示词和画布接线。建立两集共用角色、第二集有衍生造型的脱敏样本 | 登记全部页面动作、13 个接口、后台 job 种类和 Agent 注册名。将源码观察、运行记录、外部服务待测分别标记 | 通过（源码观察 + 样本重放）。见 [W01 清点](shortplay-workbench-port-w01.md)、[证据矩阵](../../testdata/shortplay-workbench-port/README.md)与 `donor/inventory.json`；样本 `sample/two-episodes.json` 同时被仓储回放（`TestShortplayWorkbenchSampleReplay`）与纯规则重放（`TestWorkbenchSampleDerivedLookRules`）消费。已提交 `0857e41`。 |
 | W02 数据与权限 | W01 | 移入作品、集、资产、任务、设置和画布绑定的最终模型。登记目标架构包角色，按目标当前数据库序列新增迁移。项目内整数资产 ID 使用项目复合身份 | SQLite、PostgreSQL 空库及含旧 drama 的库升级成功；两个项目可各有资产 1，跨项目读写被拒；并发建档失败可原子回滚 | 通过。迁移 v112 + 六表模型 + `internal/shortplay` 纯规则。v112 注册文件改名为 `migrations_zzzzz_shortplay.go`（排在 v111 之后），修掉 init 追加顺序导致的 `86 after 112` 计划失败；`TestCurrentSchemaVersionMatchesMigrationPlan` PASS。新增 `TestMigrateShortplayWorkbenchUpgradesV111DramaDatabase`：按当前计划真实建到 v111、只跑 v112，旧 drama 项目/制作台/画布行保留、六表可写、重跑幂等。`go test -count=1 ./internal/database` PASS；`./internal/repository -run Shortplay` 4 PASS（含并发同名单赢家，CANVAS_TEST_POSTGRES_DSN 指向一次性隔离容器 `shortplay-w02-verify-20261126`）；`TestMigrateShortplayWorkbenchPostgres` 在同一容器自建 schema 后 DROP，PASS；`./internal/shortplay/...`、`./internal/architecture` PASS。已提交 `0857e41`。 |
 | W03 分集工作台 | W02 | 完成菜单与路由、列表、新建、详情、设置，接入分集原文和设置校验。复用目标 `http`、i18n、正式布局和错误处理 | 从导航录入两集原文，列表、深链接和刷新后读到同一作品；设置写失败可重试，权限与项目类型校验通过。此片交付首个可用版本 | 通过。提交 `0857e41`，PR [#154](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/154)。侧栏「短剧工作台」独立入口 `/shortplays`、`/shortplays/new`、`/shortplays/:projectId`；一次建档写作品容器（`type=shortplay`）+ 域配置 + 全部分集；列表/详情/设置整份保存。功能开关改为独立的 `shortplayEnabled`：后端 `/shortplays` 路由组、前端路由、侧栏和「功能开放」面板同口径，与 `shortDramaEnabled` 互不影响（`TestShortplayFeatureGateIsIndependentOfDrama` 覆盖四种组合）。正式页面走通登录→新建两集《雨夜回眸 W03》→保存设置→刷新重开，分集/原文/画布地址/设置保持。门禁环境修复见文末「W03 实测记录」。 |
-| W04 资产与提取 | W03 | 移植资产读写、提取提示词与结构校验、游标、去重键、租约及调度循环。接入已有 worker 和模型调用。资产库呈现角色、场景、道具及分集绑定 | 连点提取只排一项；中断恢复后同一资产绑定两集，已锁字段按供体合同保留；收件箱能定位失败项 | 施工中（后端最小链路已通）。已落地：`GET/POST /shortplays/:id/assets`（跨账号/跨作品 404、kind 不可改、衍生父资产不可改挂、revision CAS）；`POST /shortplays/:id/extract` 入队在途去重（重复点击返回同一 job，`queued=false`）；job 领取条件更新（多 worker 单赢家）；游标从最近成功 job 续跑；`ParseExtractAssets` + `PlanExtractApply` 合并（锁定行只并别名与分集绑定、不覆盖设定）；每批按原文命中回写集 `assetIdsJson`（两集同现的角色绑定 `[1,2]`）；失败写 `last_error` 且去重键释放可重试。命令：`go test -count=1 ./internal/shortplay ./internal/repository ./internal/app -run 'Shortplay|Extract|Dedupe|Claim'` PASS；`go test -count=1 -run 'TestShortplayAssetRoutesIsolateProjectsAndDeduplicateExtract|TestOpenAPI' ./internal/handler` PASS。未完成：真实模型执行器接线、常驻 scheduler 启动、前端资产库/收件箱、PostgreSQL 队列专项。 |
+| W04 资产与提取 | W03 | 移植资产读写、提取提示词与结构校验、游标、去重键、租约及调度循环。接入已有 worker 和模型调用。资产库呈现角色、场景、道具及分集绑定 | 连点提取只排一项；中断恢复后同一资产绑定两集，已锁字段按供体合同保留；收件箱能定位失败项 | 已完成（真实模型渠道未配置）。后端：资产读写路由、提取提示词与结构校验、`PlanExtractApply` 落库计划、job 领取条件更新与去重键、游标续跑、失败写 `last_error`；`ConfigureShortplayExtractExecutorFromEnv` 接 OpenAI 兼容 `chat/completions`，`startShortplayExtractWorker` 常驻每 5s 领取至多 4 条。前端：详情页「资产与提取」资产库、手动增改、提取按钮、收件箱（状态/尝试次数/`last_error`），job 终态自动重读资产。PostgreSQL 隔离 schema 专项覆盖领取单赢家与去重键释放。 |
 | W05 造型和媒体 | W04 | 复用 `derived.go` 的基础资产与衍生造型解析；接模型选择、参考图、音色生成、批量补缺、失败重试和回调 | 两套造型有独立参考图，基础角色改名和音色按合同继承；双 worker、重复回调、延迟回调与配额失败均有可复验结果和费用记录 | 待施工 |
 | W06 分集精修与收录 | W03、W04 | 接入每集画布创建、反查、资产投送、单项生图与收录，复用 submap 和现有画布写入服务 | 同一集同时打开两次得到同一画布；两集共享资源身份；画布改动保存重开后可定位资产；收录时校验资源和项目归属 | 待施工 |
 | W07 Agent | W05、W06 | 逐个迁入供体资产查询、详情、创建、更新、放置卡片及生图工具的声明、策略、提示词和执行绑定；通过 4AI Worker 调回 Go 并重新生成 harness | 在分集画布中执行查询、修改和受审批生成；无作品绑定、跨租户、拒绝审批、批准重放均有测试；另一客户端能看见最终状态 | 待施工 |
@@ -88,3 +88,28 @@ Web 对齐供体 `web/src/shortplay/pages` 的列表、创建、详情、资产�
 **推送状态**　此前 4 个本机提交仍未推送；本轮把根因结论与 W04 首个产物一并提交，推送前按最新 HEAD 重新 bump 并复跑全量门禁（含可达代理与 `CHROME_BIN`），只有门禁通过才更新 PR #154。
 
 **未覆盖项（W04 起）**　资产与提取、造型与媒体、分集画布与收录、Agent 工具与审批、正式页面全流程、发布与恢复；真实图像/音频渠道与生产灰度仍未验证。
+## W04 实测记录（2026-11-26）
+
+**执行器与常驻调度**　`ConfigureShortplayExtractExecutorFromEnv` 只在 `TEXT_BASE_URL` 与 `TEXT_MODEL` 都存在时注入执行器，请求 `POST {base}/chat/completions`（`TEXT_API_KEY` 可选、`TEXT_TIMEOUT_MS` 默认 120s），从 `choices[0].message.content` 取整段回复，非 2xx 或空内容直接报错。执行器只读部署环境，不下发浏览器。`startShortplayExtractWorker` 随 `StartWorker` 启动，每 5s 领取至多 4 条；未注入执行器时在途任务以「提取执行器未配置」失败并写 `last_error`，不静默空转。
+
+**PostgreSQL 队列专项**　新增 `repository_shortplay_jobs_postgres_test.go`：`CANVAS_TEST_POSTGRES_DSN` 指向隔离实例时建临时 schema，8 个 worker 并发领取 3 条 queued job，每条只被一方拿到；`idx_shortplay_jobs_dedupe_active` 拒绝第二条同键在途 job，`FinishShortplayJob` 后同键可重新入队。SQLite 专项的 DSN 补齐 `_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=on`（与 `database.Open` 的生产配置同档），修掉「并发领取把 database is locked 当仓储行为」的假失败。
+
+**前端资产库与收件箱**　详情页新增「资产与提取」：资产按角色/道具/场景分组，显示序号、别名、分集绑定、图/音状态与行版本；「手动添加」与「编辑」走同一条写入合同（revision CAS），可锁定设定；「提取资产」调 `POST /shortplays/{id}/extract`，重复点击提示复用在途任务。收件箱列出 `extract` 任务的状态、尝试次数与 `last_error`；job 状态变化即重读资产，失败不自动重试。
+
+**正式页面验收（浏览器）**　本机后端 `127.0.0.1:18081`（`CANVAS_BACKEND_DATA_DIR=../.local/project-workbench-debug`，`TEXT_*` 指向本机 `.local/stub-text-server.mjs` 的 OpenAI 兼容桩）+ 前端 `127.0.0.1:13100`。账号 `shortplay-w04`：新建两集《雨夜回眸 W04》（9:16，130+111 字）→ 提取资产 → 角色沈青禾/顾行舟、道具油纸伞、场景雨巷客栈落库并绑定第 1/2 集 → 编辑沈青禾设定并锁定，`revision` 0→1 → 刷新重开，设定、锁定与集绑定保持。停掉桩后对第三个作品提取，job 进入 `failed`，收件箱显示 `Post "http://127.0.0.1:18090/v1/chat/completions": ... connection refused`，去重键释放。
+
+**验证命令与结果**
+
+| 命令 | 结果 |
+|---|---|
+| `go build ./internal/... ./cmd/server` | 退出码 0 |
+| `go test -count=1 -run 'TestShortplay\|TestQueueShortplayExtract\|TestRunShortplayExtract\|TestUpsertShortplayAsset\|TestExtract\|TestClaimShortplayJob\|TestDedupeKey\|TestConfigureShortplayExtractExecutor' ./internal/shortplay ./internal/repository ./internal/app ./internal/handler` | 4 包 PASS（1.3s / 1.8s / 14.0s / 11.6s） |
+| `CANVAS_TEST_POSTGRES_DSN=postgres://canvas:canvas@127.0.0.1:15432/canvas_event_integration?sslmode=disable go test -count=1 -run TestShortplayJobsClaimAndDedupePostgres ./internal/repository` | PASS（1.45s） |
+| `CANVAS_TEST_POSTGRES_DSN=... go test -count=1 -run 'TestMigrateShortplayWorkbenchPostgres\|TestMigrateShortplayWorkbenchOnEmptyDatabase\|TestMigrateShortplayWorkbenchUpgradesOldDramaCopy' ./internal/database` | PASS（11.0s） |
+| `node node_modules/typescript/bin/tsc --noEmit --incremental false`（web） | 退出码 0 |
+| `eslint src/pages/shortplays/assets-panel.tsx src/pages/shortplays/detail.tsx src/services/api/shortplay.ts` | 退出码 0 |
+| `prettier --check` 三个改动文件 | 退出码 0 |
+
+**本机环境说明**　`bun run typecheck` 在本机失败于 `tsconfig.tsbuildinfo` 写入被拒（TypeScript 7 的原生 `tsc.exe` 在当前 Windows 环境写任何 buildinfo 路径都报 `Access is denied`，而 Node 脚本写同一路径成功）。改用 `--incremental false` 复跑同一类型检查，退出码 0；增量缓存只影响速度，不影响诊断。CI 为 Linux，不受影响。
+
+**未覆盖项**　没有配置真实模型渠道：执行器用本机 OpenAI 兼容桩验证了 HTTP 请求形状、落库、收件箱与失败路径，不能宣称真实模型提取通过。真实参考图/音色、集画布、收录与 Agent 工具仍属 W05–W07。

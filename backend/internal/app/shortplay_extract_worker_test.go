@@ -230,3 +230,39 @@ func TestExtractKeepsLockedSettingsButMergesAliases(t *testing.T) {
 		t.Fatalf("episode binding missing: %#v", character.EpisodeNumbers)
 	}
 }
+
+func TestShortplayExtractSchedulerTickDrainsQueuedJobs(t *testing.T) {
+	svc, db := newShortplayWorkflowService(t)
+	seedShortplay(t, db, "owner", "p-tick", "sp-tick")
+	queued, err := svc.QueueShortplayExtract("owner", "sp-tick")
+	if err != nil || !queued.Queued {
+		t.Fatalf("queue = %#v, %v", queued, err)
+	}
+	svc.SetShortplayExtractExecutor(func(context.Context, string, string) (string, error) {
+		return extractReply(), nil
+	})
+	svc.tickShortplayExtract(context.Background())
+	var job model.ShortplayJob
+	if err := db.Where("id = ?", queued.JobID).First(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != shortplay.JobSucceeded {
+		t.Fatalf("job status = %s lastError = %s", job.Status, job.LastError)
+	}
+	var episodes []model.ShortplayEpisode
+	if err := db.Where("shortplay_id = ?", "sp-tick").Order("number asc").Find(&episodes).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(episodes) != 2 || !strings.Contains(episodes[1].AssetIDsJSON, "[1") {
+		t.Fatalf("episode bindings = %#v", episodes)
+	}
+	// 第二次 tick 没有待领取 job，不应重复执行或报错。
+	svc.tickShortplayExtract(context.Background())
+	var again model.ShortplayJob
+	if err := db.Where("id = ?", queued.JobID).First(&again).Error; err != nil {
+		t.Fatal(err)
+	}
+	if again.Status != shortplay.JobSucceeded {
+		t.Fatalf("job changed after empty tick: %#v", again)
+	}
+}

@@ -96,6 +96,14 @@ func (m shortplayModels) normalized() shortplayModels {
 	}
 }
 
+// extractText 返回资产提取实际使用的文本模型：单独指定的 BibleText 优先，否则跟随 Text。
+func (m shortplayModels) extractText() shortplayModelChoice {
+	if !m.BibleText.empty() {
+		return m.BibleText
+	}
+	return m.Text
+}
+
 // shortplaySkillRef 指向用户技能库里的一个技能文件，作为资产提取的写作方法。
 // 与 DramaSkillRef 同形（字段名也一致），便于复用 drama 的技能选择器与读取逻辑。
 type shortplaySkillRef struct {
