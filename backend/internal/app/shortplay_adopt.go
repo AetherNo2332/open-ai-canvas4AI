@@ -37,6 +37,11 @@ func (s *Service) PlaceShortplayAssetCards(userID, ref, episodeID string, req sh
 	if strings.TrimSpace(episode.CanvasID) == "" {
 		return shortplay.PlaceAssetResult{}, BadAuthRequest("目标集还没有画布，先点「进精修画布」再投送")
 	}
+	// 集行只记录画布地址；画布行在首次进入画布或首次写入时才建。投送前按需建出，
+	// 否则注入阶段读到 record not found，接口会以 500 收场。
+	if _, err := s.EnsureShortplayEpisodeCanvas(userID, owner.ID, episode.ID); err != nil {
+		return shortplay.PlaceAssetResult{}, err
+	}
 	assets, err := s.repo.ShortplayAssets(owner.ID)
 	if err != nil {
 		return shortplay.PlaceAssetResult{}, err
@@ -146,6 +151,10 @@ func (s *Service) shortplayPlaceCardsOnCanvas(userID, canvasID string, cards []s
 		return nil, err
 	}
 	canvas, err := s.repo.CanvasProjectForUser(userID, canvasID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// 调用方本应先按需建画布；这里再兜一层，避免把原始 record not found 变成 500。
+		return nil, NewAppError(http.StatusConflict, "目标集画布尚未建好，请先进入画布后再投送")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -182,6 +191,10 @@ func (s *Service) AdoptShortplayAsset(userID, ref string, req shortplay.AdoptAss
 	}
 	source, episode, err := s.shortplayAdoptInputs(userID, owner, req)
 	if err != nil {
+		return shortplay.AdoptAssetResult{}, err
+	}
+	// 目标集画布同样按需建出：收录要把新卡放到目标集，画布行可能还没建。
+	if _, err := s.EnsureShortplayEpisodeCanvas(userID, owner.ID, episode.ID); err != nil {
 		return shortplay.AdoptAssetResult{}, err
 	}
 	assets, err := s.repo.ShortplayAssets(owner.ID)

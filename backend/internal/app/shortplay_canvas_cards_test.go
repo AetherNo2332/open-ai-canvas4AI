@@ -244,3 +244,33 @@ func TestApplyShortplayAssetImageFromCanvasRejectsFreeCanvas(t *testing.T) {
 		t.Fatal("free canvas image write-back was accepted")
 	}
 }
+
+// 集行先有画布地址、画布行还没建时，投送必须先按需建画布再投卡；
+// 曾经的 500 是这里直接读 record not found。
+func TestPlaceShortplayAssetCardsCreatesMissingEpisodeCanvas(t *testing.T) {
+	svc, db := newShortplayWorkflowService(t)
+	seedShortplay(t, db, "owner", "p-place-new", "sp-place-new")
+	asset := seedAsset(t, svc, "sp-place-new", 1, shortplay.AssetCharacter, "沈青禾", "")
+	result, err := svc.PlaceShortplayAssetCards("owner", "sp-place-new", "sp-place-new-ep1", shortplay.PlaceAssetRequest{AssetIDs: []int{asset.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Placed != 1 || len(result.NodeIDs) != 1 {
+		t.Fatalf("place result = %#v", result)
+	}
+	canvas, err := svc.repo.CanvasProjectForUser("owner", "sp-place-new-c1")
+	if err != nil {
+		t.Fatalf("episode canvas not created: %v", err)
+	}
+	doc := mustCreationDocument(t, canvas.PayloadJSON)
+	nodes := creationMaps(doc["nodes"])
+	cards := 0
+	for _, node := range nodes {
+		if stringValue(node["type"]) == shortplayAssetNodeType {
+			cards++
+		}
+	}
+	if cards != 1 {
+		t.Fatalf("cards = %d", cards)
+	}
+}

@@ -88,26 +88,29 @@ func MergeAliases(existing []string, incoming []string) []string {
 	return result
 }
 
-// SplitAliasesJSON 读 aliases_json 成切片；非法 JSON 返回空。
+// SplitAliasesJSON 读 aliases_json 成切片；空值与非法 JSON 返回空切片，
+// 读模型序列化成 [] 而不是 null，前端无需为历史空行做空值兜底。
 func SplitAliasesJSON(raw string) []string {
+	result := []string{}
 	if strings.TrimSpace(raw) == "" {
-		return nil
+		return result
 	}
 	var values []string
 	if json.Unmarshal([]byte(raw), &values) != nil {
-		return nil
+		return result
 	}
-	return values
+	return append(result, values...)
 }
 
-// SplitEpisodeNumbersJSON 读 episode_numbers_json；非法 JSON 返回空切片。
+// SplitEpisodeNumbersJSON 读 episode_numbers_json；空值与非法 JSON 返回空切片。
 func SplitEpisodeNumbersJSON(raw string) []int {
+	result := []int{}
 	if strings.TrimSpace(raw) == "" {
-		return nil
+		return result
 	}
 	var values []int
 	if json.Unmarshal([]byte(raw), &values) != nil {
-		return nil
+		return result
 	}
-	return values
+	return append(result, values...)
 }

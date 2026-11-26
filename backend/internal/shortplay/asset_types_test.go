@@ -1,6 +1,7 @@
 package shortplay
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -96,3 +97,23 @@ func TestBuildAssetSummaryProjectsRow(t *testing.T) {
 }
 
 func ptrString(value string) *string { return &value }
+
+// 读模型的别名与分集绑定必须是 []；nil 切片会序列化成 null，前端类型是数组，
+// 曾因此让资产卡在真实页面崩溃（Cannot read properties of null (reading "length")）。
+func TestBuildAssetSummaryEncodesEmptyListsAsArrays(t *testing.T) {
+	row := model.ShortplayAsset{ShortplayID: "sp", ID: 1, Kind: AssetCharacter, Name: "沈青禾", AliasesJSON: "", EpisodeNumbersJSON: ""}
+	raw, err := json.Marshal(BuildAssetSummary(row))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `"aliases":[]`) || !strings.Contains(text, `"episodeNumbers":[]`) {
+		t.Fatalf("summary lists must encode as arrays, got %s", text)
+	}
+	if aliases := SplitAliasesJSON("not-json"); aliases == nil || len(aliases) != 0 {
+		t.Fatalf("invalid aliases json = %#v", aliases)
+	}
+	if numbers := SplitEpisodeNumbersJSON("not-json"); numbers == nil || len(numbers) != 0 {
+		t.Fatalf("invalid episode numbers json = %#v", numbers)
+	}
+}
