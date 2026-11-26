@@ -279,6 +279,7 @@ func (s *Service) validateShortplayModels(userID string, models shortplayModels)
 		{"image", models.CharacterImage},
 		{"image", models.PropImage},
 		{"image", models.SceneImage},
+		{"audio", models.Audio},
 	} {
 		if item.choice.empty() {
 			continue

@@ -108,22 +108,38 @@ func (s *Service) QueueShortplayAssetImages(userID, idOrProject string, req shor
 	return result, nil
 }
 
-// tickShortplayAssetImages 领取并推进至多若干条出图 job；单条失败只记录，循环继续。
+// tickShortplayAssetImages 推进至多若干条出图 job：先收口已提交任务，再领取新排队。
+//
+// 只领 queued 会把提交后的 job 饿死（提交后状态已是 running），所以两段都不能省。
 func (s *Service) tickShortplayAssetImages(ctx context.Context) {
 	if s.IsDraining() {
 		return
 	}
 	for i := 0; i < shortplayExtractPerTick; i++ {
-		job, err := s.repo.ClaimShortplayJob(shortplay.JobAssetImage)
+		job, err := s.repo.RunningShortplayJob(shortplay.JobAssetImage)
 		if err != nil {
-			slog.Warn("shortplay asset image claim failed", "error", err)
+			slog.Warn("shortplay asset image running lookup failed", "error", err)
 			return
+		}
+		if job == nil {
+			job, err = s.repo.ClaimShortplayJob(shortplay.JobAssetImage)
+			if err != nil {
+				slog.Warn("shortplay asset image claim failed", "error", err)
+				return
+			}
 		}
 		if job == nil {
 			return
 		}
 		run := s.runShortplayAssetImageJob(ctx, job)
 		if run.Status == "" {
+			// 未提交任务（等父资产图）：退回 queued 让下一 tick 再判，否则这条 job 会
+			// 一直挂在 running 且没有 taskId，去重键也跟着堵死。
+			if strings.TrimSpace(job.TaskID) == "" {
+				if err := s.repo.ReleaseShortplayJob(job.ID); err != nil {
+					slog.Warn("shortplay asset image release failed", "jobId", job.ID, "error", err)
+				}
+			}
 			continue
 		}
 		if err := s.repo.FinishShortplayJob(job.ID, run.Status, run.LastError, run.Payload); err != nil {

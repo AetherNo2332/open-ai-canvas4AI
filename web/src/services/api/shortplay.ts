@@ -14,6 +14,8 @@ export type ShortplayModels = {
     characterImage?: ShortplayModelChoice;
     propImage?: ShortplayModelChoice;
     sceneImage?: ShortplayModelChoice;
+    /** 音色样本的音频模型；为空跟随平台目录第一个可用项。 */
+    audio?: ShortplayModelChoice;
 };
 
 /** 参考图方案，与 drama 的资产方案同一份契约：方案版式 + 角色/场景提示词 + 角色画幅 + 分辨率档位。 */
@@ -124,6 +126,16 @@ export type ShortplayImageQueueRequest = {
 /** 三档计数：新排队 / 已在途复用 / 跳过（锁定或不在筛选范围）。 */
 export type ShortplayImageQueueResult = { queued: number; reused: number; skipped: number; jobIds: string[] };
 
+/** 音色样本入队筛选：单个角色、缺音或失败项；非角色与锁定行由服务端计入跳过。 */
+export type ShortplayAudioQueueRequest = {
+    assetIds?: number[];
+    onlyMissing?: boolean;
+    onlyFailed?: boolean;
+};
+
+/** 音色样本入队回执，与参考图同形。 */
+export type ShortplayAudioQueueResult = { queued: number; reused: number; skipped: number; jobIds: string[] };
+
 /** 提取入队回执：queued=false 表示已有在途提取，返回的是那一条。 */
 export type ShortplayExtractQueueResult = { jobId: string; queued: boolean; cursor: number };
 
@@ -199,6 +211,11 @@ export function queueShortplayExtract(projectId: string) {
  */
 export function queueShortplayAssetImages(projectId: string, body: ShortplayImageQueueRequest) {
     return http.post<ShortplayImageQueueResult>(`/shortplays/${encodeURIComponent(projectId)}/assets/images`, body);
+}
+
+/** 音色样本入队：只排角色；任务提交与计费在服务端调度里。 */
+export function queueShortplayAssetAudio(projectId: string, body: ShortplayAudioQueueRequest) {
+    return http.post<ShortplayAudioQueueResult>(`/shortplays/${encodeURIComponent(projectId)}/assets/audio`, body);
 }
 
 /** 集画布按需创建：第一次调用建出画布行，已存在返回 created=false。 */

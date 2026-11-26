@@ -69,6 +69,60 @@ func ParseAssetImageJob(raw string) AssetImageJobPayload {
 	return payload
 }
 
+// QueueAssetAudioRequest 是页面「生成音色」的筛选条件，与图片同构。
+// Audio 只对角色有意义，非角色一律计入 Skipped。
+type QueueAssetAudioRequest struct {
+	AssetIDs    []int `json:"assetIds"`
+	OnlyMissing bool  `json:"onlyMissing"`
+	OnlyFailed  bool  `json:"onlyFailed"`
+}
+
+// AudioQueueResult 与 ImageQueueResult 同形：新排队、在途复用、跳过。
+type AudioQueueResult struct {
+	Queued  int      `json:"queued"`
+	Reused  int      `json:"reused"`
+	Skipped int      `json:"skipped"`
+	JobIDs  []string `json:"jobIds"`
+}
+
+// AssetAudioJobPayload 是音色 job 的载荷。sourceAudioId / prompt 在提交那一刻固定，
+// 理由与图片相同：提交与回写之间父资产可能换样本。
+type AssetAudioJobPayload struct {
+	AssetID       int    `json:"assetId"`
+	SourceAudioID int    `json:"sourceAudioId,omitempty"`
+	Prompt        string `json:"prompt,omitempty"`
+}
+
+// Encode 序列化载荷；失败时返回带 assetId 的最小载荷。
+func (p AssetAudioJobPayload) Encode() string {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return `{"assetId":` + itoa(p.AssetID) + `}`
+	}
+	return string(raw)
+}
+
+// ParseAssetAudioJob 解析载荷；assetId 也兼容纯数字写法。
+func ParseAssetAudioJob(raw string) AssetAudioJobPayload {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return AssetAudioJobPayload{}
+	}
+	var payload AssetAudioJobPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		var id int
+		if json.Unmarshal([]byte(raw), &id) == nil {
+			return AssetAudioJobPayload{AssetID: id}
+		}
+		return AssetAudioJobPayload{}
+	}
+	return payload
+}
+
+// AudioOperation 是音频任务的标准 operation：仓里唯一在用的音频 token。
+// 音频能力规格目前没有可编辑渠道 JSON，所以不按规格挑 operation。
+const AudioOperation = "text_to_speech"
+
 // AssetImageRatio 是某类资产的参考图画幅：场景与道具统一横版 16:9（要容纳完整空间、
 // 留足展示余量），角色跟参考图方案。
 func AssetImageRatio(assets production.AssetSettings, kind string) string {

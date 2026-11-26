@@ -9,6 +9,7 @@ import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/
 import { RelativeTime } from "@/components/ui/product/relative-time";
 import { getShortplayDetail, ensureShortplayEpisodeCanvas, updateShortplaySettings, type ShortplaySettings } from "@/services/api/shortplay";
 import { ShortplayAssetsPanel } from "./assets-panel";
+import { ShortplayModelPickers } from "./shortplay-models";
 import { ASSET_MODES, parseShortplaySettings, settingsDirty } from "./shortplay-shared";
 
 // 详情：分集（原文、字数、画布地址）、资产库与提取收件箱、设置（整份保存，回执为权威）。
@@ -148,6 +149,7 @@ export default function ShortplayDetailPage() {
                                         <div className="mt-3 text-xs font-medium text-foreground/70">对白语言</div>
                                         <Input className="mt-2" value={settings.language} onChange={(event) => setSettings((current) => ({ ...current, language: event.target.value }))} />
                                     </div>
+                                    <ShortplayModelPickers models={settings.models} onChange={(models) => setSettings((current) => ({ ...current, models }))} />
                                     <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-1)] p-4">
                                         <div className="text-xs font-medium text-foreground/70">参考图方案</div>
                                         <Segmented

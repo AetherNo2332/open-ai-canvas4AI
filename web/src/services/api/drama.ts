@@ -474,7 +474,7 @@ export type DramaModelOption = {
 /** 平台目录里有、但短剧流水线无法使用的模型及原因；前端置灰展示。 */
 export type DramaModelUnavailable = { choice: DramaModelChoice; reason: string };
 
-export type DramaModelCatalog = { defaults: DramaModels; options: Record<DramaCapability, DramaModelOption[]>; unavailable?: Partial<Record<DramaCapability, DramaModelUnavailable[]>> };
+export type DramaModelCatalog = { defaults: DramaModels; options: Record<DramaCapability, DramaModelOption[]> & { audio?: DramaModelOption[] }; unavailable?: Partial<Record<DramaCapability, DramaModelUnavailable[]>> & { audio?: DramaModelUnavailable[] } };
 
 export type DramaEstimate = {
     episodes: number;
@@ -793,3 +793,4 @@ export function listDramaTakes(projectId: string, ownerId: string, kind: DramaTa
 export function adoptDramaSegmentVideo(projectId: string, episodeId: string, segmentIndex: number, input: { resourceId: string; taskId?: string; cascade: boolean; expectedRevision?: number }) {
     return http.put<DramaSegmentAdoptResult>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/segments/${segmentIndex}/video`, input, { timeout: 300_000 });
 }
+

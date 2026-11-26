@@ -112,6 +112,15 @@ func (r *Repository) FinishShortplayJob(id, status, lastError, payloadJSON strin
 	return r.db.Model(&model.ShortplayJob{}).Where("id = ?", id).Updates(updates).Error
 }
 
+// ReleaseShortplayJob 把已领取但本轮不能派发的 job 退回 queued（例如衍生形象在等父资产）。
+// 去重键仍被这条 queued 行占着，不会因此多排一条；下一 tick 重新领取。
+func (r *Repository) ReleaseShortplayJob(id string) error {
+	now := time.Now()
+	return r.db.Model(&model.ShortplayJob{}).
+		Where("id = ? AND status = ? AND task_id = ''", id, shortplay.JobRunning).
+		Updates(map[string]any{"status": shortplay.JobQueued, "updated_at": now}).Error
+}
+
 // UpdateShortplayEpisodeAssetIDs 回写某一集命中的资产序号列表（assetIdsJson）。
 func (r *Repository) UpdateShortplayEpisodeAssetIDs(episodeID, assetIDsJSON string) error {
 	return r.db.Model(&model.ShortplayEpisode{}).Where("id = ?", episodeID).

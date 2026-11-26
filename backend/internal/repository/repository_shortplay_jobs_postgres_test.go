@@ -26,6 +26,72 @@ func TestShortplayJobsClaimAndDedupePostgres(t *testing.T) {
 	assertShortplayJobDedupeReleasesAfterFinish(t, repo)
 }
 
+// TestShortplayAssetAudioClaimAndLateCallbackPostgres 在真实 PostgreSQL 上复验 W05 音色链路：
+// 两个 worker 只有一个领到同一条 job；延迟回调（已收口成 ready 后的第二次写入）被 CAS 拒绝；
+// 失败记录不推进 current_audio_id。
+func TestShortplayAssetAudioClaimAndLateCallbackPostgres(t *testing.T) {
+	db := shortplayJobsTestPostgres(t)
+	if err := db.AutoMigrate(&model.ShortplayAsset{}, &model.ShortplayAssetAudio{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	asset := &model.ShortplayAsset{ShortplayID: "pg-audio-sp", ID: 1, Kind: shortplay.AssetCharacter, Name: "沈青禾",
+		Voice: "青年女声", AudioStatus: shortplay.ImageRunning, Revision: 1}
+	if err := repo.CreateShortplayAsset(asset); err != nil {
+		t.Fatal(err)
+	}
+	job := &model.ShortplayJob{ID: "pg-audio-job", ShortplayID: "pg-audio-sp", Kind: shortplay.JobAssetAudio,
+		Status: shortplay.JobQueued, DedupeKey: shortplay.JobDedupeKey(shortplay.JobAssetAudio, "pg-audio-sp|1")}
+	if err := repo.CreateShortplayJob(job); err != nil {
+		t.Fatal(err)
+	}
+	claimed := make(chan string, 4)
+	var wg sync.WaitGroup
+	for worker := 0; worker < 2; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			row, err := repo.ClaimShortplayJob(shortplay.JobAssetAudio)
+			if err == nil && row != nil {
+				claimed <- row.ID
+			}
+		}()
+	}
+	wg.Wait()
+	close(claimed)
+	winners := 0
+	for range claimed {
+		winners++
+	}
+	if winners != 1 {
+		t.Fatalf("audio job claimed %d times, want 1", winners)
+	}
+	applied, err := repo.SetShortplayAssetAudioFrom("pg-audio-sp", 1, ShortplayAssetAudioWrite{
+		ResourceID: "res-audio-1", Prompt: "青年女声",
+	}, shortplay.AudioInFlight())
+	if err != nil || !applied {
+		t.Fatalf("first audio write = %v, %v", applied, err)
+	}
+	// 延迟回调：状态已从 running 收口成 ready，第二次写入必须被拒。
+	late, err := repo.SetShortplayAssetAudioFrom("pg-audio-sp", 1, ShortplayAssetAudioWrite{
+		ResourceID: "res-audio-late", Prompt: "青年女声",
+	}, shortplay.AudioInFlight())
+	if err != nil || late {
+		t.Fatalf("late audio callback = %v, %v", late, err)
+	}
+	if err := repo.RecordShortplayAssetAudioFailure("pg-audio-sp", 1, ShortplayAssetAudioWrite{Prompt: "青年女声"}); err != nil {
+		t.Fatal(err)
+	}
+	audios, err := repo.ShortplayAssetAudios("pg-audio-sp", 1)
+	if err != nil || len(audios) != 2 {
+		t.Fatalf("audio history = %#v, %v", audios, err)
+	}
+	stored, err := repo.ShortplayAssetByID("pg-audio-sp", 1)
+	if err != nil || stored.CurrentAudioID == 0 || stored.AudioVersion != 1 || stored.AudioStatus != shortplay.ImageReady {
+		t.Fatalf("asset after late callback = %#v, %v", stored, err)
+	}
+}
+
 func shortplayJobsTestPostgres(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := os.Getenv("CANVAS_TEST_POSTGRES_DSN")

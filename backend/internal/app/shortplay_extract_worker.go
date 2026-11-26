@@ -36,6 +36,7 @@ func (s *Service) startShortplayExtractWorker() {
 		for {
 			s.tickShortplayExtract(ctx)
 			s.tickShortplayAssetImages(ctx)
+			s.tickShortplayAssetAudio(ctx)
 			select {
 			case <-ctx.Done():
 				return

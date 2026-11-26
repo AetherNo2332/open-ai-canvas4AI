@@ -1,17 +1,35 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Input, InputNumber, Switch, Tag, Tooltip } from "antd";
-import { Image as ImageIcon, Inbox, Plus, RefreshCw, Sparkles } from "lucide-react";
+import { AudioLines, Image as ImageIcon, Inbox, Plus, RefreshCw, Sparkles } from "lucide-react";
 
 import { AppModal } from "@/components/ui/product/app-modal";
 import { RelativeTime } from "@/components/ui/product/relative-time";
 import { resourceFileUrl } from "@/services/api/resources";
-import { listShortplayAssets, queueShortplayAssetImages, queueShortplayExtract, upsertShortplayAsset, type ShortplayAssetSummary, type ShortplayAssetWrite, type ShortplayImageQueueRequest, type ShortplayJob } from "@/services/api/shortplay";
+import {
+    listShortplayAssets,
+    queueShortplayAssetAudio,
+    queueShortplayAssetImages,
+    queueShortplayExtract,
+    upsertShortplayAsset,
+    type ShortplayAssetSummary,
+    type ShortplayAssetWrite,
+    type ShortplayAudioQueueRequest,
+    type ShortplayImageQueueRequest,
+    type ShortplayJob,
+} from "@/services/api/shortplay";
 
 // W04/W05 资产库、提取收件箱与参考图：列角色/道具/场景、手写或修订单条资产、
 // 新建衍生造型、把提取或出图排进 job 队列，并在同一处查看状态与失败原因。
 
 const KIND_LABELS: Record<string, string> = { character: "角色", prop: "道具", scene: "场景" };
+
+const JOB_KIND_LABELS: Record<string, string> = {
+    extract: "资产提取",
+    asset_image: "参考图",
+    asset_audio: "音色样本",
+    asset_sync: "画布回写",
+};
 
 const JOB_STATUS_LABELS: Record<string, string> = {
     queued: "排队中",
@@ -121,6 +139,15 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
         onError: (error) => message.error(error instanceof Error ? error.message : "参考图排队失败"),
     });
 
+    const audioQueue = useMutation({
+        mutationFn: (body: ShortplayAudioQueueRequest) => queueShortplayAssetAudio(projectId, body),
+        onSuccess: (result) => {
+            message.success(`音色：新排队 ${result.queued}，复用 ${result.reused}，跳过 ${result.skipped}`);
+            refresh();
+        },
+        onError: (error) => message.error(error instanceof Error ? error.message : "音色排队失败"),
+    });
+
     const save = useMutation({
         mutationFn: (current: AssetDraft) => upsertShortplayAsset(projectId, draftToWrite(current)),
         onSuccess: () => {
@@ -148,7 +175,17 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                         </Button>
                         <Tooltip title="为所有从未生成过参考图的资产排队；锁定的资产会被跳过">
                             <Button icon={<ImageIcon />} loading={imageQueue.isPending} disabled={assets.length === 0} onClick={() => imageQueue.mutate({ onlyMissing: true })}>
-                                生成缺图
+                                补缺图
+                            </Button>
+                        </Tooltip>
+                        <Tooltip title="只为上一次失败的行重新排队，成功的不重做；锁定行仍跳过">
+                            <Button icon={<RefreshCw />} loading={imageQueue.isPending} disabled={assets.length === 0} onClick={() => imageQueue.mutate({ onlyFailed: true })}>
+                                重试失败图
+                            </Button>
+                        </Tooltip>
+                        <Tooltip title="为所有还没有音色样本的角色排队；非角色、无音色文本与锁定行会被跳过">
+                            <Button icon={<AudioLines />} loading={audioQueue.isPending} disabled={assets.length === 0} onClick={() => audioQueue.mutate({ onlyMissing: true })}>
+                                补缺音
                             </Button>
                         </Tooltip>
                         <Button type="primary" icon={<Sparkles />} loading={extract.isPending} onClick={() => extract.mutate()}>
@@ -168,7 +205,7 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                             </div>
                             <div className="grid gap-2 md:grid-cols-2">
                                 {group.items.map((asset) => (
-                                    <AssetCard key={asset.id} asset={asset} onEdit={() => setDraft(draftFromAsset(asset))} onQueueImage={() => imageQueue.mutate({ assetIds: [asset.id] })} />
+                                    <AssetCard key={asset.id} asset={asset} onEdit={() => setDraft(draftFromAsset(asset))} onQueueImage={() => imageQueue.mutate({ assetIds: [asset.id] })} onQueueAudio={() => audioQueue.mutate({ assetIds: [asset.id] })} />
                                 ))}
                             </div>
                         </div>
@@ -190,7 +227,7 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                         {jobs.map((job) => (
                             <div key={job.id} className="rounded-lg border border-[var(--line-soft)] p-2">
                                 <div className="flex items-center justify-between gap-2 text-[11px]">
-                                    <span className="text-foreground/70">{job.kind}</span>
+                                    <span className="text-foreground/70">{JOB_KIND_LABELS[job.kind] || job.kind}</span>
                                     <Tag color={JOB_STATUS_COLORS[job.status] || "default"} className="m-0">
                                         {JOB_STATUS_LABELS[job.status] || job.status}
                                     </Tag>
@@ -198,12 +235,13 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
                                 <div className="mt-1 text-[11px] text-foreground/45">
                                     {job.attempt > 0 ? `第 ${job.attempt} 次 · ` : ""}
                                     {job.updatedAt ? <RelativeTime value={job.updatedAt} /> : null}
+                                    {job.costMicrocredits > 0 ? ` · 费用 ${job.costMicrocredits} 微积分` : ""}
                                 </div>
                                 {job.lastError ? <div className="mt-1 whitespace-pre-wrap break-words rounded bg-[var(--surface-2)] p-1.5 text-[11px] leading-5 text-[var(--danger,#d14343)]">{job.lastError}</div> : null}
                             </div>
                         ))}
                     </div>
-                    <div className="mt-2 text-[11px] leading-5 text-foreground/45">失败的提取不会自动重试；修好渠道或设置后重新点「提取资产」，游标会从上次成功的批次继续。</div>
+                    <div className="mt-2 text-[11px] leading-5 text-foreground/45">失败的提取、出图与音色都不会自动重试，避免重复计费；修好渠道或设置后重新点对应按钮，提取游标会从上次成功的批次继续。费用列是任务已记录的账务口径，空表示尚未结算。</div>
                 </div>
             </aside>
             <AppModal
@@ -277,7 +315,8 @@ export function ShortplayAssetsPanel({ projectId, jobs }: { projectId: string; j
     );
 }
 
-function AssetCard({ asset, onEdit, onQueueImage }: { asset: ShortplayAssetSummary; onEdit: () => void; onQueueImage: () => void }) {
+function AssetCard({ asset, onEdit, onQueueImage, onQueueAudio }: { asset: ShortplayAssetSummary; onEdit: () => void; onQueueImage: () => void; onQueueAudio: () => void }) {
+    const canVoice = asset.kind === "character";
     return (
         <div className="rounded-xl border border-[var(--line-soft)] bg-[var(--surface-1)] p-3">
             <div className="flex items-start gap-3">
@@ -311,16 +350,30 @@ function AssetCard({ asset, onEdit, onQueueImage }: { asset: ShortplayAssetSumma
                         </div>
                     </div>
                     {asset.description ? <div className="mt-2 line-clamp-3 text-xs leading-5 text-foreground/60">{asset.description}</div> : null}
+                    {asset.audioResourceId ? (
+                        <audio controls preload="none" src={resourceFileUrl(asset.audioResourceId)} className="mt-2 h-8 w-full">
+                            <track kind="captions" />
+                        </audio>
+                    ) : null}
                     <div className="mt-2 flex items-center justify-between gap-2">
                         <div className="text-[11px] text-foreground/40">
                             图 {asset.imageStatus || "未生成"}
                             {asset.audioStatus ? ` · 音 ${asset.audioStatus}` : ""} · rev {asset.revision}
                         </div>
-                        <Tooltip title={asset.locked ? "参考图已锁定，出图会跳过；先解除锁定" : "为这一条资产排队出参考图"}>
-                            <Button size="small" icon={<ImageIcon />} disabled={asset.locked} onClick={onQueueImage}>
-                                出图
-                            </Button>
-                        </Tooltip>
+                        <div className="flex items-center gap-1">
+                            <Tooltip title={asset.locked ? "参考图已锁定，出图会跳过；先解除锁定" : "为这一条资产排队出参考图"}>
+                                <Button size="small" icon={<ImageIcon />} disabled={asset.locked} onClick={onQueueImage}>
+                                    出图
+                                </Button>
+                            </Tooltip>
+                            {canVoice ? (
+                                <Tooltip title={asset.locked ? "已锁定，出音会跳过；先解除锁定" : asset.voice ? "为这条角色排队生成音色样本" : "先在设定里写一句音色描述"}>
+                                    <Button size="small" icon={<AudioLines />} disabled={asset.locked || !asset.voice} onClick={onQueueAudio}>
+                                        出音
+                                    </Button>
+                                </Tooltip>
+                            ) : null}
+                        </div>
                     </div>
                 </div>
             </div>

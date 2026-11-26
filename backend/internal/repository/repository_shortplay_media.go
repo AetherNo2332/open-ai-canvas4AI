@@ -170,6 +170,140 @@ func (r *Repository) RecordShortplayAssetImageFailure(shortplayID string, assetI
 	return ErrShortplayMediaIDTaken
 }
 
+// ShortplayAssetAudioWrite 是一次音色样本的写入内容，与图片同形（无 appearance）。
+type ShortplayAssetAudioWrite struct {
+	ResourceID    string
+	SourceAudioID int
+	Prompt        string
+}
+
+// NextShortplayAssetAudioID 返回作品内下一段音频行的序号（max+1，从 1 起，不复用）。
+func (r *Repository) NextShortplayAssetAudioID(shortplayID string) (int, error) {
+	var maxID int
+	if err := r.db.Model(&model.ShortplayAssetAudio{}).Where("shortplay_id = ?", shortplayID).
+		Select("COALESCE(MAX(id), 0)").Scan(&maxID).Error; err != nil {
+		return 0, err
+	}
+	return maxID + 1, nil
+}
+
+// ShortplayAssetAudioByID 按 (shortplayId, id) 取一行音频产物。
+func (r *Repository) ShortplayAssetAudioByID(shortplayID string, id int) (*model.ShortplayAssetAudio, error) {
+	var row model.ShortplayAssetAudio
+	if err := r.db.First(&row, "shortplay_id = ? AND id = ?", shortplayID, id).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// ShortplayAssetAudios 返回某个资产的全部音色样本行，按 version 升序。
+func (r *Repository) ShortplayAssetAudios(shortplayID string, assetID int) ([]model.ShortplayAssetAudio, error) {
+	var rows []model.ShortplayAssetAudio
+	err := r.db.Where("shortplay_id = ? AND asset_id = ?", shortplayID, assetID).
+		Order("version asc").Find(&rows).Error
+	return rows, err
+}
+
+// SetShortplayAssetAudioFrom 以状态机 CAS 落一段新样本并推进指针，语义与图片一致：
+// 只允许从 allowed（在途状态）收口；RowsAffected==0 表示旧任务撞上新样本。
+func (r *Repository) SetShortplayAssetAudioFrom(shortplayID string, assetID int, write ShortplayAssetAudioWrite, allowed []string) (bool, error) {
+	if len(allowed) == 0 {
+		return false, errors.New("音色样本落库必须给允许的前置状态")
+	}
+	applied := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var maxVersion, maxID int
+		if err := tx.Model(&model.ShortplayAssetAudio{}).
+			Where("shortplay_id = ? AND asset_id = ?", shortplayID, assetID).
+			Select("COALESCE(MAX(version), 0)").Scan(&maxVersion).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.ShortplayAssetAudio{}).Where("shortplay_id = ?", shortplayID).
+			Select("COALESCE(MAX(id), 0)").Scan(&maxID).Error; err != nil {
+			return err
+		}
+		audio := &model.ShortplayAssetAudio{
+			ShortplayID:   shortplayID,
+			ID:            maxID + 1,
+			AssetID:       assetID,
+			Version:       maxVersion + 1,
+			Prompt:        write.Prompt,
+			SourceAudioID: write.SourceAudioID,
+			ResourceID:    write.ResourceID,
+			Status:        shortplay.ImageReady,
+			CreatedAt:     time.Now(),
+		}
+		if err := tx.Create(audio).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&model.ShortplayAsset{}).
+			Where("shortplay_id = ? AND id = ? AND audio_status IN ?", shortplayID, assetID, allowed).
+			Updates(map[string]any{
+				"current_audio_id": audio.ID,
+				"audio_status":     shortplay.ImageReady,
+				"audio_version":    gorm.Expr("audio_version + 1"),
+				"updated_at":       time.Now(),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errShortplayImageStateRejected
+		}
+		applied = true
+		return nil
+	})
+	if errors.Is(err, errShortplayImageStateRejected) {
+		return false, nil
+	}
+	return applied, err
+}
+
+// UpdateShortplayAssetAudioStatus 只推进音色样本生命周期，不动样本本身。
+func (r *Repository) UpdateShortplayAssetAudioStatus(shortplayID string, assetID int, status string) error {
+	return r.db.Model(&model.ShortplayAsset{}).
+		Where("shortplay_id = ? AND id = ?", shortplayID, assetID).
+		Updates(map[string]any{"audio_status": status, "updated_at": time.Now()}).Error
+}
+
+// RecordShortplayAssetAudioFailure 记录一次失败尝试：落一行 status=failed，
+// 不碰 current_audio_id，上一段可用样本继续可用。
+func (r *Repository) RecordShortplayAssetAudioFailure(shortplayID string, assetID int, write ShortplayAssetAudioWrite) error {
+	for attempt := 0; attempt < 2; attempt++ {
+		err := r.db.Transaction(func(tx *gorm.DB) error {
+			var maxVersion, maxID int
+			if err := tx.Model(&model.ShortplayAssetAudio{}).
+				Where("shortplay_id = ? AND asset_id = ?", shortplayID, assetID).
+				Select("COALESCE(MAX(version), 0)").Scan(&maxVersion).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&model.ShortplayAssetAudio{}).Where("shortplay_id = ?", shortplayID).
+				Select("COALESCE(MAX(id), 0)").Scan(&maxID).Error; err != nil {
+				return err
+			}
+			return tx.Create(&model.ShortplayAssetAudio{
+				ShortplayID:   shortplayID,
+				ID:            maxID + 1,
+				AssetID:       assetID,
+				Version:       maxVersion + 1,
+				Prompt:        write.Prompt,
+				SourceAudioID: write.SourceAudioID,
+				ResourceID:    write.ResourceID,
+				Status:        shortplay.ImageFailed,
+				CreatedAt:     time.Now(),
+			}).Error
+		})
+		if err == nil {
+			return nil
+		}
+		if attempt == 0 && isUniqueConstraintError(err) {
+			continue
+		}
+		return err
+	}
+	return ErrShortplayMediaIDTaken
+}
+
 // UpdateShortplayJobRunState 只推进在途 job 的 taskId 与载荷，不结束它。
 func (r *Repository) UpdateShortplayJobRunState(id, taskID, payloadJSON string) error {
 	updates := map[string]any{"task_id": taskID, "updated_at": time.Now()}
