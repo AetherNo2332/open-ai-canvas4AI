@@ -29,11 +29,11 @@
 - 测试（`shortplay_agent_write_test.go`）：预览无副作用、create 重放幂等、update 解锁且保留
   未提交字段、跨账号拒、自由画布拒、只读 run 不暴露工具。全 PASS（app 17.4s）。
 - `internal/architecture` PASS（读工具复杂度超限已用合并 case + 收窄 director 守卫修复）。
-- 工具目录本树：29 个、60313 字节、余量 3687 字节（不声明两 PR 合并预算通过）。
+- `shortplay_asset` 第二片：`place/image/audio` action 已接入同一审批链路（只入队，不直接提交付费任务）；place 重复执行只刷新同一张卡，image 重复入队复用同一 job（单测覆盖）。
 
 ## Next（按序，第一项是下一动作）
 
-1. W07 第二片：`shortplay_asset` 增加 `place` / `image` / `audio` action（或独立工具），
+1. W07 引擎级审批回归（未完成）：真实 run 里 `requestCloudAgentWriteApproval` 测试未取得 waiting_approval，需先按 directorFixture 的完整 dispatch 路径定位；补拒绝无写入/批准重放/进程恢复不重复付费任务。下一项：
    复用 `PlaceShortplayAssetCards` 与队列方法，仍走审批；补拒绝审批/批准重放与迟到回调测试。
 2. W06 正式页面回归：投送、拖动后重跑、刷新、收录、回写、双账号隔离。
 3. W08 确定性渠道跨进程全流程；W09 隔离恢复演练与完整门禁。
@@ -67,4 +67,5 @@
 - 本机前端 `tsc` 需 `--noEmit --incremental false`（tsbuildinfo 写入受限）；`web` 构建
   若被阻断，用隔离 Linux Docker 跑项目原命令，不复用旧 CI 结果。
 - 禁止：后台/第二写者、强推、新开 PR、直推 main、自动合并/生产部署、`prune`、删他人资源。
+
 

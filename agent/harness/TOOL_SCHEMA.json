@@ -1322,10 +1322,13 @@
           "additionalProperties": false,
           "properties": {
             "action": {
-              "description": "create 建行；update 改既有行（含解锁）",
+              "description": "create 建行；update 改设定/解锁；place 投送卡到本集；image/audio 入队生成",
               "enum": [
                 "create",
-                "update"
+                "update",
+                "place",
+                "image",
+                "audio"
               ],
               "type": "string"
             },
@@ -1342,9 +1345,17 @@
               "type": "string"
             },
             "assetId": {
-              "description": "update 必填：当前短剧项目内的整数资产 id",
+              "description": "update 必填：项目内整数资产 id",
               "minimum": 0,
               "type": "integer"
+            },
+            "assetIds": {
+              "description": "place 必填；image/audio 可省略表示全部",
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 50,
+              "type": "array"
             },
             "description": {
               "description": "叙事设定；update 留空不改",
@@ -1366,6 +1377,10 @@
             "name": {
               "description": "create 必填；update 留空不改",
               "type": "string"
+            },
+            "onlyMissing": {
+              "description": "image/audio：只排从未生成过的资产",
+              "type": "boolean"
             },
             "voice": {
               "description": "仅角色使用的音色描述；留空不改",
