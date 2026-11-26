@@ -41,7 +41,7 @@
 
 ## 推送前门禁
 
-门禁命令固定为 `bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full`。环境：`GOTOOLCHAIN=go1.25.0`、`CHROME_BIN=C:\Program Files\Google\Chrome\Application\chrome.exe`、`TEST_AGENT_POSTGRES_DSN` 与 `CANVAS_TEST_POSTGRES_DSN` 同时指向隔离库 `canvas_event_integration`（容器 `task7-continuation-pg-20261126`，`127.0.0.1:4908`）。每轮的提交、计划、逐项日志和 skip 统计都在 `.local/cache/verify/`，门禁输出在 `.local/cache/continuation/`。
+门禁命令固定为 `bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full`。环境：`GOTOOLCHAIN=go1.25.0`、`CHROME_BIN=C:\Program Files\Google\Chrome\Application\chrome.exe`、`TEST_AGENT_POSTGRES_DSN` 与 `CANVAS_TEST_POSTGRES_DSN` 同时指向隔离库 `canvas_event_integration`（容器 `task7-continuation-pg-20261126`，`127.0.0.1:4961`，端口变更原因见「环境、隔离与限制」）。每轮的提交、计划、逐项日志和 skip 统计都在 `.local/cache/verify/`，门禁输出在 `.local/cache/continuation/`。
 
 结果按提交分别记录，不把不同提交、不同模式（full / affected）混写：
 
@@ -59,10 +59,11 @@ skip 口径（首轮遗留问题，本轮修正）：
 首轮定位并修掉的门禁问题（保留记录，均在分支内修复，未降低断言或安全合同）：
 
 - `backend:full → TestAgentWakePostgresWorkerClaimsDuringFallback` 超时：根因是主机名非 ASCII（本机 `你猜猜我是谁`）时 Worker 用主机名派生租约槽位被 `^[A-Za-z0-9._-]+$` 拒绝并抛 `Invalid worker slot`，事件流永不建立。在与基线一致的干净 `canvas4ai/main` 工作树用其自带 v7 Worker 复现（`.local/cache/continuation/main-baseline-evidence.log`），修复前源码在 `golang:1.25-alpine` 容器内同样失败（`.local/cache/continuation/linux-wake.log`），确认是既有缺陷。修复：`agent/src/bridge.ts` 先归一化 Worker id 再截取槽位，`bridge-wire-contract` 新增用例；后端用例只把等待 Worker 冷启动的预算从 5s 提到 60s，不改服务超时。修复后该用例退出 0（PASS 21.90s，`.local/cache/continuation/wake-postfix.log`）。
+- 该用例随后暴露第二个既有竞争：监听器会在约 1s 内重连，而断言要求 worker 在监听器离线期间完成认领。现在改为服务级故障控制：`Service.StopAgentWakeListener` 同步停止读取循环并等待退出，测试在「监听器确实停止」的窗口内创建运行并观察 worker 认领，然后 `RestartAgentWakeListener` 恢复并验证完成与单次租约/模型执行；断言仍是「认领必须发生在监听器离线期间」，不再靠杀连接碰成功。本机连续 3 次通过（认领约 0.6–0.85s）。
 - `agent:smoke`：生产冒烟内部探针硬编码 `canvas-pi-wire/v7`，已同步 `v8`（`scripts/verify-production-agent-smoke.py`）。
 - `web:test` 的 10 条失败是工作树 CRLF 与仓库 LF 文本断言不一致；规范为 LF 后 3708 通过 / 7 跳过 / 0 失败，未改断言。
 - `TestSettingsEncryptionKey*` 按平台限定 `0600` 位比较：Windows 仍执行发布、完整性、并发一致性、防覆盖、回退与临时文件清理检查，Linux 容器实跑原始断言（见上表）。
-- wake 用例在本机与「监听器 1s 级自动重连」存在竞争：现在每次监听器重连都重新终止它，直到观察到 worker 认领或到达有界超时（`agent_wake_worker_fallback_test.go`，只改测试；断言不变，仍是「认领必须发生在监听器离线期间」，产品代码未动）。本机连续 3 次通过，认领耗时约 0.6s。
+- wake 用例的并发认领竞争：`TestAgentWakeClaimRacePostgres` 曾出现两次并发 claim 都返回「暂无」（`winner="", null responses=2`），随后运行被后续 worker 认领。现在 `raceAgentWakeClaims` 用有界重试等运行可认领，每一轮仍要求恰好一个赢家、出现双认领立即失败，断言强度不变；本机连跑 2 次通过。
 
 ## 复审修复（首轮独立审阅，P1 + 3×P2）
 
@@ -96,7 +97,8 @@ skip 口径（首轮遗留问题，本轮修正）：
 
 ## 环境、隔离与限制
 
-- 本机 Docker Server；复用 `postgres:17-alpine`（PostgreSQL 17.12，镜像摘要 `sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7`）。独立容器 `task7-continuation-pg-20261126` 仅绑定 `127.0.0.1:4908`，独享匿名卷，无业务挂载、无 Compose 项目；未 `prune`、未 `--no-cache`、未清理他人容器或镜像。Go/Node/Bun 在宿主机运行，本轮未构建 Docker 镜像。
+- 本机 Docker Server；复用 `postgres:17-alpine`（PostgreSQL 17.12，镜像摘要 `sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7`）。独立容器 `task7-continuation-pg-20261126` 仅绑定 `127.0.0.1:4961`，独享匿名卷，无业务挂载、无 Compose 项目；未 `prune`、未 `--no-cache`、未清理他人容器或镜像。Go/Node/Bun 在宿主机运行，本轮未构建 Docker 镜像。
+- 端口变更：容器原先绑定 `127.0.0.1:4908`；2026-11-26 20:30 左右 Docker Desktop 重启后容器退出，且 Windows TCP 排除端口段（`netsh int ipv4 show excludedportrange protocol=tcp`）此时覆盖 4853–4952，4908 已无法绑定。用同一缓存镜像重建容器并改绑 `127.0.0.1:4961`，数据库、认证方式与隔离范围不变（仍与短剧 15432/15439 隔离）。
 - `TEST_AGENT_POSTGRES_DSN` 与 `CANVAS_TEST_POSTGRES_DSN` 都指向该容器内的 `canvas_event_integration`；每个 HTTP 用例创建并删除独立 schema，不使用业务库 DSN。只设置其中一个会让另一组 PostgreSQL 用例 skip，这类结果不计为完整覆盖。
 - Windows 上多包 `go test` 并行、SQLite 与真实跨进程用例互相拖慢；300 秒整包时限对全量套件不足，这是环境限制，未通过扩大产品超时或降低安全合同绕过。
 - 真实模型效果、生产计费、浏览器交互、真实素材交付，以及「在每个状态杀死整个 Go 后端进程」未作为本轮真实证据；进程级恢复用新 Service/新连接读取同一数据库文件与真实 Worker 接管覆盖。

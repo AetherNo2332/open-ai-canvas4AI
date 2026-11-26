@@ -107,12 +107,12 @@ func TestAgentWakePostgresWorkerClaimsDuringFallback(t *testing.T) {
 	workerStart := 60 * time.Second
 	waitWakeTestSignalWithin(t, streamStarted, "worker event stream", workerStart)
 	waitWakeTestSignalWithin(t, firstClaim, "worker initial empty claim", workerStart)
-	var terminated bool
-	if err := db.Raw(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-		WHERE datname=current_database() AND application_name='canvas-agent-wake-listener'`).Scan(&terminated).Error; err != nil || !terminated {
-		t.Fatalf("could not terminate isolated listener: terminated=%v err=%v", terminated, err)
+	// 确定的离线窗口：显式停止事件流监听器（同步等待读取循环退出），不杀数据库
+	// 连接、也不靠反复重连碰成功。停止后订阅接口返回 nil，说明没有在线监听器。
+	if err := svc.StopAgentWakeListener(t.Context()); err != nil {
+		t.Fatal(err)
 	}
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(10 * time.Second)
 	for events != nil {
 		select {
 		case _, ok := <-events:
@@ -123,9 +123,8 @@ func TestAgentWakePostgresWorkerClaimsDuringFallback(t *testing.T) {
 			t.Fatal("listener did not disconnect")
 		}
 	}
-	_, _, reconnect, _ := svc.AgentWakeSubscription("fallback-user")
-	if reconnect == nil {
-		t.Fatal("listener already reconnected")
+	if _, _, reconnect, _ := svc.AgentWakeSubscription("fallback-user"); reconnect != nil {
+		t.Fatal("listener still registered after stop")
 	}
 	started := time.Now()
 	request := service.CloudAgentRequest{CanvasID: "fallback-canvas", Prompt: "Reply with one sentence.", Model: "text-e2e", ChannelID: "sdk-text", ChannelModelKey: "text-e2e", PermissionMode: "auto", ContextScope: []string{"canvas"}, IdempotencyKey: "worker-disconnect-fallback"}
@@ -136,35 +135,21 @@ func TestAgentWakePostgresWorkerClaimsDuringFallback(t *testing.T) {
 	}
 	ticker := time.NewTicker(15 * time.Millisecond)
 	defer ticker.Stop()
-	// 监听器会在 1s 级别自己重连；本用例要证明的是「worker 在没有事件流时也能认领
-	// 持久化运行」。因此每次监听器重连都重新终止它，直到观察到认领（有界重试），
-	// 断言语义不变：认领必须发生在监听器离线期间，不能靠重连后的唤醒。
-	terminateListener := func() {
-		var terminated bool
-		if err := db.Raw(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-			WHERE datname=current_database() AND application_name='canvas-agent-wake-listener'`).Scan(&terminated).Error; err != nil || !terminated {
-			t.Fatalf("could not terminate isolated listener again: terminated=%v err=%v", terminated, err)
-		}
-		if _, _, next, _ := svc.AgentWakeSubscription("fallback-user"); next != nil {
-			reconnect = next
-		}
-	}
+	// 监听器已停止，认领只能来自 worker 自己的轮询；监听器不在线期间出现任何
+	// 在线订阅都说明离线窗口被破坏。
 	claimDeadline := time.After(workerStart)
 	var execution model.CloudAgentExecution
-	for reinit := 0; ; {
+	for {
 		if err := db.First(&execution, "id = ?", run.ID).Error; err != nil {
 			t.Fatal(err)
 		}
 		if strings.HasPrefix(execution.LeaseOwner, "fallback-worker:") || execution.Status == "completed" {
 			break
 		}
+		if _, _, online, _ := svc.AgentWakeSubscription("fallback-user"); online != nil {
+			t.Fatalf("listener came online before the worker claimed the run: status=%s", execution.Status)
+		}
 		select {
-		case <-reconnect:
-			reinit++
-			if reinit > 5 {
-				t.Fatalf("listener kept reconnecting before the worker claimed the run: status=%s", execution.Status)
-			}
-			terminateListener()
 		case <-ticker.C:
 		case <-claimDeadline:
 			t.Fatalf("worker did not claim the run while the listener stayed offline: status=%s", execution.Status)
@@ -173,7 +158,13 @@ func TestAgentWakePostgresWorkerClaimsDuringFallback(t *testing.T) {
 		}
 	}
 	t.Logf("production worker claimed the persisted run while listener was offline after %s", time.Since(started))
-	waitWakeTestSignal(t, reconnect, "listener reconnect")
+	// 认领已发生在监听器停止期间；重启监听器验证恢复后的完成与单次租约/模型执行。
+	if err := svc.RestartAgentWakeListener(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ready, _ := svc.AgentWakeSubscription("fallback-user"); ready != nil {
+		t.Fatalf("restarted listener is not online: ready=%v", ready)
+	}
 	finish := time.After(15 * time.Second)
 	for execution.Status != "completed" {
 		select {

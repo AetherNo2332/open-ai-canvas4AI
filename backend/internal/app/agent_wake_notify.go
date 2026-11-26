@@ -41,15 +41,63 @@ func (s *Service) StartAgentWakeListener() {
 	}
 	s.agentWakeOnce.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())
-		s.agentWake = &agentWakeHub{repo: s.repo, subscribers: make(map[*agentWakeSubscriber]struct{}), ready: make(chan struct{}), cancel: cancel, done: make(chan struct{})}
-		go s.agentWake.run(ctx)
+		hub := &agentWakeHub{repo: s.repo, subscribers: make(map[*agentWakeSubscriber]struct{}), ready: make(chan struct{}), cancel: cancel, done: make(chan struct{})}
+		s.agentWakeMu.Lock()
+		s.agentWake = hub
+		s.agentWakeMu.Unlock()
+		go hub.run(ctx)
 	})
+}
+
+// RestartAgentWakeListener 重建事件流监听器：停止时取消并在返回前等待读取循环退出，
+// 因此重新启动后的窗口里没有旧监听器残留。生产用于进程收尾与恢复演练，测试用它
+// 建立确定的「监听器离线」窗口，不需要反复杀数据库连接。
+func (s *Service) RestartAgentWakeListener(ctx context.Context) error {
+	if err := s.StopAgentWakeListener(ctx); err != nil {
+		return err
+	}
+	s.agentWakeOnce = sync.Once{}
+	s.StartAgentWakeListener()
+	hub := s.currentAgentWakeHub()
+	if hub == nil {
+		return nil
+	}
+	select {
+	case <-hub.ready:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return nil
+}
+
+// StopAgentWakeListener 停止事件流监听器并等待其读取循环退出。
+func (s *Service) StopAgentWakeListener(ctx context.Context) error {
+	s.agentWakeMu.Lock()
+	hub := s.agentWake
+	s.agentWake = nil
+	s.agentWakeMu.Unlock()
+	if hub == nil {
+		return nil
+	}
+	hub.cancel()
+	select {
+	case <-hub.done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return nil
+}
+
+func (s *Service) currentAgentWakeHub() *agentWakeHub {
+	s.agentWakeMu.Lock()
+	defer s.agentWakeMu.Unlock()
+	return s.agentWake
 }
 
 // AgentWakeSubscription captures the live queue and the historical boundary atomically.
 // A nil queue means poll until ready closes (or forever if ready is nil).
 func (s *Service) AgentWakeSubscription(scope string) (<-chan model.AgentWakeEvent, int64, <-chan struct{}, func()) {
-	hub := s.agentWake
+	hub := s.currentAgentWakeHub()
 	if hub == nil {
 		return nil, 0, nil, nil
 	}
