@@ -41,15 +41,17 @@
 
 ## 推送前门禁
 
-最后一次完整门禁在功能分支 HEAD 上执行（`GOTOOLCHAIN=go1.25.0`、`CHROME_BIN=C:\Program Files\Google\Chrome\Application\chrome.exe`、`TEST_AGENT_POSTGRES_DSN` 指向隔离库 `canvas_event_integration`，容器 `task7-continuation-pg-20261126` / `127.0.0.1:4908`）：
+最后一次完整门禁在功能分支提交 `f16c4d70f` 上执行（`GOTOOLCHAIN=go1.25.0`、`CHROME_BIN=C:\Program Files\Google\Chrome\Application\chrome.exe`、`TEST_AGENT_POSTGRES_DSN` 指向隔离库 `canvas_event_integration`，容器 `task7-continuation-pg-20261126` / `127.0.0.1:4908`）：
 
-- 结果：26 项，**25 通过，1 失败**，用时 1923.3s；计划与逐项日志保存在 `.local/cache/verify/`（`verification-plan.json`、`result-local.json`、`*.log`），门禁输出在 `.local/cache/continuation/gate-full-5.log`。
-- 通过项包括：`backend:agent-lint`、`agent:check`、`backend:app-shard-1..4`、`backend:baseline`、`backend:gofmt`、`backend:vet`、`backend:tool-contract`、`changelog`、`docs:*`、`deployment:commands`、`verification:tests`、`payment:*`、`agent:smoke`、`web:format/lint/test/typecheck/e2e`。
-- 唯一失败（已定位并修复）：`backend:full → TestAgentWakePostgresWorkerClaimsDuringFallback`（`timed out waiting for worker event stream`）。根因不是本次续接改动：本机主机名是非 ASCII（`你猜猜我是谁`），Worker 用它派生租约槽位时被 `^[A-Za-z0-9._-]+$` 拒绝，直接抛 `Invalid worker slot`，所以从未打开 `/internal-agent/events`。在干净的 `canvas4ai/main` 工作树、用它自带的 `canvas-pi-wire/v7` Worker 构建复现同一失败（日志 `.local/cache/continuation/main-baseline-evidence.log`），修复前的源码在 `golang:1.25-alpine` 容器内也是同一现象（`.local/cache/continuation/linux-wake.log`），说明这是既有缺陷，与平台无关。
-- 修复：`agent/src/bridge.ts` 先用 `[^A-Za-z0-9._-]` 归一化 Worker id 再截取槽位，非 ASCII 主机名不再让 Worker 启动失败，`agent/test/bridge-wire-contract.test.ts` 新增用例钉住；该后端用例等待 Worker 冷启动的预算从 5s 提到 60s（只改测试，不改服务超时）。修复后本机实跑 `go test ./internal/handler -run '^TestAgentWakePostgresWorkerClaimsDuringFallback$'` 退出 0，PASS 21.90s（`.local/cache/continuation/wake-postfix.log`）。
-- 本轮修复并复验：生产冒烟内部探针同步 `canvas-pi-wire/v8`（`scripts/verify-production-agent-smoke.py`），`agent:smoke` 由失败转为通过；工作树 CRLF 规范为 LF 后 `web:test` 3708 通过/7 跳过/0 失败；`CHROME_BIN` 下 `web:e2e` 78/78 断言通过；`docs:check` 的 `bun run build` 直接执行退出 0（此前门禁 `child output pipes did not close` 为 Bun/Windows 管道问题，本轮未复现）。
-- 隔离 PG 下 SDK 跨进程用例通过（`TestAgentSDKRealHTTPWorkerRestart`、`TestAgentSDKNativeSkillsHTTP`）；`TestPasswordResetRecordsSkipReasonsAndDeliveries` 的 60 秒冷却顺序问题在 `canvas4ai/main` 上也 1/3 次失败（同日志文件），属既有测试时序缺陷。
-- 上表对应提交之后的改动只有本验收文件、Agent SDK 文档、待验清单、内部版本号，以及上面的 Worker 槽位修复（`4246adcc3`：`agent/src/bridge.ts` 一条行为修复、一条前端合同用例、两个后端用例的等待预算）。最终提交上的完整门禁复跑结果保存在本机 `.local/cache/verify/`，并在 PR 描述里列出，本文件不预写尚未执行的结果。
+- 结果：26 项全部通过，失败 0 项，用时 2214.1s，退出 0；计划与逐项日志在 `.local/cache/verify/`（`verification-plan.json`、`result-local.json`、`*.log`），门禁输出在 `.local/cache/continuation/gate-full-9.log`。
+- 通过项：`backend:agent-lint`、`agent:check`、`backend:app-shard-1..4`、`backend:full`、`backend:baseline`、`backend:gofmt`、`backend:vet`、`backend:tool-contract`、`changelog`、`docs:metadata/deployment/types/check`、`deployment:commands`、`verification:tests`、`payment:artifacts/platforms`、`agent:smoke`、`web:format/lint/test/typecheck/e2e`。
+- 门禁过程中定位并修掉的问题（都在本分支内，未降低断言、未放宽安全合同）：
+  - `backend:full → TestAgentWakePostgresWorkerClaimsDuringFallback` 超时：根因是主机名非 ASCII（本机 `你猜猜我是谁`）时 Worker 用主机名派生租约槽位被 `^[A-Za-z0-9._-]+$` 拒绝并抛 `Invalid worker slot`，事件流因此永不建立。在干净的 `canvas4ai/main` 工作树、用它自带的 `canvas-pi-wire/v7` Worker 构建复现同一失败（`.local/cache/continuation/main-baseline-evidence.log`），修复前源码在 `golang:1.25-alpine` 容器内同样失败（`.local/cache/continuation/linux-wake.log`），确认是既有缺陷而非本次改动。修复：`agent/src/bridge.ts` 先归一化 Worker id 再截取槽位，`bridge-wire-contract` 新增用例钉住；后端用例只把等待 Worker 冷启动的预算从 5s 提到 60s，不改服务超时。修复后该用例退出 0（PASS 21.90s，`.local/cache/continuation/wake-postfix.log`）。
+  - `agent:smoke`：生产冒烟内部探针硬编码 `canvas-pi-wire/v7`，已同步 `v8`（`scripts/verify-production-agent-smoke.py`）。
+  - `web:test` 的 10 条失败是工作树 CRLF 与仓库 LF 文本断言不一致；规范为 LF 后 3708 通过/7 跳过/0 失败，未改断言。
+  - `TestSettingsEncryptionKey*` 按平台限定 `0600` 位比较：Windows 仍执行全部行为检查，Linux 容器实跑原始断言（见上表）。
+- 隔离 PG 下 SDK 跨进程用例通过；`TestPasswordResetRecordsSkipReasonsAndDeliveries` 的 60 秒冷却顺序缺陷在 `canvas4ai/main` 上同样出现（1/3），属既有测试时序问题，本次未改动。
+- 本文件后续只增加这段证据更新与内部版本号，没有代码或测试改动；这部分文本增量在最终提交上用 `--mode affected` 复验，完整结果同样保存在 `.local/cache/verify/`，并写入 PR 描述。
 
 ## 行为覆盖（对应任务书 Task 7）
 
