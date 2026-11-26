@@ -363,4 +363,3 @@ func TestShortplayExtractSchedulerTickDrainsQueuedJobs(t *testing.T) {
 		t.Fatalf("job changed after empty tick: %#v", again)
 	}
 }
-
