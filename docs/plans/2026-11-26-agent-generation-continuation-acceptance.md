@@ -36,7 +36,17 @@
 | `cd agent && npm test` | 退出 0（207 项，206 通过、1 跳过）。 |
 | `cd agent && npm run build` | 退出 0。 |
 | `cd backend && go test ./internal/app -count=1 -timeout 900s` | 见推送门禁的分片结果；300s 时限不足是总时长环境限制，不记为通过。分片里曾出现的 `TestSettingsEncryptionKey*` 失败是 Windows 无法观测 Unix 0600 权限位（生产 `settings_key.go` 本就按 GOOS 跳过 chmod）；已在测试中按 GOOS 保留 Unix 断言、Windows 跳过断言，行为用例仍执行，Linux CI 覆盖不变。 |
-| `bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full` | 见推送前门禁记录；选中项与结果写入 `.local/cache/verify/`，未选中项不作通过声明。 |
+| `bun scripts/verify-before-push.mjs --base canvas4ai/main --mode full` | 见下方「推送前门禁」：26 项 25 通过，唯一失败是 `backend:full` 里的 `TestAgentWakePostgresWorkerClaimsDuringFallback`；该用例在干净的 `canvas4ai/main` 工作树用其自带 v7 Worker 同样失败。 |
+
+## 推送前门禁
+
+最后一次完整门禁在功能分支 HEAD 上执行（`GOTOOLCHAIN=go1.25.0`、`CHROME_BIN=C:\Program Files\Google\Chrome\Application\chrome.exe`、`TEST_AGENT_POSTGRES_DSN` 指向隔离库 `canvas_event_integration`，容器 `task7-continuation-pg-20261126` / `127.0.0.1:4908`）：
+
+- 结果：26 项，**25 通过，1 失败**，用时 1923.3s；计划与逐项日志保存在 `.local/cache/verify/`（`verification-plan.json`、`result-local.json`、`*.log`），门禁输出在 `.local/cache/continuation/gate-full-5.log`。
+- 通过项包括：`backend:agent-lint`、`agent:check`、`backend:app-shard-1..4`、`backend:baseline`、`backend:gofmt`、`backend:vet`、`backend:tool-contract`、`changelog`、`docs:*`、`deployment:commands`、`verification:tests`、`payment:*`、`agent:smoke`、`web:format/lint/test/typecheck/e2e`。
+- 唯一失败：`backend:full → TestAgentWakePostgresWorkerClaimsDuringFallback`（`timed out waiting for worker event stream`，15s）。已排除本次改动：在 `canvas4ai/main` 干净工作树、用它自己的 `canvas-pi-wire/v7` Worker 构建运行同一用例，同样在 15s 超时失败（日志 `.local/cache/continuation/main-baseline-evidence.log`）；失败现场 backend 侧只有 `Agent capacity recovery: Pi worker internal Error`，Worker 未在等待窗口内打开 `/internal-agent/events`。这是本机 Windows/Node 环境的既有问题，不用它豁免推送门禁，需由 CI（Ubuntu）或环境修复闭环。
+- 本轮修复并复验：生产冒烟内部探针同步 `canvas-pi-wire/v8`（`scripts/verify-production-agent-smoke.py`），`agent:smoke` 由失败转为通过；工作树 CRLF 规范为 LF 后 `web:test` 3708 通过/7 跳过/0 失败；`CHROME_BIN` 下 `web:e2e` 78/78 断言通过；`docs:check` 的 `bun run build` 直接执行退出 0（此前门禁 `child output pipes did not close` 为 Bun/Windows 管道问题，本轮未复现）。
+- 隔离 PG 下 SDK 跨进程用例通过（`TestAgentSDKRealHTTPWorkerRestart`、`TestAgentSDKNativeSkillsHTTP`）；`TestPasswordResetRecordsSkipReasonsAndDeliveries` 的 60 秒冷却顺序问题在 `canvas4ai/main` 上也 1/3 次失败（同日志文件），属既有测试时序缺陷。
 
 ## 行为覆盖（对应任务书 Task 7）
 
