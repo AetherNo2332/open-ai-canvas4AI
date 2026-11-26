@@ -22,9 +22,10 @@ func TestSettingsEncryptionKeyPublication(t *testing.T) {
 			t.Fatalf("incomplete temporary key: %v", err)
 		}
 		info, err := os.Stat(temp)
-		if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
-			t.Fatalf("temporary permissions: %v", err)
+		if err != nil {
+			t.Fatalf("temporary key stat: %v", err)
 		}
+		assertSettingsKeyPermissions(t, info, "temporary permissions")
 		if _, err := os.Stat(target); !os.IsNotExist(err) {
 			t.Fatalf("key visible before publication: %v", err)
 		}
@@ -66,9 +67,10 @@ func TestSettingsEncryptionKeyLinkFallback(t *testing.T) {
 				t.Fatalf("key changed: %v", err)
 			}
 			info, err := os.Stat(path)
-			if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
-				t.Fatalf("permissions: %v", err)
+			if err != nil {
+				t.Fatalf("published key stat: %v", err)
 			}
+			assertSettingsKeyPermissions(t, info, "permissions")
 		})
 	}
 }
@@ -104,11 +106,9 @@ func TestSettingsEncryptionKeyConcurrentFirstUse(t *testing.T) {
 	}
 	info, err := entries[0].Info()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("published key stat: %v", err)
 	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
-		t.Fatalf("key permissions = %o", info.Mode().Perm())
-	}
+	assertSettingsKeyPermissions(t, info, "key permissions")
 }
 
 func TestSettingsEncryptionKeyWaitsForLegacyWriter(t *testing.T) {
@@ -152,5 +152,18 @@ func TestSettingsEncryptionKeyNeverReplacesExisting(t *testing.T) {
 				t.Fatal("existing key not returned")
 			}
 		})
+	}
+}
+
+// The POSIX 0600 assertion only applies where the platform can represent mode
+// bits. Windows still fails on any stat error and keeps running every other key
+// check in this file; only the permission comparison is platform-specific.
+func assertSettingsKeyPermissions(t *testing.T, info os.FileInfo, label string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("%s = %o", label, info.Mode().Perm())
 	}
 }

@@ -17,6 +17,7 @@
 | 分镜异步提交改走续接 | `TestCloudAgentStoryboardAsyncSubmitContinuation` 通过（2.01s）：拆镜回执立即返回并登记同一批次；`finish_run.continuation` 后 source 为 completed、批次 armed；末项终态前 `QueueReadyGenerationContinuations` 返回 0，终态后只排入一条内部消息，重复扫描返回 0；批次结果保留 `splitResult`/`rowId`，用户可见队列看不到内部消息。 |
 | SQLite→PostgreSQL 迁移清单 | `cmd/migrate-sqlite-postgres` 的 `TestMigrationListCoversSchemaModels`、`TestMigrationListCoversInitializedSchema` 通过：两张批次表已加入精确表清单，升级/复制不会漏表。 |
 | 策略元数据 | `TestLoadAgentPoliciesUsesDocumentMetadata` 通过：system 28、general 1、media 7，正文不含 frontmatter，media 保留“不轮询/续接/不自动重新收费”合同语句。 |
+| 密钥文件权限（POSIX 语义） | `TestSettingsEncryptionKey*` 在 Linux 容器内实际执行原始 `0600` 断言：`golang:1.25-alpine`（`sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59`，Go 1.25.14 linux/amd64），仓库只读挂载、临时目录用容器原生文件系统；5 个用例（发布、链接回退、并发首次使用、等待旧写入者、不覆盖已有）全部通过，退出 0，日志 `.local/cache/continuation/linux-settings-key.log`。Windows 上仍执行发布、完整性、并发一致性、防覆盖、回退与临时文件清理检查，`os.Stat` 错误仍然失败；只有 `0600` 位比较限定在能表达 POSIX 权限位的平台，生产 `settings_key.go` 的 GOOS 分支未改。 |
 | 提示词与制品一致 | `TestCloudAgentGenerationContinuationPrompts`、`TestAgentToolSchemaArtifactMatchesRuntime` 通过；`agent/scripts/sync-harness.mjs` 已同步 SYSTEM_POLICY/MEDIA_POLICY/TOOL_DESCRIPTIONS/SOURCE。制品版本 `cloud-agent-tools/v30`、`canvas-pi-wire/v8`。 |
 | Agent Worker | `cd agent && npm test` 退出 0：207 项，206 通过、1 跳过、0 失败；`npm run build` 退出 0。 |
 
