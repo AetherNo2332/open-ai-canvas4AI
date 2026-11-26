@@ -20,6 +20,7 @@
 | 密钥文件权限（POSIX 语义） | `TestSettingsEncryptionKey*` 在 Linux 容器内实际执行原始 `0600` 断言：`golang:1.25-alpine`（`sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59`，Go 1.25.14 linux/amd64），仓库只读挂载、临时目录用容器原生文件系统；5 个用例（发布、链接回退、并发首次使用、等待旧写入者、不覆盖已有）全部通过，退出 0，日志 `.local/cache/continuation/linux-settings-key.log`。Windows 上仍执行发布、完整性、并发一致性、防覆盖、回退与临时文件清理检查，`os.Stat` 错误仍然失败；只有 `0600` 位比较限定在能表达 POSIX 权限位的平台，生产 `settings_key.go` 的 GOOS 分支未改。 |
 | 提示词与制品一致 | `TestCloudAgentGenerationContinuationPrompts`、`TestAgentToolSchemaArtifactMatchesRuntime` 通过；`agent/scripts/sync-harness.mjs` 已同步 SYSTEM_POLICY/MEDIA_POLICY/TOOL_DESCRIPTIONS/SOURCE。制品版本 `cloud-agent-tools/v30`、`canvas-pi-wire/v8`。 |
 | Agent Worker | `cd agent && npm test` 退出 0：207 项，206 通过、1 跳过、0 失败；`npm run build` 退出 0。 |
+| 非 ASCII 主机名的 Worker 启动 | 门禁暴露的既有缺陷：本机主机名是 `你猜猜我是谁`，Worker 用它派生租约槽位时被 `^[A-Za-z0-9._-]+$` 拒绝并抛 `Invalid worker slot`，因此从不打开 `/internal-agent/events`。`agent/src/bridge.ts` 改为先归一化 Worker id 再截取槽位，新增 `bridge-wire-contract` 用例覆盖；修复后 `TestAgentWakePostgresWorkerClaimsDuringFallback` 通过（PASS 21.90s），覆盖 listener 断开期间 Worker 认领持久 run。 |
 
 ## 命令与结果
 
@@ -44,10 +45,11 @@
 
 - 结果：26 项，**25 通过，1 失败**，用时 1923.3s；计划与逐项日志保存在 `.local/cache/verify/`（`verification-plan.json`、`result-local.json`、`*.log`），门禁输出在 `.local/cache/continuation/gate-full-5.log`。
 - 通过项包括：`backend:agent-lint`、`agent:check`、`backend:app-shard-1..4`、`backend:baseline`、`backend:gofmt`、`backend:vet`、`backend:tool-contract`、`changelog`、`docs:*`、`deployment:commands`、`verification:tests`、`payment:*`、`agent:smoke`、`web:format/lint/test/typecheck/e2e`。
-- 唯一失败：`backend:full → TestAgentWakePostgresWorkerClaimsDuringFallback`（`timed out waiting for worker event stream`，15s）。已排除本次改动：在 `canvas4ai/main` 干净工作树、用它自己的 `canvas-pi-wire/v7` Worker 构建运行同一用例，同样在 15s 超时失败（日志 `.local/cache/continuation/main-baseline-evidence.log`）；失败现场 backend 侧只有 `Agent capacity recovery: Pi worker internal Error`，Worker 未在等待窗口内打开 `/internal-agent/events`。这是既有问题，不用它豁免推送门禁，需由 CI（Ubuntu）或环境修复闭环。同一用例在 `golang:1.25-alpine` 容器内（Node 24、仓库只读挂载、DSN 指向同一隔离库）也超时失败（日志 `.local/cache/continuation/linux-wake.log`）；该容器与 CI 的 Node 22 可写检出不等价，只能说明失败不限于 Windows 宿主，不能作为 CI 结论。
+- 唯一失败（已定位并修复）：`backend:full → TestAgentWakePostgresWorkerClaimsDuringFallback`（`timed out waiting for worker event stream`）。根因不是本次续接改动：本机主机名是非 ASCII（`你猜猜我是谁`），Worker 用它派生租约槽位时被 `^[A-Za-z0-9._-]+$` 拒绝，直接抛 `Invalid worker slot`，所以从未打开 `/internal-agent/events`。在干净的 `canvas4ai/main` 工作树、用它自带的 `canvas-pi-wire/v7` Worker 构建复现同一失败（日志 `.local/cache/continuation/main-baseline-evidence.log`），修复前的源码在 `golang:1.25-alpine` 容器内也是同一现象（`.local/cache/continuation/linux-wake.log`），说明这是既有缺陷，与平台无关。
+- 修复：`agent/src/bridge.ts` 先用 `[^A-Za-z0-9._-]` 归一化 Worker id 再截取槽位，非 ASCII 主机名不再让 Worker 启动失败，`agent/test/bridge-wire-contract.test.ts` 新增用例钉住；该后端用例等待 Worker 冷启动的预算从 5s 提到 60s（只改测试，不改服务超时）。修复后本机实跑 `go test ./internal/handler -run '^TestAgentWakePostgresWorkerClaimsDuringFallback$'` 退出 0，PASS 21.90s（`.local/cache/continuation/wake-postfix.log`）。
 - 本轮修复并复验：生产冒烟内部探针同步 `canvas-pi-wire/v8`（`scripts/verify-production-agent-smoke.py`），`agent:smoke` 由失败转为通过；工作树 CRLF 规范为 LF 后 `web:test` 3708 通过/7 跳过/0 失败；`CHROME_BIN` 下 `web:e2e` 78/78 断言通过；`docs:check` 的 `bun run build` 直接执行退出 0（此前门禁 `child output pipes did not close` 为 Bun/Windows 管道问题，本轮未复现）。
 - 隔离 PG 下 SDK 跨进程用例通过（`TestAgentSDKRealHTTPWorkerRestart`、`TestAgentSDKNativeSkillsHTTP`）；`TestPasswordResetRecordsSkipReasonsAndDeliveries` 的 60 秒冷却顺序问题在 `canvas4ai/main` 上也 1/3 次失败（同日志文件），属既有测试时序缺陷。
-- 上表的提交之后只增加了本验收文件、Agent SDK 文档、待验清单与内部版本号，没有代码或测试改动；最终提交上的同一门禁复跑结果，以及上面的 Linux 容器复现记录，保存在本机 `.local/cache/verify/` 与 PR 描述里，本文件不预写尚未执行的结果。
+- 上表对应提交之后的改动只有本验收文件、Agent SDK 文档、待验清单、内部版本号，以及上面的 Worker 槽位修复（`4246adcc3`：`agent/src/bridge.ts` 一条行为修复、一条前端合同用例、两个后端用例的等待预算）。最终提交上的完整门禁复跑结果保存在本机 `.local/cache/verify/`，并在 PR 描述里列出，本文件不预写尚未执行的结果。
 
 ## 行为覆盖（对应任务书 Task 7）
 
