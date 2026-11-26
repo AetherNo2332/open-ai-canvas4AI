@@ -49,6 +49,7 @@ import { CanvasCharacterLibraryModal } from "@/components/canvas/canvas-characte
 import { CanvasPoseLibraryModal } from "@/components/canvas/canvas-pose-library-modal";
 import { CanvasCharacterReferenceNodeContent } from "@/components/canvas/canvas-character-reference-node";
 import { ShortplayAssetNodeContent } from "@/components/canvas/canvas-shortplay-asset-node";
+import { shortplayCanvasEntriesEnabled } from "@/lib/canvas/canvas-shortplay-asset";
 import { CanvasCharacterReferenceModal } from "@/components/canvas/canvas-character-reference-modal";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { resolveProjectCanvasStyle } from "@/components/canvas/canvas-style-picker-modal";
@@ -567,6 +568,9 @@ function CanvasViewportPage() {
         [persistLocalEdits, projectId, setConnections, setNodes],
     );
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
+    // 关联画布 = drama 开关打开且画布已关联作品；短剧局部卡/收录只在这些画布之外出现。
+    const canvasProjectLinked = Boolean(shortDramaEnabled && currentProject?.projectId);
+    const shortplayCanvasEntries = shortplayCanvasEntriesEnabled({ shortplayEnabled, isProjectLinked: canvasProjectLinked });
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
     // 这张画布是不是某部短剧的分集画布：是的话顶栏回跳短剧工作台，而不是 drama 制作台。
     const shortplayBindingQuery = useQuery({
@@ -2763,7 +2767,7 @@ function CanvasViewportPage() {
             : [];
     const freeformCreateCommands = useCanvasCreateCommands({
         workspaceMode,
-        isProjectLinked: Boolean(shortDramaEnabled && currentProject?.projectId),
+        isProjectLinked: canvasProjectLinked,
         handlers: {
             onAddText: () => createNode(CanvasNodeType.Text),
             onAddImage: () => createNode(CanvasNodeType.Image),
@@ -2775,7 +2779,7 @@ function CanvasViewportPage() {
             onAddDrawing: () => createNode(CanvasNodeType.Drawing),
             onAddWorkflow: () => createNode(CanvasNodeType.Config),
             onAddExtensionNode: (type) => createNode(type),
-            onAddShortplayAsset: createShortplayAssetNode,
+            onAddShortplayAsset: shortplayCanvasEntries ? createShortplayAssetNode : undefined,
             onChooseStyle: () => setStylePickerOpen(true),
             onOpenPrevis: () => setPrevisTemplateRequest({}),
             onUpload: () => handleUploadRequest(),
@@ -3298,7 +3302,7 @@ function CanvasViewportPage() {
                                             workspaceMode={workspaceMode}
                                             canvasTool={canvasTool}
                                             onToolChange={setCanvasTool}
-                                            isProjectLinked={Boolean(shortDramaEnabled && currentProject?.projectId)}
+                                            isProjectLinked={canvasProjectLinked}
                                             canUndo={historyState.canUndo}
                                             canRedo={historyState.canRedo}
                                             appearance={canvasAppearance}
@@ -3314,7 +3318,7 @@ function CanvasViewportPage() {
                                             onAddFolder={createFolder}
                                             onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
                                             onAddExtensionNode={(type) => createNode(type)}
-                                            onAddShortplayAsset={createShortplayAssetNode}
+                                            onAddShortplayAsset={shortplayCanvasEntries ? createShortplayAssetNode : undefined}
                                             onAddWorkflow={() => createNode(CanvasNodeType.Config)}
                                             onOpenPrevis={() => setPrevisTemplateRequest({})}
                                             onUndo={undoCanvas}
@@ -3521,7 +3525,7 @@ function CanvasViewportPage() {
                                 onTimeline={(node) => setTimelineNodeId(node.id)}
                                 onVersions={(node) => setMediaVersionNodeId(node.id)}
                                 onAdoptToDrama={drama.active ? drama.openAdopt : undefined}
-                                onAdoptToShortplay={currentProject?.projectId ? undefined : (node) => setShortplayAdoptNodeId(node.id)}
+                                onAdoptToShortplay={shortplayCanvasEntries ? (node) => setShortplayAdoptNodeId(node.id) : undefined}
                                 onRefreshFromDrama={toolbarNode && drama.staleNodeIds.has(toolbarNode.id) ? drama.refreshNode : undefined}
                                 extractingVideoFrames={toolbarNode?.id === extractingVideoFramesNodeId}
                                 extractingAudio={segmentRunningMode === "audio"}
@@ -3635,7 +3639,7 @@ function CanvasViewportPage() {
 
                             {drama.summary && dramaAdoptNode ? <CanvasDramaAdoptModal node={dramaAdoptNode} nodes={nodes} summary={drama.summary} cast={drama.cast} onClose={drama.closeAdopt} onAdopted={drama.markAdopted} /> : null}
 
-                            <CanvasShortplayAdoptModal open={Boolean(shortplayAdoptNode)} canvasId={projectId} node={shortplayAdoptNode} onClose={() => setShortplayAdoptNodeId(null)} />
+                            <CanvasShortplayAdoptModal open={shortplayCanvasEntries && Boolean(shortplayAdoptNode)} canvasId={projectId} node={shortplayAdoptNode} onClose={() => setShortplayAdoptNodeId(null)} />
 
                             <CanvasMediaVersionModal
                                 node={mediaVersionNode}

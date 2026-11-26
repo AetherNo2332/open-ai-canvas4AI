@@ -60,6 +60,14 @@ export function shortplayAssetInitial(name: string): string {
     return Array.from(name.trim())[0] || "资";
 }
 
+/**
+ * 自由画布上的短剧入口（局部卡与「收录到短剧」）只认独立的 `shortplayEnabled`，
+ * 与 drama 的 `shortDramaEnabled` 无关；一旦画布已是关联画布，资产走作品投影，不再出现入口。
+ */
+export function shortplayCanvasEntriesEnabled(input: { shortplayEnabled: boolean; isProjectLinked: boolean }): boolean {
+    return input.shortplayEnabled && !input.isProjectLinked;
+}
+
 export const SHORTPLAY_ASSET_CATEGORY_LABELS: Record<ShortplayAssetCategory, string> = {
     character: "角色",
     prop: "道具",
