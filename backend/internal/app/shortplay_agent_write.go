@@ -61,6 +61,19 @@ func cloudAgentShortplayAssetSchema() map[string]any {
 	}
 }
 
+// cloudAgentShortplayCanvas 判断本轮画布是否属于当前账号的短剧工作台作品。资产工具只能
+// 操作作品里的集画布，能力目录按该判定披露，自由画布不为这两个工具占用预算。
+func (s *Service) cloudAgentShortplayCanvas(userID string, canvas *model.CanvasProject) bool {
+	if s.repo == nil || canvas == nil || strings.TrimSpace(canvas.ProjectID) == "" {
+		return false
+	}
+	owner, err := s.repo.ShortplayByProject(canvas.ProjectID)
+	if err != nil || owner == nil {
+		return false
+	}
+	return owner.UserID == userID
+}
+
 // cloudAgentShortplayOwner 按画布反查作品与分集；自由画布与跨账号画布都拒绝。
 func cloudAgentShortplayOwner(repo *repository.Repository, userID, canvasID string) (*model.Shortplay, *model.ShortplayEpisode, error) {
 	canvas, err := repo.CanvasProjectForUser(userID, canvasID)

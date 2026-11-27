@@ -36,6 +36,9 @@ func shortplayRunFixture(t *testing.T, action string, extra string) (*Service, *
 		t.Fatal(err)
 	}
 	state.Request.PermissionMode = "request_approval"
+	// 资产工具只在短剧集画布披露：夹具在建 run 后补上作品绑定，这里同步定格标记并重算目录。
+	state.Request.ShortplayEnabled = true
+	rebuildFrozenCapabilities(t, s, &state, false)
 	state.Calls = []cloudAgentCall{call}
 	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": "", "tool_calls": state.Calls})
 	if err := s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {

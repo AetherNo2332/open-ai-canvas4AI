@@ -264,6 +264,8 @@ func TestAgentCapabilityDirectorySizes(t *testing.T) {
 		request  CloudAgentRequest
 	}{
 		{"canvas", CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, VisionEnabled: true, WebSearchEnabled: true, SubagentEnabled: true}},
+		// 短剧集画布：资产工具会额外进入目录，必须仍然落在同一条目录预算内。
+		{"canvas", CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, ShortplayEnabled: true}},
 		{"canvas", CloudAgentRequest{PermissionMode: "read_only", ContextScope: []string{"canvas"}}},
 		{"drama", CloudAgentRequest{PermissionMode: "read_only"}},
 		{"zero", CloudAgentRequest{PermissionMode: "read_only"}},

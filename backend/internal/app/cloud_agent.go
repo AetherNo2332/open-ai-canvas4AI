@@ -34,11 +34,14 @@ type CloudAgentRequest struct {
 	SubagentWriteEnabled bool `json:"subagentWriteEnabled,omitempty"`
 	// StoryboardDisabled 冻结 Agent 设置里的分镜表工具开关：关闭时 storyboard
 	// 工具不披露、调用被拒；分镜行仍可经 canvas_get_state / canvas_read_content 读取。
-	StoryboardDisabled bool   `json:"storyboardDisabled,omitempty"`
-	Model              string `json:"model,omitempty"`
-	LogicalModelID     string `json:"logicalModelId,omitempty"`
-	ChannelID          string `json:"channelId,omitempty"`
-	ChannelModelKey    string `json:"channelModelKey,omitempty"`
+	StoryboardDisabled bool `json:"storyboardDisabled,omitempty"`
+	// ShortplayEnabled 由服务端在建 run 时按画布反查短剧作品后定格：只有短剧工作台的
+	// 集画布才披露 shortplay_asset / shortplay_list_assets，自由画布不占用工具目录预算。
+	ShortplayEnabled bool   `json:"shortplayEnabled,omitempty"`
+	Model            string `json:"model,omitempty"`
+	LogicalModelID   string `json:"logicalModelId,omitempty"`
+	ChannelID        string `json:"channelId,omitempty"`
+	ChannelModelKey  string `json:"channelModelKey,omitempty"`
 	// VisionEnabled is server-derived from the selected model input contract and persisted for the run.
 	VisionEnabled bool `json:"visionEnabled,omitempty"`
 	// MemoryMode 是建 run 时从用户记忆文件冻结的模式（auto / review / off），服务端推导，

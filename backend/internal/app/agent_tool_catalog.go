@@ -118,10 +118,16 @@ func builtinAgentToolPolicy(name string) agentToolRegistration {
 		tool.allowed = func(req CloudAgentRequest) bool { return req.SubagentEnabled && req.subagent == nil }
 	case "send_parent_message", "finish_subagent":
 		tool.allowed = func(req CloudAgentRequest) bool { return req.subagent != nil }
-	case "director", "canvas_list_node_types", "canvas_list_assets", "shortplay_list_assets", "canvas_read_content",
+	// 短剧资产工具只对短剧工作台的集画布披露：能力目录在画布上限内要给画布、
+	// 生成和子代理工具留空间，自由画布上这两个工具也没有可操作对象。
+	case "shortplay_list_assets":
+		tool.allowed = func(req CloudAgentRequest) bool { return canvas(req) && req.ShortplayEnabled }
+	case "shortplay_asset":
+		tool.allowed, tool.writeOnly = func(req CloudAgentRequest) bool { return canvas(req) && req.ShortplayEnabled }, true
+	case "director", "canvas_list_node_types", "canvas_list_assets", "canvas_read_content",
 		"canvas_search_nodes", "canvas_get_state", "canvas_read_batch_table", "canvas":
 		tool.allowed = canvas
-	case "canvas_undo", "canvas_redo", "canvas_bind_asset", "shortplay_asset", "model_list", "canvas_create_character",
+	case "canvas_undo", "canvas_redo", "canvas_bind_asset", "model_list", "canvas_create_character",
 		"canvas_edit_batch_table", "canvas_apply_ops", "canvas_arrange_nodes", "generate_media",
 		"generate_media_batch", "media_batch_control", "canvas_build_board", "canvas_preflight":
 		tool.allowed, tool.writeOnly = canvas, true

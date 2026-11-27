@@ -266,6 +266,8 @@ func (s *Service) freezeCloudAgentRunInputs(draft *cloudAgentRunDraft) error {
 	}
 	// 看图能力取决于本轮渠道模型自己的合同，在建 run 时定格，运行期间不再变化。
 	draft.req.VisionEnabled = s.cloudAgentVisionEnabled(draft.req)
+	// 短剧资产工具只在短剧工作台的集画布上有对象可操作，同样在建 run 时按画布定格。
+	draft.req.ShortplayEnabled = s.cloudAgentShortplayCanvas(draft.userID, draft.canvas)
 	contextScope := AgentContextScope{UserID: draft.userID, Business: agentBusinessScope(draft.req)}
 	contextPolicy := AgentContextPolicy{MemoryPolicy: draft.definition.MemoryPolicy}
 	if draft.req.subagent != nil {
