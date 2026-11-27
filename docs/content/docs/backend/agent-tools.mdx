@@ -5,7 +5,7 @@ description: Agent（beta）的当前工具总数、按需披露和执行边界
 
 管理员在「Agent（beta）」查看当前工具总数。数字由后端当前工具目录实时计算，包含原生技能读取和父子代理的工具全集；实际每轮可用范围仍按权限、任务、上下文和开关筛选。页面读取失败时显示暂不可用，不把未知状态显示为零；重新读取配置时同步更新工具数量。卡片沿用后台皮肤圆角。
 
-一期有三个内置范围：`canvas.default` 按画布权限提供读取、编辑、生成和预演工具；`drama.analysis` 只提供 `task_get`、分集只读 `read` 与运行控制；`platform.default` 只有 `plan_update`、`ask_user`、`finish_run`，并且固定只读、无业务工具、无 Skill、关闭记忆。范围由 Go 注册表和对象授权在准入、每次工具执行时复核；前端 `scope` 只是请求归属，不是工具授权。
+一期有三个内置范围：`canvas.default` 按画布权限提供读取、编辑、生成和预演工具；`drama.analysis` 只提供 `task_get`、分集只读 `read` 与运行控制；`platform.default` 只有 `plan_update`、`ask_user`、`finish_run`，并且固定只读、无业务工具、无 Skill、关闭记忆。范围由 Go 注册表和对象授权在准入、每次工具执行时复核；前端 `scope` 只是请求归属，不是工具授权。短剧工作台的 `shortplay_asset`、`shortplay_list_assets` 只在画布能反查到当前账号的短剧作品时披露，自由画布不为这两个工具占用目录预算。
 
 `GET /api/admin/settings/agent-scheduler` 返回 `{ setting, toolCount }`。该接口继续要求管理员身份，数量不是可编辑配置项；更新配置继续返回保存后的 `setting`。
 

@@ -3,6 +3,14 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 主干与 PR153–155 集成
+
+- 已实现：主干（含 #152 子画布）加 #153 技能读取收敛、#154 短剧工作台、#155 生成批次续跑合流；数据库 Schema 113，`wait_generations` 已移除，工具 Schema 仍为 `cloud-agent-tools/v30`、协议 `canvas-pi-wire/v8`、能力目录 2。
+- 合流修复：`shortplay_asset` 与 `shortplay_list_assets` 补登记进 `canvas.default` 的业务工具清单，并改为按画布反查短剧作品后披露（`shortplayEnabled`）；否则能力目录校验会以「工具未获本轮权限授权」拒绝，且自由画布会多占约 2KB 目录预算。
+- [ ] 真实页面核对短剧工作台集画布上 Agent 能新建/投送资产卡、看资产库，自由画布不出现这两个工具，审批与拒绝文案正常。
+- [ ] 目录预算：画布 `auto` 全开（看图、联网、子代理）且带短剧资产工具时约 65.5KB，超过 64KB 上限，这类组合会在准入阶段被拒绝；需要后续压缩工具 Schema 或重评上限。
+- 真实模型与页面验证待做。
+
 ## Agent Skill-only read 与业务专用读取工具
 
 - 已实现：`read` 恢复为只读本轮已授权 Skill 的文本文件；画布正文、识图与短剧分集分别使用 `canvas_read_content`、`canvas_inspect_image`、`drama_read_episode`。业务读取统一经 `BusinessTools` 注册 Schema、执行器、适用业务和版本，并沿用共享读取次数、持久回执与恢复链路。能力目录升到 2，协议升到 `canvas-pi-wire/v8`，工具 Schema 升到 `cloud-agent-tools/v30`。
