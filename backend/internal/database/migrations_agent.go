@@ -28,6 +28,7 @@ func AgentRuntimeModels() []any {
 		&model.AgentRuntimeInstance{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{},
 		&model.AgentWorker{},
 		&model.AgentQueuedMessage{}, &model.AgentConversationQueue{}, &model.AgentUISetting{},
+		&model.AgentGenerationBatch{}, &model.AgentGenerationBatchTask{},
 		&model.AgentSkillDefault{}, &model.AgentConversationSkill{},
 		&model.AgentSubagentPolicy{}, &model.AgentSubagentLink{}, &model.AgentSubagentMessage{},
 		&model.AgentWorkspace{}, &model.AgentWorkspaceSkill{},

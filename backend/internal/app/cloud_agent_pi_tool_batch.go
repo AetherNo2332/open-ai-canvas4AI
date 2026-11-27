@@ -286,7 +286,7 @@ func (s *Service) piToolAdvanceResult(userID, runID, taskID, callID string) (*Pi
 	if cloudAgentRunTerminal(latest.Status) {
 		return &PiToolReceipt{CallID: callID, Terminated: true}, nil
 	}
-	if latest.WaitKind == "subagents" || latest.WaitKind == cloudAgentGenerationsWaitKind {
+	if latest.WaitKind == "subagents" || latest.WaitKind == cloudAgentLegacyGenerationsWaitKind {
 		return &PiToolReceipt{CallID: callID, Pending: true, Suspended: true}, nil
 	}
 	return &PiToolReceipt{CallID: callID, Pending: true}, nil

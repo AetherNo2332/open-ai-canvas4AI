@@ -40,6 +40,8 @@ type Repository struct {
 	canvasChanges        map[canvasChangeKey]CanvasChange
 	// Agent 消息队列表是否存在。只读 fixture 没有迁移 Agent 表时，队列准入整体关闭。
 	agentMessageQueueEnabled bool
+	// 生成批次表是否存在。未迁移 Schema 113 的库不计入批次正文，避免查询整表缺失。
+	agentGenerationBatchEnabled bool
 	// Agent 画布命令使用的媒体版本表是否存在。
 	structuredWriteQuota StructuredWriteQuota
 }
@@ -56,7 +58,11 @@ type UserStorageUsage struct {
 
 func New(db *gorm.DB) *Repository {
 	database.InstallAgentEventCallbacks(db)
-	return &Repository{db: db, agentMessageQueueEnabled: db.Migrator().HasTable(&model.AgentConversationQueue{})}
+	return &Repository{
+		db:                          db,
+		agentMessageQueueEnabled:    db.Migrator().HasTable(&model.AgentConversationQueue{}),
+		agentGenerationBatchEnabled: db.Migrator().HasTable(&model.AgentGenerationBatch{}),
+	}
 }
 
 func (r *Repository) WithContext(ctx context.Context) *Repository {
@@ -89,6 +95,8 @@ func (r *Repository) NextPrefixedID(prefix string) (string, error) {
 
 func (r *Repository) UserStorageUsage(userID string) (UserStorageUsage, error) {
 	var usage UserStorageUsage
+	// 队列正文与批次正文按表存在性拼接：只读 fixture 和未迁移 Schema 113 的库
+	// 没有这些表，累计计量不能因此整体失败。
 	query := `
 		SELECT
 			(SELECT COUNT(*) FROM assets WHERE user_id = ?) AS asset_count,
@@ -100,14 +108,31 @@ func (r *Repository) UserStorageUsage(userID string) (UserStorageUsage, error) {
 			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(message, '') AS BLOB)) + length(CAST(COALESCE(payload, '') AS BLOB))), 0) FROM task_logs WHERE user_id = ?)
 			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(url, '') AS BLOB)) + length(CAST(COALESCE(payload, '') AS BLOB))), 0) FROM results WHERE user_id = ?)
 			+ (SELECT COALESCE(SUM(byte_count), 0) FROM task_text_delta WHERE user_id = ?)
-			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(path, '') AS BLOB)) + length(CAST(COALESCE(model, '') AS BLOB)) + length(CAST(COALESCE(provider_request_id, '') AS BLOB)) + length(CAST(COALESCE(error_code, '') AS BLOB)) + length(CAST(COALESCE(error, '') AS BLOB)) + length(CAST(COALESCE(upstream_url, '') AS BLOB)) + length(CAST(COALESCE(request_body, '') AS BLOB)) + length(CAST(COALESCE(response_body, '') AS BLOB))), 0) FROM api_call_logs WHERE user_id = ?) AS task_bytes,
+			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(path, '') AS BLOB)) + length(CAST(COALESCE(model, '') AS BLOB)) + length(CAST(COALESCE(provider_request_id, '') AS BLOB)) + length(CAST(COALESCE(error_code, '') AS BLOB)) + length(CAST(COALESCE(error, '') AS BLOB)) + length(CAST(COALESCE(upstream_url, '') AS BLOB)) + length(CAST(COALESCE(request_body, '') AS BLOB)) + length(CAST(COALESCE(response_body, '') AS BLOB))), 0) FROM api_call_logs WHERE user_id = ?)`
+	args := make([]any, 0, 13)
+	for range 10 {
+		args = append(args, userID)
+	}
+	if r.agentMessageQueueEnabled {
+		query += `
+			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(prompt, '') AS BLOB)) + length(CAST(COALESCE(request_json, '') AS BLOB)) + length(CAST(COALESCE(last_error, '') AS BLOB))), 0) FROM agent_queued_messages WHERE user_id = ?)`
+		args = append(args, userID)
+	}
+	if r.agentGenerationBatchEnabled {
+		query += `
+			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(instruction, '') AS BLOB)) + length(CAST(COALESCE(request_json, '') AS BLOB)) + length(CAST(COALESCE(results_json, '') AS BLOB))), 0) FROM agent_generation_batches WHERE user_id = ?)
+			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(outcome_json, '') AS BLOB))), 0) FROM agent_generation_batch_tasks WHERE user_id = ?)`
+		args = append(args, userID, userID)
+	}
+	query += ` AS task_bytes,
 			(SELECT COUNT(*) FROM api_call_logs WHERE user_id = ?) AS api_call_count
 	`
+	args = append(args, userID)
 	if r.Dialect() == "postgres" {
 		query = strings.ReplaceAll(query, "length(CAST(COALESCE(", "octet_length(COALESCE(")
 		query = strings.ReplaceAll(query, ", '') AS BLOB))", ", ''))")
 	}
-	err := r.db.Raw(query, userID, userID, userID, userID, userID, userID, userID, userID, userID, userID, userID).Scan(&usage).Error
+	err := r.db.Raw(query, args...).Scan(&usage).Error
 	return usage, err
 }
 

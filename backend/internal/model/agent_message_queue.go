@@ -2,6 +2,11 @@ package model
 
 import "time"
 
+const (
+	AgentQueuedMessageUser                   = "user"
+	AgentQueuedMessageGenerationContinuation = "generation_continuation"
+)
+
 // AgentQueuedMessage is a durable submission receipt, independent of a run.
 // Fingerprint always describes the original POST; edits only change RequestJSON.
 type AgentQueuedMessage struct {
@@ -12,6 +17,9 @@ type AgentQueuedMessage struct {
 	IdempotencyKey string `json:"-" gorm:"size:128;uniqueIndex:idx_agent_message_key,priority:2"`
 	Fingerprint    string `json:"-" gorm:"size:64;not null"`
 	Mode           string `json:"mode" gorm:"size:16;not null"`
+	// Kind distinguishes user messages from system generation continuations.
+	// Legacy rows migrate to "user" through the column default.
+	Kind string `json:"-" gorm:"size:32;not null;default:user;index"`
 	// An explicit send may start one recovery turn while ordinary work stays
 	// paused. Stop/pause and a definitive admission failure revoke that intent.
 	DispatchRequested bool       `json:"-" gorm:"not null;default:false"`

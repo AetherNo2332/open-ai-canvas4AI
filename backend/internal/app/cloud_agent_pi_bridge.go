@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -239,6 +240,15 @@ func parsePiAgentLeaseOwner(owner string) (string, int64, bool, error) {
 }
 
 func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnapshot, error) {
+	// Upgrade checkpoints suspended on the removed wait_generations tool before
+	// rebuilding the loadout, so an old run cannot stay parked forever.
+	repaired, err := s.repairLegacyGenerationWait(run)
+	if err != nil {
+		return nil, err
+	}
+	if repaired != nil {
+		run = repaired
+	}
 	// 先回写已结束的生成：通知随这份快照的待送插话一起交给模型。
 	if run, err := s.settleCloudAgentGenerationsAndReload(run); err != nil {
 		return nil, err
@@ -443,7 +453,7 @@ func (s *Service) PiFailRun(userID, runID, owner, reason string) error {
 	if message == "" {
 		message = "Pi worker 无法继续本轮（未提供原因）"
 	}
-	return s.mutatePiControl(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+	err = s.mutatePiControl(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		current.Status = "failed"
 		current.FailureMessage = message
 		current.CleanupPending = true
@@ -451,6 +461,15 @@ func (s *Service) PiFailRun(userID, runID, owner, reason string) error {
 			"text": "Agent 运行无法继续：" + message, "reason": "pi_worker_fatal",
 		})
 	})
+	if err != nil {
+		return err
+	}
+	// source run 已失败，不会再有 finish_run 登记续接；仍在 collecting 的批次
+	// 在这里关闭，避免它继续被当作待续接批次。
+	if detachErr := s.repo.DetachAgentGenerationBatchBySourceRun(userID, runID); detachErr != nil {
+		log.Printf("[cloud-agent] detach generation batch for failed run %s: %v", runID, detachErr)
+	}
+	return nil
 }
 
 // Terminal transitions release their session lease. These idempotent worker

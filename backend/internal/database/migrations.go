@@ -12,8 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// CurrentSchemaVersion preserves fork v78-v85 and maps upstream v78-v93 to v86-v101.
-const CurrentSchemaVersion int64 = 112
+// CurrentSchemaVersion preserves fork v78-v85 and maps upstream v78-v93 to v86-v101; v112 is the shortplay port, so generation continuation appends v113.
+const CurrentSchemaVersion int64 = 113
 
 const (
 	baselineSchemaChecksum                = "sha256:open-ai-canvas-schema-v1-20260830"

@@ -229,7 +229,9 @@ export class CanvasBridge {
   }
 
   private get leaseOwner(): string {
-    const slot = this.workerId.slice(-Math.min(15, 79 - this.identity.length));
+    // Host names are not guaranteed to be ASCII; the wire-safe slot is derived from the sanitized id.
+    const safeWorkerId = this.workerId.replace(/[^A-Za-z0-9._-]/g, "-");
+    const slot = safeWorkerId.slice(-Math.min(15, 79 - this.identity.length));
     if (!/^[A-Za-z0-9._-]+$/.test(slot)) throw new Error("Invalid worker slot");
     return `${this.identity}:${slot}`;
   }

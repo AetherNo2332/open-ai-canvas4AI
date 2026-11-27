@@ -36,7 +36,7 @@ func (r *Repository) AgentMessageQueueSummaries(userID string, ids []string) (ma
 		return result, nil
 	}
 	var rows []AgentMessageQueueSummary
-	err := r.db.Model(&model.AgentConversationQueue{}).Select("conversation_id, revision, paused, (SELECT COUNT(*) FROM agent_queued_messages m WHERE m.user_id = agent_conversation_queues.user_id AND m.conversation_id = agent_conversation_queues.conversation_id AND m.status IN ('queued','dispatching')) AS queued_count").Where("user_id = ? AND conversation_id IN ?", userID, ids).Scan(&rows).Error
+	err := r.db.Model(&model.AgentConversationQueue{}).Select("conversation_id, revision, paused, (SELECT COUNT(*) FROM agent_queued_messages m WHERE m.user_id = agent_conversation_queues.user_id AND m.conversation_id = agent_conversation_queues.conversation_id AND m.kind = 'user' AND m.status IN ('queued','dispatching')) AS queued_count").Where("user_id = ? AND conversation_id IN ?", userID, ids).Scan(&rows).Error
 	for _, row := range rows {
 		result[row.ConversationID] = row
 	}
@@ -139,7 +139,7 @@ func (r *Repository) CommitAgentMessageAdmission(message model.AgentQueuedMessag
 		if err = createCloudAgentHoldingTaskGuarded(tx.db, admission.Task, admission.Order, admission.Execution, activeLimit, true, admission.Skills); err != nil {
 			return err
 		}
-		if err = tx.FinishAgentQueuedMessage(row, "started", admission.Execution.ID); err != nil {
+		if err = tx.admitQueuedMessageRun(row, admission); err != nil {
 			return err
 		}
 		if row.ReplyToQuestionID != "" {
@@ -148,6 +148,18 @@ func (r *Repository) CommitAgentMessageAdmission(message model.AgentQueuedMessag
 		}
 		return tx.SaveAgentConversationQueue(q)
 	})
+}
+
+// admitQueuedMessageRun binds the admitted run to the queued message and, for a
+// generation continuation, consumes the batch the message was waiting on.
+func (r *Repository) admitQueuedMessageRun(row *model.AgentQueuedMessage, admission CloudAgentAdmission) error {
+	if err := r.FinishAgentQueuedMessage(row, "started", admission.Execution.ID); err != nil {
+		return err
+	}
+	if row.Kind != model.AgentQueuedMessageGenerationContinuation {
+		return nil
+	}
+	return r.ConsumeAgentGenerationBatchByMessage(row.UserID, row.ID, admission.Execution.ID)
 }
 
 func (r *Repository) LatestAgentConversationRun(userID, conversationID string) (*model.CloudAgentExecution, error) {
@@ -242,7 +254,7 @@ func (r *Repository) AgentQueuedMessage(userID, conversationID, id string) (*mod
 }
 func (r *Repository) AgentQueuedMessages(userID, conversationID string) ([]model.AgentQueuedMessage, error) {
 	rows := []model.AgentQueuedMessage{}
-	err := r.db.Where("user_id = ? AND conversation_id = ? AND status IN ?", userID, conversationID, []string{"queued", "dispatching"}).Order("sequence,id").Find(&rows).Error
+	err := r.db.Where("user_id = ? AND conversation_id = ? AND kind = ? AND status IN ?", userID, conversationID, model.AgentQueuedMessageUser, []string{"queued", "dispatching"}).Order("sequence,id").Find(&rows).Error
 	return rows, err
 }
 
@@ -252,9 +264,10 @@ func (r *Repository) agentMessageDispatchCandidateQuery() *gorm.DB {
 	return r.db.Table("agent_queued_messages AS candidate").Select("candidate.id").
 		Joins("JOIN agent_conversation_queues control ON control.user_id = candidate.user_id AND control.conversation_id = candidate.conversation_id").
 		Where("candidate.status IN ?", []string{"queued", "dispatching"}).
+		Where("NOT (candidate.kind = 'generation_continuation' AND candidate.last_error <> '' AND candidate.next_attempt_at IS NULL)").
 		Where("(control.paused = false OR candidate.dispatch_requested = true)").
 		Where("(control.awaiting_question_id = '' OR candidate.reply_to_question_id = control.awaiting_question_id)").
-		Order("CASE WHEN candidate.mode = 'interject' THEN 0 ELSE 1 END, candidate.sequence, candidate.id").Limit(1)
+		Order("CASE WHEN candidate.kind = 'generation_continuation' THEN 1 ELSE 0 END, CASE WHEN candidate.mode = 'interject' THEN 0 ELSE 1 END, candidate.sequence, candidate.id").Limit(1)
 }
 
 func (r *Repository) AgentQueuedMessageForDispatch(userID, conversationID string) (*model.AgentQueuedMessage, error) {
@@ -269,7 +282,7 @@ func (r *Repository) AgentQueuedMessageForDispatch(userID, conversationID string
 
 func (r *Repository) AgentQuestionAnswerPending(userID, conversationID, questionID string) (bool, error) {
 	var count int64
-	err := r.db.Model(&model.AgentQueuedMessage{}).Where("user_id = ? AND conversation_id = ? AND reply_to_question_id = ? AND status IN ?", userID, conversationID, questionID, []string{"queued", "dispatching"}).Count(&count).Error
+	err := r.db.Model(&model.AgentQueuedMessage{}).Where("user_id = ? AND conversation_id = ? AND kind = ? AND reply_to_question_id = ? AND status IN ?", userID, conversationID, model.AgentQueuedMessageUser, questionID, []string{"queued", "dispatching"}).Count(&count).Error
 	return count > 0, err
 }
 func (r *Repository) InsertAgentQueuedMessage(row *model.AgentQueuedMessage, queue *model.AgentConversationQueue, perConversation, perUser int) error {
@@ -285,7 +298,7 @@ func (r *Repository) InsertAgentQueuedMessage(row *model.AgentQueuedMessage, que
 		return err
 	}
 	var userCount, conversationCount int64
-	query := r.db.Model(&model.AgentQueuedMessage{}).Where("user_id = ? AND status IN ?", row.UserID, []string{"queued", "dispatching"})
+	query := r.db.Model(&model.AgentQueuedMessage{}).Where("user_id = ? AND kind = ? AND status IN ?", row.UserID, model.AgentQueuedMessageUser, []string{"queued", "dispatching"})
 	if err = query.Count(&userCount).Error; err != nil {
 		return err
 	}
@@ -296,6 +309,9 @@ func (r *Repository) InsertAgentQueuedMessage(row *model.AgentQueuedMessage, que
 		return ErrAgentMessageQueueFull
 	}
 	queue.NextSequence++
+	if row.Kind == "" {
+		row.Kind = model.AgentQueuedMessageUser
+	}
 	row.Sequence = queue.NextSequence
 	row.Status = "queued"
 	row.Revision = 1

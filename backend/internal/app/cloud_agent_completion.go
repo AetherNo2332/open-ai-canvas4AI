@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"yingce/backend/internal/model"
 )
@@ -218,38 +219,80 @@ func cloudAgentFinishRunAlreadyRequested(state *cloudAgentRuntime) bool {
 
 // --- finish_run：显式完成动作 ---
 
+type cloudAgentFinishRunContinuation struct {
+	When        string `json:"when"`
+	Instruction string `json:"instruction"`
+}
+
 // cloudAgentFinishRunArguments 解析 finish_run 的参数。summary 就是本轮最终答复的全文，
 // 必填：让"最终答复"有一个显式来源，而不是从最后一段正文里猜。
-func cloudAgentFinishRunArguments(call cloudAgentCall) (string, error) {
+func cloudAgentFinishRunArguments(call cloudAgentCall) (string, *cloudAgentFinishRunContinuation, error) {
 	var args struct {
-		Summary string `json:"summary"`
+		Summary      string                           `json:"summary"`
+		Continuation *cloudAgentFinishRunContinuation `json:"continuation"`
 	}
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-		return "", cloudAgentJSONArgumentError(err)
+		return "", nil, cloudAgentJSONArgumentError(err)
 	}
 	summary := strings.TrimSpace(args.Summary)
 	if summary == "" {
-		return "", &cloudAgentFieldArgumentError{
+		return "", nil, &cloudAgentFieldArgumentError{
 			error: &cloudAgentArgumentError{BadAuthRequest("finish_run 的 summary 是本轮给用户的最终答复，不能为空")},
 			Field: "summary", Issue: "required",
 		}
 	}
 	if len(summary) > cloudAgentMaxOutputBytes {
-		return "", &cloudAgentFieldArgumentError{
+		return "", nil, &cloudAgentFieldArgumentError{
 			error: &cloudAgentArgumentError{BadAuthRequest("finish_run 的 summary 过长，请精简到 " + fmt.Sprint(cloudAgentMaxOutputBytes) + " 字节以内")},
 			Field: "summary", Issue: "too_long",
 		}
 	}
-	return summary, nil
+	var continuation *cloudAgentFinishRunContinuation
+	if args.Continuation != nil {
+		when := strings.TrimSpace(args.Continuation.When)
+		instruction := strings.TrimSpace(args.Continuation.Instruction)
+		if when != model.AgentGenerationContinuationAllTerminal {
+			return "", nil, cloudAgentFieldError("continuation.when", "invalid_value", "continuation.when 首版只支持 all_generations_terminal")
+		}
+		if instruction == "" {
+			return "", nil, cloudAgentFieldError("continuation.instruction", "required", "continuation.instruction 是下一轮的明确工作指令，不能为空")
+		}
+		if utf8.RuneCountInString(instruction) > 16000 {
+			return "", nil, cloudAgentFieldError("continuation.instruction", "too_long", "continuation.instruction 过长，请精简到 16000 字以内")
+		}
+		continuation = &cloudAgentFinishRunContinuation{When: when, Instruction: instruction}
+	}
+	return summary, continuation, nil
 }
 
 // cloudAgentFinishRun 在工具调用点执行完成闸门：通过才收尾，不通过就回结构化回执。
 // 这是本工具与"纯文本收尾"的唯一区别——闸门在这里、也在文本收尾路径上跑，判据完全相同。
-func cloudAgentFinishRun(runID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {
-	summary, err := cloudAgentFinishRunArguments(call)
+func cloudAgentFinishRun(tc *cloudAgentToolCheckpoint, current *model.CloudAgentExecution, call cloudAgentCall) (any, error) {
+	summary, continuation, err := cloudAgentFinishRunArguments(call)
 	if err != nil {
 		return nil, err
 	}
+	if continuation != nil {
+		if tc.repo == nil || current == nil {
+			return nil, cloudAgentFieldError("continuation", "unavailable", "当前运行无法登记生成续接")
+		}
+		batch, lookupErr := tc.repo.AgentGenerationBatchBySourceRun(current.UserID, current.ID)
+		if lookupErr != nil || batch.ExpectedTasks == 0 {
+			return nil, cloudAgentFieldError("continuation", "no_generation_batch", "本轮没有成功提交的生成任务，不能登记 all_generations_terminal 续接")
+		}
+		if batch.Status == model.AgentGenerationBatchDetached {
+			return nil, cloudAgentFieldError("continuation", "detached", "本轮生成批次已结束且未登记续接")
+		}
+		// 续接提示词由后端拼装，必须与运行提示词共用同一长度预算；否则指令合法
+		// 但拼装后必然 400，source run 已 completed，内部项只能被停派。
+		if limit := generationContinuationInstructionLimit(batch.ExpectedTasks); runeCount(continuation.Instruction) > limit {
+			return nil, cloudAgentFieldError("continuation.instruction", "too_long",
+				fmt.Sprintf("continuation.instruction 过长：本批次 %d 个任务最多 %d 字（续接提示词与运行提示词共用 %d 字上限）", batch.ExpectedTasks, limit, cloudAgentPromptMaxRunes))
+		}
+		tc.finishBatch = batch
+	}
+	tc.finishContinuation = continuation
+	state := tc.state
 	if cloudAgentFinishRunAlreadyRequested(state) {
 		// 同一批里的重复申请：不重复计数、不重复回执原因，只如实告知本次未处理。
 		return map[string]any{"phase": "completion", "summary": summary, "completionBlocked": true, "duplicate": true,
@@ -270,7 +313,7 @@ func cloudAgentFinishRun(runID string, state *cloudAgentRuntime, call cloudAgent
 	}
 	attempt, exhausted := cloudAgentNoteCompletionBlocked(state, block.Fingerprint)
 	block.Attempt = attempt
-	state.event(runID, "completion_blocked", cloudAgentCompletionPayload(block,
+	state.event(current.ID, "completion_blocked", cloudAgentCompletionPayload(block,
 		cloudAgentCompletionBlockerText(block)+"；已将阻塞原因返回 Agent。"))
 	result["blockers"] = block.Blockers
 	result["fingerprint"] = block.Fingerprint

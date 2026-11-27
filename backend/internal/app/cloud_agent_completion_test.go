@@ -230,8 +230,10 @@ func TestCloudAgentFinishRunProtocolRetriesAreBounded(t *testing.T) {
 	state := &cloudAgentRuntime{ActiveSubagents: 1}
 	call := cloudAgentCall{ID: "finish"}
 	call.Function.Arguments = `{"summary":"汇总完成。"}`
+	current := &model.CloudAgentExecution{ID: "run", UserID: "user"}
+	tc := &cloudAgentToolCheckpoint{run: current, state: state, call: call}
 	for attempt := 1; attempt <= cloudAgentCompletionNudgeLimit+1; attempt++ {
-		result, err := cloudAgentFinishRun("run", state, call)
+		result, err := cloudAgentFinishRun(tc, current, call)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -270,11 +272,14 @@ func TestCloudAgentFinishRunCountsOncePerBatch(t *testing.T) {
 	first.Function.Name, first.Function.Arguments = "finish_run", `{"summary":"汇总完成。"}`
 	second.Function = first.Function
 	state := &cloudAgentRuntime{ActiveSubagents: 1, Calls: []cloudAgentCall{first, second}}
-	if _, err := cloudAgentFinishRun("run", state, first); err != nil {
+	current := &model.CloudAgentExecution{ID: "run", UserID: "user"}
+	tc := &cloudAgentToolCheckpoint{run: current, state: state, call: first}
+	if _, err := cloudAgentFinishRun(tc, current, first); err != nil {
 		t.Fatal(err)
 	}
 	state.CallIndex = 1
-	result, err := cloudAgentFinishRun("run", state, second)
+	tc.call = second
+	result, err := cloudAgentFinishRun(tc, current, second)
 	if err != nil {
 		t.Fatal(err)
 	}

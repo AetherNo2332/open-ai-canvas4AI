@@ -108,12 +108,17 @@ func TestAgentWakePostgresDisconnectFallbackAndClose(t *testing.T) {
 
 func waitWakeTestSignal(t *testing.T, signal <-chan struct{}, name string) {
 	t.Helper()
+	waitWakeTestSignalWithin(t, signal, name, 5*time.Second)
+}
+
+func waitWakeTestSignalWithin(t *testing.T, signal <-chan struct{}, name string, budget time.Duration) {
+	t.Helper()
 	if signal == nil {
 		return
 	}
 	select {
 	case <-signal:
-	case <-time.After(5 * time.Second):
+	case <-time.After(budget):
 		t.Fatalf("timed out waiting for %s", name)
 	}
 }

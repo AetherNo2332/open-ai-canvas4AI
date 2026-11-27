@@ -1,4 +1,10 @@
 # CHANGELOG
+## v1.8.3(5103237)
+
+- 画布 Agent 提交生成后不再阻塞等待：本轮提交完全部生成项即可继续或收尾，需要生成结果后再继续时用 finish_run 的 continuation 声明「全部登记任务终态后续接一次」，由后端在批次终态时自动开启续接；普通收尾不自动续接，也不轮询、不自动重试失败的付费生成。
+- 移除 wait_generations 工具，工具说明、Pi wire 身份（canvas-pi-wire/v8）、云端工具 schema（cloud-agent-tools/v30）和 Agent SDK 文档同步更新。
+- 数据库 Schema 113 新增生成批次与批次任务表，会话队列消息增加 kind。升级前备份数据库并使用配套迁移命令；v112 预留给短剧工作台移植，按合并后的注册顺序依次执行。
+
 ## v1.8.3(11d63dc)
 
 - 画布与短剧 Agent 的 `read` 收敛为只读本轮已授权 Skill 的文本文件；画布正文、识图与短剧分集分别改用 `canvas_read_content`、`canvas_inspect_image`、`drama_read_episode`，不再通过 `read` 的业务命名空间读取内容。
@@ -1501,4 +1507,3 @@
 
 - 预演台：切换 director 实现为 previs 工作台，接入场景模板、四种模式、路径/机位、预览回写与 Agent 语义工具。
 - 开发阶段不保留 director 字段兼容层；预演场景快照与画布快照分离校验。
-

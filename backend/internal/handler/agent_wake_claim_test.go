@@ -339,7 +339,26 @@ func startWakeClaimWorker(t *testing.T, server *httptest.Server, claim wakeClaim
 	return command, lines
 }
 
+// raceAgentWakeClaims 让两个 worker 并发认领同一个运行。运行刚提交时两次认领
+// 可能都读到「暂无」，因此用有界重试等到运行可认领；每一轮仍只允许一个赢家，
+// 出现双认领会立刻失败（断言强度不变）。
 func raceAgentWakeClaims(t *testing.T, server *httptest.Server, workers []string, runID, slot string) wakeClaim {
+	t.Helper()
+	for attempt := 0; attempt < 50; attempt++ {
+		winner, nulls, claimable := raceAgentWakeClaimsOnce(t, server, workers, runID, slot)
+		if claimable {
+			if nulls != 1 {
+				t.Fatalf("winner=%q, null responses=%d", winner.owner, nulls)
+			}
+			return winner
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("run %s never became claimable within bounded retries", runID)
+	return wakeClaim{}
+}
+
+func raceAgentWakeClaimsOnce(t *testing.T, server *httptest.Server, workers []string, runID, slot string) (wakeClaim, int, bool) {
 	t.Helper()
 	type result struct {
 		owner    string
@@ -396,10 +415,10 @@ func raceAgentWakeClaims(t *testing.T, server *httptest.Server, workers []string
 		}
 		winner = wakeClaim{reply.owner, envelope.Data.RunAuthorization, snapshot}
 	}
-	if winner.snapshot == nil || nulls != 1 {
-		t.Fatalf("winner=%q, null responses=%d", winner.owner, nulls)
+	if winner.snapshot == nil {
+		return winner, nulls, false
 	}
-	return winner
+	return winner, nulls, true
 }
 
 func setWakeWorkerHeaders(request *http.Request, worker, token string) {

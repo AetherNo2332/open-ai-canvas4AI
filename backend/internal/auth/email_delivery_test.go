@@ -81,7 +81,19 @@ func TestPasswordResetRecordsSkipReasonsAndDeliveries(t *testing.T) {
 	}
 	expect("missing@example.com", "skipped:该邮箱未绑定任何账号", 0)
 	expect("oauth@example.com", "skipped:账号未设置密码", 0)
-	expect("member@example.com", "sent:", 0)
-	expect("member@example.com", "skipped:60 秒内已发送过", 1)
+	// 两次 member 请求可能落在同一 created_at，行序不稳定；按状态计数断言：
+	// 恰有一次真实发送、一次冷却跳过，语义与顺序无关。
+	var memberSent, memberSkipped int
+	for _, entry := range got["member@example.com"] {
+		switch {
+		case strings.HasPrefix(entry, "sent:"):
+			memberSent++
+		case strings.HasPrefix(entry, "skipped:60 秒内已发送过"):
+			memberSkipped++
+		}
+	}
+	if memberSent != 1 || memberSkipped != 1 || len(got["member@example.com"]) != 2 {
+		t.Fatalf("member@example.com logs = %v, want exactly one sent and one cooldown skip", got["member@example.com"])
+	}
 	expect("broken@example.com", "failed:550 mailbox unavailable", 0)
 }

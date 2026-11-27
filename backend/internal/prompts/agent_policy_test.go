@@ -15,7 +15,7 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if system.ID != "cloud-agent-system" || system.Version != 27 || general.ID != "cloud-agent-general" || general.Version != 1 || media.ID != "cloud-agent-media" || media.Version != 6 {
+	if system.ID != "cloud-agent-system" || system.Version != 28 || general.ID != "cloud-agent-general" || general.Version != 1 || media.ID != "cloud-agent-media" || media.Version != 7 {
 		t.Fatalf("unexpected policy metadata: system=%s@%d general=%s@%d media=%s@%d", system.ID, system.Version, general.ID, general.Version, media.ID, media.Version)
 	}
 	if strings.Contains(system.Text, "id: cloud-agent-system") || !strings.HasPrefix(system.Text, "# ArrowFX Cloud Agent") ||
@@ -25,7 +25,8 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 	for _, phrase := range []string{
 		"auto 由服务端完成模型、价格、预算和资源准入后提交",
 		"不要用 task_get 轮询",
-		"调用 wait_generations 等待",
+		"在 finish_run.continuation 声明 when=all_generations_terminal",
+		"不自动重新收费提交",
 		"成功后新结果进入节点 mediaVersions 并自动采用；用户期间手动切换过版本或输出归属曾改变时只进入历史",
 		"request_approval 必须等待界面独立审批",
 		"authorizedChargeMicrocredits / chargeLimitMicrocredits 是预授权或上限，不是实际消费",

@@ -26,6 +26,25 @@ func TestCurrentSchemaVersionMatchesMigrationPlan(t *testing.T) {
 	}
 }
 
+func TestMigrationV113CreatesGenerationContinuationTables(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-agent-generation-continuation-v113?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if !db.Migrator().HasTable(&model.AgentGenerationBatch{}) || !db.Migrator().HasTable(&model.AgentGenerationBatchTask{}) {
+		t.Fatal("migration v113 did not create generation continuation tables")
+	}
+	if !db.Migrator().HasIndex(&model.AgentGenerationBatch{}, "idx_agent_generation_batch_source") {
+		t.Fatal("generation batch source-run identity index is missing")
+	}
+	if !db.Migrator().HasColumn(&model.AgentQueuedMessage{}, "kind") {
+		t.Fatal("migration v113 did not add the queued message kind column")
+	}
+}
+
 type channelModelProtocolV58 struct {
 	ID       string `gorm:"primaryKey;size:36"`
 	Protocol string `gorm:"size:32;index"`

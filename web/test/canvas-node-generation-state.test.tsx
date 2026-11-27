@@ -157,5 +157,5 @@ describe("画布节点完成反馈", () => {
         const { exitCode, output } = await runBunHarness(["test", "./test/fixtures/canvas-node-generation-reveal.harness.tsx"], 15000);
         expect(output).toContain("0 fail");
         expect(exitCode, output).toBe(0);
-    }, 30000);
+    }, 30_000);
 });

@@ -380,6 +380,9 @@ func (s *Service) UpdateAgentQueuedMessage(userID, conversationID, id string, in
 		if err != nil {
 			return err
 		}
+		if row.Kind != model.AgentQueuedMessageUser {
+			return gorm.ErrRecordNotFound
+		}
 		if row.Revision != input.Revision || row.Status != "queued" {
 			return repository.ErrCreationConflict
 		}
@@ -455,6 +458,9 @@ func (s *Service) CancelAgentQueuedMessage(userID, conversationID, id string, re
 		row, err := tx.AgentQueuedMessage(userID, conversationID, id)
 		if err != nil {
 			return err
+		}
+		if row.Kind != model.AgentQueuedMessageUser {
+			return gorm.ErrRecordNotFound
 		}
 		if row.Revision != revision || row.Status != "queued" {
 			return repository.ErrCreationConflict

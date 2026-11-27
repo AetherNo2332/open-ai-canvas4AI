@@ -521,6 +521,8 @@ var baseTableMigrations = []tableMigration{
 	migrateTable[model.AgentWorker]("agent_workers"),
 	migrateTable[model.AgentQueuedMessage]("agent_queued_messages"),
 	migrateTable[model.AgentConversationQueue]("agent_conversation_queues"),
+	migrateTable[model.AgentGenerationBatch]("agent_generation_batches"),
+	migrateTable[model.AgentGenerationBatchTask]("agent_generation_batch_tasks"),
 	migrateTable[model.AgentUISetting]("agent_ui_settings"),
 	migrateTable[model.AgentSkillDefault]("agent_skill_defaults"),
 	migrateTable[model.AgentConversationSkill]("agent_conversation_skills"),

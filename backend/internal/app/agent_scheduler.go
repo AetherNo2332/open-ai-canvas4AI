@@ -20,7 +20,7 @@ type PiRuntimePhaseRequest struct {
 	Reason string `json:"reason"`
 }
 
-// cloudAgentToolOperationTimeout 是单次工具操作（不含审批与 wait_generations 挂起）
+// cloudAgentToolOperationTimeout 是单次工具操作（不含审批挂起）
 // 的护栏超时：超过就补失败回执并结束 op，不制造"永远 Pending"的黑洞。初值放宽到
 // 5 分钟，配合 advance 耗时日志观察后再收紧。
 const cloudAgentToolOperationTimeout = 5 * time.Minute
@@ -204,7 +204,7 @@ func (s *Service) PiToolAdvanceAsync(userID, runID, owner, taskID, callID string
 	if state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].ID != callID {
 		return nil, kernel.Forbidden("Invalid Agent tool operation order")
 	}
-	if (run.WaitKind == "subagents" || run.WaitKind == cloudAgentGenerationsWaitKind) && run.WaitID == callID {
+	if run.WaitKind == "subagents" && run.WaitID == callID {
 		return &PiToolReceipt{CallID: callID, Pending: true, Suspended: true}, nil
 	}
 	operationID := fmt.Sprintf("ato_%x", sha256.Sum256([]byte(runID+"\x00"+taskID+"\x00"+callID)))
@@ -268,7 +268,7 @@ func (s *Service) runAgentToolOperationTask(op *model.AgentToolOperation, owner 
 	}
 	// 等待审批/挂起等待的操作允许长时间驻留；其他调用超过护栏超时
 	// 就补一条失败回执并结束 op，避免"永远 Pending"的执行黑洞。
-	wait := current.WaitKind == "subagents" || current.WaitKind == cloudAgentGenerationsWaitKind
+	wait := current.WaitKind == "subagents"
 	if !wait && time.Since(op.CreatedAt) > cloudAgentToolOperationTimeout {
 		markFailed("工具执行超时")
 		return

@@ -38,7 +38,7 @@ func validateCloudAgentRequestBasics(req *CloudAgentRequest) error {
 		return BadAuthRequest("Agent 配置 ID 无效")
 	}
 	req.CanvasID = strings.TrimSpace(req.CanvasID)
-	if err := validateCloudAgentPrompt(req.Prompt, 16000); err != nil {
+	if err := validateCloudAgentPrompt(req.Prompt, cloudAgentPromptMaxRunes); err != nil {
 		return err
 	}
 	req.Prompt = strings.TrimSpace(req.Prompt)

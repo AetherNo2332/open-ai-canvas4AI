@@ -156,6 +156,11 @@ type CloudAgentRunViewOptions struct {
 	FromStart  bool
 }
 
+// cloudAgentPromptMaxRunes 是运行提示词（用户输入、内部续接）共用的字符上限。
+// 续接提示词由后端拼装，必须与用户提示词走同一预算，否则内部续接会在 source
+// run 已经 completed 之后才因 400 被拒绝。
+const cloudAgentPromptMaxRunes = 16000
+
 func validateCloudAgentPrompt(value string, maxRunes int) error {
 	if !utf8.ValidString(value) || strings.TrimSpace(value) == "" || utf8.RuneCountInString(strings.TrimSpace(value)) > maxRunes {
 		return BadAuthRequest("需要有效画布和 1–16000 个字符的提示词")

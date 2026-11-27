@@ -95,6 +95,7 @@ type Service struct {
 	agentSkillDefaultsMu     sync.Mutex
 	agentToolWake            chan struct{}
 	agentWakeOnce            sync.Once
+	agentWakeMu              sync.Mutex
 	agentWake                *agentWakeHub
 	agentMessageWake         chan struct{}
 	agentEventPurgeAt        time.Time

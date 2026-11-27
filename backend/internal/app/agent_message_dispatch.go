@@ -47,6 +47,13 @@ func (s *Service) DispatchAgentMessages(limit int) (int, error) {
 	if limit < 1 || limit > 100 {
 		limit = 64
 	}
+	// 续接入队是尽力而为：某个账号的批次因配额/存储被拒时，它的批次保持 ready
+	// 等下一周期，但普通消息和其它账号的续接必须继续派发。真实错误仍然返回给
+	// 调用方记录。
+	var continuationErr error
+	if _, err := s.QueueReadyGenerationContinuations(limit); err != nil {
+		continuationErr = err
+	}
 	queues, err := s.repo.PendingAgentMessageConversations(limit)
 	if err != nil {
 		return 0, err
@@ -61,7 +68,7 @@ func (s *Service) DispatchAgentMessages(limit int) (int, error) {
 			dispatched++
 		}
 	}
-	return dispatched, nil
+	return dispatched, continuationErr
 }
 
 func (s *Service) dispatchAgentConversation(userID, conversationID string) (bool, error) {
@@ -161,14 +168,14 @@ func (s *Service) recoverAgentMessageClaim(message model.AgentQueuedMessage, cau
 			delay := time.Duration(1<<min(row.Attempts, 6)) * time.Second
 			at := time.Now().UTC().Add(delay)
 			next = &at
-		} else {
+		} else if row.Kind != model.AgentQueuedMessageGenerationContinuation {
 			q.Paused = true
 			q.PauseReason = agentMessageFailureText(cause)
 		}
 		if err = tx.ReleaseAgentMessageClaim(row, agentMessageFailureText(cause), next); err != nil {
 			return err
 		}
-		if !transient {
+		if !transient && row.Kind != model.AgentQueuedMessageGenerationContinuation {
 			if err = tx.InvalidateAgentMessageClaims(message.UserID, message.ConversationID); err != nil {
 				return err
 			}

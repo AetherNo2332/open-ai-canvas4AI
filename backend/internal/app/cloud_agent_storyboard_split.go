@@ -358,20 +358,25 @@ func (s *Service) cloudAgentCommitStoryboardSplitMutation(run *model.CloudAgentE
 		state.TaskIDs = append(state.TaskIDs, handle.TaskID)
 		state.Generations++
 		pending := cloudAgentPendingGeneration{TaskID: handle.TaskID, NodeID: req.NodeID, CallID: call.ID, Mode: "storyboard", Title: "分镜拆镜", SubmittedAt: time.Now().UTC()}
+		batch, err := cloudAgentEnsureGenerationBatch(repo, run, state, handle.TaskID, req.NodeID, "storyboard", "分镜拆镜")
+		if err != nil {
+			return err
+		}
+		pending.BatchID = batch.ID
 		state.PendingGenerations = append(state.PendingGenerations, pending)
 		state.MediaTaskID = handle.TaskID
 		state.event(run.ID, "generation_task_created", map[string]any{"toolName": "storyboard", "taskId": handle.TaskID, "nodeId": req.NodeID, "mode": "storyboard", "canvasId": state.Request.CanvasID})
-		cloudAgentRecordToolResult(current, state, call, cloudAgentStoryboardSubmittedReceipt(&plan.Result, action, req.NodeID, len(state.PendingGenerations), fallback), nil)
+		cloudAgentRecordToolResult(current, state, call, cloudAgentStoryboardSubmittedReceipt(&plan.Result, action, req.NodeID, len(state.PendingGenerations), fallback, batch.ID, batch.ExpectedTasks), nil)
 		return cloudAgentSave(current, state)
 	}
 }
 
-func cloudAgentStoryboardSubmittedReceipt(result *CanvasStoryboardSplitResult, action, nodeID string, pending int, fallback bool) map[string]any {
-	next := "拆镜在后台执行；写回后在同一任务的下一步通过系统通知告知结果。依赖结果时调用 wait_generations，不要轮询 task_get"
+func cloudAgentStoryboardSubmittedReceipt(result *CanvasStoryboardSplitResult, action, nodeID string, pending int, fallback bool, batchID string, batchTasks int) map[string]any {
+	next := "拆镜在后台执行；写回后会通过系统通知告知结果。需要结果后再继续时，先完成本轮提交并用 finish_run.continuation 声明续接条件，不要轮询 task_get"
 	if fallback {
 		next = "未传模型选择，服务端使用本轮运行的文本模型拆镜。" + next
 	}
-	return map[string]any{"status": "submitted", "taskSubmitted": true, "taskId": result.TaskID, "nodeId": nodeID, "action": action, "partial": result.Partial, "rowIds": result.RowIDs, "pendingGenerations": pending, "modelFallback": fallback, "next": next}
+	return map[string]any{"status": "submitted", "taskSubmitted": true, "taskId": result.TaskID, "nodeId": nodeID, "action": action, "partial": result.Partial, "rowIds": result.RowIDs, "pendingGenerations": pending, "generationBatchId": batchID, "batchTaskCount": batchTasks, "modelFallback": fallback, "next": next}
 }
 func cloudAgentStoryboardMarkdown(result map[string]any) string {
 	board, _ := result["storyboard"].(map[string]any)
