@@ -21,6 +21,7 @@ export const enUS: Messages = {
         tools: {
             create: "Create",
             projects: "Short dramas",
+            shortplays: "Shortplay Studio",
             canvas: "Canvas",
             tasks: "Tasks",
             assets: "Assets",
@@ -36,6 +37,7 @@ export const enUS: Messages = {
         sidebar: {
             home: "Create",
             projects: "Short dramas",
+            shortplays: "Shortplay Studio",
             ecommerce: "E-commerce Agent",
             canvas: "Canvas",
             toolboxImage: "Image generation",
@@ -50,6 +52,7 @@ export const enUS: Messages = {
         collapsed: {
             home: "Create",
             projects: "Drama",
+            shortplays: "Shortplay Studio",
             canvas: "Canvas",
             assets: "Assets",
             skills: "Skills",
@@ -59,6 +62,7 @@ export const enUS: Messages = {
         pageTitles: {
             home: "Create",
             projects: "Short dramas",
+            shortplays: "Shortplay Studio",
             canvas: "Canvas",
             tasks: "History",
             assets: "Assets",

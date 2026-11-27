@@ -29,8 +29,10 @@ func TestMigrateUserSubmapPresetOnEmptyDatabase(t *testing.T) {
 	if !status.Ready || status.Current != CurrentSchemaVersion {
 		t.Fatalf("unexpected schema status: %+v", status)
 	}
-	if CurrentSchemaVersion != userSubmapPresetMigrationVersion {
-		t.Fatalf("latest schema %d is not the user submap preset migration %d", CurrentSchemaVersion, userSubmapPresetMigrationVersion)
+	// 这里只守住「预设迁移已被包含」；最新版本号由各迁移自己的专项测试钉住，
+	// 否则每加一个迁移都要改这条无关断言。
+	if CurrentSchemaVersion < userSubmapPresetMigrationVersion {
+		t.Fatalf("latest schema %d is older than the user submap preset migration %d", CurrentSchemaVersion, userSubmapPresetMigrationVersion)
 	}
 }
 

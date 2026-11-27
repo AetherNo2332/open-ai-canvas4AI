@@ -16,9 +16,9 @@ describe("节点注册表——覆盖完整性", () => {
         for (const type of ALL_TYPES) expect(getNodeMinSize(type)).toBeDefined();
     });
 
-    test("仅技能与生成配置不进创建菜单", () => {
+    test("仅技能、生成配置与资产卡不进创建菜单", () => {
         const hidden = ALL_TYPES.filter((type) => !listCreatableNodeDefinitions().some((def) => def.type === type));
-        expect(hidden.sort()).toEqual([CanvasNodeType.Config, CanvasNodeType.Skill].sort());
+        expect(hidden.sort()).toEqual([CanvasNodeType.Config, CanvasNodeType.Skill, CanvasNodeType.ShortplayAsset].sort());
     });
 });
 
@@ -118,23 +118,14 @@ describe("connectionInputSummary——计数与跨类型覆盖", () => {
     });
 
     test("绘图计入 imageCount，脚本与技能计入 textCount", () => {
-        const nodes = [
-            node(CanvasNodeType.Drawing, undefined, "draw"),
-            node(CanvasNodeType.Script, undefined, "script"),
-            node(CanvasNodeType.Skill, undefined, "skill"),
-            node(CanvasNodeType.Text, undefined, "target"),
-        ];
+        const nodes = [node(CanvasNodeType.Drawing, undefined, "draw"), node(CanvasNodeType.Script, undefined, "script"), node(CanvasNodeType.Skill, undefined, "skill"), node(CanvasNodeType.Text, undefined, "target")];
         const summary = connectionInputSummary("target", nodes, [conn("draw", "target"), conn("script", "target"), conn("skill", "target")]);
         expect(summary.imageCount).toBe(1);
         expect(summary.textCount).toBe(2);
     });
 
     test("生成配置与背板作为上游一律不计数", () => {
-        const nodes = [
-            node(CanvasNodeType.Config, undefined, "config"),
-            node(CanvasNodeType.Frame, undefined, "frame"),
-            node(CanvasNodeType.Text, undefined, "target"),
-        ];
+        const nodes = [node(CanvasNodeType.Config, undefined, "config"), node(CanvasNodeType.Frame, undefined, "frame"), node(CanvasNodeType.Text, undefined, "target")];
         const summary = connectionInputSummary("target", nodes, [conn("config", "target"), conn("frame", "target")]);
         expect(summary).toEqual({ textCount: 0, imageCount: 0, videoCount: 0, audioCount: 0, characterCount: 0 });
     });

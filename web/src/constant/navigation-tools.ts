@@ -1,5 +1,5 @@
 // label 是中文源文案（用于搜索与兜底），界面显示用 labelKey 经 i18n 翻译。
-import { Blocks, CircleDollarSign, Clapperboard, Images, LibraryBig, ListTodo, PanelsTopLeft, Settings, PenTool } from "lucide-react";
+import { Blocks, CircleDollarSign, Clapperboard, Film, Images, LibraryBig, ListTodo, PanelsTopLeft, Settings, PenTool } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -14,6 +14,14 @@ export const navigationTools = [
         label: "短剧创作",
         labelKey: "nav.tools.projects",
         icon: Clapperboard,
+        section: "创作空间",
+    },
+    {
+        // 独立短剧工作台：与上面的「短剧创作」（drama 制作台）是两条产品线。
+        slug: "shortplays",
+        label: "短剧工作台",
+        labelKey: "nav.tools.shortplays",
+        icon: Film,
         section: "创作空间",
     },
     {

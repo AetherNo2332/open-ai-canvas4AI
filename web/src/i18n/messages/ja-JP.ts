@@ -22,6 +22,7 @@ export const jaJP: Messages = {
         tools: {
             create: "作成",
             projects: "ショートドラマ",
+            shortplays: "ショートドラマ工房",
             canvas: "キャンバス",
             tasks: "タスク",
             assets: "素材",
@@ -37,6 +38,7 @@ export const jaJP: Messages = {
         sidebar: {
             home: "作成",
             projects: "ショートドラマ制作",
+            shortplays: "ショートドラマ工房",
             ecommerce: "EC エージェント",
             canvas: "フリーキャンバス",
             toolboxImage: "画像生成",
@@ -51,6 +53,7 @@ export const jaJP: Messages = {
         collapsed: {
             home: "作成",
             projects: "ドラマ",
+            shortplays: "ショートドラマ工房",
             canvas: "キャンバス",
             assets: "素材",
             skills: "スキル",
@@ -60,6 +63,7 @@ export const jaJP: Messages = {
         pageTitles: {
             home: "作成",
             projects: "ショートドラマ制作",
+            shortplays: "ショートドラマ工房",
             canvas: "フリーキャンバス",
             tasks: "作成履歴",
             assets: "アセット",

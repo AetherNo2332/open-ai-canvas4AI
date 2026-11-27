@@ -23,6 +23,7 @@ export const zhCN = {
         tools: {
             create: "创作",
             projects: "短剧创作",
+            shortplays: "短剧工作台",
             canvas: "画布",
             tasks: "任务",
             assets: "素材",
@@ -38,6 +39,7 @@ export const zhCN = {
         sidebar: {
             home: "创作",
             projects: "短剧制作",
+            shortplays: "短剧工作台",
             ecommerce: "电商 Agent",
             canvas: "自由画布",
             toolboxImage: "图片生成",
@@ -52,6 +54,7 @@ export const zhCN = {
         collapsed: {
             home: "创作",
             projects: "短剧",
+            shortplays: "短剧工作台",
             canvas: "画布",
             assets: "资产",
             skills: "技能",
@@ -61,6 +64,7 @@ export const zhCN = {
         pageTitles: {
             home: "创作",
             projects: "短剧制作",
+            shortplays: "短剧工作台",
             canvas: "自由画布",
             tasks: "创作历史",
             assets: "资产",

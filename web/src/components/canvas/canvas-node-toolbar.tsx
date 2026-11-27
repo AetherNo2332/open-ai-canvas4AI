@@ -67,6 +67,7 @@ type CanvasNodeToolbarProps = {
     onTimeline: (node: CanvasNodeData) => void;
     onVersions?: (node: CanvasNodeData) => void;
     onAdoptToDrama?: (node: CanvasNodeData) => void;
+    onAdoptToShortplay?: (node: CanvasNodeData) => void;
     onRefreshFromDrama?: (node: CanvasNodeData) => void;
     extractingVideoFrames: boolean;
     extractingAudio: boolean;
@@ -141,6 +142,7 @@ export function CanvasNodeToolbar({
     onTimeline,
     onVersions,
     onAdoptToDrama,
+    onAdoptToShortplay,
     onRefreshFromDrama,
     extractingVideoFrames,
     extractingAudio,
@@ -242,6 +244,7 @@ export function CanvasNodeToolbar({
         onNodeToggleLocked: onToggleLocked,
         onNodeCopyPrompt: copyImagePrompt,
         onNodeAdoptToDrama: onAdoptToDrama,
+        onNodeAdoptShortplay: onAdoptToShortplay,
         onNodeRefreshFromDrama: onRefreshFromDrama,
     } as Partial<ToolbarHandlers> as ToolbarHandlers;
 

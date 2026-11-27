@@ -474,7 +474,11 @@ export type DramaModelOption = {
 /** 平台目录里有、但短剧流水线无法使用的模型及原因；前端置灰展示。 */
 export type DramaModelUnavailable = { choice: DramaModelChoice; reason: string };
 
-export type DramaModelCatalog = { defaults: DramaModels; options: Record<DramaCapability, DramaModelOption[]>; unavailable?: Partial<Record<DramaCapability, DramaModelUnavailable[]>> };
+export type DramaModelCatalog = {
+    defaults: DramaModels;
+    options: Record<DramaCapability, DramaModelOption[]> & { audio?: DramaModelOption[] };
+    unavailable?: Partial<Record<DramaCapability, DramaModelUnavailable[]>> & { audio?: DramaModelUnavailable[] };
+};
 
 export type DramaEstimate = {
     episodes: number;

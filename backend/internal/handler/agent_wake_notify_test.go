@@ -118,6 +118,23 @@ func waitWakeTestSignal(t *testing.T, signal <-chan struct{}, name string) {
 	}
 }
 
+// workerProcessSignalWindow covers signals produced by the separately spawned `node dist/src/server.js`
+// worker: process start, config load and the first claim all happen outside this test process, so the
+// in-process 5s budget is too tight on a loaded host (CI included).
+const workerProcessSignalWindow = 30 * time.Second
+
+func waitWakeWorkerSignal(t *testing.T, signal <-chan struct{}, name string) {
+	t.Helper()
+	if signal == nil {
+		return
+	}
+	select {
+	case <-signal:
+	case <-time.After(workerProcessSignalWindow):
+		t.Fatalf("timed out waiting for %s", name)
+	}
+}
+
 func TestAgentWakeNotifyUsesOneListenerPostgres(t *testing.T) {
 	if os.Getenv("TEST_AGENT_POSTGRES_DSN") == "" {
 		t.Skip("requires isolated PostgreSQL")

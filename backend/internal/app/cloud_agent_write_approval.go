@@ -235,6 +235,12 @@ func cloudAgentWriteApprovalPreview(repo *repository.Repository, run *model.Clou
 			return cloudAgentApprovalPreview{}, err
 		}
 		return arrangePlan.Preview, nil
+	case "shortplay_asset":
+		assetPlan, err := prepareCloudAgentShortplayAsset(repo, run.UserID, canvasID, call)
+		if err != nil {
+			return cloudAgentApprovalPreview{}, err
+		}
+		return assetPlan.Preview, nil
 	case "canvas":
 		plan, err := prepareCloudAgentCanvasCommandPlan(repo, run.UserID, canvasID, call)
 		if err != nil {

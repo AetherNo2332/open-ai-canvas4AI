@@ -13,6 +13,7 @@ import { pruneReferenceFields, ReferenceLineOwnedError, removeReferenceConnectio
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
 import { createCanvasImageEditCopy } from "@/lib/canvas/canvas-image-edit-copy";
+import type { ShortplayAssetCategory } from "@/lib/canvas/canvas-shortplay-asset";
 import { copyImageLayerSources } from "@/lib/canvas/canvas-image-layers";
 import { adoptMediaVersion, createNodeFromMediaVersion, mediaVersionAdoptBlock, removeMediaVersion } from "@/lib/canvas/canvas-media-versions";
 import { getSubmapChildIds, getSubmapChildren, isSubmapNode } from "@/lib/canvas/canvas-submap";
@@ -234,6 +235,22 @@ export function useCanvasNodeOperations({
                 setDialogNodeId(node.id);
         },
         [allocateCanvasId, commitNodes, defaultDrawingEngine, effectiveConfig.runningHub.enabled, effectiveConfig.runningHub.workflows.length, getCanvasCenter, message, nodesRef, runtimeStatuses, selectNodes, setDialogNodeId, tldrawLicenseKey],
+    );
+
+    // 自由画布上的短剧局部卡：先起草，收录后才成为作品资产（后端收录接口只认这类节点）。
+    const createShortplayAssetNode = useCallback(
+        (category: ShortplayAssetCategory) => {
+            const label: Record<ShortplayAssetCategory, string> = { character: "未命名角色", prop: "未命名道具", scene: "未命名场景" };
+            const nodeId = allocateCanvasId(
+                CanvasNodeType.ShortplayAsset,
+                nodesRef.current.map((item) => item.id),
+            );
+            const node = createCanvasNode(CanvasNodeType.ShortplayAsset, getCanvasCenter(), { shortplayAssetCategory: category } as CanvasNodeMetadata, nodeId);
+            node.title = label[category];
+            commitNodes([...nodesRef.current, node]);
+            selectNodes(new Set([node.id]));
+        },
+        [allocateCanvasId, commitNodes, getCanvasCenter, nodesRef, selectNodes],
     );
 
     const createFolder = useCallback(
@@ -929,6 +946,7 @@ export function useCanvasNodeOperations({
         copySelectedNodes,
         createFolder,
         createNode,
+        createShortplayAssetNode,
         createReferenceGroup,
         createStoryboardGroup,
         deleteConnection,

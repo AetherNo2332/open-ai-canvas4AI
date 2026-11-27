@@ -254,6 +254,16 @@ func (s *Service) DramaModelCatalog(userID string) (DramaModelCatalog, error) {
 		}
 		result.Options[capability] = options
 		result.Unavailable[capability] = unavailable
+		if capability == "text" {
+			// 音色样本只属于独立短剧工作台。目录复用同一份解析，但音频不进入 drama
+			// 的派发能力列表（dramaCapabilities 不变），drama 设置页面因此看不到它。
+			audioOptions, audioUnavailable, audioErr := s.dramaModelOptions(userID, "audio")
+			if audioErr != nil {
+				return result, audioErr
+			}
+			result.Options["audio"] = audioOptions
+			result.Unavailable["audio"] = audioUnavailable
+		}
 		// 新作品默认竖屏、尾帧续接；新建页按用户实际选的画幅与衔接方式重新挑选。
 		defaults := DramaSettings{Settings: production.Settings{AspectRatio: production.AspectRatios[0]}, VideoContinuity: DramaContinuityTailFrame}
 		if option, ok := preferredDramaOption(options, defaults); ok {

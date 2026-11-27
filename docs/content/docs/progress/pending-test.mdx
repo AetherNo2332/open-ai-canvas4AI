@@ -5717,3 +5717,28 @@ URL 使用归属校验后的资源访问地址，本地存储也可签发厂商�
 - [ ] 使用真实模型与 Worker 验证平台、短剧和画布的策略、工具、Skill 目录与跨范围隔离；当前模型请求证据来自本地确定性 HTTP 上游。
 - [ ] 验证运行中断网、原 POST 回执丢失后的幂等重放、双标签续轮冲突和短剧失效剧集。
 - [ ] 真实预演验收：A→平台/短剧/B→A、刷新、双标签、录制中离开、上传成功但回传失败、等待超时；核对资源不重复上传、只有一次有效工具回执，并记录 Run ID、requestId、画布 ID、revision 和资源 ID。
+
+## 独立短剧工作台（W03）
+
+- 已实现：Schema 112 六张表（作品域配置、分集、资产、图片/音色历史、job 队列）；`GET/POST /api/shortplays`、`GET /api/shortplays/:id`、`PATCH /api/shortplays/:id/settings`；侧栏「短剧工作台」入口、列表、新建、详情与设置页。
+- 自动化：`go test ./internal/repository ./internal/database ./internal/shortplay ./internal/architecture` 通过，覆盖项目内复合资产身份、跨项目读写拒绝、revision CAS、同名建档原子回滚、并发建档单赢家、SQLite/PostgreSQL 17 空库与旧 drama 库升级、v112 六表与未结束 job 去重索引；`go test ./internal/handler -run TestOpenAPI` 通过；`bun run typecheck` 通过。
+- 正式页面：`127.0.0.1:18080` 后端 + `127.0.0.1:13000` 前端，隔离数据目录 `.local/project-workbench-debug`，账号 `shortplay_w03_20261126`。从侧栏进入、新建两集《雨夜回眸 W03》（9:16，49+31 字）、保存设置（`stylePrompt=W03 验收：霓虹雨夜冷调，浅景深，胶片颗粒`）后刷新重开，分集数、原文、画布地址与设置均保持。SQLite 回读 `projects.type=shortplay`、两行 `shortplay_episodes` 各带唯一 `canvas_id`、`settings_json` 含上述提示词。
+- [ ] 在正式 PostgreSQL 部署上重复建档与设置保存；本轮 PostgreSQL 只覆盖迁移与仓储并发专项，未跑 HTTP。
+- [ ] 资产提取、参考图/音色生成、集画布创建、收录与 Agent 工具（W04–W07）尚未接入；「进精修画布」按钮当前禁用。
+- [ ] 未使用真实模型渠道，本页没有生成请求；真实渠道回执留给 W05/W08。
+## 独立短剧工作台（W04）
+
+- 已实现后端最小链路：`GET/POST /api/shortplays/:id/assets`（列表、新建/更新，`:id` 接受短剧或项目 ID，跨账号/跨作品 404，`kind` 不可改，衍生形象父资产不可改挂，revision CAS）与 `POST /api/shortplays/:id/extract`（入队在途去重，重复点击返回同一 job 且 `queued=false`）。
+- 提取调度：job 领取用条件更新（多 worker 只一个成功），游标从最近一次成功 job 的 `payload.cursor` 续跑；提取结果按 `assetId` 或 `kind+标准名/别名` 合并，锁定行只并入别名与分集绑定、不覆盖设定，新行按项目内序号分配；每批按原文命中标准名/别名回写集 `assetIdsJson`（两集同时提及的角色绑定到两集）；失败写 `last_error`，结束后去重键释放可重试。
+- 自动化：`go test -count=1 ./internal/shortplay`；`go test -count=1 -run 'TestDedupeKeyBlocksSecondActiveExtract|TestClaimShortplayJobHandsEachJobToOneWorker|TestShortplayAsset' ./internal/repository`；`go test -count=1 -run 'TestQueueShortplayExtract|TestRunShortplayExtract|TestUpsertShortplayAsset|TestExtractKeepsLocked' ./internal/app`；`go test -count=1 -run 'TestShortplayAssetRoutes|TestOpenAPI' ./internal/handler`，均通过（两集绑定、锁定设定保留、失败可重试、连点去重、跨项目 404）。
+- [ ] 真实模型执行器尚未接线：当前用注入 `ShortplayExtractFunc` 的确定性回复验证调度与落库，真实渠道回执留 W05/W08。
+- [ ] 前端资产库（角色/场景/道具列表、提取按钮、收件箱失败定位）尚未接入；提取 scheduler 常驻循环未启动。
+- [ ] job 队列的领取与去重只在 SQLite 验证，PostgreSQL 专项待补。
+## 短剧工作台 W04–W06
+
+- 已实现：独立短剧工作台的资产提取（平台文本任务）、参考图与音色 job、资产卡投送与收录、画布侧单项生图回写，见 `docs/plans/shortplay-workbench-port.md` 的 W04–W06 记录。
+- 自动化：提取任务提交/结果落库/无模型失败、媒体 job 的入队筛选/去重/CAS/迟到回调、PostgreSQL 双 worker 与延迟回调、资产卡幂等注入与用户位置保留、投送绑集、收录建行与目标集投卡、自由画布拒绝回写；`internal/architecture`、OpenAPI 路由合同与前端 `tsc`/`eslint` 通过。
+- [ ] 配置真实文本、图片与音频渠道后重跑：提取产出资产、两张造型各自出图、角色音色样本、费用结算金额与流水；当前本机只能验证到「没有可用的文本/图片/音频模型」的明确失败。
+- [ ] 在正式页面把资产卡投送进集画布、拖动后重跑提取确认位置不变、在集画布上出单项图并回写资产表；再用浏览器刷新与重开画布核对节点与资产投影一致。
+- [ ] 用真实 PostgreSQL 部署核对媒体 job 的 `cost_microcredits` 落库口径与失败不重复扣费；当前只在隔离 schema 验证领取与 CAS。
+

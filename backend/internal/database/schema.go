@@ -167,6 +167,12 @@ func businessModels() []any {
 		&model.DramaTake{},
 		&model.DramaSegment{},
 		&model.DramaJob{},
+		&model.Shortplay{},
+		&model.ShortplayEpisode{},
+		&model.ShortplayAsset{},
+		&model.ShortplayAssetImage{},
+		&model.ShortplayAssetAudio{},
+		&model.ShortplayJob{},
 	}
 }
 

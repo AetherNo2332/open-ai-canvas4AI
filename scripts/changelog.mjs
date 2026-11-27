@@ -70,6 +70,20 @@ if (hasFlag("--check")) {
         console.error(`VERSION 当前为 ${versionRaw}，请先运行：node scripts/changelog.mjs --write`);
         process.exit(1);
     }
+    // 版本号 bump 只能改名最新标题；整段替换会把历史标题洗成同一个 sha，这里显式拦下。
+    const seenHeadings = new Map();
+    for (const line of changelog.split("\n")) {
+        if (!line.startsWith("## ")) continue;
+        const value = line.slice(3).trim();
+        seenHeadings.set(value, (seenHeadings.get(value) || 0) + 1);
+    }
+    const duplicated = [...seenHeadings].filter(([, count]) => count > 1);
+    if (duplicated.length > 0) {
+        console.error("CHANGELOG.md 存在重复的版本标题：");
+        for (const [value, count] of duplicated) console.error(`  ${value} × ${count}`);
+        console.error("每个 `## <版本>(<短 SHA>)` 必须唯一；bump 时只改最新一条标题。");
+        process.exit(1);
+    }
     if (versionRaw !== `${baseVersion}(${headSha})`) {
         // 不判失败：PR 期间还会追加提交，AGENTS.md 只要求 push 前重新 bump。
         console.warn(`提示：VERSION=${versionRaw}，当前 HEAD 是 ${headSha}，push 前记得重新 bump。`);

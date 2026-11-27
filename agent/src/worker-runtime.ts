@@ -9,6 +9,17 @@ interface FailureBridge {
   reportRecovery?(run: PiSnapshot, error: RetryableBridgeError, signal?: AbortSignal): Promise<void>;
 }
 
+// Worker ids are part of the backend lease contract: `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`
+// (see CanvasBridge). Hostnames are user-controlled and often non-ASCII, so they are
+// slugged here instead of throwing "Invalid worker slot" at claim/capacity time.
+export function workerSlotId(host: string, pid: number, suffix: string): string {
+  const slug = host
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^[-._]+|[-.]+$/g, "")
+    .slice(0, 40) || "agent-host";
+  return `${slug}-${pid}-${suffix}`.slice(0, 64);
+}
+
 export function workerErrorSummary(error: unknown): string {
   if (error instanceof RetryableBridgeError || error instanceof FatalWorkerError) return safeWorkerDetail(error.message);
   if (error instanceof CanvasLeaseLost || error instanceof CanvasRunTerminated) return error.name;

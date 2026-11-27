@@ -5,12 +5,25 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 )
+
+// requireKeyPermissions 在 POSIX 上要求密钥文件只有所有者可读写；
+// Windows 的权限模型没有 group/other 位，os.FileMode.Perm 恒为 0666/0444，无法表达 0600。
+func requireKeyPermissions(t *testing.T, info os.FileInfo) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("key permissions = %o", info.Mode().Perm())
+	}
+}
 
 func TestSettingsEncryptionKeyPublication(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".settings-key")
@@ -21,9 +34,10 @@ func TestSettingsEncryptionKeyPublication(t *testing.T) {
 			t.Fatalf("incomplete temporary key: %v", err)
 		}
 		info, err := os.Stat(temp)
-		if err != nil || info.Mode().Perm() != 0600 {
+		if err != nil {
 			t.Fatalf("temporary permissions: %v", err)
 		}
+		requireKeyPermissions(t, info)
 		if _, err := os.Stat(target); !os.IsNotExist(err) {
 			t.Fatalf("key visible before publication: %v", err)
 		}
@@ -65,9 +79,10 @@ func TestSettingsEncryptionKeyLinkFallback(t *testing.T) {
 				t.Fatalf("key changed: %v", err)
 			}
 			info, err := os.Stat(path)
-			if err != nil || info.Mode().Perm() != 0600 {
+			if err != nil {
 				t.Fatalf("permissions: %v", err)
 			}
+			requireKeyPermissions(t, info)
 		})
 	}
 }
@@ -105,9 +120,7 @@ func TestSettingsEncryptionKeyConcurrentFirstUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("key permissions = %o", info.Mode().Perm())
-	}
+	requireKeyPermissions(t, info)
 }
 
 func TestSettingsEncryptionKeyWaitsForLegacyWriter(t *testing.T) {

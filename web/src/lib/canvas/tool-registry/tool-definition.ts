@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { MouseEvent } from "react";
 
 import type { CanvasAlignmentMode } from "@/lib/canvas/canvas-layout";
+import type { ShortplayAssetCategory } from "@/lib/canvas/canvas-shortplay-asset";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasNodeData, CanvasNodeMetadata, CanvasNodeTypeId, CanvasToolMode, CanvasWorkspaceMode } from "@/types/canvas";
 
@@ -100,6 +101,10 @@ export type ToolbarHandlers = {
     onNodeVersions?: (node: CanvasNodeData) => void;
     /** 采用到短剧（设定参考图或剧情段视频）；只在关联短剧的精修画布上提供。 */
     onNodeAdoptToDrama?: (node: CanvasNodeData) => void;
+    /** 自由画布上的短剧局部卡收录进作品并投卡到目标集；只在未关联短剧的画布上提供。 */
+    onNodeAdoptShortplay?: (node: CanvasNodeData) => void;
+    /** 新建一张短剧局部卡（角色 / 道具 / 场景）；只在未关联短剧的画布上提供。 */
+    onAddShortplayAsset?: (category: ShortplayAssetCategory) => void;
     /** 短剧侧已有更新的版本时才提供：把节点换成短剧当前的媒体。 */
     onNodeRefreshFromDrama?: (node: CanvasNodeData) => void;
     onNodeReversePrompt: (node: CanvasNodeData) => void;
@@ -155,6 +160,7 @@ export type AddNodeMenuContext = {
         | "onAddDrawing"
         | "onAddWorkflow"
         | "onAddExtensionNode"
+        | "onAddShortplayAsset"
         | "onChooseStyle"
         | "onOpenPrevis"
         | "onUpload"

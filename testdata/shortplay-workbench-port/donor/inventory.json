@@ -1,0 +1,439 @@
+{
+  "agent": {
+    "extraction": "RequiresDeclaration + RequiresShortplay; not part of the base tool set",
+    "tools": [
+      {
+        "const": "ShortplayListAssets",
+        "kind": "KindRead",
+        "name": "shortplay_list_assets",
+        "requiresCanvas": false,
+        "requiresDeclaration": true,
+        "requiresShortplay": true
+      },
+      {
+        "const": "ShortplayAsset",
+        "kind": "KindWrite",
+        "name": "shortplay_asset",
+        "requiresCanvas": true,
+        "requiresDeclaration": true,
+        "requiresShortplay": true
+      },
+      {
+        "const": "ShortplayAssetImage",
+        "kind": "KindMedia",
+        "name": "shortplay_asset_image",
+        "requiresCanvas": true,
+        "requiresDeclaration": true,
+        "requiresShortplay": true
+      },
+      {
+        "const": "ShortplayAssetAudio",
+        "kind": "KindMedia",
+        "name": "shortplay_asset_audio",
+        "requiresCanvas": true,
+        "requiresDeclaration": true,
+        "requiresShortplay": true
+      }
+    ]
+  },
+  "capability": {
+    "fields": [
+      {
+        "kind": "KindString",
+        "label": "外貌描述",
+        "name": "shortplayAssetAppearance",
+        "path": "metadata.shortplayAssetAppearance"
+      },
+      {
+        "kind": "KindStrings",
+        "label": "别名",
+        "name": "shortplayAssetAliases",
+        "path": "metadata.shortplayAssetAliases"
+      },
+      {
+        "kind": "KindString",
+        "label": "音色",
+        "name": "shortplayAssetVoice",
+        "path": "metadata.shortplayAssetVoice"
+      },
+      {
+        "kind": "KindBoolean",
+        "label": "锁定",
+        "name": "shortplayAssetLocked",
+        "path": "metadata.shortplayAssetLocked"
+      },
+      {
+        "kind": "KindString",
+        "label": "资产分类",
+        "name": "shortplayAssetCategory",
+        "path": "metadata.shortplayAssetCategory"
+      },
+      {
+        "kind": "KindString",
+        "label": "造型名",
+        "name": "shortplayAssetLook",
+        "path": "metadata.shortplayAssetLook"
+      },
+      {
+        "kind": "KindNumber",
+        "label": "项目资产",
+        "name": "shortplayAssetId",
+        "path": "metadata.shortplayAssetId"
+      },
+      {
+        "kind": "KindNumber",
+        "label": "行修订",
+        "name": "shortplayAssetRevision",
+        "path": "metadata.shortplayAssetRevision"
+      },
+      {
+        "kind": "KindString",
+        "label": "参考图资源",
+        "name": "shortplayAssetImageResourceId",
+        "path": "metadata.shortplayAssetImageResourceId"
+      },
+      {
+        "kind": "KindNumber",
+        "label": "图版本",
+        "name": "shortplayAssetImageVersion",
+        "path": "metadata.shortplayAssetImageVersion"
+      },
+      {
+        "kind": "KindString",
+        "label": "封面地址",
+        "name": "shortplayAssetCoverUrl",
+        "path": "metadata.shortplayAssetCoverUrl"
+      },
+      {
+        "kind": "KindString",
+        "label": "形象状态",
+        "name": "shortplayAssetImageStatus",
+        "path": "metadata.shortplayAssetImageStatus"
+      },
+      {
+        "kind": "KindNumber",
+        "label": "父资产",
+        "name": "shortplayAssetDerivedFrom",
+        "path": "metadata.shortplayAssetDerivedFrom"
+      },
+      {
+        "kind": "KindString",
+        "label": "形象名",
+        "name": "shortplayAssetVariantName",
+        "path": "metadata.shortplayAssetVariantName"
+      },
+      {
+        "kind": "KindString",
+        "label": "生图纪律",
+        "name": "shortplayAssetRenderRule",
+        "path": "metadata.shortplayAssetRenderRule"
+      },
+      {
+        "kind": "KindBoolean",
+        "label": "基座已更新",
+        "name": "shortplayAssetBaseImageStale",
+        "path": "metadata.shortplayAssetBaseImageStale"
+      },
+      {
+        "kind": "KindString",
+        "label": "音色资源",
+        "name": "shortplayAssetAudioResourceId",
+        "path": "metadata.shortplayAssetAudioResourceId"
+      },
+      {
+        "kind": "KindString",
+        "label": "音色状态",
+        "name": "shortplayAssetAudioStatus",
+        "path": "metadata.shortplayAssetAudioStatus"
+      },
+      {
+        "kind": "KindNumber",
+        "label": "音色版本",
+        "name": "shortplayAssetAudioVersion",
+        "path": "metadata.shortplayAssetAudioVersion"
+      },
+      {
+        "kind": "KindBoolean",
+        "label": "基座音色已更新",
+        "name": "shortplayAssetBaseAudioStale",
+        "path": "metadata.shortplayAssetBaseAudioStale"
+      },
+      {
+        "kind": "KindString",
+        "label": "音色地址",
+        "name": "shortplayAssetAudioUrl",
+        "path": "metadata.shortplayAssetAudioUrl"
+      }
+    ],
+    "nodeType": "shortplay-asset"
+  },
+  "evidence": {
+    "pending": [
+      "real model-channel extract/image/audio runs and receipts",
+      "PostgreSQL upgrade of the donor shortplay schema",
+      "browser walkthrough of the donor pages"
+    ],
+    "runtime": [],
+    "source-observed": "every row above; captured from the pinned donor tree"
+  },
+  "http": {
+    "routeCount": 13,
+    "routes": [
+      {
+        "bodyLimitBytes": 0,
+        "method": "GET",
+        "note": "",
+        "path": "/api/shortplays",
+        "service": "ListShortplays"
+      },
+      {
+        "bodyLimitBytes": 33554432,
+        "method": "POST",
+        "note": "整篇剧本随建档请求一次提交（32MB），与 /dramas 同口径。",
+        "path": "/api/shortplays",
+        "service": "CreateShortplay"
+      },
+      {
+        "bodyLimitBytes": 0,
+        "method": "GET",
+        "note": ":id 是 projects 容器 ID，与 /dramas/:id 同口径。",
+        "path": "/api/shortplays/:id",
+        "service": "ShortplayDetail"
+      },
+      {
+        "bodyLimitBytes": 0,
+        "method": "GET",
+        "note": "资产列表与写入。:id 同时接受 shortplayId 与 projectId（service 内两个都反查），",
+        "path": "/api/shortplays/:id/assets",
+        "service": "ShortplayAssets"
+      },
+      {
+        "bodyLimitBytes": 1048576,
+        "method": "POST",
+        "note": "身份行 + 设定一次提交，1MB 上限足够（设定是几段文字，不是整篇剧本）。",
+        "path": "/api/shortplays/:id/assets",
+        "service": "UpsertShortplayAsset"
+      },
+      {
+        "bodyLimitBytes": 65536,
+        "method": "PATCH",
+        "note": "设置：整份提交（分步骤模型 + 参考图方案 + 风格与语言），服务端归一后回传 settingsJson。",
+        "path": "/api/shortplays/:id/settings",
+        "service": "UpdateShortplaySettings"
+      },
+      {
+        "bodyLimitBytes": 1048576,
+        "method": "POST",
+        "note": "页面出图入口：设定页的「生成参考图」、设置页的「重做某类」。只入队 asset_image job，",
+        "path": "/api/shortplays/:id/assets/images",
+        "service": "QueueShortplayAssetImages"
+      },
+      {
+        "bodyLimitBytes": 1048576,
+        "method": "POST",
+        "note": "页面生音入口：与 images 同构。音色样本同样只入队 asset_audio job，",
+        "path": "/api/shortplays/:id/assets/audio",
+        "service": "QueueShortplayAssetAudio"
+      },
+      {
+        "bodyLimitBytes": 1048576,
+        "method": "POST",
+        "note": "收录（§6.7.4）：自由画布上的一张局部卡 → 项目资产 + 目标集上的一张域卡。",
+        "path": "/api/shortplays/:id/adopt",
+        "service": "AdoptShortplayAsset"
+      },
+      {
+        "bodyLimitBytes": 0,
+        "method": "POST",
+        "note": "按需建集画布：「进精修画布」那一刻调，幂等。",
+        "path": "/api/shortplays/:id/episodes/:episodeId/canvas",
+        "service": "EnsureShortplayEpisodeCanvas"
+      },
+      {
+        "bodyLimitBytes": 0,
+        "method": "POST",
+        "note": "提取资产：页面按钮显式入队 extract。已在途时返回那一条 job（queued=false），不排第二条。",
+        "path": "/api/shortplays/:id/extract",
+        "service": "QueueShortplayExtract"
+      },
+      {
+        "bodyLimitBytes": 65536,
+        "method": "POST",
+        "note": "画布生成结果的回写（§6.4）：按画布反查集归属，是集画布才写表。",
+        "path": "/api/shortplays/by-canvas/:canvasId/assets/:assetId/image",
+        "service": "ApplyShortplayAssetImage"
+      },
+      {
+        "bodyLimitBytes": 0,
+        "method": "GET",
+        "note": "按画布反查集归属。未命中返回 {linked:false} 而不是 404：自由画布是正常状态，",
+        "path": "/api/shortplays/by-canvas/:canvasId",
+        "service": "ShortplayByCanvas"
+      }
+    ]
+  },
+  "jobs": {
+    "dedupeForms": [
+      "extract|shortplayId",
+      "asset_image|shortplayId|assetId",
+      "asset_audio|shortplayId|assetId",
+      "asset_sync|canvasId"
+    ],
+    "dispatch": {
+      "asset_audio": "backend/internal/app/shortplay_asset_audio.go",
+      "asset_image": "backend/internal/app/shortplay_asset_image.go",
+      "asset_sync": "backend/internal/app/shortplay_asset_sync.go",
+      "extract": "backend/internal/app/shortplay_extract.go"
+    },
+    "imageStates": {
+      "ShortplayImageFailed": "failed",
+      "ShortplayImageQueued": "queued",
+      "ShortplayImageReady": "ready",
+      "ShortplayImageRunning": "running"
+    },
+    "kinds": {
+      "ShortplayJobAssetAudio": "asset_audio",
+      "ShortplayJobAssetImage": "asset_image",
+      "ShortplayJobAssetSync": "asset_sync",
+      "ShortplayJobExtract": "extract"
+    },
+    "priorities": {
+      "ShortplayAssetAudioPriority": 40,
+      "ShortplayAssetImagePriority": 40,
+      "ShortplayAssetSyncPriority": 20,
+      "ShortplayExtractPriority": 60
+    },
+    "scheduler": {
+      "shortplayConcurrency": 2,
+      "shortplayLeaseTTL": 2,
+      "shortplayRunsPerTick": 20,
+      "shortplayTickInterval": 3
+    },
+    "statuses": {
+      "ShortplayJobCanceled": "canceled",
+      "ShortplayJobFailed": "failed",
+      "ShortplayJobQueued": "queued",
+      "ShortplayJobRunning": "running",
+      "ShortplayJobSucceeded": "succeeded"
+    },
+    "uniqueIndexScope": "unfinished jobs only (queued, running)"
+  },
+  "migrations": [
+    {
+      "apply": "migrateSchemaV88",
+      "name": "shortplay_tables",
+      "version": 88
+    },
+    {
+      "apply": "migrateShortplayAssetVoice",
+      "name": "shortplay_asset_voice",
+      "version": 91
+    },
+    {
+      "apply": "migrateShortplayAssetIntID",
+      "name": "shortplay_asset_int_id",
+      "version": 92
+    },
+    {
+      "apply": "migrateShortplayDerivedAsset",
+      "name": "shortplay_derived_asset",
+      "version": 110
+    },
+    {
+      "apply": "migrateShortplayAssetAudioStatus",
+      "name": "shortplay_asset_audio_status",
+      "version": 111
+    }
+  ],
+  "project": {
+    "cascadeDeleteOfShortplayTables": true,
+    "type": "shortplay",
+    "webApiFunctions": [
+      "getShortplayCanvasBinding",
+      "listShortplayAssets",
+      "applyShortplayAssetImage",
+      "listShortplays",
+      "createShortplay",
+      "getShortplayDetail",
+      "deleteShortplay",
+      "ensureShortplayEpisodeCanvas",
+      "queueShortplayExtract",
+      "upsertShortplayAsset",
+      "updateShortplaySettings",
+      "queueShortplayAssetImages",
+      "queueShortplayAssetAudio",
+      "adoptShortplayAsset"
+    ],
+    "webModules": [
+      "asset-presentation.ts",
+      "canvas/adopt-tool.tsx",
+      "canvas/asset-groups.ts",
+      "canvas/insert.ts",
+      "canvas/paste-adapt.ts",
+      "canvas/query-keys.ts",
+      "canvas/shortplay-asset-image-sync.ts",
+      "canvas/shortplay-asset-node.tsx",
+      "canvas/shortplay-asset-refresh.ts",
+      "canvas/types.ts",
+      "canvas/use-adopt-to-shortplay.tsx",
+      "canvas/use-canvas-shortplay.ts",
+      "pages/cast-view.tsx",
+      "pages/create.tsx",
+      "pages/detail-model.ts",
+      "pages/detail-parts.tsx",
+      "pages/detail.tsx",
+      "pages/inbox-view.tsx",
+      "pages/list.tsx",
+      "pages/settings-model.ts",
+      "pages/settings-view.tsx"
+    ],
+    "webRoutes": [
+      {
+        "action": "列作品",
+        "page": "list.tsx",
+        "path": "/shortplays"
+      },
+      {
+        "action": "建档（两集原文一次性提交）",
+        "page": "create.tsx",
+        "path": "/shortplays/new"
+      },
+      {
+        "action": "详情/分集/资产/设置/收件箱",
+        "page": "detail.tsx",
+        "path": "/shortplays/:projectId"
+      }
+    ],
+    "webSidebarEntry": true
+  },
+  "prompts": {
+    "defaultRenderRule": "参考图1是角色既有形象，保持五官、脸型与体态完全一致，只改服装、发型与配饰。",
+    "extractPrompt": "ExtractPrompt",
+    "extractSystemPrompt": "ExtractSystemPrompt",
+    "file": "backend/internal/shortplay/prompts.go",
+    "settingsSchema": {
+      "aspectRatio": "AspectRatio",
+      "assets": "Assets",
+      "episodeSeconds": "EpisodeSeconds",
+      "language": "Language",
+      "storyboard": "Storyboard",
+      "styleName": "StyleName",
+      "stylePrompt": "StylePrompt"
+    }
+  },
+  "provenance": {
+    "capturedAt": "2026-11-25T20:52:43+00:00",
+    "collector": "scripts/shortplay-port/capture_workbench_donor.py",
+    "donorCommit": "13731aae6c4cefadc2a1719e3e7e59b22e249f94",
+    "kind": "source-observed",
+    "note": "The collector only reads the pinned donor tree; no donor code was executed."
+  },
+  "tables": [
+    "shortplays",
+    "shortplay_episodes",
+    "shortplay_assets",
+    "shortplay_jobs",
+    "shortplay_asset_images",
+    "shortplay_asset_audios"
+  ]
+}

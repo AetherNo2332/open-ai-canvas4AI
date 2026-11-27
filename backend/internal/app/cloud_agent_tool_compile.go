@@ -102,6 +102,7 @@ func (c *cloudAgentToolCompiler) addCanvasReadTools(req CloudAgentRequest) {
 	c.add("director", cloudAgentToolText("director"), cloudAgentDirectorToolSchema(directorReadOnly), "action")
 	c.add("canvas_list_node_types", "查询可创建节点和可编辑字段。传 nodeType 返回该类型的完整字段 schema；编辑复杂内容前先查字段合同。", map[string]any{"nodeType": str("可选节点类型；空值列出摘要")})
 	c.add("canvas_list_assets", "搜索当前用户素材库，返回可用于绑定的 assetId、标题和类型，不暴露下载凭证。", map[string]any{"query": str("可选搜索文字"), "kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio", "text"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
+	c.add("shortplay_list_assets", "当前集画布所属短剧项目的资产库：角色/道具/场景的项目内整数 id、设定、外貌、音色与图/音状态；非集画布返回 linked=false。只读，不含下载凭证。", map[string]any{"query": str("可选搜索文字，匹配名称与别名"), "kind": map[string]any{"type": "string", "enum": []string{"character", "prop", "scene"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
 	c.add("canvas_read_content", "分页读取节点正文或分镜行文本。分镜续读须同时指定 rowId 和 field。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。", map[string]any{
 		"nodeId": str("当前画布节点 ID"), "rowId": str("分镜行 ID，普通正文省略"), "field": map[string]any{"type": "string", "enum": append([]string{"content", "composerContent"}, cloudAgentStoryboardTextFields...)},
 		"offset": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 16000},
@@ -194,6 +195,7 @@ func (c *cloudAgentToolCompiler) addStoryboardIndependentTools(req CloudAgentReq
 	for _, name := range []string{"canvas_undo", "canvas_redo"} {
 		c.add(name, "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。", map[string]any{"snapshotHash": str("当前画布快照")}, "snapshotHash")
 	}
+	c.add("shortplay_asset", cloudAgentToolText("shortplay_asset"), cloudAgentShortplayAssetSchema(), "action")
 	c.add("canvas_bind_asset", "用当前用户素材库的 assetId 替换匹配类型节点的内容；先读取画布并查询素材，不接受任意 URL。运行中的生成节点不能替换。", map[string]any{"snapshotHash": str("最新画布快照"), "nodeId": str("目标节点 ID"), "assetId": str("素材库 ID")}, "snapshotHash", "nodeId", "assetId")
 	c.add("model_list", cloudAgentToolText("model_list")+" 分镜可传 storyboardRowIds 批量查询；相同实际输入能力合并为一份模型列表，逐行返回问题。", map[string]any{"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_045"))}, "storyboardNodeId": str("分镜表节点 ID，与 storyboardRowId 或 storyboardRowIds 同时传入，输入从行读取"), "storyboardRowId": str("分镜行 ID"), "storyboardRowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": map[string]any{"type": "string", "minLength": 1}}})
 }

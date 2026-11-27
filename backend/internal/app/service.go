@@ -125,6 +125,9 @@ type Service struct {
 	dramaTails            dramaTailWorker
 	dramaBackgroundRunner func(fn func()) bool
 	memoryDoc             *document.Service
+	// shortplayTaskHook 仅用于测试注入任务提交；生产路径走 CreateTask 准入 + 唤醒执行器。
+	shortplayTaskMu   sync.Mutex
+	shortplayTaskHook func(userID string, req CreateTaskRequest) (*model.Task, error)
 }
 
 const taskWorkerConcurrency = 3
@@ -230,6 +233,7 @@ func (s *Service) StartWorker() {
 	s.startBillingAutoRefundWorker()
 	s.startArkPortraitWorker()
 	s.startDramaScheduler()
+	s.startShortplayExtractWorker()
 	if s.canvasTasks != nil {
 		s.startCanvasMaterializer()
 	}

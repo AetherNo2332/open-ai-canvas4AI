@@ -98,3 +98,61 @@ func TestShortDramaFeatureGateKeepsSharedLibraries(t *testing.T) {
 		})
 	}
 }
+
+// 独立短剧工作台与 drama 是两个产品线：任一开关关闭只隐藏自己的入口，
+// /projects 只看 shortDramaEnabled，/shortplays 只看 shortplayEnabled。
+func TestShortplayFeatureGateIsIndependentOfDrama(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, scenario := range []struct{ drama, shortplay bool }{
+		{false, false},
+		{true, false},
+		{false, true},
+		{true, true},
+	} {
+		t.Run(fmt.Sprintf("drama=%t_shortplay=%t", scenario.drama, scenario.shortplay), func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sqlDB, err := db.DB()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sqlDB.SetMaxOpenConns(1)
+			t.Cleanup(func() { _ = sqlDB.Close() })
+			if err := db.AutoMigrate(&model.User{}, &model.AuthSession{}, &model.SystemSetting{},
+				&model.Project{}, &model.Shortplay{}, &model.ShortplayEpisode{}, &model.ShortplayAsset{},
+				&model.ShortplayAssetImage{}, &model.ShortplayAssetAudio{}, &model.ShortplayJob{}); err != nil {
+				t.Fatal(err)
+			}
+			for _, record := range []any{
+				&model.User{ID: "owner", Username: "owner", Email: "owner@example.invalid", Role: model.UserRoleUser, Status: model.UserStatusActive},
+				&model.AuthSession{ID: "owner", UserID: "owner", TokenHash: auth.HashToken("test-token"), ExpiresAt: time.Now().Add(time.Hour)},
+				&model.SystemSetting{Key: "feature_availability", ValueJSON: fmt.Sprintf(`{"shortDramaEnabled":%t,"shortplayEnabled":%t}`, scenario.drama, scenario.shortplay)},
+			} {
+				if err := db.Create(record).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			svc := service.New(repository.New(db), t.TempDir())
+			router := gin.New()
+			RegisterCanvasAPI(router.Group("/api"), svc)
+			call := func(path string, enabled bool) {
+				t.Helper()
+				want := http.StatusForbidden
+				if enabled {
+					want = http.StatusOK
+				}
+				req := httptest.NewRequest(http.MethodGet, "/api"+path, nil)
+				req.AddCookie(&http.Cookie{Name: service.SessionCookieName, Value: "owner.test-token"})
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+				if w.Code != want {
+					t.Fatalf("GET %s: got %d want %d: %s", path, w.Code, want, w.Body.String())
+				}
+			}
+			call("/projects", scenario.drama)
+			call("/shortplays", scenario.shortplay)
+		})
+	}
+}

@@ -5,7 +5,7 @@ import { CanvasBridge } from "./bridge.js";
 import { loadHarnessPrompt, runCanvasAgent } from "./runner.js";
 import { RuntimeConfigController } from "./runtime-config.js";
 import { EventScheduler, RunEvents, runEventSessions } from "./event-scheduler.js";
-import { runLeasedPiSession, workerErrorSummary } from "./worker-runtime.js";
+import { runLeasedPiSession, workerErrorSummary, workerSlotId } from "./worker-runtime.js";
 import { WorkerHealthState } from "./health-state.js";
 import { validateHarnessArtifacts } from "./bootstrap-check.js";
 import { resourceBudgetFromEnv } from "./resource-budget.js";
@@ -35,7 +35,7 @@ const harness = await loadHarnessPrompt(harnessDir).catch((error) => { health.fa
 const scheduler = new EventScheduler(4);
 const events = new RunEvents();
 const availability={nextProbeAt:0};
-const eventBridge = new CanvasBridge(backend, token, `${hostname()}-${process.pid}-events`, scheduler, events,availability,identity);
+const eventBridge = new CanvasBridge(backend, token, workerSlotId(hostname(), process.pid, "events"), scheduler, events,availability,identity);
 // Fail closed before any claim when the authoritative configuration is unavailable.
 async function loadInitialConfig(): Promise<RuntimeConfigController | undefined> {
   while (!controller.signal.aborted) {
@@ -130,7 +130,7 @@ await runEventSessions({
   reportState: capacityReport,
   signal: controller.signal,
   createBridge: (index) => new CanvasBridge(backend, token,
-    `${hostname()}-${process.pid}-${index + 1}`.slice(0, 80), scheduler, events,availability,identity),
+    workerSlotId(hostname(), process.pid, String(index + 1)), scheduler, events,availability,identity),
   run: async (bridge, run, signal) => {
     await runLeasedPiSession(bridge, run, signal, (b, r, s) => runCanvasAgent(b, r, s, harness));
   },

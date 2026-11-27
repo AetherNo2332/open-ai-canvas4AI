@@ -33,7 +33,7 @@ func cloudAgentReadCall(call cloudAgentCall) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "task_get", "drama_read_episode":
+	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "shortplay_list_assets", "canvas_search_nodes", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "task_get", "drama_read_episode":
 		return true
 	default:
 		return false

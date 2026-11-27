@@ -1,4 +1,23 @@
-# Shortplay S01 baseline
+# Shortplay donor baselines
+
+## Workbench inventory (W01)
+
+`capture_workbench_donor.py` reads the pinned donor tree and writes the
+workbench inventory plus validates the two-episode sample:
+
+```powershell
+python scripts/shortplay-port/capture_workbench_donor.py `
+  --donor-root .local/donor-13731aae6 `
+  --out testdata/shortplay-workbench-port/donor
+```
+
+It never runs donor code: every inventory row is `source-observed`. It refuses a
+dirty donor tree or a HEAD other than the pinned commit, and exits non-zero when
+the sample breaks a donor rule (project-scoped asset ids, derived-look fallback,
+job dedupe key forms). The evidence matrix lives in
+`testdata/shortplay-workbench-port/README.md`.
+
+## Canvas submap flow (S01)
 
 `capture_donor_baseline.py` replays the built-in storyboard submap flow against
 the donor at commit `13731aae6c4cefadc2a1719e3e7e59b22e249f94`:

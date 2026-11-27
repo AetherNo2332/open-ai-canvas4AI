@@ -45,6 +45,8 @@ export enum CanvasNodeType {
     MediaConversion = "media-conversion",
     BatchTable = "batch-table",
     Submap = "submap",
+    /** 短剧资产卡：集画布上的只读投影，权威在短剧资产表。 */
+    ShortplayAsset = "shortplay-asset",
 }
 
 /** Runtime IDs contributed by plugins share the persisted node type field. */

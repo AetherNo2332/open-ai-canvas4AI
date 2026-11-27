@@ -22,10 +22,7 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 	case "canvas_preflight":
 		return cloudAgentHandleCanvasPreflight(repo, userID, state, call, services...)
 	case "director":
-		if state == nil || cloudAgentWriteCall(call) {
-			return nil, BadAuthRequest("director 写操作不能走只读通道")
-		}
-		return cloudAgentDirectorRead(repo, userID, state.Request.CanvasID, call)
+		return cloudAgentReadDirector(repo, userID, state, call)
 	case "web_search":
 		return cloudAgentReadWebSearch(service, state, call)
 	case "plan_update":
@@ -34,7 +31,10 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentAskUser(call)
 	case "canvas_list_node_types":
 		return cloudAgentReadNodeTypes(call)
-	case "canvas_list_assets":
+	case "canvas_list_assets", "shortplay_list_assets":
+		if call.Function.Name == "shortplay_list_assets" {
+			return cloudAgentListShortplayAssets(repo, userID, state, call)
+		}
 		return cloudAgentListScopedAssets(repo, userID, state, call)
 	case "canvas_read_content", "canvas_search_nodes":
 		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
@@ -54,6 +54,15 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentReadDramaEpisodeTool(service, userID, state, call)
 	}
 	return nil, BadAuthRequest("未知工具")
+}
+
+// cloudAgentReadDirector 保留 director 只读通道原有的 nil 与写操作守卫；抽成函数只为让
+// 主派发函数的圈复杂度留在上限内，行为与内联版本逐条一致。
+func cloudAgentReadDirector(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {
+	if state == nil || cloudAgentWriteCall(call) {
+		return nil, BadAuthRequest("director 写操作不能走只读通道")
+	}
+	return cloudAgentDirectorRead(repo, userID, state.Request.CanvasID, call)
 }
 
 func cloudAgentReadCanvasCommand(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, services ...*Service) (any, error) {

@@ -140,6 +140,20 @@ description: 影策后端核心持久化表与状态边界
 
 复合索引 `idx_user_submap_presets_user_updated` 按 `(user_id, updated_at)` 支撑个人模板列表；`user_id` 另有单列索引供归属检查和计数。模板不是画布版本的一部分：删除模板不会修改已插入的画布子树，画布恢复也不会回滚模板。每个用户最多 200 个模板的限制在 service 创建路径检查，接口同时校验快照节点数、字节数、名称、类型和自包含引用。升级前先备份数据库，并使用匹配新二进制版本的迁移命令；回退旧二进制前需恢复升级前备份。
 
+## 独立短剧工作台（Schema 112）
+
+版本 112 `shortplay_workbench_tables` 只新增独立 shortplay 工作台的六张表，不改写既有项目、画布、历史快照或 drama 制作台数据。空库由基线模型一并建出；已升级到 111 的库执行本迁移只创建表、索引与约束，重复执行保持幂等。
+
+| 表 | 主键与唯一约束 | 用途 |
+| --- | --- | --- |
+| `shortplays` | `id`；`project_id` 索引 | 项目的短剧域配置，`settings_json` 整份落库，`source_raw` 留整篇原文。 |
+| `shortplay_episodes` | `id`；`(shortplay_id, number)` 唯一；`canvas_id` 唯一且非空 | 一集一行。集行是画布归属权威，`canvas_id` 建档时预分配，画布行按需创建。 |
+| `shortplay_assets` | `(shortplay_id, id)` 复合主键 | 资产身份与设定。`id` 是项目内从 1 起的整数序号，跨项目可以重复，只有带作品身份才唯一。 |
+| `shortplay_asset_images` | `(shortplay_id, asset_id, version)` 唯一 | 每次出图一行；`source_image_id` 支撑衍生形象的过期判定。 |
+| `shortplay_asset_audios` | `(shortplay_id, asset_id, version)` 唯一 | 音色样本，与图片同形。 |
+| `shortplay_jobs` | `id`；未结束行 `dedupe_key` 部分唯一索引 | 后台 job 队列。唯一索引只覆盖 `queued` / `running`，结束后同键可以再次入队。 |
+
+作品容器仍是 `projects` 行，`type = "shortplay"`，与 `short-drama` 并存。资产参考图的媒体文件在 `resources` 表，短剧资产只持 `current_image_id` / `current_audio_id` 指针。升级前先备份数据库，并使用匹配新二进制版本的迁移命令。
 ## Agent 记忆文件列补齐（Schema 77）
 
 版本 77 `agent_memory_document_columns` 只做补列：确保 `agent_memory_documents.next_entry_seq` 与 `agent_memory_document_revisions.call_id` 存在，并把空值回填为 `0` / 空串。开发期的早期构建执行 v76 时这两列还没加入模型，v76 已记为完成、校验和不能再改，缺列会让创建 Agent 轮次时读取记忆文件失败（`no column named next_entry_seq`）。新库由 v76 一次建全，v77 是空操作；不改写既有记忆内容。

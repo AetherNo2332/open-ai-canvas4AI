@@ -22,6 +22,7 @@ export const koKR: Messages = {
         tools: {
             create: "창작",
             projects: "숏드라마",
+            shortplays: "숏드라마 작업대",
             canvas: "캔버스",
             tasks: "작업",
             assets: "소재",
@@ -37,6 +38,7 @@ export const koKR: Messages = {
         sidebar: {
             home: "창작",
             projects: "숏드라마 제작",
+            shortplays: "숏드라마 작업대",
             ecommerce: "이커머스 에이전트",
             canvas: "자유 캔버스",
             toolboxImage: "이미지 생성",
@@ -51,6 +53,7 @@ export const koKR: Messages = {
         collapsed: {
             home: "창작",
             projects: "드라마",
+            shortplays: "숏드라마 작업대",
             canvas: "캔버스",
             assets: "에셋",
             skills: "스킬",
@@ -60,6 +63,7 @@ export const koKR: Messages = {
         pageTitles: {
             home: "창작",
             projects: "숏드라마 제작",
+            shortplays: "숏드라마 작업대",
             canvas: "자유 캔버스",
             tasks: "창작 기록",
             assets: "에셋",

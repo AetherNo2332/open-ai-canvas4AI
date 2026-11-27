@@ -42,11 +42,14 @@ import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-pa
 import { CanvasActiveTaskPanel } from "@/components/canvas/canvas-active-task-panel";
 import { CanvasDramaSidebar } from "@/components/canvas/canvas-drama-sidebar";
 import { CanvasDramaAdoptModal } from "@/components/canvas/canvas-drama-adopt-modal";
+import { CanvasShortplayAdoptModal } from "@/components/canvas/canvas-shortplay-adopt-modal";
 import { canvasStoryboardToDramaSource } from "@/lib/canvas/drama-canvas-projection";
 import { CanvasProjectAssetModal } from "@/components/canvas/canvas-project-asset-modal";
 import { CanvasCharacterLibraryModal } from "@/components/canvas/canvas-character-library-modal";
 import { CanvasPoseLibraryModal } from "@/components/canvas/canvas-pose-library-modal";
 import { CanvasCharacterReferenceNodeContent } from "@/components/canvas/canvas-character-reference-node";
+import { ShortplayAssetNodeContent } from "@/components/canvas/canvas-shortplay-asset-node";
+import { shortplayCanvasEntriesEnabled } from "@/lib/canvas/canvas-shortplay-asset";
 import { CanvasCharacterReferenceModal } from "@/components/canvas/canvas-character-reference-modal";
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { resolveProjectCanvasStyle } from "@/components/canvas/canvas-style-picker-modal";
@@ -81,6 +84,7 @@ import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { useCanvasCreateCommands } from "@/components/canvas/use-canvas-create-commands";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { getProject, listCharacters, type ProjectAsset } from "@/services/api/projects";
+import { getShortplayCanvasBinding } from "@/services/api/shortplay";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasAgentHud } from "@/components/canvas/canvas-agent-hud";
 import { persistCanvasAgentCameraFollow, readCanvasAgentCameraFollow } from "@/lib/canvas/canvas-agent-camera-follow";
@@ -275,6 +279,7 @@ function CanvasViewportPage() {
     const theme = canvasThemes[colorTheme];
     const defaultDrawingEngine = useUserStore((state) => state.drawingEngine.defaultEngine);
     const shortDramaEnabled = useUserStore((state) => state.features.shortDramaEnabled);
+    const shortplayEnabled = useUserStore((state) => state.features.shortplayEnabled);
     const previsOnboardingScope = useUserStore((state) => state.user?.id?.trim() || "");
     const nodesRef = useRef<CanvasNodeData[]>([]);
     const [nodes, setNodesState] = useState<CanvasNodeData[]>([]);
@@ -333,6 +338,7 @@ function CanvasViewportPage() {
     const [subtitleNodeId, setSubtitleNodeId] = useState<string | null>(null);
     const [timelineNodeId, setTimelineNodeId] = useState<string | null>(null);
     const [mediaVersionNodeId, setMediaVersionNodeId] = useState<string | null>(null);
+    const [shortplayAdoptNodeId, setShortplayAdoptNodeId] = useState<string | null>(null);
     const [superResolveNodeId, setSuperResolveNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
     const [scriptEditorNodeId, setScriptEditorNodeId] = useState<string | null>(null);
@@ -562,7 +568,19 @@ function CanvasViewportPage() {
         [persistLocalEdits, projectId, setConnections, setNodes],
     );
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
+    // 关联画布 = drama 开关打开且画布已关联作品；短剧局部卡/收录只在这些画布之外出现。
+    const canvasProjectLinked = Boolean(shortDramaEnabled && currentProject?.projectId);
+    const shortplayCanvasEntries = shortplayCanvasEntriesEnabled({ shortplayEnabled, isProjectLinked: canvasProjectLinked });
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
+    // 这张画布是不是某部短剧的分集画布：是的话顶栏回跳短剧工作台，而不是 drama 制作台。
+    const shortplayBindingQuery = useQuery({
+        queryKey: ["shortplay-canvas-binding", projectId],
+        queryFn: ({ signal }) => getShortplayCanvasBinding(projectId, signal),
+        enabled: shortplayEnabled && Boolean(projectId),
+        retry: false,
+        staleTime: 60_000,
+    });
+    const shortplayBinding = shortplayBindingQuery.data?.linked ? shortplayBindingQuery.data : undefined;
     const refetchLinkedProject = linkedProjectQuery.refetch;
     const archiveNodesToLinkedFolder = useCallback(
         (folder: CanvasNodeData, droppedNodes: CanvasNodeData[]) => {
@@ -1091,6 +1109,7 @@ function CanvasViewportPage() {
         applySubmapPreset,
         createFolder,
         createNode,
+        createShortplayAssetNode,
         createReferenceGroup,
         createStoryboardGroup,
         deleteConnection,
@@ -1618,6 +1637,7 @@ function CanvasViewportPage() {
     const subtitleNode = subtitleNodeId ? nodeById.get(subtitleNodeId) || null : null;
     const timelineNode = timelineNodeId ? nodeById.get(timelineNodeId) || null : null;
     const dramaAdoptNode = drama.adoptNodeId ? nodeById.get(drama.adoptNodeId) || null : null;
+    const shortplayAdoptNode = shortplayAdoptNodeId ? nodeById.get(shortplayAdoptNodeId) || null : null;
     const mediaVersionNode = mediaVersionNodeId ? nodeById.get(mediaVersionNodeId) || null : null;
     const frameNode = frameDialogNodeId ? nodeById.get(frameDialogNodeId) || null : null;
     const segmentNode = segmentDialogNodeId ? nodeById.get(segmentDialogNodeId) || null : null;
@@ -2492,6 +2512,10 @@ function CanvasViewportPage() {
 
     const renderCanvasNodeContent = useCallback(
         (contentNode: CanvasNodeData) => {
+            if (contentNode.type === CanvasNodeType.ShortplayAsset) {
+                // 资产卡只渲染节点快照；归属徽标需要知道当前画布是不是集画布。
+                return <ShortplayAssetNodeContent node={contentNode} linked={Boolean(shortplayBinding)} />;
+            }
             if (contentNode.metadata?.workflowKind === "character" && contentNode.metadata.characterAssetId) {
                 return <CanvasCharacterReferenceNodeContent node={contentNode} />;
             }
@@ -2743,7 +2767,7 @@ function CanvasViewportPage() {
             : [];
     const freeformCreateCommands = useCanvasCreateCommands({
         workspaceMode,
-        isProjectLinked: Boolean(shortDramaEnabled && currentProject?.projectId),
+        isProjectLinked: canvasProjectLinked,
         handlers: {
             onAddText: () => createNode(CanvasNodeType.Text),
             onAddImage: () => createNode(CanvasNodeType.Image),
@@ -2755,6 +2779,7 @@ function CanvasViewportPage() {
             onAddDrawing: () => createNode(CanvasNodeType.Drawing),
             onAddWorkflow: () => createNode(CanvasNodeType.Config),
             onAddExtensionNode: (type) => createNode(type),
+            onAddShortplayAsset: shortplayCanvasEntries ? createShortplayAssetNode : undefined,
             onChooseStyle: () => setStylePickerOpen(true),
             onOpenPrevis: () => setPrevisTemplateRequest({}),
             onUpload: () => handleUploadRequest(),
@@ -3058,12 +3083,12 @@ function CanvasViewportPage() {
                                     syncIcon={<CanvasSyncStatus projectId={projectId} />}
                                     onOpenSearch={() => setNodeSearchOpen(true)}
                                     projectContext={
-                                        shortDramaEnabled && currentProject?.projectId
+                                        currentProject?.projectId && (shortDramaEnabled || shortplayBinding)
                                             ? {
                                                   ...canvasContext,
                                                   projectId: currentProject.projectId,
-                                                  projectName: drama.summary?.project.name || linkedProjectQuery.data?.project.name || currentProject.title,
-                                                  ...(drama.active ? { kind: "drama" as const } : {}),
+                                                  projectName: shortplayBinding ? linkedProjectQuery.data?.project.name || currentProject.title : drama.summary?.project.name || linkedProjectQuery.data?.project.name || currentProject.title,
+                                                  ...(shortplayBinding ? { kind: "shortplay" as const } : drama.active ? { kind: "drama" as const } : {}),
                                               }
                                             : undefined
                                     }
@@ -3277,7 +3302,7 @@ function CanvasViewportPage() {
                                             workspaceMode={workspaceMode}
                                             canvasTool={canvasTool}
                                             onToolChange={setCanvasTool}
-                                            isProjectLinked={Boolean(shortDramaEnabled && currentProject?.projectId)}
+                                            isProjectLinked={canvasProjectLinked}
                                             canUndo={historyState.canUndo}
                                             canRedo={historyState.canRedo}
                                             appearance={canvasAppearance}
@@ -3293,6 +3318,7 @@ function CanvasViewportPage() {
                                             onAddFolder={createFolder}
                                             onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
                                             onAddExtensionNode={(type) => createNode(type)}
+                                            onAddShortplayAsset={shortplayCanvasEntries ? createShortplayAssetNode : undefined}
                                             onAddWorkflow={() => createNode(CanvasNodeType.Config)}
                                             onOpenPrevis={() => setPrevisTemplateRequest({})}
                                             onUndo={undoCanvas}
@@ -3499,6 +3525,7 @@ function CanvasViewportPage() {
                                 onTimeline={(node) => setTimelineNodeId(node.id)}
                                 onVersions={(node) => setMediaVersionNodeId(node.id)}
                                 onAdoptToDrama={drama.active ? drama.openAdopt : undefined}
+                                onAdoptToShortplay={shortplayCanvasEntries ? (node) => setShortplayAdoptNodeId(node.id) : undefined}
                                 onRefreshFromDrama={toolbarNode && drama.staleNodeIds.has(toolbarNode.id) ? drama.refreshNode : undefined}
                                 extractingVideoFrames={toolbarNode?.id === extractingVideoFramesNodeId}
                                 extractingAudio={segmentRunningMode === "audio"}
@@ -3611,6 +3638,8 @@ function CanvasViewportPage() {
                             <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} onMetadataChange={handleConfigNodeChange} />
 
                             {drama.summary && dramaAdoptNode ? <CanvasDramaAdoptModal node={dramaAdoptNode} nodes={nodes} summary={drama.summary} cast={drama.cast} onClose={drama.closeAdopt} onAdopted={drama.markAdopted} /> : null}
+
+                            <CanvasShortplayAdoptModal open={shortplayCanvasEntries && Boolean(shortplayAdoptNode)} canvasId={projectId} node={shortplayAdoptNode} onClose={() => setShortplayAdoptNodeId(null)} />
 
                             <CanvasMediaVersionModal
                                 node={mediaVersionNode}
