@@ -210,7 +210,7 @@ Run 准入对发给模型的规范化工具目录检查 **64,000 字节总量**�
 
 1. 在隔离数据库副本验证 Schema 108、109 的会话归属及 Schema 113 的生成批次、任务明细和内部队列字段，核对 Run、Pi 会话、待续接批次和回执。保留数据库与资源备份。
 2. 暂停新准入，排空或按现有流程取消不兼容的运行。确认读取、事件与取消接口仍可用。
-3. 配套切换 Go 与 Node Worker。当前协议为 `canvas-pi-wire/v8`，能力目录版本 2，工具 Schema 为 `cloud-agent-tools/v31`，Pi SDK 为 `0.87.1`，Pi 持久会话格式为 3。先确认 Worker wire 身份兼容、就绪，再恢复准入。目录版本 1（业务 `read` 扩展）、legacy 目录 0 和缺少冻结目录的旧记录都不再执行：新版服务端以 `agent_capability_directory_unavailable` 终止它们并释放占用，新版 Worker 同样拒绝旧目录。`wait_generations` 已从工具目录移除，生成结果由后台回写与 `finish_run.continuation` 接续；v6 注册式 Run 缺少可验证目录版本，升级前应排空。已提交的回执仍可交付，历史、取消与归档接口照常可用。
+3. 配套切换 Go 与 Node Worker。当前协议为 `canvas-pi-wire/v8`，能力目录版本 2，工具 Schema 为 `cloud-agent-tools/v30`，Pi SDK 为 `0.87.1`，Pi 持久会话格式为 3。先确认 Worker wire 身份兼容、就绪，再恢复准入。目录版本 1（业务 `read` 扩展）、legacy 目录 0 和缺少冻结目录的旧记录都不再执行：新版服务端以 `agent_capability_directory_unavailable` 终止它们并释放占用，新版 Worker 同样拒绝旧目录。`wait_generations` 已从工具目录移除，生成结果由后台回写与 `finish_run.continuation` 接续；v6 注册式 Run 缺少可验证目录版本，升级前应排空。已提交的回执仍可交付，历史、取消与归档接口照常可用。
 4. 冒烟验证画布正文、画布看图、短剧分集读取与提问回答、Skill 读取、后台生成续接、断线恢复、单次计费和旧会话只读入口，检查占用与失败指标。
 5. 回退先停止准入，保留兼容的读取、取消和排空路径。保留迁移后的业务数据、事件、回执和账单。回退镜像不会恢复已终止的运行，也不会撤销已发生的费用；二进制回退前在副本验证目标版本是否接受已迁移的数据库与新运行。
 
