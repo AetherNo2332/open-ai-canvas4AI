@@ -13,18 +13,6 @@ import (
 	"time"
 )
 
-// requireKeyPermissions 在 POSIX 上要求密钥文件只有所有者可读写；
-// Windows 的权限模型没有 group/other 位，os.FileMode.Perm 恒为 0666/0444，无法表达 0600。
-func requireKeyPermissions(t *testing.T, info os.FileInfo) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		return
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("key permissions = %o", info.Mode().Perm())
-	}
-}
-
 func TestSettingsEncryptionKeyPublication(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".settings-key")
 	key := bytes.Repeat([]byte{5}, 32)
