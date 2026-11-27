@@ -15,7 +15,7 @@ func cloudAgentToolCategory(name string) string {
 		return "agent_tools_memory"
 	case "read":
 		return "native_skill"
-	case "canvas_list_node_types", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_batch_table":
+	case "canvas_list_node_types", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_batch_table", "drama_read_episode":
 		return "agent_tools_canvas_read"
 	case "canvas_inspect_image":
 		return "agent_tools_image"

@@ -46,6 +46,8 @@ func TestPiRetiredToolLeavesLoadoutOnlyAfterBatchSettles(t *testing.T) {
 	declareTestChannelWindow(t, db, 64000, 8192)
 	_, state := reloadPiRun(t, s, run.ID)
 	state.Canonical.Tools = append(state.Canonical.Tools, map[string]any{"type": "function", "function": map[string]any{"name": "previs_preview", "parameters": map[string]any{"type": "object"}}})
+	// 退役工具仍留在冻结目录里（历史批次引用了它），但已不在本轮可执行工具集合中。
+	resealFrozenDirectoryHash(t, state)
 	state.AdvertisedToolNames = cloudAgentToolNames(state.Canonical.Tools)
 	call := piAgentTestCall("old-render", "previs_preview", `{"sceneId":"scene"}`)
 	state.Calls = []cloudAgentCall{call}

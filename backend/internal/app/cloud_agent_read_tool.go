@@ -47,13 +47,11 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 	case "canvas_read_batch_table":
 		return cloudAgentReadBatchTable(repo, userID, state, call)
 	case "model_list":
-		if len(services) == 0 || services[0] == nil {
-			return nil, errors.New("Agent 模型目录工具缺少服务上下文")
-		}
-		service := services[0]
-		return service.cloudAgentQueryModels(userID, state.Request.CanvasID, call.Function.Arguments)
+		return cloudAgentReadModels(service, userID, state, call)
 	case "task_get":
 		return cloudAgentReadTask(repo, userID, state, call)
+	case "drama_read_episode":
+		return cloudAgentReadDramaEpisodeTool(service, userID, state, call)
 	}
 	return nil, BadAuthRequest("未知工具")
 }
@@ -63,6 +61,22 @@ func cloudAgentReadCanvasCommand(repo *repository.Repository, userID string, sta
 		return nil, cloudAgentCanvasCommandReadOnlyError(call)
 	}
 	return canvasCommandHandleRead(repo, userID, state, call, services...)
+}
+
+// cloudAgentReadDramaEpisodeTool 把短剧分集读取接到读工具分派上；服务上下文缺失时
+// 直接拒绝，避免把 nil 服务传进业务查询。
+func cloudAgentReadDramaEpisodeTool(service *Service, userID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {
+	if service == nil || state == nil {
+		return nil, errors.New("短剧分集读取缺少服务上下文")
+	}
+	return service.cloudAgentReadDramaEpisode(userID, state, call)
+}
+
+func cloudAgentReadModels(service *Service, userID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {
+	if service == nil || state == nil {
+		return nil, errors.New("Agent 模型目录工具缺少服务上下文")
+	}
+	return service.cloudAgentQueryModels(userID, state.Request.CanvasID, call.Function.Arguments)
 }
 
 func cloudAgentReadWebSearch(service *Service, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {

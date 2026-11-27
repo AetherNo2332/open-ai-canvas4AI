@@ -34,10 +34,6 @@ func TestAgentDefinitionRegistry(t *testing.T) {
 			def.BusinessTools = []string{"task_get", "task_get"}
 			return []AgentDefinition{def}
 		}},
-		{"foreign read adapter", func(def AgentDefinition) []AgentDefinition {
-			def.ReadAdapters = []string{"drama:episode"}
-			return []AgentDefinition{def}
-		}},
 		{"foreign business tool", func(def AgentDefinition) []AgentDefinition {
 			def.BusinessType = "drama"
 			def.BusinessTools = []string{"canvas_apply_ops"}
@@ -90,7 +86,7 @@ func TestAgentToolAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	execution, state := reloadPiRun(t, s, run.ID)
-	if state.Capabilities.DefinitionID != "canvas.default" || state.Capabilities.DefinitionVersion != 1 {
+	if state.Capabilities.DefinitionID != "canvas.default" || state.Capabilities.DefinitionVersion != 2 {
 		t.Fatalf("missing frozen definition identity: %+v", state.Capabilities)
 	}
 	if cloudAgentRunAllowsTool(state, "canvas_apply_ops") || cloudAgentRunAllowsTool(state, "read_foreign_project") {
@@ -101,8 +97,8 @@ func TestAgentToolAdmission(t *testing.T) {
 		t.Fatal("tool accepted a different scope from the admitted run")
 	}
 	state.Request.Scope = nil
-	v2 := AgentDefinition{ID: "canvas.default", Version: 2, BusinessType: "canvas", IsDefault: true, BusinessTools: []string{}}
-	registry, err := newAgentDefinitionRegistry([]AgentDefinition{v2})
+	v3 := AgentDefinition{ID: "canvas.default", Version: 3, BusinessType: "canvas", IsDefault: true, BusinessTools: []string{}}
+	registry, err := newAgentDefinitionRegistry([]AgentDefinition{v3})
 	if err != nil {
 		t.Fatal(err)
 	}

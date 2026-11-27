@@ -8,69 +8,6 @@ import (
 	"yingce/backend/internal/model"
 )
 
-func TestAgentReadAdapter(t *testing.T) {
-	s, _, _ := cloudAgentVisionFixture(t)
-	state := cloudAgentRuntime{Request: agentTestRequest()}
-	state.Request.VisionEnabled = true
-	t.Run("third business references use the durable batch", func(t *testing.T) {
-		call := piAgentTestCall("read", "read", `{"path":"library:document/item","offset":-1}`)
-		if !agentBusinessRead(call) {
-			t.Fatal("business read was sent to the local Skill reader")
-		}
-	})
-	for _, arguments := range []string{
-		`{"path":"canvas:image/cat","limit":12000}`,
-		`{"path":"canvas:image/cat","offset":0}`,
-		`{"path":"canvas:text/../shot-1"}`,
-		`{"path":"canvas:text/%2e%2e"}`,
-		`{"path":"https://example.invalid/shot-1"}`,
-		`{"path":"drama:episode/episode-1"}`,
-	} {
-		t.Run(arguments, func(t *testing.T) {
-			if _, err := s.agentReadBusinessContent("user", &state, piAgentTestCall("read", "read", arguments)); err == nil {
-				t.Fatal("invalid request returned content")
-			}
-		})
-	}
-	t.Run("registry limits references and freezes adapter version", func(t *testing.T) {
-		definition := AgentDefinition{
-			ID: "library.default", Version: 1, BusinessType: "library", IsDefault: true, BusinessTools: []string{},
-			ReadAdapters: []string{"library:document"},
-			authorize: func(_ *Service, _ string, _ CloudAgentRequest) (*model.CanvasProject, error) {
-				return nil, nil
-			},
-		}
-		registry, err := newAgentDefinitionRegistry([]AgentDefinition{definition}, agentReadAdapter{
-			namespace: "library:document", business: "library", version: 1,
-			read: func(_ *Service, _ string, _ *cloudAgentRuntime, object string, args agentReadArguments, _ cloudAgentCall) (agentReadResult, error) {
-				return agentReadResult{fields: map[string]any{"content": object, "offset": args.offset()}}, nil
-			},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		s.agentDefinitions = registry
-		registered, err := s.ResolveAgentDefinition("library", "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		caps, err := CompileAgentCapabilities(registered, AgentCapabilityAdmission{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		state := cloudAgentRuntime{Request: CloudAgentRequest{Scope: &AgentBusinessScope{Type: "library", ID: "shelf"}}, Capabilities: &caps}
-		call := piAgentTestCall("read", "read", `{"path":"library:document/item","offset":4}`)
-		result, err := s.agentReadBusinessContent("user", &state, call)
-		if receipt, ok := result.(map[string]any); err != nil || !ok || receipt["content"] != "item" || receipt["offset"] != 4 {
-			t.Fatalf("registered adapter did not execute: %+v %v", result, err)
-		}
-		caps.ReadAdapterVersions["library:document"]++
-		if _, err := s.agentReadBusinessContent("user", &state, call); err == nil {
-			t.Fatal("unavailable frozen version was silently substituted")
-		}
-	})
-}
-
 func TestAgentResourceScope(t *testing.T) {
 	s, db, _ := cloudAgentVisionFixture(t)
 	req := agentTestRequest()

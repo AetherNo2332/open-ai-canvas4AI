@@ -19,8 +19,7 @@ func piSnapshotToolSpecs(state *cloudAgentRuntime) []PiAgentToolSpec {
 		if name == "" || parameters == nil {
 			continue
 		}
-		nativeRead := state.Capabilities == nil && state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
-		allowed := nativeRead || (cloudAgentRunAllowsTool(state, name) && cloudAgentToolAdvertisedForRun(state, name))
+		allowed := cloudAgentRunAllowsTool(state, name) && cloudAgentToolAdvertisedForRun(state, name)
 		tools = append(tools, PiAgentToolSpec{
 			Name: name, Description: stringField(function, "description"), Parameters: parameters,
 			Category: cloudAgentToolCategory(name), Allowed: allowed,

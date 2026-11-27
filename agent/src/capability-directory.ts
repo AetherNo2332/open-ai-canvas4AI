@@ -7,10 +7,12 @@ export function validateCapabilityDirectory(run: PiSnapshot, previous?: PiSnapsh
     throw new FatalWorkerError(`Agent capability directory ${detail} (run ${run.runId})`);
   };
   const directory = run.capabilityDirectory;
-  if (!directory || ![0, 1].includes(directory.version) || !/^[a-f0-9]{64}$/.test(directory.hash)) {
+  // 目录版本 2 是 Skill-only read 合同：旧目录 1 带着业务 read 的执行语义，新版 Worker
+  // 一律拒绝继续执行。0 只保留给冻结目录出现之前的运行形态。
+  if (!directory || ![0, 2].includes(directory.version) || !/^[a-f0-9]{64}$/.test(directory.hash)) {
     return reject("version or identity unavailable");
   }
-  if (directory.version === 1 && (!directory.definitionId ||
+  if (directory.version !== 0 && (!directory.definitionId ||
       !Number.isSafeInteger(directory.definitionVersion) || (directory.definitionVersion ?? 0) < 1)) {
     return reject("definition identity unavailable");
   }

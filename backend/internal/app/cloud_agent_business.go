@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 
@@ -70,33 +69,4 @@ func (s *Service) authorizePlatformAgent(userID string, req CloudAgentRequest) (
 		return nil, kernel.NotFound("平台 Agent 会话不存在")
 	}
 	return nil, nil
-}
-
-func (s *Service) agentReadDramaEpisode(userID string, state *cloudAgentRuntime, episodeID string, args agentReadArguments, _ cloudAgentCall) (agentReadResult, error) {
-	projectID := agentBusinessScope(state.Request).ID
-	if _, _, err := s.dramaForUser(userID, projectID); err != nil {
-		return agentReadResult{}, err
-	}
-	episode, err := s.repo.DramaEpisode(projectID, episodeID)
-	if err != nil {
-		return agentReadResult{}, err
-	}
-	shots, err := s.repo.DramaShots(episode.ID)
-	if err != nil {
-		return agentReadResult{}, err
-	}
-	body, err := json.Marshal(struct {
-		Episode *model.DramaEpisode `json:"episode"`
-		Shots   []model.DramaShot   `json:"shots"`
-	}{episode, shots})
-	if err != nil {
-		return agentReadResult{}, err
-	}
-	runes := []rune(string(body))
-	offset := min(args.offset(), len(runes))
-	end := min(offset+args.limit(), len(runes))
-	return agentReadResult{fields: map[string]any{
-		"projectId": projectID, "content": string(runes[offset:end]),
-		"offset": offset, "totalRunes": len(runes), "hasMore": end < len(runes), "adopted": false,
-	}}, nil
 }

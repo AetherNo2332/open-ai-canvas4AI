@@ -11,7 +11,7 @@ import (
 const (
 	cloudAgentToolSchemaTotalBudget   = 64000
 	cloudAgentToolSchemaPerToolBudget = 12000
-	agentCapabilityDirectoryVersion   = 1
+	agentCapabilityDirectoryVersion   = 2
 )
 
 func cloudAgentToolDirectoryCost(tools []map[string]any, runID string) (int, error) {

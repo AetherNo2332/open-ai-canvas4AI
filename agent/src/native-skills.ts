@@ -4,16 +4,6 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { InlineExtension, LoadSkillsResult } from "@earendil-works/pi-coding-agent";
 import type { CanvasBridge, PiSkillSnapshot, PiSnapshot } from "./bridge.js";
 import { FatalWorkerError } from "./tool-disclosure.js";
-import type { PiToolCall } from "./bridge.js";
-
-/** These reads use Go's ordinary leased, receipt-backed tool execution. */
-export function isBusinessRead(call: PiToolCall): boolean {
-  if (call.function.name !== "read") return false;
-  try {
-    const args = JSON.parse(call.function.arguments) as { path?: unknown };
-    return typeof args?.path === "string" && /^[a-z][a-z0-9_-]+:/.test(args.path);
-  } catch { return false; }
-}
 
 const MAX_ENTRY_BYTES = 512 << 10;
 const MAX_PAGE_RUNES = 12_000;

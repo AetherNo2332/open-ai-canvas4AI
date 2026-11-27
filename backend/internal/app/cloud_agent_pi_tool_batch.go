@@ -82,7 +82,8 @@ func (s *Service) piToolBatchState(run *model.CloudAgentExecution, calls []cloud
 	}
 	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
 		for _, call := range calls {
-			if call.Function.Name == "read" && !agentBusinessRead(call) {
+			// 原生运行的全部 read 都是 Skill 读取，由 Worker 在本地执行。
+			if call.Function.Name == "read" {
 				return state, kernel.Forbidden("native Skill read does not use a canvas tool batch")
 			}
 		}
@@ -141,7 +142,8 @@ func (s *Service) piAdmitToolBatchEnvelope(userID string, state *cloudAgentRunti
 	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
 		canvasCalls := make([]cloudAgentCall, 0, len(expected))
 		for _, call := range expected {
-			if call.Function.Name != "read" || agentBusinessRead(call) {
+			// 计费模型步的输出来自 Worker 同一个工具目录；原生 read 不进批次。
+			if call.Function.Name != "read" {
 				canvasCalls = append(canvasCalls, call)
 			}
 		}

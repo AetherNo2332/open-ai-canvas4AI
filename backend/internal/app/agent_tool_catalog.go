@@ -18,10 +18,44 @@ func CloudAgentToolSchemaArtifact() AgentToolSchemaArtifact { return backendTool
 
 func CloudAgentToolCount() int { return len(backendToolArtifact().Tools) }
 
+// cloudAgentSchemaArtifactRequests 为每个受支持业务提供一个代表性请求。离线全集
+// 是这些请求工具表的并集，平台共同工具只出现一次。
+func cloudAgentSchemaArtifactRequests() []CloudAgentRequest {
+	canvas := CloudAgentRequest{
+		PermissionMode: "auto", ContextScope: []string{"canvas"}, VisionEnabled: true,
+		MemoryMode: model.AgentMemoryDocumentModeAuto, WebSearchEnabled: true, SkillIDs: []string{"schema-artifact-skill"},
+	}
+	canvas.Budget.MaxCredits = 1
+	// 短剧顾问是只读业务：目录里不应出现任何写入或画布工具。
+	drama := CloudAgentRequest{
+		PermissionMode: "read_only", Scope: &AgentBusinessScope{Type: "drama", ID: "schema-artifact-drama"},
+		SkillIDs: []string{"schema-artifact-skill"},
+	}
+	drama.Budget.MaxCredits = 1
+	return []CloudAgentRequest{canvas, drama}
+}
+
+func cloudAgentUnionTools(requests []CloudAgentRequest) []map[string]any {
+	union := []map[string]any{}
+	seen := map[string]bool{}
+	for _, request := range requests {
+		for _, tool := range cloudAgentTools(request) {
+			name, _ := cloudAgentToolSchemaIdentity(tool)
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			union = append(union, tool)
+		}
+	}
+	return union
+}
+
 func backendToolArtifact() AgentToolSchemaArtifact {
-	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, VisionEnabled: true, MemoryMode: model.AgentMemoryDocumentModeAuto, WebSearchEnabled: true, SkillIDs: []string{"schema-artifact-skill"}}
-	req.Budget.MaxCredits = 1
-	artifact := AgentToolSchemaArtifact{SchemaVersion: cloudAgentToolSchemaVersion, Tools: append(cloudAgentTools(req), nativeSkillReadToolSchema())}
+	artifact := AgentToolSchemaArtifact{
+		SchemaVersion: cloudAgentToolSchemaVersion,
+		Tools:         append(cloudAgentUnionTools(cloudAgentSchemaArtifactRequests()), nativeSkillReadToolSchema()),
+	}
 	for _, request := range []CloudAgentRequest{{SubagentEnabled: true, PermissionMode: "read_only", ContextScope: []string{"canvas"}}, {PermissionMode: "read_only", ContextScope: []string{"canvas"}, subagent: &SubagentRuntime{Depth: 1}}} {
 		for _, tool := range cloudAgentTools(request) {
 			name := stringField(tool["function"].(map[string]any), "name")
@@ -72,6 +106,8 @@ func builtinAgentToolPolicy(name string) agentToolRegistration {
 		}
 	case "task_get":
 		tool.businesses = []string{"canvas", "drama"}
+	case "drama_read_episode":
+		tool.businesses = []string{"drama"}
 	case "web_search":
 		tool.allowed = func(req CloudAgentRequest) bool { return req.WebSearchEnabled }
 	case "canvas_inspect_image":
@@ -93,21 +129,6 @@ func builtinAgentToolPolicy(name string) agentToolRegistration {
 		tool.execute = nil
 	}
 	return tool
-}
-
-func agentScopedReadToolSchema(capabilities *AgentCapabilitySnapshot) map[string]any {
-	schema := nativeSkillReadToolSchema()
-	function := schema["function"].(map[string]any)
-	sources := make([]string, 0, len(capabilities.ReadAdapters)+1)
-	for _, name := range capabilities.ReadAdapters {
-		sources = append(sources, name+"/<id>")
-	}
-	if capabilities.SkillRead {
-		sources = append(sources, "skills/<name>/SKILL.md 或其引用文件")
-	}
-	function["description"] = "读取本轮已授权内容：" + strings.Join(sources, "、") +
-		"。offset/limit 按 Unicode 字符分页，仅用于文本。不支持任意 URL 或本机路径。"
-	return schema
 }
 
 func agentCapabilityConfigurationError(message, tool string) error {

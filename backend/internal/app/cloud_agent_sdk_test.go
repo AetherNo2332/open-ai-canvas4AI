@@ -139,8 +139,11 @@ func TestAgentSDKDramaUsesRealProjectWithoutCanvas(t *testing.T) {
 			t.Fatalf("canvas tool leaked into drama: %s", name)
 		}
 	}
-	call := piAgentTestCall("read-episode", "read", `{"path":"drama:episode/episode-1"}`)
-	result, err := s.agentReadBusinessContent("user", &state, call)
+	if !containsString(cloudAgentToolNames(state.Canonical.Tools), "drama_read_episode") {
+		t.Fatalf("drama catalog lost its named read tool: %v", cloudAgentToolNames(state.Canonical.Tools))
+	}
+	call := piAgentTestCall("read-episode", "drama_read_episode", `{"episodeId":"episode-1"}`)
+	result, err := cloudAgentReadTool(s.repo, "user", &state, call, s)
 	raw, _ := json.Marshal(result)
 	if err != nil || !strings.Contains(string(raw), "SDK_EPISODE_TEXT") || !strings.Contains(string(raw), `"adopted":false`) {
 		t.Fatalf("missing real proposal input: %s %v", raw, err)
@@ -166,16 +169,6 @@ func TestAgentSDKDramaUsesRealProjectWithoutCanvas(t *testing.T) {
 	}
 }
 
-func TestAgentSDKReadClassifierKeepsMalformedBusinessReadInDurableBatch(t *testing.T) {
-	call := piAgentTestCall("bad-read", "read", `{"path":"drama:episode/ep","offset":-1,"unexpected":true}`)
-	if !agentBusinessRead(call) {
-		t.Fatal("malformed business read was mistaken for local Skill IO")
-	}
-	if _, err := agentReadArgumentsFor(call); err == nil {
-		t.Fatal("malformed read passed execution validation")
-	}
-}
-
 func TestAgentSDKCorruptLegacyAccountRuleDoesNotBlockIsolatedRun(t *testing.T) {
 	s, db, _, _ := creationTestService(t)
 	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: `{"nodes":[]}`}).Error; err != nil {
@@ -194,42 +187,6 @@ func TestAgentSDKCorruptLegacyAccountRuleDoesNotBlockIsolatedRun(t *testing.T) {
 	_, state := reloadPiRun(t, s, run.ID)
 	if strings.Contains(state.Canonical.SystemPrompt, strings.Repeat("x", 100)) {
 		t.Fatal("corrupt legacy source reached the isolated model prompt")
-	}
-}
-
-func TestAgentSDKUnifiedReadReturnsTextAndAuthorizedImage(t *testing.T) {
-	s, db, _ := cloudAgentVisionFixture(t)
-	state := cloudAgentRuntime{Request: agentTestRequest()}
-	state.Request.VisionEnabled = true
-	text, err := s.agentReadBusinessContent("user", &state, piAgentTestCall("read-text", "read", `{"path":"canvas:text/shot-1","limit":24}`))
-	raw, _ := json.Marshal(text)
-	if err != nil || !strings.Contains(string(raw), "镜头完整指令") {
-		t.Fatalf("text read has no content: %s %v", raw, err)
-	}
-	imageCall := piAgentTestCall("read-image", "read", `{"path":"canvas:image/cat"}`)
-	image, err := s.agentReadBusinessContent("user", &state, imageCall)
-	inspection, ok := image.(cloudAgentImageInspection)
-	if err != nil || !ok || inspection.ImageURL != "resource:ref-one" {
-		t.Fatalf("image read is not a model image: %+v %v", image, err)
-	}
-	if _, err := s.agentReadBusinessContent("other", &state, imageCall); err == nil {
-		t.Fatal("cross-user image read succeeded")
-	}
-	state.Request.VisionEnabled = false
-	if _, err := s.agentReadBusinessContent("user", &state, imageCall); err == nil {
-		t.Fatal("image downgraded to successful text")
-	}
-	state.Request.VisionEnabled = true
-	db.Model(&model.Resource{}).Where("id = ?", "ref-one").Update("status", "pending")
-	if _, err := s.agentReadBusinessContent("user", &state, imageCall); err == nil {
-		t.Fatal("unready image read succeeded")
-	}
-	db.Model(&model.Resource{}).Where("id = ?", "ref-one").Update("status", model.ResourceStatusReady)
-	for i := 0; i < cloudAgentMaxImageInspectionsPerRun; i++ {
-		state.markCanvasImageInspection("cat", true, stringValue(inspection.Receipt["contentSignature"]))
-	}
-	if _, err := s.agentReadBusinessContent("user", &state, imageCall); err == nil {
-		t.Fatal("image limit silently returned successful text without pixels")
 	}
 }
 

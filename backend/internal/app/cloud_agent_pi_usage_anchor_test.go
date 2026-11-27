@@ -3,7 +3,6 @@ package app
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
@@ -11,62 +10,14 @@ import (
 
 func piUsageAnchorTestRun(t *testing.T) (*Service, *gorm.DB, *model.CloudAgentExecution) {
 	t.Helper()
-	s, db, _, _ := creationTestService(t)
-	const userID, runID, canvasID = "user", "pi-usage-run", "pi-usage-canvas"
-	req := agentTestRequest()
-	req.CanvasID = canvasID
-	req.PermissionMode = "auto"
-	system, policy, err := compileCloudAgentPolicies(req, nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := cloudAgentRuntime{
-		Request: req, Policy: policy, Decisions: map[string]string{},
-		TaskIDs: []string{"pi-usage-root-task"},
-	}
-	state.Canonical = cloudAgentCanonical(system, nil, req.Prompt, req)
-	state.StepLimits, err = s.cloudAgentStepLimits()
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.Task{
-		ID: "pi-usage-root-task", UserID: userID, ProjectID: canvasID, Type: "canvas_text",
-		Status: model.TaskStatusSucceeded, ResultJSON: `{"text":""}`,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	run := &model.CloudAgentExecution{
-		ID: runID, UserID: userID, Status: "running", Engine: "pi", Revision: 1,
-		CanvasID: canvasID, ConversationID: runID, StateJSON: string(encoded),
-	}
-	if err := db.Create(run).Error; err != nil {
-		t.Fatal(err)
-	}
-	header, err := json.Marshal(map[string]any{
-		"type": "session", "version": 3, "id": runID,
-		"timestamp": time.Now().UTC().Format(time.RFC3339Nano), "cwd": "canvas://" + canvasID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.CloudAgentPiSession{
-		ID: runID, UserID: userID, ConversationID: runID, CanvasID: canvasID,
-		FormatVersion: 3, HeaderJSON: string(header), Revision: 1, ActiveRunID: runID,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.CanvasProject{ID: canvasID, UserID: userID, PayloadJSON: `{"nodes":[]}`}).Error; err != nil {
-		t.Fatal(err)
-	}
+	// 复用标准 Pi 夹具：冻结目录、定义身份与上下文合同都按当前合同构建，
+	// 这样模型步才能通过目录校验。
+	s, db, fixtureRun := piAgentTestFixture(t)
 	claimed, err := s.ClaimPiAgent("worker-usage")
 	if err != nil || claimed == nil {
 		t.Fatalf("claim Pi usage test run: snapshot=%#v error=%v", claimed, err)
 	}
-	run, err = s.repo.CloudAgent(userID, runID)
+	run, err := s.repo.CloudAgent(fixtureRun.UserID, claimed.RunID)
 	if err != nil {
 		t.Fatal(err)
 	}

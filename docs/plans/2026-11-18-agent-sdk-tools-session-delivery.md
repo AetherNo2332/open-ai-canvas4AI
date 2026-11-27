@@ -79,6 +79,8 @@
 
 ### 3.2 统一 read 与业务写入
 
+> **已被取代（2026-11-25）：** 本节设计的"统一 read"在一次功能回退中被撤除。业务 `read` 现在只读取本轮已授权 Skill 的文本文件，画布正文、识图与短剧分集分别使用具名工具 `canvas_read_content`、`canvas_inspect_image`、`drama_read_episode`。取代计划与验收见 [Agent read 业务扩展回退与专用工具接续开发计划](<../superpowers/plans/2026-11-25-agent-skill-read-business-tools.md>) 与[验收记录](2026-11-25-agent-skill-read-business-tools-acceptance.md)。下面的原文保留为历史验收来源。
+
 模型侧保留一个 `read(path, offset?, limit?)`。业务通过注册适配器解析引用，不能自己绕开平台图片输入与预算链路。
 
 统一读取回执至少包含：`source`、`contentType`、`revision`、类型化的文本或授权图片引用、分页信息。文本沿用现有 Unicode 字符分页；图片不接受文本分页。图片返回平台可验证的资源引用，平台再执行图片加载、模型视觉能力检查与预算控制。

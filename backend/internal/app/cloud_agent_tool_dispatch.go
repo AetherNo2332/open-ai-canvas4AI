@@ -277,20 +277,6 @@ func (s *Service) checkpointCloudAgentToolCall(run *model.CloudAgentExecution, s
 // readCloudAgentToolOutsideCheckpoint 在检查点事务之前完成识图准备、服务读取和长期记忆写入。
 // budgetExhausted 表示识图额度已用尽，调用方终止本轮。
 func (s *Service) readCloudAgentToolOutsideCheckpoint(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, allowed bool) (reads cloudAgentToolOutsideReads, budgetExhausted bool) {
-	if allowed && agentBusinessRead(call) {
-		if state.ReadToolCalls >= state.callLimits().ReadCallsPerRun {
-			reads.skillErr = &cloudAgentReadLoopError{ToolName: "read", Count: state.ReadToolCalls + 1, Budget: true}
-			return reads, false
-		}
-		state.ReadToolCalls++
-		result, err := s.agentReadBusinessContent(run.UserID, state, call)
-		if _, image := result.(cloudAgentImageInspection); image {
-			reads.inspectionResult, reads.inspectionErr = result, err
-		} else {
-			reads.skillResult, reads.skillErr = result, err
-		}
-		return reads, errors.Is(err, errCloudAgentImageInspectionBudget)
-	}
 	// 看图的资源与能力校验在写事务外完成；真实图片只在模型任务执行时读取。
 	if allowed && call.Function.Name == "canvas_inspect_image" && state.Request.VisionEnabled {
 		reads.inspectionResult, reads.inspectionErr = s.prepareCloudAgentImageInspection(run.UserID, state.Request.CanvasID, state, call)
@@ -300,7 +286,8 @@ func (s *Service) readCloudAgentToolOutsideCheckpoint(run *model.CloudAgentExecu
 	}
 	// Service-backed reads, including outbound search, run before the checkpoint
 	// transaction to avoid nested DB reads and holding a write lock during HTTP.
-	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "model_list" || call.Function.Name == "canvas_preflight") {
+	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "model_list" ||
+		call.Function.Name == "canvas_preflight" || call.Function.Name == "drama_read_episode") {
 		reads.skillResult, reads.skillErr = cloudAgentReadToolCached(s.repo, run.UserID, state, call, s)
 	}
 	// 长期记忆写的是用户自己的记忆文件（独立的 CAS 与修订事务），不是画布：在检查点事务外执行，
@@ -313,6 +300,12 @@ func (s *Service) readCloudAgentToolOutsideCheckpoint(run *model.CloudAgentExecu
 
 // runCloudAgentCheckpointTool 在检查点事务里执行一次工具调用。未下发的工具最先拒绝；其余工具名互不重叠，按类别分发。
 func (s *Service) runCloudAgentCheckpointTool(tc *cloudAgentToolCheckpoint, current *model.CloudAgentExecution, repo *repository.Repository) cloudAgentToolOutcome {
+	call := tc.call
+	if call.Function.Name == "read" {
+		// 原生运行的 Skill read 由 Worker 在本地执行，不进入 Go 工具通道。业务正文、
+		// 图片和短剧分集各有具名工具；走到这里说明调用走错了通道。
+		return cloudAgentToolOutcome{toolErr: cloudAgentSkillReadChannelRejection()}
+	}
 	if !tc.allowed {
 		_, message := cloudAgentUnadvertisedToolAdmission(tc.state, tc.call.Function.Name)
 		return cloudAgentToolOutcome{toolErr: BadAuthRequest(message)}
@@ -324,6 +317,13 @@ func (s *Service) runCloudAgentCheckpointTool(tc *cloudAgentToolCheckpoint, curr
 		return outcome
 	}
 	return s.runCloudAgentControlTool(tc, current, repo)
+}
+
+// cloudAgentSkillReadChannelRejection 是对错误通道 read 调用的可纠正拒绝：既说明
+// read 的实际职责，也点名本轮可用的具名工具。
+func cloudAgentSkillReadChannelRejection() error {
+	return &cloudAgentArgumentError{BadAuthRequest(
+		"read 只读取本轮已授权 Skill 的文本文件，不接受业务内容路径；画布正文用 canvas_read_content，看图用 canvas_inspect_image，短剧分集用 drama_read_episode")}
 }
 
 // runCloudAgentSubagentTool 执行父子代理之间的协作工具；ok 为 false 表示不是这类工具。
@@ -425,14 +425,6 @@ func runCloudAgentCanvasWriteTool(tc *cloudAgentToolCheckpoint, repo *repository
 func (s *Service) runCloudAgentControlTool(tc *cloudAgentToolCheckpoint, current *model.CloudAgentExecution, repo *repository.Repository) cloudAgentToolOutcome {
 	run, state, call := tc.run, tc.state, tc.call
 	switch call.Function.Name {
-	case "read":
-		if !agentBusinessRead(call) {
-			return cloudAgentToolOutcome{toolErr: BadAuthRequest("read 引用未获本轮业务授权")}
-		}
-		if tc.outside.inspectionResult != nil || tc.outside.inspectionErr != nil {
-			return s.settleCloudAgentImageInspection(tc, repo)
-		}
-		return cloudAgentToolOutcome{result: tc.outside.skillResult, toolErr: tc.outside.skillErr}
 	case "wait_generations":
 		result, suspended := cloudAgentWaitGenerations(current, state, call)
 		if suspended {
@@ -452,7 +444,7 @@ func (s *Service) runCloudAgentControlTool(tc *cloudAgentToolCheckpoint, current
 		// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
 		result, err := cloudAgentFinishRun(run.ID, state, call)
 		return cloudAgentToolOutcome{result: result, toolErr: err}
-	case "web_search", "model_list", "memory_update", "canvas_preflight":
+	case "web_search", "model_list", "memory_update", "canvas_preflight", "drama_read_episode":
 		return cloudAgentToolOutcome{result: tc.outside.skillResult, toolErr: tc.outside.skillErr}
 	}
 	result, err := cloudAgentReadToolCached(repo, run.UserID, state, call)

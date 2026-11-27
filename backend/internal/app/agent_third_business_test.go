@@ -11,36 +11,51 @@ import (
 	"yingce/backend/internal/repository"
 )
 
+// TestAgentSDKThirdBusinessReadAndRecovery 证明新业务只需注册一个具名工具
+// <business>_<action>_<object>，就能拿到与画布、短剧一致的授权、回执和恢复语义。
 func TestAgentSDKThirdBusinessReadAndRecovery(t *testing.T) {
 	s, db := agentRunFixture(t)
 	scope := AgentBusinessScope{Type: "library", ID: "licensed-shelf"}
 	readCount := 0
-	registry, err := newAgentDefinitionRegistry([]AgentDefinition{{
+	compiler := &cloudAgentToolCompiler{}
+	compiler.add("library_read_document", "读取测试书架中的一份文档", map[string]any{
+		"documentId": map[string]any{"type": "string"},
+	}, "documentId")
+	registration := agentToolRegistration{
+		name: "library_read_document", businesses: []string{"library"}, version: 1, schema: compiler.tools[0],
+		execute: func(service *Service, run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall, _ bool) error {
+			readCount++
+			var args struct {
+				DocumentID string `json:"documentId"`
+			}
+			if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
+				return service.recordCloudAgentToolReceipt(run, state, call, nil, cloudAgentJSONArgumentError(err))
+			}
+			if args.DocumentID != "chapter-1" {
+				return service.recordCloudAgentToolReceipt(run, state, call, nil, kernel.NotFound("文档不存在"))
+			}
+			return service.recordCloudAgentToolReceipt(run, state, call, map[string]any{
+				"documentId": args.DocumentID, "content": "THIRD_BUSINESS_CHAPTER", "adopted": false,
+			}, nil)
+		},
+	}
+	registry, err := newAgentRegistry([]AgentDefinition{{
 		ID: "library.reader", Version: 1, BusinessType: "library", IsDefault: true, ReadOnly: true,
-		BusinessTools: []string{}, ReadAdapters: []string{"library:document"},
+		BusinessTools: []string{"library_read_document"},
 		authorize: func(_ *Service, user string, request CloudAgentRequest) (*model.CanvasProject, error) {
 			if user != "user" || agentBusinessScope(request) != scope {
 				return nil, kernel.NotFound("书架不可访问")
 			}
 			return nil, nil
 		},
-	}}, agentReadAdapter{
-		namespace: "library:document", business: "library", version: 1,
-		read: func(_ *Service, _ string, _ *cloudAgentRuntime, id string, _ agentReadArguments, _ cloudAgentCall) (agentReadResult, error) {
-			readCount++
-			if id != "chapter-1" {
-				return agentReadResult{}, kernel.NotFound("文档不存在")
-			}
-			return agentReadResult{fields: map[string]any{"content": "THIRD_BUSINESS_CHAPTER"}}, nil
-		},
-	})
+	}}, []agentToolRegistration{registration})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.agentDefinitions = registry
 	req := agentTestRequest()
 	req.Scope, req.CanvasID, req.ContextScope = &scope, "", nil
-	req.Prompt = "读取 library:document/chapter-1"
+	req.Prompt = "读取 chapter-1"
 	if _, err := s.CreateCloudAgentRun("foreign", req, ""); err == nil {
 		t.Fatal("new business object authorizer did not run")
 	}
@@ -53,7 +68,10 @@ func TestAgentSDKThirdBusinessReadAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := piAgentTestCall("third-read", "read", `{"path":"library:document/chapter-1"}`)
+	if !containsToolName(piSnapshotToolNames(snapshot), "library_read_document") {
+		t.Fatalf("registered business tool was not disclosed: %v", piSnapshotToolNames(snapshot))
+	}
+	call := piAgentTestCall("third-read", "library_read_document", `{"documentId":"chapter-1"}`)
 	taskID := state.ActiveTaskID
 	result, _ := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{call}})
 	if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{
@@ -99,4 +117,15 @@ func TestAgentSDKThirdBusinessReadAndRecovery(t *testing.T) {
 	if err != nil || !strings.Contains(task.InputJSON, "THIRD_BUSINESS_CHAPTER") || task.ProjectID != scope.ID {
 		t.Fatalf("registered tool output was not sent to the model task: %v", err)
 	}
+}
+
+func piSnapshotToolNames(snapshot *PiAgentSnapshot) []string {
+	if snapshot == nil {
+		return nil
+	}
+	names := make([]string, 0, len(snapshot.Tools))
+	for _, tool := range snapshot.Tools {
+		names = append(names, tool.Name)
+	}
+	return names
 }

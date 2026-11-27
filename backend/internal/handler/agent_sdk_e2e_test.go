@@ -373,13 +373,14 @@ func agentSDKUpstream(requests, pixels, isolated, leaks *atomic.Int32) http.Hand
 			}
 			if strings.Contains(text, source) && strings.Contains(text, `"role":"tool"`) {
 				delta = map[string]any{"content": "SDK_ISOLATED_RESULT " + identity[0]}
+			} else if identity[2] == "drama" {
+				arguments, _ := json.Marshal(map[string]string{
+					"episodeId": fmt.Sprintf("isolation-%s-drama-%s-ep", identity[1], identity[3]),
+				})
+				delta, finish = agentSDKToolDelta("drama_read_episode", string(arguments)), "tool_calls"
 			} else {
-				path := "canvas:text/source"
-				if identity[2] == "drama" {
-					path = fmt.Sprintf("drama:episode/isolation-%s-drama-%s-ep", identity[1], identity[3])
-				}
-				args, _ := json.Marshal(map[string]string{"path": path})
-				delta, finish = agentSDKToolDelta("read", string(args)), "tool_calls"
+				arguments, _ := json.Marshal(map[string]string{"nodeId": "source"})
+				delta, finish = agentSDKToolDelta("canvas_read_content", string(arguments)), "tool_calls"
 			}
 		case strings.Contains(text, "SDK_ANSWER"):
 			delta = map[string]any{"content": "SDK_ANSWERED_RESULT"}
@@ -395,12 +396,13 @@ func agentSDKUpstream(requests, pixels, isolated, leaks *atomic.Int32) http.Hand
 			pixels.Add(1)
 		case strings.Contains(text, "SDK_DRAMA_SOURCE"):
 		default:
-			path := "drama:episode/sdk-episode"
+			// 业务读取走各自的具名工具：画布看图用 canvas_inspect_image，短剧分集用
+			// drama_read_episode。通用 read 只读 Skill。
 			if strings.Contains(text, "SDK_CANVAS") {
-				path = "canvas:image/cat"
+				delta, finish = agentSDKToolDelta("canvas_inspect_image", `{"nodeId":"cat"}`), "tool_calls"
+			} else {
+				delta, finish = agentSDKToolDelta("drama_read_episode", `{"episodeId":"sdk-episode"}`), "tool_calls"
 			}
-			args, _ := json.Marshal(map[string]string{"path": path})
-			delta, finish = agentSDKToolDelta("read", string(args)), "tool_calls"
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": delta}}})

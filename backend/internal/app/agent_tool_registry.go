@@ -28,10 +28,17 @@ type agentToolRegistration struct {
 }
 
 var agentToolRegistry map[string]agentToolRegistration
-var agentRegisteredToolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
+// agentRegisteredToolName 是新的工具命名合同：小写 snake_case、单下划线分段、
+// 首字符必须是字母、总长不超过 64。业务工具的显式业务前缀让读取与写入在名字上
+// 就能分辨，不必依赖运行期白名单。
+var agentRegisteredToolName = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`)
+
+const agentRegisteredToolNameMaxRunes = 64
 
 func registerAgentTool(tools map[string]agentToolRegistration, tool agentToolRegistration) error {
-	if !agentRegisteredToolName.MatchString(tool.name) || strings.HasPrefix(tool.name, "agent_tools_") ||
+	if !agentRegisteredToolName.MatchString(tool.name) || len(tool.name) > agentRegisteredToolNameMaxRunes ||
+		strings.HasPrefix(tool.name, "agent_tools_") ||
 		!agentToolRegistrationSchemaValid(tool.name, tool.schema) ||
 		tool.version <= 0 || tool.execute == nil || tools[tool.name].version != 0 ||
 		(!tool.platform && len(tool.businesses) == 0) {
@@ -80,12 +87,6 @@ func validateAgentDefinition(definition AgentDefinition) error {
 		}
 		seen[name] = true
 	}
-	for _, name := range definition.ReadAdapters {
-		if seen[name] || definition.readAdapters[name].business != definition.BusinessType {
-			return fmt.Errorf("invalid or duplicate read adapter %q in %q", name, definition.ID)
-		}
-		seen[name] = true
-	}
 	if definition.MemoryPolicy != "" && definition.MemoryPolicy != "off" && definition.MemoryPolicy != "scope" {
 		return fmt.Errorf("invalid Agent memory policy in %q", definition.ID)
 	}
@@ -115,24 +116,24 @@ type AgentCapabilityAdmission struct {
 }
 
 type AgentCapabilitySnapshot struct {
-	DefinitionID        string         `json:"definitionId"`
-	DefinitionVersion   int            `json:"definitionVersion"`
-	BusinessType        string         `json:"businessType"`
-	Tools               map[string]int `json:"tools"`
-	ReadAdapters        []string       `json:"readAdapters"`
-	ReadAdapterVersions map[string]int `json:"readAdapterVersions,omitempty"`
-	SkillRead           bool           `json:"skillRead,omitempty"`
-	ReadOnly            bool           `json:"readOnly,omitempty"`
-	DirectoryVersion    int            `json:"directoryVersion,omitempty"`
-	DirectoryHash       string         `json:"directoryHash,omitempty"`
-	WriteTools          []string       `json:"writeTools,omitempty"`
+	DefinitionID      string         `json:"definitionId"`
+	DefinitionVersion int            `json:"definitionVersion"`
+	BusinessType      string         `json:"businessType"`
+	Tools             map[string]int `json:"tools"`
+	SkillRead         bool           `json:"skillRead,omitempty"`
+	ReadOnly          bool           `json:"readOnly,omitempty"`
+	DirectoryVersion  int            `json:"directoryVersion,omitempty"`
+	DirectoryHash     string         `json:"directoryHash,omitempty"`
+	WriteTools        []string       `json:"writeTools,omitempty"`
 }
 
+// CompileAgentCapabilities freezes the tool versions a run may execute. The
+// generic read tool exists only when this run was admitted with enabled Skills;
+// business content belongs to each business's own named tools.
 func CompileAgentCapabilities(definition AgentDefinition, admission AgentCapabilityAdmission) (AgentCapabilitySnapshot, error) {
 	snapshot := AgentCapabilitySnapshot{
 		DefinitionID: definition.ID, DefinitionVersion: definition.Version, BusinessType: definition.BusinessType,
 		Tools: make(map[string]int), ReadOnly: definition.ReadOnly, SkillRead: admission.HasSkills,
-		ReadAdapterVersions: make(map[string]int),
 	}
 	names := append(slices.Clone(definition.BusinessTools), "plan_update", "finish_run")
 	if definition.InteractionPolicy == "ask_user" {
@@ -141,17 +142,7 @@ func CompileAgentCapabilities(definition AgentDefinition, admission AgentCapabil
 	if definition.MemoryPolicy == "scope" && !definition.ReadOnly {
 		names = append(names, "memory_update")
 	}
-	for _, namespace := range definition.ReadAdapters {
-		adapter := definition.readAdapters[namespace]
-		if adapter.read == nil {
-			return AgentCapabilitySnapshot{}, fmt.Errorf("missing executor for read adapter %q", namespace)
-		}
-		if !adapter.vision || admission.VisionEnabled {
-			snapshot.ReadAdapters = append(snapshot.ReadAdapters, namespace)
-			snapshot.ReadAdapterVersions[namespace] = adapter.version
-		}
-	}
-	if admission.HasSkills || len(snapshot.ReadAdapters) > 0 {
+	if admission.HasSkills {
 		names = append(names, "read")
 	}
 	for _, name := range names {
@@ -187,7 +178,7 @@ func compileAgentRunCapabilityDirectory(definition AgentDefinition, req CloudAge
 		if tool.writeOnly || (req.PermissionMode != "read_only" && tool.readOnlySchema != nil && cloudAgentWrite(tool.name)) {
 			capabilities.WriteTools = append(capabilities.WriteTools, tool.name)
 		}
-		tools = append(tools, tool.modelSchema(req, &capabilities))
+		tools = append(tools, tool.modelSchema(req))
 	}
 	return capabilities, tools, nil
 }
@@ -203,10 +194,8 @@ func (tool agentToolRegistration) eligible(req CloudAgentRequest) bool {
 	return tool.allowed == nil || tool.allowed(req)
 }
 
-func (tool agentToolRegistration) modelSchema(req CloudAgentRequest, capabilities *AgentCapabilitySnapshot) map[string]any {
+func (tool agentToolRegistration) modelSchema(req CloudAgentRequest) map[string]any {
 	switch {
-	case tool.name == "read":
-		return agentScopedReadToolSchema(capabilities)
 	case req.PermissionMode == "read_only" && tool.readOnlySchema != nil:
 		return tool.readOnlySchema
 	case req.StoryboardDisabled && tool.noStoryboardSchema != nil:
@@ -228,16 +217,27 @@ func compileRegisteredAgentTools(req CloudAgentRequest, runtimeMode string, capa
 }
 
 func cloudAgentRunAllowsTool(state *cloudAgentRuntime, name string) bool {
-	if state.Capabilities != nil && state.Capabilities.DirectoryVersion != 0 {
-		return state.Capabilities.Tools[name] != 0 && (state.Request.PermissionMode != "read_only" ||
-			!slices.Contains(state.Capabilities.WriteTools, name))
-	}
-	if state.Capabilities != nil && state.Capabilities.Tools[name] == 0 {
-		return false
-	}
 	req := state.Request
 	if state.Subagent != nil {
 		req.subagent = state.Subagent
+	}
+	if state.Capabilities != nil && state.Capabilities.DirectoryVersion != 0 {
+		if state.Capabilities.Tools[name] == 0 {
+			return false
+		}
+		if req.PermissionMode == "read_only" && slices.Contains(state.Capabilities.WriteTools, name) {
+			return false
+		}
+		// 冻结目录已经按运行条件裁剪过一次；这里按当前角色再校验一次，避免目录与角色
+		// 状态不一致时把写入或平台控制工具放给子代理。
+		if req.subagent != nil && (name == "ask_user" || name == "finish_run" ||
+			(!req.subagent.WriteGranted && cloudAgentWrite(name))) {
+			return false
+		}
+		return true
+	}
+	if state.Capabilities != nil && state.Capabilities.Tools[name] == 0 {
+		return false
 	}
 	return cloudAgentToolAllowed(req, name)
 }
@@ -246,11 +246,8 @@ func (s *Service) authorizeAgentRunTool(run *model.CloudAgentExecution, state *c
 	if !cloudAgentRunAllowsTool(state, name) {
 		return kernel.Forbidden("工具未获本轮权限授权")
 	}
-	if state.Capabilities == nil {
-		return nil
-	}
 	registration := s.agentDefinitionRegistry().tools[name]
-	if registration.execute == nil || state.Capabilities.Tools[name] != registration.version {
+	if state.Capabilities == nil || registration.execute == nil || state.Capabilities.Tools[name] != registration.version {
 		return kernel.Forbidden("本轮工具执行器版本不可用")
 	}
 	return s.authorizeRegisteredAgentRun(run, state)
@@ -293,9 +290,6 @@ func agentRunPermissionPermitted(state *cloudAgentRuntime, mode string) bool {
 }
 
 func (s *Service) authorizeRegisteredAgentRun(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
-	if state.Capabilities == nil {
-		return nil
-	}
 	if err := s.verifyAgentCapabilityDirectory(state); err != nil {
 		return err
 	}

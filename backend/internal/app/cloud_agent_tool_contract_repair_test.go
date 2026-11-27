@@ -36,6 +36,7 @@ func TestPiModelStepPersistsOnlyAdmittedImageSHAs(t *testing.T) {
 	if err := db.Create(&model.Resource{ID: resourceID, UserID: "user", Kind: "image", Status: "ready", MimeType: "image/png", Size: 12}).Error; err != nil {
 		t.Fatal(err)
 	}
+	bindCanvasImageResources(t, db, run.CanvasID, "resource:"+resourceID)
 	message := func(nodeID, sha string) map[string]any {
 		return map[string]any{"role": "user", "content": []any{
 			map[string]any{"type": "text", "text": `{"bytes":12,"nodeId":"` + nodeID + `","sha256":"` + sha + `"}`},

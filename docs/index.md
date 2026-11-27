@@ -20,6 +20,7 @@
 
 - [Agent SDK 增量开发规划](plans/2026-11-18-agent-sdk-incremental-delivery.md)及[工具注册与会话隔离计划](plans/2026-11-18-agent-sdk-tools-session-delivery.md)。
 - [Agent SDK 测试交接](plans/2026-11-19-agent-sdk-test-handoff.md)：覆盖共享偏好、业务隔离、读取、会话交互、Worker 接管与升级。
+- [Agent read 业务扩展回退与专用工具接续开发计划](<superpowers/plans/2026-11-25-agent-skill-read-business-tools.md>)及[验收记录](plans/2026-11-25-agent-skill-read-business-tools-acceptance.md)：`read` 恢复为 Skill-only，画布正文、识图与短剧分集改用 `canvas_read_content`、`canvas_inspect_image`、`drama_read_episode`，能力目录 2 / `canvas-pi-wire/v8` / `cloud-agent-tools/v30`。
 
 - [平台内部创作 SDK：实施设计与分片验收](plans/2026-11-05-internal-platform-sdk-rollout.md)及 [S0 合同锁定与迁移清单](plans/2026-11-05-internal-platform-sdk-s0-contract.md)：模型生成、任务、计费、媒体资源的统一合同、调用方迁移矩阵与 S0–S8 验收（实施中，S0 完成）。
 

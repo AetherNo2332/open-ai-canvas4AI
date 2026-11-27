@@ -3,6 +3,15 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## Agent Skill-only read 与业务专用读取工具
+
+- 已实现：`read` 恢复为只读本轮已授权 Skill 的文本文件；画布正文、识图与短剧分集分别使用 `canvas_read_content`、`canvas_inspect_image`、`drama_read_episode`。业务读取统一经 `BusinessTools` 注册 Schema、执行器、适用业务和版本，并沿用共享读取次数、持久回执与恢复链路。能力目录升到 2，协议升到 `canvas-pi-wire/v8`，工具 Schema 升到 `cloud-agent-tools/v30`。
+- 自动化：Go 侧覆盖短剧分集授权/分页/预算/回执重放、Skill-only 披露、旧目录拒绝与历史保留；Worker 侧覆盖旧业务命名空间本地拒绝、混合批次、Skill read 恢复与历史只做展示投影。逐项结果见[验收记录](<../../plans/2026-11-25-agent-skill-read-business-tools-acceptance.md>)。
+- [ ] 在真实模型路线上确认短剧分析会调用 `drama_read_episode` 续读到末尾，画布正文与看图分别调用具名工具，且不再尝试业务 `read`。
+- [ ] 真实页面（Studio 画布与短剧分集分析）核对 Skill 读取、正文读取、看图、分集读取、取消与刷新恢复，并检查旧运行提示文案。
+- [ ] 在隔离部署演练 v7 → v8 配套切换：确认旧目录运行被拒绝并释放占用、已提交回执仍可交付、历史与归档可用、新一轮使用目录 2。
+- 真实模型与页面验证待做。
+
 ## 画布换图或删节点后的 Agent 续聊
 
 - 自动化：`TestPiContinuesAfterHistoricalCanvasImageLosesBinding` 覆盖切换媒体版本、删除节点、仍有效的图片、原会话记录保留，以及本轮和无法证明来源的未授权引用继续被拒绝。

@@ -24,8 +24,10 @@ func agentCapabilityDirectoryUnavailable(runID, detail string) error {
 
 func (s *Service) verifyAgentCapabilityDirectory(state *cloudAgentRuntime) error {
 	frozen := state.Capabilities
+	// 冻结目录缺失是旧执行合同（业务 read 扩展之前或之后）的形态：没有目录就无法
+	// 证明工具身份与版本，可执行入口一律拒绝继续。
 	if frozen == nil {
-		return nil
+		return agentCapabilityDirectoryUnavailable(state.RuntimeRunID, "缺少冻结工具目录")
 	}
 	if frozen.DirectoryVersion != agentCapabilityDirectoryVersion || frozen.DirectoryHash == "" {
 		return agentCapabilityDirectoryUnavailable(state.RuntimeRunID, "版本不兼容")
@@ -42,12 +44,6 @@ func (s *Service) verifyAgentCapabilityDirectory(state *cloudAgentRuntime) error
 		tool := registry.tools[name]
 		if tool.execute == nil || tool.version != version {
 			return agentCapabilityDirectoryUnavailable(state.RuntimeRunID, "工具执行器版本不可用："+name)
-		}
-	}
-	for name, version := range frozen.ReadAdapterVersions {
-		adapter := registry.readAdapters[name]
-		if adapter.read == nil || adapter.version != version {
-			return agentCapabilityDirectoryUnavailable(state.RuntimeRunID, "读取适配器版本不可用："+name)
 		}
 	}
 	return nil

@@ -33,6 +33,7 @@ export const AGENT_TOOL_NAMES = [
     "plan_update",
     "memory_update",
     "read",
+    "drama_read_episode",
     "task_get",
 ] as const;
 
@@ -139,6 +140,19 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
         },
         failureMessage: ({ text, detail }) => agentVisionFailureSummary(text, detail),
     },
+    // 短剧分集：结果是可续读的分页正文，和画布正文同一套游标口径。
+    drama_read_episode: {
+        summary: ({ pending, detail }) => {
+            if (pending) return "正在读取分集";
+            const result = record(field(detail, "result"));
+            const { offset, nextOffset, totalRunes, hasMore } = result;
+            if (![offset, nextOffset, totalRunes].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) || typeof hasMore !== "boolean" || Number(offset) > Number(nextOffset) || Number(nextOffset) > Number(totalRunes))
+                return "已读取分集片段（完整性未确认）";
+            if (offset === 0 && nextOffset === totalRunes && !hasMore) return `已完整读取分集（${totalRunes} 字符）`;
+            return `已读取分集片段（${offset}–${nextOffset} / ${totalRunes} 字符，${hasMore ? "尚有后续" : "已到末尾"}）`;
+        },
+        failureMessage: "读取分集失败",
+    },
     // 收尾闸门（工作项 A）：被拦下时卡片要说清"这次没结束"，而不是千篇一律的"操作已完成"。
     finish_run: {
         summary: ({ pending, detail }) => (pending ? "准备收尾并给出最终答复" : field(field(detail, "result"), "completionBlocked") === true ? "收尾被拦下，继续处理交付阻塞" : "已收尾并给出最终答复"),
@@ -159,8 +173,8 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
 
 /** 画布上"读到清单"的只读工具：无像素，chip 必须是存在式。 */
 const AGENT_CANVAS_READ_TOOLS = new Set(["canvas_get_state", "canvas_list_node_types", "canvas_read_batch_table", "canvas_read_content", "canvas_search_nodes", "canvas_read_drawing"]);
-/** 非画布信息的只读工具（模型、任务、技能、偏好）。`skills_load` 是历史事件名，保留兼容。 */
-const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "read", "native_skill_enabled", "canvas_list_assets"]);
+/** 非画布信息的只读工具（模型、任务、技能、偏好、短剧分集）。`skills_load` 是历史事件名，保留兼容。 */
+const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "read", "native_skill_enabled", "canvas_list_assets", "drama_read_episode"]);
 const AGENT_VISION_TOOLS = new Set(["canvas_inspect_image"]);
 const AGENT_CREATE_TOOLS = new Set(["generate_media", "image_annotation_render", "canvas_create_character"]);
 const AGENT_OPERATE_TOOLS = new Set(["canvas_apply_ops", "canvas_arrange_nodes", "canvas_edit_batch_table", "canvas_edit_drawing", "canvas_bind_asset", "canvas_undo", "canvas_redo", "image_layer_split", "image_text_detect"]);
@@ -245,11 +259,15 @@ export function agentToolCategoryLabel(toolName: string, category: AgentToolCate
               ? "读取正文"
               : toolName === "canvas_read_drawing"
                 ? "读取绘图"
-                : toolName === "canvas_search_nodes"
-                  ? "搜索节点"
-                  : AGENT_CANVAS_READ_TOOLS.has(toolName)
-                    ? "读取清单"
-                    : "读取信息";
+                : toolName === "drama_read_episode"
+                  ? "读取分集"
+                  : toolName === "canvas_search_nodes"
+                    ? "搜索节点"
+                    : toolName === "read"
+                      ? "读取技能"
+                      : AGENT_CANVAS_READ_TOOLS.has(toolName)
+                        ? "读取清单"
+                        : "读取信息";
     if (category === "create") return "创建节点";
     if (category === "operate") return "修改画布";
     return "其他操作";

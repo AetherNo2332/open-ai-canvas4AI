@@ -179,8 +179,7 @@ func piModelStepCheckDisclosure(state *cloudAgentRuntime, request PiModelStepReq
 		// A recovered batch may finish before the worker reads a fresh snapshot.
 		// Retired tools can leave the next model loadout only after that batch
 		// settles; current tools and all new calls retain normal disclosure checks.
-		nativeRead := state.Capabilities == nil && state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && previous == "read"
-		if state.CallIndex >= len(state.Calls) && !nativeRead && !cloudAgentRunAllowsTool(state, previous) {
+		if state.CallIndex >= len(state.Calls) && !cloudAgentRunAllowsTool(state, previous) {
 			continue
 		}
 		if !cloudAgentContainsString(requestedNames, previous) {
@@ -227,8 +226,7 @@ func piModelStepRequestedToolsDisclosed(state *cloudAgentRuntime, request PiMode
 	for _, tool := range request.Canonical.Tools {
 		function, _ := tool["function"].(map[string]any)
 		name := stringField(function, "name")
-		nativeRead := state.Capabilities == nil && state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
-		if !allowed[name] || (!nativeRead && !cloudAgentRunAllowsTool(state, name)) {
+		if !allowed[name] || !cloudAgentRunAllowsTool(state, name) {
 			return kernel.Forbidden("Pi 模型请求包含未披露工具")
 		}
 	}
