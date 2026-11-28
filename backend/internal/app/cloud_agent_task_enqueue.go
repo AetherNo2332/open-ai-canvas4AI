@@ -270,7 +270,7 @@ func (enqueue *cloudAgentTaskEnqueue) insertTask(repo *repository.Repository) er
 		state.Phase = ""
 		return nil
 	}
-	return createTaskWithStorageQuotaRepository(repo, task, enqueue.prepare.Order, enqueue.policy)
+	return createTaskWithStorageQuotaRepository(repo, task, enqueue.prepare.Order, enqueue.policy, nil)
 }
 
 // registerMediaTask binds the billed task to the canvas draft, emits the canvas

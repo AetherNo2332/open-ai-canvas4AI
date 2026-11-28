@@ -139,7 +139,7 @@ func (p *creationPlatform) commitPlatformTask(task *model.Task, order *model.Bil
 	if err != nil {
 		return err
 	}
-	if err := p.s.createTaskWithinStorageQuota(task, order, policy, record); err != nil {
+	if err := p.s.createTaskWithinStorageQuota(task, order, policy, nil, record); err != nil {
 		return err
 	}
 	p.s.recordActivity(task.UserID, "task", 1)

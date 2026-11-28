@@ -49,10 +49,13 @@ func (s *Service) startShortplayExtractWorker() {
 // tickShortplayExtract 领取并推进至多 shortplayExtractPerTick 条提取 job；
 // 单条失败只记录日志，循环继续（失败已由 RunShortplayExtractOnce 写入 job）。
 func (s *Service) tickShortplayExtract(ctx context.Context) {
-	if s.IsDraining() {
+	if !s.shortplayCanDispatch(ctx) {
 		return
 	}
 	for i := 0; i < shortplayExtractPerTick; i++ {
+		if !s.shortplayCanDispatch(ctx) {
+			return
+		}
 		jobID, err := s.RunShortplayExtractOnce(ctx)
 		if err != nil {
 			slog.Warn("shortplay extract failed", "jobId", jobID, "error", err)
@@ -106,16 +109,28 @@ type shortplayExtractRun struct {
 	Status    string
 	LastError string
 	Payload   string
-	TaskID    string
 }
 
 // RunShortplayExtractOnce 推进一条提取 job：优先把已提交任务读结果，没有在途任务时
 // 领取一条 queued job 并提交；两头都没有返回空 jobID 与 nil。
 func (s *Service) RunShortplayExtractOnce(ctx context.Context) (string, error) {
+	if !s.shortplayCanDispatch(ctx) {
+		return "", nil
+	}
+	orphan, err := s.takeOrphanedShortplayJob(ctx, shortplay.JobExtract)
+	if err != nil {
+		return "", err
+	}
+	if orphan != nil {
+		return s.advanceShortplayExtract(orphan)
+	}
 	if active, err := s.repo.RunningShortplayJob(shortplay.JobExtract); err != nil {
 		return "", err
 	} else if active != nil {
 		return s.advanceShortplayExtract(active)
+	}
+	if !s.shortplayCanDispatch(ctx) {
+		return "", nil
 	}
 	job, err := s.repo.ClaimShortplayJob(shortplay.JobExtract)
 	if err != nil || job == nil {
@@ -124,18 +139,13 @@ func (s *Service) RunShortplayExtractOnce(ctx context.Context) (string, error) {
 	return s.advanceShortplayExtract(job)
 }
 
-// advanceShortplayExtract 跑一轮并把结论落到 job 行；在途（Status 为空）只更新 taskId。
+// advanceShortplayExtract 跑一轮并收口；在途任务已在创建事务内绑定。
 func (s *Service) advanceShortplayExtract(job *model.ShortplayJob) (string, error) {
 	run := s.runShortplayExtractJob(job)
-	if run.TaskID != "" {
-		if updateErr := s.repo.UpdateShortplayJobRunState(job.ID, run.TaskID, run.Payload); updateErr != nil {
-			return job.ID, updateErr
-		}
-	}
 	if run.Status == "" {
 		return job.ID, nil
 	}
-	return job.ID, s.repo.FinishShortplayJob(job.ID, run.Status, run.LastError, run.Payload)
+	return job.ID, s.finishShortplayJob(job, run.Status, run.LastError, run.Payload)
 }
 
 // runShortplayExtractJob 按是否已提交分派：TaskID 为空 → 提交；非空 → 读结果落库。
@@ -194,7 +204,7 @@ func (s *Service) submitShortplayExtract(owner *model.Shortplay, project *model.
 		"textOptions": map[string]any{"stream": true, "thinkingLevel": ThinkingLevelHigh, "maxOutputTokens": shortplayExtractMaxOutputTokens},
 		"metadata":    map[string]any{"source": "shortplay_extract", "domainProjectId": project.ID, "shortplayJobId": job.ID},
 	}
-	task, err := s.submitShortplayTask(project.UserID, CreateTaskRequest{
+	_, err = s.submitShortplayTaskForJob(job, project.UserID, CreateTaskRequest{
 		ProjectID:      project.ID,
 		Type:           "canvas_text",
 		Operation:      "text",
@@ -202,11 +212,11 @@ func (s *Service) submitShortplayExtract(owner *model.Shortplay, project *model.
 		LogicalModelID: choice.LogicalModelID,
 		Model:          choice.ModelKey,
 		Input:          input,
-	})
+	}, shortplay.ExtractCursorPayload(cursor))
 	if err != nil {
 		return shortplayExtractRun{Status: shortplay.JobFailed, LastError: "提交提取任务失败：" + err.Error()}
 	}
-	return shortplayExtractRun{TaskID: task.ID, Payload: shortplay.ExtractCursorPayload(cursor)}
+	return shortplayExtractRun{}
 }
 
 // applyShortplayExtract 读任务结果：成功时解析并落库，失败时记录上游原因。
@@ -223,6 +233,8 @@ func (s *Service) applyShortplayExtract(owner *model.Shortplay, job *model.Short
 	case model.TaskStatusSucceeded:
 	case model.TaskStatusFailed, model.TaskStatusCancelled:
 		return shortplayExtractRun{Status: shortplay.JobFailed, LastError: firstNonEmpty(task.Error, "生成失败")}
+	case model.TaskStatusSubmissionUncertain:
+		return shortplayExtractRun{Status: shortplay.JobFailed, LastError: "上游提交结果待核对，未自动重发"}
 	default:
 		return shortplayExtractRun{}
 	}

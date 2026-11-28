@@ -12,7 +12,7 @@ import { ShortplayAssetsPanel } from "./assets-panel";
 import { ShortplayModelPickers } from "./shortplay-models";
 import { ASSET_MODES, parseShortplaySettings, settingsDirty } from "./shortplay-shared";
 
-// 详情：分集（原文、字数、画布地址）、资产库与提取收件箱、设置（整份保存，回执为权威）。
+// 详情：分集（原文、字数、精修入口）、资产库与提取收件箱、设置（整份保存，回执为权威）。
 // 集画布与收录按 W06 接入同一页。
 export default function ShortplayDetailPage() {
     const { projectId = "" } = useParams();
@@ -45,9 +45,14 @@ export default function ShortplayDetailPage() {
 
     // 集画布按需创建：第一次点「进精修画布」时建出来，之后直接进入同一张画布。
     const openCanvas = useMutation({
+        // 进入画布是即时操作；离线也执行请求并报告失败，不挂起到下次联网自动导航。
+        networkMode: "always",
+        retry: false,
         mutationFn: (episodeId: string) => ensureShortplayEpisodeCanvas(projectId, episodeId),
         onSuccess: (result) => navigate(`/canvas/${result.canvasId}`),
-        onError: (error) => message.error(error instanceof Error ? error.message : "画布创建失败"),
+        onError: (error) => {
+            void message.error(error instanceof Error ? error.message : "画布创建失败，请重试");
+        },
     });
 
     if (query.isLoading) {
@@ -103,9 +108,9 @@ export default function ShortplayDetailPage() {
                                                     第 {episode.number} 集 · {episode.title}
                                                 </div>
                                                 <div className="mt-1 text-xs text-foreground/55">
-                                                    {episode.wordCount} 字 · 画布地址 {episode.canvasId || "未分配"}
-                                                    {episode.assetIds.length ? ` · ${episode.assetIds.length} 个资产` : ""}
+                                                    {episode.wordCount} 字{episode.assetIds.length ? ` · ${episode.assetIds.length} 个资产` : ""}
                                                 </div>
+                                                <div className="mt-1 text-xs text-foreground/55">通过「进精修画布」打开本集画布，首次进入时自动创建。</div>
                                             </div>
                                             <Tooltip title="第一次进入时按需建出这一集的画布">
                                                 <Button type="primary" loading={openCanvas.isPending && openCanvas.variables === episode.id} onClick={() => openCanvas.mutate(episode.id)}>

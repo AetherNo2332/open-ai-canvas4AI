@@ -32,6 +32,7 @@ func bindCanvasImageResources(t *testing.T, db *gorm.DB, canvasID string, keys .
 		t.Fatal(err)
 	}
 }
+
 // visionReadyService 让夹具里的渠道模型声明图片输入能力，并造一张就绪的图片资源。
 //
 // 这两件事缺一不可：cloudAgentVisionReferences 要求

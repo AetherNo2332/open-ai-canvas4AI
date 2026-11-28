@@ -202,8 +202,7 @@ func TestPiMixedMalformedBatchPreservesSuccessfulWriteAcrossRestart(t *testing.T
 			return err
 		}
 		state.LastStepTaskID = taskID
-		state.Canonical.Tools = cloudAgentTools(state.Request)
-		state.ActivatedToolCategories = []string{"agent_tools_canvas_edit"}
+		// 夹具已冻结当前业务目录；安装模型回执不能改写目录或退回旧版类别披露。
 		return cloudAgentSave(current, &state)
 	}); err != nil {
 		t.Fatal(err)
@@ -213,6 +212,7 @@ func TestPiMixedMalformedBatchPreservesSuccessfulWriteAcrossRestart(t *testing.T
 		t.Fatal(err)
 	}
 	_, admitted := reloadPiRun(t, s, run.ID)
+	frozenHash := admitted.Capabilities.DirectoryHash
 	if !admitted.CallAdmissions[0].Allowed || admitted.CallAdmissions[1].Allowed {
 		t.Fatalf("mixed batch admissions: %+v", admitted.CallAdmissions)
 	}
@@ -247,6 +247,12 @@ func TestPiMixedMalformedBatchPreservesSuccessfulWriteAcrossRestart(t *testing.T
 		t.Fatal(err)
 	}
 	_, settled := reloadPiRun(t, restarted, run.ID)
+	if settled.Capabilities.DirectoryHash != frozenHash {
+		t.Fatal("restart changed the frozen capability directory")
+	}
+	if err := restarted.verifyAgentCapabilityDirectory(settled); err != nil {
+		t.Fatalf("restart invalidated the original frozen directory: %v", err)
+	}
 	if settled.CallIndex != 2 || piToolReceipt(settled, taskID, invalid.ID) == nil || !piToolReceipt(settled, taskID, invalid.ID).IsError {
 		t.Fatalf("malformed call was not durably closed: index=%d", settled.CallIndex)
 	}

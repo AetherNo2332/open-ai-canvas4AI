@@ -92,6 +92,112 @@ func TestShortplayAssetAudioClaimAndLateCallbackPostgres(t *testing.T) {
 	}
 }
 
+func TestW09RecoveryPostgres(t *testing.T) {
+	for name, check := range map[string]func(*testing.T, *Repository){
+		"FinishUnboundShortplayJobPreservesAdvancedRows":        assertFinishUnboundShortplayJobPreservesAdvancedRows,
+		"RestoreShortplayJobMediaRunningPreservesTerminalState": assertRestoreShortplayJobMediaRunningPreservesTerminalState,
+		"ShortplayJobTasksMatchesStructuredMetadataOnly":        assertShortplayJobTasksMatchesStructuredMetadataOnly,
+		"ShortplayJobTasksReturnsEveryCandidate":                assertShortplayJobTasksReturnsEveryCandidate,
+		"LinkShortplayJobTaskSkipsAdvancedRows":                 assertLinkShortplayJobTaskSkipsAdvancedRows,
+		"FailOrphanedShortplayJobOnlyTouchesStaleEmptyRunning":  assertFailOrphanedShortplayJobOnlyTouchesStaleEmptyRunning,
+		"TaskCreateHookLinksShortplayJobInSameTransaction":      assertTaskCreateHookLinksShortplayJobInSameTransaction,
+		"TaskCreateHookRollsBackWhenJobAlreadySettled":          assertTaskCreateHookRollsBackWhenJobAlreadySettled,
+		"SlowTaskCreateFencesRecoveryWriter":                    assertSlowTaskCreateFencesRecoveryWriter,
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := shortplayJobsTestPostgres(t)
+			if err := db.AutoMigrate(&model.Task{}); err != nil {
+				t.Fatal(err)
+			}
+			check(t, New(db))
+		})
+	}
+}
+
+func TestW09PostgresBoundTransactionFencesRecovery(t *testing.T) {
+	db := shortplayJobsTestPostgres(t)
+	if err := db.AutoMigrate(&model.Task{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	job := model.ShortplayJob{ID: "bound-first", ShortplayID: "sp", Kind: shortplay.JobExtract, Status: shortplay.JobRunning, DedupeKey: "bound-first"}
+	if err := db.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&job).Update("updated_at", time.Now().Add(-10*time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	created := make(chan error, 1)
+	task := model.Task{ID: "bound-task", UserID: "owner", Type: "canvas_text", Status: model.TaskStatusQueued}
+	go func() {
+		created <- repo.CreateTaskWithActiveLimitAndHook(&task, 10, func(tx *Repository, task *model.Task) error {
+			applied, err := tx.LinkShortplayJobTaskIfEmpty(job.ID, task.ID, "")
+			if err != nil {
+				return err
+			}
+			if !applied {
+				return ErrShortplayJobNotSubmitting
+			}
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	select {
+	case <-entered:
+	case err := <-created:
+		t.Fatalf("creation ended: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("binding not reached")
+	}
+	type result struct {
+		applied bool
+		err     error
+	}
+	recovered := make(chan result, 1)
+	go func() {
+		applied, err := repo.FailOrphanedShortplayJob(job.ID, "review required", "", time.Now().Add(-time.Minute))
+		recovered <- result{applied, err}
+	}()
+	select {
+	case got := <-recovered:
+		t.Fatalf("recovery did not wait for binding lock: %+v", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+	unblock()
+	select {
+	case err := <-created:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("create did not finish")
+	}
+	select {
+	case got := <-recovered:
+		if got.err != nil || got.applied {
+			t.Fatalf("recovery=%+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery did not finish")
+	}
+	if err := db.First(&job, "id = ?", job.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err := db.Model(&model.Task{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != shortplay.JobRunning || job.TaskID != task.ID || count != 1 {
+		t.Fatalf("job=%+v tasks=%d", job, count)
+	}
+	t.Log("binding UPDATE owns job row lock; recovery waits then predicate fails after commit; one bound task")
+}
+
 func shortplayJobsTestPostgres(t *testing.T) *gorm.DB {
 	t.Helper()
 	dsn := os.Getenv("CANVAS_TEST_POSTGRES_DSN")

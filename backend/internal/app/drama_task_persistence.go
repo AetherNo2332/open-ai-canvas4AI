@@ -40,7 +40,7 @@ func (s *Service) persistDramaTask(job *model.DramaJob, task *model.Task, order 
 	// 读到的状态时生效；期间被取消或重试则整笔回滚，不留下已扣费却没人认领的任务。
 	s.storageMu.Lock()
 	err = s.repo.Transaction(func(repo *repository.Repository) error {
-		if err := createTaskWithStorageQuotaRepository(repo, task, order, policy, submission...); err != nil {
+		if err := createTaskWithStorageQuotaRepository(repo, task, order, policy, nil, submission...); err != nil {
 			return err
 		}
 		return repo.BindDramaJobTask(&bound, job.Status, job.TaskID)

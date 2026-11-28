@@ -897,7 +897,7 @@ func (s *Service) ExecuteCreationSubmission(userID, id string, req CreationReque
 		if e = checkCreationPriceSignature(repo, task, signature); e != nil {
 			return e
 		}
-		if e = createTaskWithStorageQuotaRepository(repo, task, order, policy); e != nil {
+		if e = createTaskWithStorageQuotaRepository(repo, task, order, policy, nil); e != nil {
 			return e
 		}
 		fresh.TaskID = &task.ID

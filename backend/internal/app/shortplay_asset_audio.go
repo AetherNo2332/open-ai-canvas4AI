@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-	"time"
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/repository"
@@ -82,16 +81,29 @@ func (s *Service) QueueShortplayAssetAudio(userID, idOrProject string, req short
 
 // tickShortplayAssetAudio 与出图同构：先收口已提交任务，再领取新排队。
 func (s *Service) tickShortplayAssetAudio(ctx context.Context) {
-	if s.IsDraining() {
+	if !s.shortplayCanDispatch(ctx) {
 		return
 	}
 	for i := 0; i < shortplayExtractPerTick; i++ {
-		job, err := s.repo.RunningShortplayJob(shortplay.JobAssetAudio)
+		if !s.shortplayCanDispatch(ctx) {
+			return
+		}
+		job, err := s.takeOrphanedShortplayJob(ctx, shortplay.JobAssetAudio)
 		if err != nil {
-			slog.Warn("shortplay asset audio running lookup failed", "error", err)
+			slog.Warn("shortplay asset audio orphan recovery failed", "error", err)
 			return
 		}
 		if job == nil {
+			job, err = s.repo.RunningShortplayJob(shortplay.JobAssetAudio)
+			if err != nil {
+				slog.Warn("shortplay asset audio running lookup failed", "error", err)
+				return
+			}
+		}
+		if job == nil {
+			if !s.shortplayCanDispatch(ctx) {
+				return
+			}
 			job, err = s.repo.ClaimShortplayJob(shortplay.JobAssetAudio)
 			if err != nil {
 				slog.Warn("shortplay asset audio claim failed", "error", err)
@@ -111,7 +123,7 @@ func (s *Service) tickShortplayAssetAudio(ctx context.Context) {
 			}
 			continue
 		}
-		if err := s.repo.FinishShortplayJob(job.ID, run.Status, run.LastError, run.Payload); err != nil {
+		if err := s.finishShortplayJob(job, run.Status, run.LastError, run.Payload); err != nil {
 			slog.Warn("shortplay asset audio finish failed", "jobId", job.ID, "error", err)
 		}
 	}
@@ -198,8 +210,7 @@ func (s *Service) submitShortplayAssetAudio(project *model.Project, owner *model
 	}
 	payload := shortplay.AssetAudioJobPayload{AssetID: asset.ID, Prompt: prompt}
 	job.PayloadJSON = payload.Encode()
-	s.shortplayMarkAssetAudioStatus(owner.ID, asset.ID, shortplay.ImageQueued)
-	task, err := s.submitShortplayTask(project.UserID, CreateTaskRequest{
+	_, err = s.submitShortplayTaskForJob(job, project.UserID, CreateTaskRequest{
 		ProjectID:      project.ID,
 		Type:           "canvas_audio",
 		Operation:      shortplay.AudioOperation,
@@ -207,18 +218,11 @@ func (s *Service) submitShortplayAssetAudio(project *model.Project, owner *model
 		LogicalModelID: choice.LogicalModelID,
 		Model:          choice.ModelKey,
 		Input:          input,
-	})
+	}, payload.Encode())
 	if err != nil {
-		s.shortplayMarkAssetAudioStatus(owner.ID, asset.ID, shortplay.ImageFailed)
 		return shortplayImageJobRun{Status: shortplay.JobFailed, LastError: "提交音频任务失败：" + err.Error()}
 	}
-	s.shortplayMarkAssetAudioStatus(owner.ID, asset.ID, shortplay.ImageRunning)
-	now := time.Now()
-	job.TaskID, job.Status, job.StartedAt, job.UpdatedAt = task.ID, shortplay.JobRunning, &now, now
 	job.LastError = ""
-	if err := s.repo.UpdateShortplayJobRunState(job.ID, task.ID, payload.Encode()); err != nil {
-		return shortplayImageJobRun{Status: shortplay.JobFailed, LastError: err.Error()}
-	}
 	return shortplayImageJobRun{}
 }
 
@@ -240,6 +244,12 @@ func (s *Service) applyShortplayAssetAudio(project *model.Project, owner *model.
 		})
 		s.shortplayMarkAssetAudioStatus(owner.ID, asset.ID, shortplay.ImageFailed)
 		return shortplayImageJobRun{Status: shortplay.JobFailed, LastError: firstNonEmpty(task.Error, "生成失败")}
+	case model.TaskStatusSubmissionUncertain:
+		s.shortplayRecordAssetAudioFailure(owner.ID, asset.ID, repository.ShortplayAssetAudioWrite{
+			SourceAudioID: payload.SourceAudioID, Prompt: payload.Prompt,
+		})
+		s.shortplayMarkAssetAudioStatus(owner.ID, asset.ID, shortplay.ImageFailed)
+		return shortplayImageJobRun{Status: shortplay.JobFailed, LastError: "上游提交结果待核对，未自动重发"}
 	default:
 		return shortplayImageJobRun{}
 	}

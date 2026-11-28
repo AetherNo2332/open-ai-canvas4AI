@@ -138,6 +138,8 @@ type CreateTaskRequest struct {
 	creationPrepare *creationTaskPreparation
 	admission       *taskAdmission
 	workbenchKind   string
+	// afterTaskCreate 只给内部调用方使用：在同一条任务创建事务内绑定业务记录。
+	afterTaskCreate repository.TaskCreateHook
 	// callerHoldsStorageMu 只给已经持有 Service.storageMu 的内部调用设置。
 	// 文件容量检查不能再锁一次，否则审批改参数会自锁。
 	callerHoldsStorageMu bool

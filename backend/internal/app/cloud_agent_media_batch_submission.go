@@ -102,7 +102,7 @@ func (s *Service) submitCloudAgentMediaBatchItem(run *model.CloudAgentExecution,
 		if err := createCloudAgentMediaNode(repo, run.UserID, state.Request.CanvasID, plan, task, policy, cloudAgentCanvasEventRecorder(run.ID, state)); err != nil {
 			return err
 		}
-		if err := createTaskWithStorageQuotaRepository(repo, task, preparation.Order, policy); err != nil {
+		if err := createTaskWithStorageQuotaRepository(repo, task, preparation.Order, policy, nil); err != nil {
 			return err
 		}
 		if len(item.ResourceIDs) > 0 {

@@ -72,11 +72,11 @@ func validateStructuredReplacementQuotaWithPolicy(usage repository.UserStorageUs
 	return validateStructuredStorageQuotaWithPolicy(usage, kind, false, deltaBytes, policy)
 }
 
-func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting, submission ...*model.PlatformSubmission) error {
+func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting, hook repository.TaskCreateHook, submission ...*model.PlatformSubmission) error {
 	s.storageMu.Lock()
 	err := func() error {
 		defer s.storageMu.Unlock()
-		return createTaskWithStorageQuotaRepository(s.repo, task, billingOrder, policy, submission...)
+		return createTaskWithStorageQuotaRepository(s.repo, task, billingOrder, policy, hook, submission...)
 	}()
 	if err == nil {
 		s.wakeTaskDispatcher()
@@ -84,7 +84,7 @@ func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *m
 	return err
 }
 
-func createTaskWithStorageQuotaRepository(repo *repository.Repository, task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting, submission ...*model.PlatformSubmission) error {
+func createTaskWithStorageQuotaRepository(repo *repository.Repository, task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting, hook repository.TaskCreateHook, submission ...*model.PlatformSubmission) error {
 	usage, err := repo.UserStorageUsage(task.UserID)
 	if err != nil {
 		return err
@@ -94,7 +94,13 @@ func createTaskWithStorageQuotaRepository(repo *repository.Repository, task *mod
 		return err
 	}
 	if billingOrder != nil {
+		if hook != nil {
+			return repo.CreateTaskWithCreditReservationAndHook(task, billingOrder, policy.Task.ActiveTaskLimit, hook, submission...)
+		}
 		return repo.CreateTaskWithCreditReservation(task, billingOrder, policy.Task.ActiveTaskLimit, submission...)
+	}
+	if hook != nil {
+		return repo.CreateTaskWithActiveLimitAndHook(task, policy.Task.ActiveTaskLimit, hook, submission...)
 	}
 	return repo.CreateTaskWithActiveLimit(task, policy.Task.ActiveTaskLimit, submission...)
 }

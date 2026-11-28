@@ -251,7 +251,7 @@ export function applyShortplayCanvasAssetImage(canvasId: string, assetId: number
 
 /** 集画布按需创建：第一次调用建出画布行，已存在返回 created=false。 */
 export function ensureShortplayEpisodeCanvas(projectId: string, episodeId: string) {
-    return http.post<{ canvasId: string; created: boolean }>(`/shortplays/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/canvas`);
+    return http.post<{ canvasId: string; created: boolean }>(`/shortplays/${encodeURIComponent(projectId)}/episodes/${encodeURIComponent(episodeId)}/canvas`, undefined, { timeout: 15000 });
 }
 
 /** 按画布反查集归属；自由画布返回 linked=false，调用方按普通画布处理。 */

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-	"time"
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/production"
@@ -39,18 +38,19 @@ func (s *Service) SetShortplayTaskHook(hook func(userID string, req CreateTaskRe
 	s.shortplayTaskHook = hook
 }
 
-func (s *Service) submitShortplayTask(userID string, req CreateTaskRequest) (*model.Task, error) {
+func (s *Service) submitShortplayTask(userID string, req CreateTaskRequest) (*model.Task, bool, error) {
 	s.shortplayTaskMu.Lock()
 	hook := s.shortplayTaskHook
 	s.shortplayTaskMu.Unlock()
 	if hook != nil {
-		return hook(userID, req)
+		task, err := hook(userID, req)
+		return task, true, err
 	}
 	task, err := s.CreateTask(userID, req)
 	if err == nil {
 		s.wakeTaskDispatcher()
 	}
-	return task, err
+	return task, false, err
 }
 
 // QueueShortplayAssetImages 按筛选条件批量入队出图，返回三档计数。
@@ -112,16 +112,29 @@ func (s *Service) QueueShortplayAssetImages(userID, idOrProject string, req shor
 //
 // 只领 queued 会把提交后的 job 饿死（提交后状态已是 running），所以两段都不能省。
 func (s *Service) tickShortplayAssetImages(ctx context.Context) {
-	if s.IsDraining() {
+	if !s.shortplayCanDispatch(ctx) {
 		return
 	}
 	for i := 0; i < shortplayExtractPerTick; i++ {
-		job, err := s.repo.RunningShortplayJob(shortplay.JobAssetImage)
+		if !s.shortplayCanDispatch(ctx) {
+			return
+		}
+		job, err := s.takeOrphanedShortplayJob(ctx, shortplay.JobAssetImage)
 		if err != nil {
-			slog.Warn("shortplay asset image running lookup failed", "error", err)
+			slog.Warn("shortplay asset image orphan recovery failed", "error", err)
 			return
 		}
 		if job == nil {
+			job, err = s.repo.RunningShortplayJob(shortplay.JobAssetImage)
+			if err != nil {
+				slog.Warn("shortplay asset image running lookup failed", "error", err)
+				return
+			}
+		}
+		if job == nil {
+			if !s.shortplayCanDispatch(ctx) {
+				return
+			}
 			job, err = s.repo.ClaimShortplayJob(shortplay.JobAssetImage)
 			if err != nil {
 				slog.Warn("shortplay asset image claim failed", "error", err)
@@ -142,7 +155,7 @@ func (s *Service) tickShortplayAssetImages(ctx context.Context) {
 			}
 			continue
 		}
-		if err := s.repo.FinishShortplayJob(job.ID, run.Status, run.LastError, run.Payload); err != nil {
+		if err := s.finishShortplayJob(job, run.Status, run.LastError, run.Payload); err != nil {
 			slog.Warn("shortplay asset image finish failed", "jobId", job.ID, "error", err)
 		}
 	}
@@ -224,18 +237,13 @@ func (s *Service) submitShortplayAssetImage(project *model.Project, owner *model
 	if parent != nil {
 		reference, refErr := s.shortplayAssetImageReference(project.UserID, parent.ImageResourceID)
 		if refErr != nil {
-			s.shortplayRecordAssetImageFailure(owner.ID, asset.ID, repository.ShortplayAssetImageWrite{
-				SourceImageID: parent.CurrentImageID, Prompt: prompt, Appearance: appearance,
-			})
-			s.shortplayMarkAssetImageStatus(owner.ID, asset.ID, shortplay.ImageFailed)
 			return shortplayImageJobRun{Status: shortplay.JobFailed, LastError: refErr.Error()}
 		}
 		input["referenceImages"] = []any{reference}
 		sourceImageID = parent.CurrentImageID
 	}
 	payload := shortplay.AssetImageJobPayload{AssetID: asset.ID, SourceImageID: sourceImageID, Prompt: prompt, Appearance: appearance}
-	s.shortplayMarkAssetImageStatus(owner.ID, asset.ID, shortplay.ImageQueued)
-	task, err := s.submitShortplayTask(project.UserID, CreateTaskRequest{
+	_, err = s.submitShortplayTaskForJob(job, project.UserID, CreateTaskRequest{
 		ProjectID:      project.ID,
 		Type:           "canvas_image",
 		Operation:      operation,
@@ -243,18 +251,11 @@ func (s *Service) submitShortplayAssetImage(project *model.Project, owner *model
 		LogicalModelID: choice.LogicalModelID,
 		Model:          choice.ModelKey,
 		Input:          input,
-	})
+	}, payload.Encode())
 	if err != nil {
-		s.shortplayMarkAssetImageStatus(owner.ID, asset.ID, shortplay.ImageFailed)
 		return shortplayImageJobRun{Status: shortplay.JobFailed, LastError: "提交出图任务失败：" + err.Error()}
 	}
-	s.shortplayMarkAssetImageStatus(owner.ID, asset.ID, shortplay.ImageRunning)
-	now := time.Now()
-	job.TaskID, job.Status, job.StartedAt, job.UpdatedAt = task.ID, shortplay.JobRunning, &now, now
 	job.LastError = ""
-	if err := s.repo.UpdateShortplayJobRunState(job.ID, task.ID, payload.Encode()); err != nil {
-		return shortplayImageJobRun{Status: shortplay.JobFailed, LastError: err.Error()}
-	}
 	return shortplayImageJobRun{}
 }
 
@@ -315,6 +316,12 @@ func (s *Service) applyShortplayAssetImage(project *model.Project, owner *model.
 		})
 		s.shortplayMarkAssetImageStatus(owner.ID, asset.ID, shortplay.ImageFailed)
 		return shortplayImageJobRun{Status: shortplay.JobFailed, LastError: firstNonEmpty(task.Error, "生成失败")}
+	case model.TaskStatusSubmissionUncertain:
+		s.shortplayRecordAssetImageFailure(owner.ID, asset.ID, repository.ShortplayAssetImageWrite{
+			SourceImageID: payload.SourceImageID, Prompt: payload.Prompt, Appearance: payload.Appearance,
+		})
+		s.shortplayMarkAssetImageStatus(owner.ID, asset.ID, shortplay.ImageFailed)
+		return shortplayImageJobRun{Status: shortplay.JobFailed, LastError: "上游提交结果待核对，未自动重发"}
 	default:
 		return shortplayImageJobRun{}
 	}

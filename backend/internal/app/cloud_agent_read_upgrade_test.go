@@ -18,6 +18,7 @@ var agentOldDirectoryMutations = []struct {
 	{"old directory 1", func(state *cloudAgentRuntime) { state.Capabilities.DirectoryVersion = 1 }},
 	{"legacy directory 0", func(state *cloudAgentRuntime) { state.Capabilities.DirectoryVersion = 0 }},
 	{"missing directory", func(state *cloudAgentRuntime) { state.Capabilities = nil }},
+	{"changed frozen tools", func(state *cloudAgentRuntime) { state.Canonical.Tools = nil }},
 }
 
 func saveRunState(t *testing.T, service *Service, db *gorm.DB, runID string, mutate func(*cloudAgentRuntime)) {

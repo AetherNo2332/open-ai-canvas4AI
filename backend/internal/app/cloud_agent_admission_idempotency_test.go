@@ -25,7 +25,7 @@ func TestCloudAgentAdmissionIdempotentResubmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := createTaskWithStorageQuotaRepository(s.repo, first, req.creationPrepare.Order, policy); err != nil {
+	if err := createTaskWithStorageQuotaRepository(s.repo, first, req.creationPrepare.Order, policy, nil); err != nil {
 		t.Fatalf("首次落库失败: %v", err)
 	}
 

@@ -23,6 +23,10 @@ var (
 	ErrChannelModelInUse       = errors.New("该渠道模型正在被使用，无法删除或停用")
 )
 
+// TaskCreateHook 在任务、计费预留与平台提交记录的同一数据库事务内执行。
+// 业务方用它把任务 ID 原子绑定到自己的调度记录；返回错误会回滚整笔任务创建。
+type TaskCreateHook func(*Repository, *model.Task) error
+
 // 先抢占唯一业务键再更新账户，确保注册和签到奖励在多实例并发下只入账一次。
 func (r *Repository) GrantCreditsOnce(userID string, entryType model.CreditLedgerType, amount int64, referenceKey string, note string) (*model.CreditAccount, bool, error) {
 	var account model.CreditAccount
@@ -117,6 +121,16 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 }
 
 func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int, submission ...*model.PlatformSubmission) error {
+	return r.createTaskWithCreditReservation(task, order, activeTaskLimit, nil, submission...)
+}
+
+// CreateTaskWithCreditReservationAndHook 与 CreateTaskWithCreditReservation 相同，
+// 但允许调用方在同一个事务里绑定任务 ID。
+func (r *Repository) CreateTaskWithCreditReservationAndHook(task *model.Task, order *model.BillingOrder, activeTaskLimit int, hook TaskCreateHook, submission ...*model.PlatformSubmission) error {
+	return r.createTaskWithCreditReservation(task, order, activeTaskLimit, hook, submission...)
+}
+
+func (r *Repository) createTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int, hook TaskCreateHook, submission ...*model.PlatformSubmission) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
 		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
@@ -131,6 +145,11 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 		if err := tx.Create(task).Error; err != nil {
 			return err
 		}
+		if hook != nil {
+			if err := hook(repo, task); err != nil {
+				return err
+			}
+		}
 		for _, item := range submission {
 			if err := insertPlatformSubmission(repo, item, task.ID); err != nil {
 				return err
@@ -144,6 +163,16 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 }
 
 func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int, submission ...*model.PlatformSubmission) error {
+	return r.createTaskWithActiveLimit(task, activeTaskLimit, nil, submission...)
+}
+
+// CreateTaskWithActiveLimitAndHook 与 CreateTaskWithActiveLimit 相同，
+// 但允许调用方在同一个事务里绑定任务 ID。
+func (r *Repository) CreateTaskWithActiveLimitAndHook(task *model.Task, activeTaskLimit int, hook TaskCreateHook, submission ...*model.PlatformSubmission) error {
+	return r.createTaskWithActiveLimit(task, activeTaskLimit, hook, submission...)
+}
+
+func (r *Repository) createTaskWithActiveLimit(task *model.Task, activeTaskLimit int, hook TaskCreateHook, submission ...*model.PlatformSubmission) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
 		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
@@ -154,6 +183,11 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit
 		}
 		if err := tx.Create(task).Error; err != nil {
 			return err
+		}
+		if hook != nil {
+			if err := hook(repo, task); err != nil {
+				return err
+			}
 		}
 		for _, item := range submission {
 			if err := insertPlatformSubmission(repo, item, task.ID); err != nil {
